@@ -414,6 +414,7 @@ export function SeoReviewPage({
   useEffect(() => {
     for (const product of products) {
       if (!product.gptJobId || !product.storeId || !persistedGptReviews.current.has(product.id)) continue;
+      if (product.backendPublish || (product.backendPublishRequired && product.isSyncing)) continue;
       const serialized = JSON.stringify(product);
       if (persistedGptReviews.current.get(product.id) === serialized) continue;
       persistedGptReviews.current.set(product.id, serialized);
@@ -424,6 +425,24 @@ export function SeoReviewPage({
       });
     }
   }, [products, gptClient]);
+
+  useEffect(() => {
+    const pending = products.filter(product => product.storeId === selectedStoreId && product.gptJobId && product.backendPublish && !["SUCCEEDED", "BLOCKED"].includes(product.backendPublish.state));
+    if (!pending.length) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void Promise.all(pending.map(async product => {
+        if (!product.gptJobId) return;
+        const state = await gptClient.reviewState(selectedStoreId, product.gptJobId);
+        if (cancelled) return;
+        setProducts(current => current.map(existing => existing.id === product.id && existing.storeId === selectedStoreId
+          ? { ...existing, ...state, id: existing.id, storeId: existing.storeId, gptJobId: existing.gptJobId } as SeoProductUiViewModel : existing));
+      })).catch(() => {
+        if (!cancelled) notifyUser({ title: "Backend Sync", message: "Chưa đọc được tiến độ. Tác vụ vẫn được lưu trên server; tải lại trang để kiểm tra, không gửi lại Shopify.", type: "warning" });
+      });
+    }, 5000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [products, selectedStoreId, gptClient]);
 
   // Sync selectedStoreId whenever urlStoreId query param changes
   useEffect(() => {
@@ -752,6 +771,26 @@ export function SeoReviewPage({
       if (targetProduct.gptJobId) {
         if (targetProduct.storeId !== targetStore) throw new Error("GPT SEO review belongs to another store");
         await gptSaveChain.current;
+        if (targetProduct.backendPublishRequired) {
+          if (options?.force) throw new Error("Backend Sync không cho ghi đè cưỡng bức. Hãy đánh giá lại nguồn đã thay đổi.");
+          const status = await gptClient.publishStatus(targetStore, targetProduct.gptJobId);
+          if (!status.managed) throw new Error("Cấu hình publish đã thay đổi. Tải lại Review trước khi tiếp tục.");
+          let receipt = status.operation;
+          if (receipt?.state === "BLOCKED") receipt = await gptClient.reconcilePublish(targetStore, targetProduct.gptJobId);
+          if (!receipt) {
+            await gptClient.saveReviewState(targetStore, targetProduct.gptJobId, { ...targetProduct, isSyncing: false, shopifySyncStatus: "idle" });
+            receipt = await gptClient.publishReview(targetStore, targetProduct.gptJobId, targetProduct.updatedAt, `publish-${targetProduct.gptJobId}-${targetProduct.updatedAt}`);
+          }
+          const savedReceipt = receipt;
+          setProducts(current => current.map(product => product.id === targetProduct.id && product.storeId === targetStore ? {
+            ...product, backendPublish: savedReceipt,
+            shopifySyncStatus: savedReceipt.state === "SUCCEEDED" ? "synced" : savedReceipt.state === "BLOCKED" ? "failed" : "syncing",
+            isSyncing: !["SUCCEEDED", "BLOCKED"].includes(savedReceipt.state),
+            shopifySyncError: savedReceipt.state === "BLOCKED" ? `Cần kiểm tra: ${savedReceipt.errorCode}` : undefined,
+          } : product));
+          notifyUser({ title: "Backend Sync", message: savedReceipt.state === "BLOCKED" ? "Tác vụ bị chặn; cần đối chiếu dữ liệu trước khi xử lý tiếp." : "Tác vụ đã lưu trên server. Bạn có thể đóng tab; mở lại Review để xem kết quả.", type: savedReceipt.state === "BLOCKED" ? "warning" : "success" });
+          return;
+        }
         gptSyncToken = (await gptClient.beginSync(targetStore, targetProduct.gptJobId)).token;
       }
       const pushItem = {
@@ -1084,6 +1123,7 @@ export function SeoReviewPage({
   async function handleApproveProduct(id: string): Promise<void> {
     const target = products.find((p) => p.id === id);
     if (!target) return;
+    if (target.backendPublish) { setSyncFeedback({ type: "warning", message: "Bản Review đã gắn tác vụ publish được giữ nguyên để đối chiếu. Cần revision mới để sửa." }); return; }
     if (target.isSyncing || target.isReverting) return;
     try {
       let nextVersion = target.coordinatorReview?.version;
@@ -1123,6 +1163,7 @@ export function SeoReviewPage({
 
   async function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu"): Promise<void> {
     const target = products.find((p) => p.id === id);
+    if (target?.backendPublish) { setSyncFeedback({ type: "warning", message: "Không thể thay quyết định của bản Review đã gửi publish." }); return; }
     if (!target || target.isSyncing || target.isReverting) return;
 
     try {
@@ -1186,6 +1227,7 @@ export function SeoReviewPage({
   // Batch Actions
   async function approveTargets(targets: readonly SeoProductUiViewModel[]): Promise<void> {
     if (targets.length === 0) return;
+    if (targets.some(product => product.backendPublish)) { setSyncFeedback({ type: "warning", message: "Bỏ chọn bản Review đã gửi publish trước khi duyệt hàng loạt." }); return; }
     try {
       const updatedReviews = await Promise.all(targets.flatMap((target) => {
         if (!target.coordinatorReview || !amazonCrawlerReviews) return [];
@@ -1332,6 +1374,7 @@ export function SeoReviewPage({
   }
 
   async function handleRejectSelected(): Promise<void> {
+    if (products.some(product => selectedIds.has(product.id) && product.backendPublish)) { setSyncFeedback({ type: "warning", message: "Bỏ chọn bản Review đã gửi publish trước khi từ chối hàng loạt." }); return; }
     const targets = products.filter(
       (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
     );
@@ -1416,6 +1459,7 @@ export function SeoReviewPage({
   async function handleRollbackProduct(id: string): Promise<void> {
     const target = products.find((p) => p.id === id);
     if (!target) return;
+    if (target.backendPublishRequired) { setSyncFeedback({ type: "warning", message: "Store dùng backend publish không cho hoàn tác trực tiếp từ trình duyệt. Cần tạo và duyệt revision mới." }); return; }
     if (target.isSyncing || target.isReverting) return;
     if (target.reviewDecision !== "approved" && !target.lastSyncedAt) return;
 
@@ -1504,6 +1548,7 @@ export function SeoReviewPage({
   }
 
   async function handleRollbackSelected(): Promise<void> {
+    if (products.some(product => selectedIds.has(product.id) && product.backendPublishRequired)) { setSyncFeedback({ type: "warning", message: "Không thể hoàn tác trực tiếp các bản backend publish. Cần revision mới." }); return; }
     const targets = products.filter(
       (p) =>
         selectedIds.has(p.id) &&
@@ -1652,6 +1697,7 @@ export function SeoReviewPage({
   async function handleSaveEdit(id: string, updated: SeoProductEditInput, autoApprove = false): Promise<boolean> {
     const target = products.find((product) => product.id === id);
     if (!target) return false;
+    if (target.backendPublish) { setSyncFeedback({ type: "warning", message: "Bản đã gửi publish không thể sửa; cần revision mới." }); return false; }
 
     const wasAlreadySynced = Boolean(
       target.shopifySyncStatus === "synced" ||

@@ -1,4 +1,11 @@
 export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
+export interface SeoPublishReceipt {
+  readonly id: string;
+  readonly jobId: string;
+  readonly state: string;
+  readonly errorCode: string | null;
+  readonly seoVersion: number | null;
+}
 export interface AgentAccessToken {
   readonly id: string;
   readonly workerId: string;

@@ -204,6 +204,28 @@ export function ProductDetailDrawer({
 
           {/* Drawer Body - Scrollable */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-300">
+            {product.backendPublishRequired && (
+              <section className="rounded-xl border border-cyan-800 bg-slate-900 p-4" aria-label="Backend publish">
+                <h3 className="font-semibold text-cyan-300">Duyệt và Sync là hai bước riêng</h3>
+                <p>Sync được lưu trên server, không cần giữ tab mở. Vendor, handle, giá và variants không được gửi cập nhật.</p>
+                {product.backendPublish && <p className="mt-2 break-all">Tác vụ: {product.backendPublish.id} · {product.backendPublish.state}{product.backendPublish.errorCode ? ` · ${product.backendPublish.errorCode}` : ""}</p>}
+                {product.originalBackup && <details className="mt-3">
+                  <summary className="cursor-pointer text-cyan-300">So sánh nội dung nguồn và bản đề xuất</summary>
+                  {[
+                    ["Tên sản phẩm", product.originalBackup.productTitle, product.productTitle.value],
+                    ["SEO title", product.originalBackup.seoTitle ?? "", product.seoTitle.value],
+                    ["Meta description", product.originalBackup.seoDescription ?? "", product.seoDescription.value],
+                    ["Mô tả (HTML dạng văn bản)", product.originalBackup.productDescription, product.productDescription.value],
+                  ].map(([label, before, after]) => <div key={label} className="mt-3">
+                    <h4 className="font-semibold">{label}</h4>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div><span className="text-slate-400">Nguồn đã lưu</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{before}</pre></div>
+                      <div><span className="text-cyan-300">Đề xuất</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{after}</pre></div>
+                    </div>
+                  </div>)}
+                </details>}
+              </section>
+            )}
             {/* Review Status Banner */}
             <div className="flex flex-wrap items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-4 gap-3">
               <div className="flex items-center gap-3 flex-wrap">

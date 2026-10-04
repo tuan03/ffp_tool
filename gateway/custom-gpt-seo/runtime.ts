@@ -9,6 +9,8 @@ import { recoverAutoSeoHandoffs } from "./auto-seo-outbox";
 import { createCodexSeoMcpHandler } from "./mcp-handler";
 import { createExternalSeoWorkflow } from "./workflow";
 import { getPerformanceService } from "../seo-performance/runtime";
+import { processSeoPublish } from "../seo-worker/publish-worker";
+import type { SeoPublishTransport } from "../seo-worker/publish-worker";
 
 interface CustomGptTickDependencies {
   readonly recoverAutoSeoHandoffs: () => Promise<void>;
@@ -44,12 +46,17 @@ function createRuntime() {
   const workflow = createExternalSeoWorkflow({ queue });
   const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials, performance: getPerformanceService });
   let isRunning = false;
+  let publishTransport: SeoPublishTransport | undefined;
   let lastWorkerRecoveryAt = 0;
   async function tick(): Promise<void> {
     if (isRunning) return;
     isRunning = true;
     try {
       await queue.initialize();
+      if (publishTransport) {
+        try { await processSeoPublish(queue.publisher, publishTransport); }
+        catch { console.error("[SEO Publish] Processing unavailable; durable operation will be recovered."); }
+      }
       if (Date.now() - lastWorkerRecoveryAt >= 60_000) {
         try { await queue.workers.recover(); }
         catch { console.error("[SEO Worker] Recovery failed; retry scheduled. Existing queue processing continues."); }
@@ -64,6 +71,6 @@ function createRuntime() {
   }
   const timer = setInterval(() => { void tick().catch(() => { console.error("[GPT SEO] Background storage operation failed; inspect database health before retrying."); }); }, 1000);
   timer.unref();
-  return { queue, handler, mcpHandler, tick, initialize: () => queue.initialize(), close: async () => { clearInterval(timer); await queue.close(); } };
+  return { queue, handler, mcpHandler, tick, configurePublisher: (transport: SeoPublishTransport) => { publishTransport = transport; }, initialize: () => queue.initialize(), close: async () => { clearInterval(timer); await queue.close(); } };
 }
 export function getCustomGptRuntime(): ReturnType<typeof createRuntime> { return runtime ??= createRuntime(); }

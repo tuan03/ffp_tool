@@ -49,6 +49,27 @@ function operation(row: Record<string, unknown>): PublishOperation {
 export class SeoPublishRepository {
   constructor(private readonly database: WorkerDatabase, private readonly now: () => number = Date.now) {}
 
+  async status(storeId: string, jobId: string): Promise<{ managed: boolean; operation: PublishOperation | null }> {
+    return this.database.transaction(async sql => {
+      if (!(await sql.query("SELECT id FROM gpt_jobs WHERE id=$1 AND store_id=$2", [jobId, storeId])).rows.length) throw new SeoWorkerError("PUBLISH_NOT_FOUND");
+      const managed = (await sql.query("SELECT store_id FROM seo_worker_stores WHERE store_id=$1", [storeId])).rows.length > 0;
+      const row = (await sql.query("SELECT * FROM seo_publish_operations WHERE job_id=$1 AND store_id=$2", [jobId, storeId])).rows[0];
+      return { managed, operation: row ? operation(row) : null };
+    });
+  }
+
+  async requestReconciliation(storeId: string, jobId: string, operatorName: string): Promise<PublishOperation> {
+    return this.database.transaction(async sql => {
+      const row = (await sql.query("SELECT * FROM seo_publish_operations WHERE store_id=$1 AND job_id=$2 FOR UPDATE", [storeId, jobId])).rows[0];
+      if (!row) throw new SeoWorkerError("PUBLISH_NOT_FOUND");
+      if (row.state !== "BLOCKED") return operation(row);
+      if (row.has_write_intent !== true) throw new SeoWorkerError("SOURCE_REASSESSMENT_REQUIRED");
+      const next = (await sql.query("UPDATE seo_publish_operations SET state='UNCERTAIN',attempts=0,retry_at=0,error_code=NULL,updated_at=$2 WHERE id=$1 RETURNING *", [row.id, this.now()])).rows[0];
+      await sql.query("INSERT INTO gpt_audit(store_id,job_id,event,created_at) VALUES ($1,$2,$3,$4)", [storeId, jobId, `PUBLISH_READBACK_REQUESTED:${operatorName}`, this.now()]);
+      return operation(next);
+    });
+  }
+
   async enqueue(input: { storeId: string; jobId: string; reviewUpdatedAt: number; requestId: string; operator: string }): Promise<PublishOperation> {
     z.object({ storeId: z.string().min(1).max(100), jobId: z.string().min(1).max(200), reviewUpdatedAt: z.number().int(), requestId: z.string().min(1).max(200), operator: z.string().min(1).max(200) }).strict().parse(input);
     return this.database.transaction(async sql => {
@@ -122,7 +143,7 @@ export class SeoPublishRepository {
       const row = (await sql.query("SELECT * FROM seo_publish_operations WHERE id=$1 AND lease_id=$2 AND state='CHECKING' AND lease_until>$3 FOR UPDATE", [op.id, op.leaseId, this.now()])).rows[0];
       if (!row) throw new SeoWorkerError("STALE_PUBLISH_LEASE");
       if (!review?.success || review.data.updatedAt !== Number(row.review_revision) || reviewFingerprint(review.data) !== row.review_fingerprint) throw new SeoWorkerError("REVIEW_CHANGED");
-      await sql.query("UPDATE seo_publish_operations SET state='WRITING',updated_at=$2 WHERE id=$1", [op.id, this.now()]);
+      await sql.query("UPDATE seo_publish_operations SET state='WRITING',has_write_intent=true,updated_at=$2 WHERE id=$1", [op.id, this.now()]);
     });
   }
 

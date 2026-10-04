@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { SeoWorkerError } from "./protocol";
 import type { SeoWorkerRepository } from "./repository";
+import type { SeoPublishRepository } from "./publish-repository";
 
 function send(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
@@ -25,6 +26,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
   readonly operator?: string;
   readonly hasStore: (storeId: string) => boolean;
   readonly repository: () => Promise<SeoWorkerRepository>;
+  readonly publisher?: () => Promise<Pick<SeoPublishRepository, "status" | "enqueue" | "requestReconciliation">>;
 }): Promise<void> {
   if (!options.operator) { send(res, 401, { error: { code: "OPERATOR_REQUIRED" } }); return; }
   if (req.method !== "GET" && req.method !== "POST") { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
@@ -37,6 +39,22 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
     const url = new URL(req.url ?? "/", "http://localhost");
     const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(url.searchParams.get("storeId"));
     if (!options.hasStore(storeId)) { send(res, 404, { error: { code: "STORE_NOT_FOUND" } }); return; }
+    if (url.pathname === "/api/seo-agent/publish" || url.pathname === "/api/seo-agent/publish-reconcile") {
+      if (!options.publisher) { send(res, 503, { error: { code: "PUBLISH_DISABLED" } }); return; }
+      const publisher = await options.publisher();
+      if (url.pathname.endsWith("publish-reconcile")) {
+        if (req.method !== "POST") { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
+        const input = z.object({ jobId: z.string().min(1).max(200) }).strict().parse(await readBody(req));
+        send(res, 202, publicReceipt(await publisher.requestReconciliation(storeId, input.jobId, options.operator))); return;
+      }
+      if (req.method === "GET") {
+        const jobId = z.string().min(1).max(200).parse(url.searchParams.get("jobId"));
+        const status = await publisher.status(storeId, jobId);
+        send(res, 200, { managed: status.managed, operation: status.operation ? publicReceipt(status.operation) : null }); return;
+      }
+      const input = z.object({ jobId: z.string().min(1).max(200), reviewUpdatedAt: z.number().int(), requestId: z.string().min(1).max(200) }).strict().parse(await readBody(req));
+      send(res, 202, publicReceipt(await publisher.enqueue({ ...input, storeId, operator: options.operator }))); return;
+    }
     const offset = z.coerce.number().int().min(0).max(1_000_000).parse(url.searchParams.get("offset") ?? 0);
     const repository = await options.repository();
     if (req.method === "GET") {
@@ -58,4 +76,8 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
     const code = error instanceof z.ZodError || error instanceof SyntaxError ? "INVALID_REQUEST" : error instanceof SeoWorkerError ? error.code : "SEO_AGENT_UNAVAILABLE";
     send(res, code === "SEO_AGENT_UNAVAILABLE" ? 503 : code === "REQUEST_TOO_LARGE" ? 413 : 400, { error: { code } });
   }
+}
+
+function publicReceipt(operation: Awaited<ReturnType<SeoPublishRepository["get"]>>) {
+  return { id: operation.id, jobId: operation.jobId, state: operation.state, errorCode: operation.errorCode, seoVersion: operation.seoVersion };
 }

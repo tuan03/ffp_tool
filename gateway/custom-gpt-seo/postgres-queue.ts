@@ -277,6 +277,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async requeue(storeId: string, jobId: string, options?: { provider?: SeoProvider; instructions?: string }): Promise<GptSeoJob> {
     return (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
+      if ((await this.publisher.status(storeId, jobId)).managed) throw new Error("NEW_REVISION_REQUIRED: converted worker reviews cannot be reset in place");
       if ((await this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status='SYNCING'").get(jobId))) {
         throw new Error("A Shopify sync is currently active for this review");
       }
@@ -308,6 +309,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async cancelReview(storeId: string, jobId: string): Promise<void> {
     (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
+      if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=?").get(jobId)) throw new Error("BACKEND_PUBLISH_MANAGED: preserve the published review history");
       if (job.status !== "REVIEW_READY") throw new Error("Job is not a ready review");
       if ((await this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status IN ('SYNCING','UNKNOWN')").get(jobId))) {
         throw new Error("A Shopify sync has already started for this review");
@@ -399,12 +401,20 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async reviewState(storeId: string, jobId: string): Promise<Record<string, unknown>> {
     (await this.get(storeId, jobId));
     const row = (await this.db.prepare("SELECT payload FROM gpt_review_state WHERE job_id=?").get(jobId));
-    return row ? record(json(row.payload)) : {};
+    const state = row ? record(json(row.payload)) : {};
+    const publish = await this.publisher.status(storeId, jobId);
+    const receipt = publish.operation;
+    return { ...state, ...(publish.managed ? { backendPublishRequired: true } : {}), ...(receipt ? {
+      backendPublish: { id: receipt.id, jobId, state: receipt.state, errorCode: receipt.errorCode, seoVersion: receipt.seoVersion },
+      shopifySyncStatus: receipt.state === "SUCCEEDED" ? "synced" : receipt.state === "BLOCKED" ? "failed" : "syncing",
+      isSyncing: !["SUCCEEDED", "BLOCKED"].includes(receipt.state),
+      shopifySyncError: receipt.state === "BLOCKED" ? `Backend publish: ${receipt.errorCode}. Cần kiểm tra trước khi thử lại.` : undefined,
+    } : {}) };
   }
   async saveReviewState(storeId: string, jobId: string, state: Record<string, unknown>): Promise<void> {
     await this.transaction(async () => {
     (await this.get(storeId, jobId));
-    if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=? AND state!='SUCCEEDED'").get(jobId)) throw new Error("PUBLISH_ACTIVE: review is frozen pending backend reconciliation");
+    if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=?").get(jobId)) throw new Error("PUBLISH_ACTIVE: published review is immutable; create a new revision after reconciliation");
     const current = (await this.reviewState(storeId, jobId));
     if (typeof current.updatedAt === "number" && typeof state.updatedAt === "number" && state.updatedAt < current.updatedAt) throw new Error("Review conflict: a newer edit is already saved");
     (await this.db.prepare("INSERT INTO gpt_review_state VALUES (?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload").run(jobId, JSON.stringify(state)));
@@ -420,6 +430,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
       if (job.status !== "REVIEW_READY") throw new Error("Sync requires a ready review");
+      if ((await this.publisher.status(storeId, jobId)).managed) throw new Error("BACKEND_PUBLISH_REQUIRED: use the operator publish endpoint");
       const newer = (await this.db.prepare("SELECT 1 FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND rowid>(SELECT rowid FROM gpt_jobs WHERE id=?) LIMIT 1").get(storeId, job.source, job.sourceIdentity, jobId));
       if (newer) throw new Error("Sync conflict: a newer source revision exists");
       if ((await this.reviewState(storeId, jobId)).reviewDecision !== "approved") throw new Error("Sync requires human approval saved on the server");

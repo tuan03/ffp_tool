@@ -37,7 +37,7 @@ Implemented:
 - Preview Agent Pack under `tools/seo-agent-pack`: Python STDIO HTTPS bridge,
   hidden terminal login, OS-vault-only credentials, bounded heartbeat and additive
   project MCP/skill setup. No automatic credential installation or production login.
-- Durable publish **core, not connected to the Sync button yet**: additive operation
+- Durable publish core: additive operation
   and version-history tables, frozen approved fields/review fingerprint, one active
   operation per product, expiring writer lease, and bounded read retries. An
   uncertain write is read back, never blindly resent. Mismatching fields block the
@@ -50,6 +50,19 @@ Implemented:
   alt text and AEO metafields; no vendor, handle, prices or variants are sent.
   Version-guarded updates now fail closed when the current product is unreadable,
   missing, or has no version, rather than proceeding with an unverifiable write.
+- Opt-in backend integration through `SEO_WORKER_PUBLISH_ENABLED=true`: the
+  Gateway attaches the Shopify transport at startup, and its persistent queue tick
+  processes pending operations without a browser tab. Operator authentication and
+  PostgreSQL are required. This does not convert any store automatically.
+- Operator-only `GET/POST /api/seo-agent/publish` and
+  `POST /api/seo-agent/publish-reconcile`, with the same CSRF/no-store protection as
+  Agent Access. Responses expose a receipt, never internal lease IDs. Reconciliation
+  only rereads a possibly written operation; it never resends a Shopify mutation.
+- Review exposes backend receipts/status, polls pending operations, and routes both
+  individual and batch Sync through the backend for converted stores. A disabled
+  backend fails closed instead of falling back to browser writes. Approve remains
+  separate from Sync. Published Review snapshots are immutable. Detail view includes
+  source/proposed content comparison; direct browser rollback/force is blocked.
 
 The compatibility adapter retains the existing PostgreSQL advisory transaction
 lock across legacy and new writers. Claims also lock selected job rows. This
@@ -59,11 +72,12 @@ API request belongs inside a worker repository transaction.
 ## Remaining implementation before activation
 
 1. Complete Review lifecycle integration: reapproval/regeneration/rollback
-   reservation handling and diff metadata. Connect the tested publish core to an
-   operator-only HTTP API, background scheduler and Review UI; add manual resolution
-   for blocked operations and reconcile the existing Shopify SEO-version metafield.
-   The new publisher is deliberately not scheduled or exposed as an endpoint yet.
-   The current Sync button still uses the existing browser-driven flow.
+   reservation handling and full run/worker/validation metadata. Add new-revision
+   regeneration for blocked or already published reviews and reconcile the existing
+   Shopify SEO-version metafield. Read-only reconciliation is implemented; no force
+   overwrite or release of an unresolved write is exposed.
+   Backend Sync is opt-in and only applies to converted stores. Unconverted stores
+   retain the existing browser-driven flow. No production activation was performed.
    This core accepts existing Shopify products only; new-product creation and
    storefront/theme rendering are outside this increment.
 2. Guarded operator cutover command with verified backup/dry-run/report and
@@ -133,6 +147,12 @@ The optional PostgreSQL test uses two independent queue clients and tests exclus
 claim, enqueue replay and legacy API protection. This is not an actual Shopify
 write, multi-Gateway crash drill or end-to-end UI acceptance result.
 
+The follow-up PostgreSQL test also starts a separate Node process which exits
+after persisting a write intent. Two fresh processes race to recover the expired
+lease; one read-back confirmation records one version, without sending another
+write. Shopify is an injected test transport here, not a real remote API. Actual
+two-machine Codex/Gateway and Shopify fault-injection acceptance remain outstanding.
+
 On 2026-10-04 the focused worker/queue/publish suite passed 35/35 with an isolated
 PostgreSQL 17 test container. A subsequent full Gateway regression with the test
 database configured passed 425 tests, with 47 unrelated environment-dependent
@@ -143,6 +163,31 @@ Read-back compares all intended fields (JSON metafields semantically). A mismatc
 after a possibly successful write requires operator reconciliation; the core does
 not assume that retrying is safe. Shopify read/version-check/write is not an atomic
 remote compare-and-swap. AEO metafield storage alone does not prove theme rendering.
+
+## Backend publish configuration and pilot gate
+
+1. Complete the backup/cutover preflight and resolve duplicate active jobs first.
+   Do not manually enable all production stores to test this feature.
+2. Configure server-only `SEO_WORKER_PUBLISH_ENABLED=true` with existing operator
+   authentication and PostgreSQL, then restart the Gateway. Leave it `false` until
+   the selected store and source snapshots have passed cutover checks.
+3. Human approval saves the Review only. Sync returns HTTP 202 and a receipt.
+   Reopening Review reads the persisted operation; the server owns completion.
+4. A blocked possibly-written operation can request read-back through Retry Sync.
+   A pre-write source/review failure requires reassessment, not resending old content.
+5. Turning the flag off pauses processing and denies new publish requests. It does
+   not delete operations, reopen legacy sync for converted stores, or undo writes.
+
+On 2026-10-04 the user selected Shopify product `8901018878151` in `jeminise-real`
+for the pilot. Read-only inspection of the VPS found its job `PENDING`, with no
+approved Review, and found no worker/publish tables in the production schema.
+No production mutation, migration, approval or publish was performed. The pilot
+therefore requires a validated draft, human approval and a reviewed deployment
+before an actual Shopify write can be tested.
+
+The helper's five unit tests passed on Windows and inside a network-disabled Linux
+Python 3.13 container. These are not OS-vault integration or real Codex-session
+tests. macOS and actual credential vault login/logout remain unverified.
 
 ## Defaults and operational constraints
 

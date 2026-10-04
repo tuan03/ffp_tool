@@ -1,4 +1,4 @@
-import type { AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider } from "./types";
+import type { AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -38,7 +38,22 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
       headers: { "Content-Type": "application/json", "x-ffp-agent": "1" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    if (!response.ok) throw new Error(response.status === 401 ? "Đăng nhập bằng tài khoản quản trị để quản lý Agent Access." : "Không thể quản lý worker. Kiểm tra kết nối và thử lại.");
+    if (!response.ok) {
+      if (route.startsWith("publish")) {
+        const payload: unknown = await response.json().catch(() => null);
+        const code = isRecord(payload) && isRecord(payload.error) ? payload.error.code : undefined;
+        const messages: Record<string, string> = {
+          PUBLISH_DISABLED: "Backend publish chưa được bật. Không chuyển sang ghi từ trình duyệt.",
+          SOURCE_REASSESSMENT_REQUIRED: "Nguồn hoặc bản duyệt cần được đánh giá lại; không thể gửi lại bản cũ.",
+          STALE_SOURCE: "Nguồn Shopify đã thay đổi. Cần tạo revision mới để đánh giá lại.",
+          OPERATOR_REQUIRED: "Đăng nhập bằng tài khoản quản trị để Sync Shopify.",
+          APPROVED_REVIEW_REQUIRED: "Cần lưu và duyệt bản Review hợp lệ trước khi Sync.",
+          VERSION_CONFLICT: "Bản Review đã thay đổi. Tải lại trước khi Sync.",
+        };
+        throw new Error(typeof code === "string" && messages[code] ? messages[code] : "Chưa xác nhận được tác vụ publish. Tải lại Review để kiểm tra; không ghi lại Shopify.");
+      }
+      throw new Error(response.status === 401 ? "Đăng nhập bằng tài khoản quản trị để quản lý Agent Access." : "Không thể quản lý worker. Kiểm tra kết nối và thử lại.");
+    }
     return await response.json() as T;
   }
   async function request<T>(route: string, storeId: string, body?: unknown): Promise<T> {
@@ -74,6 +89,9 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    reconcilePublish: (storeId: string, jobId: string) => agentRequest<SeoPublishReceipt>("publish-reconcile", storeId, { jobId }),
+    publishStatus: (storeId: string, jobId: string) => agentRequest<{ managed: boolean; operation: SeoPublishReceipt | null }>(`publish?jobId=${encodeURIComponent(jobId)}`, storeId),
+    publishReview: (storeId: string, jobId: string, reviewUpdatedAt: number, requestId: string) => agentRequest<SeoPublishReceipt>("publish", storeId, { jobId, reviewUpdatedAt, requestId }),
     agentAccess: (storeId: string, offset = 0) => agentRequest<AgentAccessPage>(`tokens?offset=${offset}`, storeId),
     agentRuns: (storeId: string, offset = 0) => agentRequest<AgentRunPage>(`runs?offset=${offset}`, storeId),
     createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: number }>("tokens", storeId, { workerId }),

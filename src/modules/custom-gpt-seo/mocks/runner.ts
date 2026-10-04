@@ -4,6 +4,9 @@ import { mockJobs, mockSettings } from "./data";
 export function createMockCustomGptClient(): CustomGptClient {
   let settings = structuredClone(mockSettings);
   return {
+    reconcilePublish: async (_storeId, jobId) => ({ id: `mock-${jobId}`, jobId, state: "SUCCEEDED", errorCode: null, seoVersion: 1 }),
+    publishStatus: async () => ({ managed: false, operation: null }),
+    publishReview: async (_storeId, jobId) => ({ id: `mock-${jobId}`, jobId, state: "SUCCEEDED", errorCode: null, seoVersion: 1 }),
     agentAccess: async () => ({ tokens: [], total: 0, nextOffset: null, claimsEnabled: false }),
     agentRuns: async () => ({ runs: [], total: 0, nextOffset: null }),
     createAgentToken: async () => ({ token: "mock-not-a-credential", tokenId: "mock-token", expiresAt: 0 }),

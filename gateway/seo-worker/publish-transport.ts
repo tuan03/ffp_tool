@@ -19,8 +19,8 @@ export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "d
       const metafields = op.fields.metafields ? await Promise.all(op.fields.metafields.map(async expected => {
         const field = await dispatcher.dispatch({ storeId: op.storeId, operation: "metafields.get", payload: { ownerId: id, namespace: expected.namespace, key: expected.key } });
         if (!field.success) throw new SeoWorkerError("SOURCE_UNAVAILABLE");
-        const actual = z.object({ value: z.string().nullable() }).parse(field.data);
-        return { ...expected, value: actual.value ?? "" };
+        const actual = z.object({ value: z.string().nullable(), type: z.string().optional() }).parse(field.data);
+        return { ...expected, type: actual.type ?? "", value: actual.value ?? "" };
       })) : undefined;
       return { version: product.updatedAt, fields: { title: product.title, descriptionHtml: product.descriptionHtml ?? "",
         seo: { title: product.seo?.title ?? "", description: product.seo?.description ?? "" },

@@ -22,3 +22,12 @@ test("publish transport sends only approved content with a live version guard", 
   await transport.write(op);
   assert.equal(writes, 1);
 });
+
+test("publish read-back uses the actual metafield type rather than assuming the intended type", async () => {
+  const fields = { title: "Title", descriptionHtml: "Description", seo: { title: "SEO", description: "Meta" }, metafields: [{ namespace: "custom", key: "aeo_faq", type: "json", value: "[]" }] };
+  const transport = createSeoPublishTransport({ dispatch: async request => ({ success: true, storeId: "demo", operation: request.operation,
+    data: request.operation === "metafields.get" ? { value: "[]", type: "multi_line_text_field" } : { product: { ...fields, updatedAt: "v1" } },
+  }) });
+  const actual = await transport.read({ id: "receipt", jobId: "job", storeId: "demo", productId: "123", sourceVersion: "v1", state: "UNCERTAIN", leaseId: "lease", seoVersion: null, errorCode: null, fields });
+  assert.equal(actual.fields.metafields?.[0].type, "multi_line_text_field");
+});

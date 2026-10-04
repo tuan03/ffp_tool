@@ -3,6 +3,18 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("backend publish client sends a revision and idempotency key without a Shopify write", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/publish?storeId=demo");
+    assert.equal(init?.credentials, "same-origin");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { jobId: "job", reviewUpdatedAt: 7, requestId: "sync" });
+    return new Response(JSON.stringify({ id: "receipt", jobId: "job", state: "QUEUED", errorCode: null, seoVersion: null }), { status: 202 });
+  });
+  assert.equal((await client.publishReview("demo", "job", 7, "sync")).state, "QUEUED");
+  assert.equal((await createMockCustomGptClient().publishStatus("demo", "job")).managed, false);
+});
+
 test("Agent Access client scopes tokens to store, disables cache and includes mutation protection", async () => {
   const client = createCustomGptClient(async (url, init) => {
     assert.equal(String(url), "/api/seo-agent/tokens?storeId=store%20one");

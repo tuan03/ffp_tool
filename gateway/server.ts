@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { createSeoPublishTransport } from "./seo-worker/publish-transport";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
 import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
@@ -146,6 +147,8 @@ export function startGatewayServer(
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
+  const isBackendPublishEnabled = (process.env.SEO_WORKER_PUBLISH_ENABLED ?? env.SEO_WORKER_PUBLISH_ENABLED) === "true" && Boolean(operatorUsername) && Boolean(getAutoSeoDatabaseUrl());
+  if (isBackendPublishEnabled) getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher));
   configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
   const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
   const storeControlPlane = new StoreControlPlane({
@@ -201,6 +204,7 @@ export function startGatewayServer(
         operator: isAuthenticatedOperator ? operatorUsername : undefined,
         hasStore: storeId => storeRegistry.hasStore(storeId),
         repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
+        publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
       });
       return;
     }

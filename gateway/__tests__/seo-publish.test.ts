@@ -65,6 +65,10 @@ test("uncertain mismatching write blocks without resetting sync or creating anot
     assert.equal((await f.pg.query<{ status: string }>("SELECT status FROM gpt_sync")).rows[0].status, "SYNCING");
     assert.equal((await f.pg.query<{ status: string }>("SELECT status FROM gpt_jobs")).rows[0].status, "REVIEW_READY");
     assert.equal((await f.pg.query("SELECT * FROM seo_publish_versions")).rows.length, 0);
+    await f.repository.requestReconciliation("demo", "job", "operator");
+    await processSeoPublish(f.repository, { read: async () => ({ version: "confirmed", fields: f.operation.fields }), write: async () => { writes++; } });
+    assert.equal((await f.repository.get("demo", f.operation.id)).state, "SUCCEEDED");
+    assert.equal(writes, 0);
   } finally { await f.pg.close(); }
 });
 
@@ -80,6 +84,7 @@ test("unavailable source has bounded retries and never writes", async () => {
     assert.equal(reads, 5);
     assert.equal(writes, 0);
     assert.equal((await f.repository.get("demo", f.operation.id)).state, "BLOCKED");
+    await assert.rejects(f.repository.requestReconciliation("demo", "job", "operator"), /SOURCE_REASSESSMENT_REQUIRED/);
     await assert.rejects(f.repository.enqueue({ storeId: "demo", jobId: "job", requestId: "sync", reviewUpdatedAt: 8, operator: "operator" }), /IDEMPOTENCY_CONFLICT/);
   } finally { await f.pg.close(); }
 });
