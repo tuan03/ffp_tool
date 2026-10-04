@@ -58,6 +58,11 @@ test("two HTTP processes fence crashed leases and revoked tokens on real Postgre
     assert.ok(replacementLease.leaseVersion > claims[0].leaseVersion);
     const stale = await invoke(second.url, workers[0].token, "queue_heartbeat", { lease: claims[0], requestId: "old-heartbeat" });
     assert.match(stale.text, /STALE_LEASE/);
+    const observations = await pool.query(`SELECT kind FROM "${schema}".seo_worker_metric_events WHERE store_id='demo'`);
+    assert.deepEqual(observations.rows.map(row => row.kind), ["STALE_LEASE"]);
+    await pool.query(`UPDATE "${schema}".seo_worker_metric_events SET occurred_at=$1`, [Date.now() - 1000]);
+    assert.equal((await queue.workers.metrics.report("demo", 24)).staleLeaseRejections, 1);
+    assert.equal((await queue.workers.metrics.report("other", 24)).staleLeaseRejections, 0);
     await queue.workers.revoke("demo", workers[1].tokenId);
     assert.equal((await invoke(second.url, workers[1].token, "worker_status", {})).status, 401);
   } finally {

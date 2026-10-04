@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { CustomGptClient } from "../service";
 import type { AgentAccessPage, AgentRunPage } from "../types";
+import { WorkerMetricsPanel } from "./WorkerMetricsPanel";
 
 const BUTTON = "rounded-lg border border-slate-600 px-3 py-2 text-sm text-cyan-300 disabled:opacity-40";
 
@@ -48,6 +49,7 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
   }
 
   return <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-5" aria-label="Agent Access">
+    <WorkerMetricsPanel client={client} storeId={storeId} />
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold text-white">Agent Access · {storeId}</h2><button type="button" className={BUTTON} onClick={() => setRefresh(value => value + 1)}>Làm mới</button></div>
     <p className="text-sm text-slate-400">Token có hiệu lực 24 giờ, chỉ cho một store và một máy. Không có quyền duyệt hoặc đồng bộ Shopify. Tài khoản quản trị dùng chung không xác định được cá nhân thực hiện.</p>
     <div className="flex flex-wrap gap-4 text-sm text-cyan-300"><a href="/seo-agent-pack/ffp-seo-worker-1.0.0-preview.zip" download>↓ Agent Pack (preview)</a><a href="/seo-agent-pack/ffp-seo-worker-1.0.0-preview.zip.sha256" download>SHA-256</a><span className="text-slate-400">Dùng Python 3.11+; token chỉ nhập trong terminal.</span></div>

@@ -7,6 +7,7 @@ import type { WorkerDatabase, WorkerSql } from "./database";
 import type { WorkerLease, WorkerPrincipal, WorkerRun } from "./protocol";
 import { getRetryDelay, getWorkerProductKey, SeoWorkerError, validateTargetCount, WORKER_DEFAULTS } from "./protocol";
 import type { AgentAccessPage, AgentRunPage } from "../../src/modules/custom-gpt-seo";
+import { SeoWorkerMetrics } from "./metrics";
 
 function digest(value: unknown): string { return createHash("sha256").update(canonicalizeJson(value)).digest("hex"); }
 function requireLabel(value: string): void {
@@ -22,8 +23,9 @@ function leaseOutput(row: Record<string, unknown>): WorkerLease {
 }
 
 export class SeoWorkerRepository {
+  readonly metrics: SeoWorkerMetrics;
   constructor(private readonly database: WorkerDatabase, private readonly now: () => number = Date.now,
-    private readonly jitter: () => number = Math.random) {}
+    private readonly jitter: () => number = Math.random) { this.metrics = new SeoWorkerMetrics(database, now); }
 
   async listAccess(storeId: string, offset: number): Promise<AgentAccessPage> {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new SeoWorkerError("INVALID_OFFSET");
@@ -147,6 +149,7 @@ export class SeoWorkerRepository {
       const row = (await sql.query("SELECT digest,response FROM seo_worker_requests WHERE scope=$1 AND request_id=$2", [`${principal.tokenId}:${lease.jobId}:${lease.leaseVersion}:checkpoint`, requestId])).rows[0];
       if (!row) return null;
       if (row.digest !== digest(payload)) throw new SeoWorkerError("IDEMPOTENCY_CONFLICT");
+      await this.recordSubmissionReplay(sql, `${principal.tokenId}:checkpoint`, payload);
       return row.response;
     });
   }
@@ -183,12 +186,19 @@ export class SeoWorkerRepository {
     const previous = (await sql.query("SELECT digest,response FROM seo_worker_requests WHERE scope=$1 AND request_id=$2", [scope, requestId])).rows[0];
     if (previous) {
       if (previous.digest !== fingerprint) throw new SeoWorkerError("IDEMPOTENCY_CONFLICT");
+      await this.recordSubmissionReplay(sql, scope, payload);
       return previous.response as T;
     }
     const output = await operation();
     await sql.query("INSERT INTO seo_worker_requests(scope,request_id,digest,response) VALUES ($1,$2,$3,$4::jsonb)",
       [scope, requestId, fingerprint, JSON.stringify(output)]);
     return output;
+  }
+
+  private async recordSubmissionReplay(sql: WorkerSql, scope: string, payload: unknown): Promise<void> {
+    if (!payload || typeof payload !== "object" || !("stage" in payload) || payload.stage !== "submission") return;
+    await sql.query(`INSERT INTO seo_worker_metric_events(id,store_id,kind,occurred_at)
+      SELECT $1,store_id,'DUPLICATE_SUBMISSION',$2 FROM seo_worker_tokens WHERE id=$3`, [randomUUID(), this.now(), scope.split(":")[0]]);
   }
 
   async register(token: string, requestId: string): Promise<{ sessionId: string }> {

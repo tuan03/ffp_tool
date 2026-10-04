@@ -1,4 +1,16 @@
 export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
+export interface WorkerMetrics {
+  readonly generatedAt: number; readonly start: number; readonly end: number; readonly eventCoverageSince: number;
+  readonly hours: number; readonly bucketHours: number;
+  readonly states: Readonly<Record<string, number>>;
+  readonly queueDepth: number; readonly successfulJobs: number; readonly jobsPerHour: number;
+  readonly attemptsStarted: number; readonly attemptsEnded: number; readonly retriedAttempts: number; readonly failedAttempts: number;
+  readonly retryRate: number | null; readonly failureRate: number | null; readonly averageProcessingMs: number | null;
+  readonly leaseExpirations: number; readonly quotaFailures: number; readonly tokenExpirations: number;
+  readonly expiredTokenRequests: number;
+  readonly duplicateSubmissionsPrevented: number; readonly staleLeaseRejections: number; readonly staleSourceRejections: number;
+  readonly series: readonly { readonly start: number; readonly completed: number }[];
+}
 export interface WorkerReviewHistory {
   readonly total: number;
   readonly nextOffset: number | null;

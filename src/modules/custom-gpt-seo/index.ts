@@ -7,3 +7,4 @@ export type { AgentAccessToken, AgentAccessPage, AgentRunPage } from "./types";
 export { getCustomGptClient } from "./runtime";
 export { createCustomGptSeoRoutes } from "./routes";
 export type { CustomGptClient, GptQueuePage, GptReviewPage, SeoQueueStore } from "./service";
+export type { WorkerMetrics } from "./types";

@@ -15,7 +15,10 @@ export async function handleWorkerMcp(req: IncomingMessage, res: ServerResponse,
   if (!match) { fail(401, "INVALID_TOKEN"); return; }
   const token = match[1];
   try { await repository.identify(token); }
-  catch (error) { fail(error instanceof SeoWorkerError ? 401 : 503, error instanceof SeoWorkerError ? error.code : "WORKER_UNAVAILABLE"); return; }
+  catch (error) {
+    if (error instanceof SeoWorkerError) await repository.metrics.record(token, error.code);
+    fail(error instanceof SeoWorkerError ? 401 : 503, error instanceof SeoWorkerError ? error.code : "WORKER_UNAVAILABLE"); return;
+  }
   const server = createWorkerMcpServer(repository, workflow, token);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   try {

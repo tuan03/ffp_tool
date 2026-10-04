@@ -32,10 +32,11 @@ export function getWorkerContracts(): { version: string; rules: string; submissi
   return { version: "ffp-seo-worker-v1", rules: WORKER_INSTRUCTIONS, submission: z.toJSONSchema(submission), analysis: z.toJSONSchema(analysis) };
 }
 
-async function safe(operation: () => Promise<unknown>): Promise<CallToolResult> {
+async function execute(operation: () => Promise<unknown>, observe: (code: string) => Promise<void>): Promise<CallToolResult> {
   try { return { content: [{ type: "text", text: JSON.stringify(await operation()) }] }; }
   catch (error) {
     const code = error instanceof SeoWorkerError ? error.code : "WORKER_OPERATION_FAILED";
+    await observe(code);
     const hints: Record<string, string> = {
       IMAGE_VIEW_REQUIRED: "Fetch every imageId with job_get_image under the current lease before analysis.",
       INVALID_ANALYSIS: "Read ffp://seo-worker/contracts analysis schema. Evidence must cover exactly all supplied imageIds; use only grounded observations.",
@@ -50,6 +51,7 @@ async function safe(operation: () => Promise<unknown>): Promise<CallToolResult> 
 }
 
 export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow: WorkerWorkflow, token: string): McpServer {
+  const safe = (operation: () => Promise<unknown>): Promise<CallToolResult> => execute(operation, code => repository.metrics.record(token, code));
   const server = new McpServer({ name: "ffp-seo-worker", version: "1.0.0" }, { instructions: WORKER_INSTRUCTIONS });
   server.registerResource("worker-contracts", "ffp://seo-worker/contracts", { mimeType: "application/json", description: "Current common rules and schemas; job context adds store-specific rules." }, async uri => {
     await repository.identify(token);

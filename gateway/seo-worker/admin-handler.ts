@@ -41,6 +41,11 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
     const url = new URL(req.url ?? "/", "http://localhost");
     const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(url.searchParams.get("storeId"));
     if (!options.hasStore(storeId)) { send(res, 404, { error: { code: "STORE_NOT_FOUND" } }); return; }
+    if (url.pathname === "/api/seo-agent/metrics" && req.method === "GET") {
+      const hours = z.coerce.number().refine(value => [24, 168, 720].includes(value)).parse(url.searchParams.get("hours") ?? 24);
+      const repository = await options.repository();
+      send(res, 200, await repository.metrics.report(storeId, hours)); return;
+    }
     if (url.pathname === "/api/seo-agent/review-history" && req.method === "GET") {
       if (!options.history) { send(res, 503, { error: { code: "HISTORY_UNAVAILABLE" } }); return; }
       const jobId = z.string().min(1).max(200).parse(url.searchParams.get("jobId"));

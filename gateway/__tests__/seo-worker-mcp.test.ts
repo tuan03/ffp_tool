@@ -71,6 +71,9 @@ test("stateless worker HTTP supports helper JSON calls and rejects revoked crede
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /application\/json/);
     assert.match(await response.text(), /http-worker/);
+    await pg.query("UPDATE seo_worker_tokens SET created_at=0,expires_at=1 WHERE id=$1", [token.tokenId]);
+    assert.equal((await invoke()).status, 401);
+    assert.equal((await pg.query<{ kind: string }>("SELECT kind FROM seo_worker_metric_events WHERE store_id='demo'")).rows[0].kind, "TOKEN_EXPIRED");
     await repository.revoke("demo", token.tokenId);
     assert.equal((await invoke()).status, 401);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await pg.close(); }

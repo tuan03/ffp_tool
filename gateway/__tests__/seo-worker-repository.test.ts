@@ -258,6 +258,8 @@ test("worker checkpoints are fenced, ordered and submission receipts survive del
     assert.equal(receipt.status, "VALIDATING");
     await f.deliver(lease.jobId); await f.repository.reconcileReviews();
     assert.deepEqual(await f.repository.saveCheckpoint(worker.token, lease, submission), receipt);
+    f.advance(1);
+    assert.equal((await f.repository.metrics.report("store-a", 24)).duplicateSubmissionsPrevented, 1);
     await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, { ...submission, payload: {} }), /IDEMPOTENCY_CONFLICT/);
     await f.repository.revoke("store-a", worker.tokenId);
     await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, submission), /TOKEN_REVOKED/);

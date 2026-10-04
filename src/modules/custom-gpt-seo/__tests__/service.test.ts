@@ -3,6 +3,21 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("worker metrics preserve store scope and window with independent mock snapshots", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/metrics?hours=168&storeId=store%20one");
+    assert.equal(init?.cache, "no-store");
+    assert.equal(init?.credentials, "same-origin");
+    return Response.json(await createMockCustomGptClient().workerMetrics("store one", 168));
+  });
+  const report = await client.workerMetrics("store one", 168);
+  assert.equal(report.series.length, 7);
+  assert.equal(report.series.reduce((sum, bucket) => sum + bucket.completed, 0), report.successfulJobs);
+  const mock = createMockCustomGptClient();
+  assert.notEqual(await mock.workerMetrics("a"), await mock.workerMetrics("a"));
+  await assert.rejects(mock.workerMetrics("a", 2), /INVALID_METRICS_WINDOW/);
+});
+
 test("worker review history is store-scoped, paginated and has fresh mock results", async () => {
   const client = createCustomGptClient(async (url, init) => {
     assert.equal(String(url), "/api/seo-agent/review-history?jobId=job%2F1&offset=50&storeId=store%20one");

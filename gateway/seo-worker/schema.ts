@@ -3,6 +3,10 @@ export function getSeoWorkerSchemaSql(schema: string): string {
   if (!/^[a-z_][a-z0-9_]*$/.test(schema)) throw new Error("Invalid SEO worker schema");
   const prefix = `"${schema}".`;
   return `
+    CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_metric_coverage (id BOOLEAN PRIMARY KEY CHECK(id), started_at BIGINT NOT NULL);
+    INSERT INTO ${prefix}seo_worker_metric_coverage VALUES (true,floor(extract(epoch FROM clock_timestamp())*1000)::bigint) ON CONFLICT DO NOTHING;
+    CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_metric_events (id TEXT PRIMARY KEY,store_id TEXT NOT NULL,kind TEXT NOT NULL,occurred_at BIGINT NOT NULL);
+    CREATE INDEX IF NOT EXISTS seo_worker_metric_window ON ${prefix}seo_worker_metric_events(store_id,occurred_at);
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_stores (
       store_id TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT false
     );
@@ -61,6 +65,10 @@ export function getSeoWorkerSchemaSql(schema: string): string {
       scope TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL,
       response JSONB NOT NULL, PRIMARY KEY(scope,request_id)
     );
+    CREATE INDEX IF NOT EXISTS seo_worker_attempt_started ON ${prefix}seo_worker_attempts(started_at);
+    CREATE INDEX IF NOT EXISTS seo_worker_attempt_ended ON ${prefix}seo_worker_attempts(ended_at);
+    CREATE INDEX IF NOT EXISTS seo_worker_success_completed ON ${prefix}seo_worker_successes(completed_at);
+    CREATE INDEX IF NOT EXISTS seo_worker_state_counts ON ${prefix}seo_worker_jobs(store_id,state);
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_image_receipts (
       job_id TEXT NOT NULL REFERENCES ${prefix}gpt_jobs(id), lease_version INTEGER NOT NULL,
       image_id TEXT NOT NULL, sha256 TEXT NOT NULL, viewed_at BIGINT NOT NULL,

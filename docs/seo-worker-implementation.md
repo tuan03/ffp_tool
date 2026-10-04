@@ -340,3 +340,60 @@ the existing large frontend chunk warning remains. Eight helper tests passed on
 Windows and in a network-disabled Linux Python 3.13 container. No macOS or actual
 two-machine Codex acceptance is implied. The local preview archive checksum is
 `e698e463d74e4f7b1cb84209c2dbb2888218a2133ee2c62170babfa0aa311115`.
+
+## Operational metrics (original specification section 40)
+
+Open **SEO Queue → Agent Access → Sức khỏe SEO Worker**. The selected store
+controls the report; choose 24 hours, 7 days, or 30 days and refresh explicitly.
+This is the new Codex worker pipeline only, not legacy batches or other providers.
+Loading/errors clear the previous snapshot, including when switching stores.
+
+The operator-authenticated, uncached read endpoint is
+`GET /api/seo-agent/metrics?storeId=STORE&hours=24|168|720`.
+No worker MCP privileges, environment variables, or dependencies are added.
+Migration adds metric events, a measurement-start marker, and aggregate indexes;
+it preserves all existing jobs, drafts, and history.
+
+Metric definitions:
+
+- Queue depth: current READY + RETRY_WAIT jobs, independent of the time window.
+- Completed jobs/hour: durable Review successes divided by all hours in the
+  selected rolling window. The chart includes zero-activity buckets.
+- Average processing time: start to completion of successful attempts ending in
+  the window, including validation/Review delivery but excluding queue wait and
+  publish. Missing successful attempts display “not enough data,” not zero.
+- Retry rate: attempts started with lease version greater than one divided by
+  all attempts started in the window.
+- Failure rate: attempts ending without SUCCESS divided by all attempts ending
+  in the window, including cancellation/operator stops. Empty denominators are null.
+- Lease expiration count: attempts recovered with LEASE_EXPIRED; the existing
+  recovery code includes lease TTL, processing inactivity, and expired credentials.
+- Quota failures: attempts ending with AGENT_QUOTA_EXHAUSTED/QUOTA_EXHAUSTED.
+  This depends on workers reporting the reason; it does not query Codex quotas.
+- Token expirations: tokens expiring in the window, excluding tokens revoked
+  before expiry. Rejected expired-token requests are displayed separately.
+- Duplicate submissions prevented: authorized matching submission receipt replays,
+  counted per request, not per product. Conflicting idempotency payloads are excluded.
+- Stale lease/source rejections: observed MCP tool errors (plus preflight token
+  expiry). Rejected requests are recorded outside the rolled-back transaction.
+
+Request-event collection starts at migration, not retroactively. The UI warns
+when a selected window precedes that marker. Unknown tokens cannot be attributed
+to a store; raw credentials/payloads are never saved in telemetry. If rejected-event
+storage fails, a generic server warning is logged without changing the worker error;
+these event counts therefore describe recorded observations, not a complete audit.
+Existing attempts/successes supply historical metrics where available. No automatic
+event deletion/retention job is introduced.
+
+Tests cover store/time isolation, empty denominators, rates, durations, zero-filled
+series, receipt replay, token expiration, authenticated HTTP access, mock parity,
+and real PostgreSQL stale-lease observations from two HTTP Gateway processes.
+Implementation stays on `rua` by explicit user instruction (branch-workflow exception).
+Merge/deployment and physical two-machine/OS/Shopify acceptance remain deferred.
+
+Verification for this metrics increment: `npm test` exit 0 (tooling 43 passed;
+web 847 passed/6 skipped; Gateway 440 passed/47 skipped; engine 305 total/1
+skipped), with an isolated PostgreSQL 17 test URL enabled. `npm run typecheck`,
+`npm run build`, and `npm run build:mock` exited 0; the existing large-chunk
+warning remains. Headless Chromium loaded the local mock dashboard and switched
+to the 7-day and 30-day windows successfully. This is not production acceptance.

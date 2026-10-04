@@ -1,9 +1,11 @@
 import type { CustomGptClient } from "../service";
 import { mockJobs, mockSettings } from "./data";
+import { mockWorkerMetrics } from "./worker-metrics";
 
 export function createMockCustomGptClient(): CustomGptClient {
   let settings = structuredClone(mockSettings);
   return {
+    workerMetrics: async (_storeId, hours = 24) => mockWorkerMetrics(hours),
     reconcilePublish: async (_storeId, jobId) => ({ id: `mock-${jobId}`, jobId, state: "SUCCEEDED", errorCode: null, seoVersion: 1 }),
     publishStatus: async () => ({ managed: false, operation: null }),
     workerReviewHistory: async () => ({ total: 0, nextOffset: null, entries: [] }),
