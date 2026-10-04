@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { CustomGptClient } from "../service";
 import type { AgentAccessPage, AgentRunPage } from "../types";
 import { WorkerMetricsPanel } from "./WorkerMetricsPanel";
+import { createAgentPrompt } from "./agent-prompt";
 
 const BUTTON = "rounded-lg border border-slate-600 px-3 py-2 text-sm text-cyan-300 hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-40";
 const PRIMARY = "rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:opacity-40";
@@ -24,13 +25,15 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
   const [notice, setNotice] = useState("");
   const [target, setTarget] = useState(1);
   const [isSetupOpen, setIsSetupOpen] = useState(false);
+  const startPrompt = createAgentPrompt({ storeId, target });
 
   async function handleCopy(value: string, message: string): Promise<void> {
     try { await navigator.clipboard.writeText(value); setNotice(message); }
     catch { setError("Không sao chép được. Kiểm tra quyền clipboard rồi thử lại."); }
   }
   async function handleCopyPrompt(runId?: string): Promise<void> {
-    const prompt = `Use $ffp-seo. Target store: ${JSON.stringify(storeId)}. Read worker_status; if needed select this authorized store with worker_select_store and verify worker_status again. ${runId ? `Resume run ${runId}; complete only its remaining target.` : `Start a run for ${target} successfully delivered Review drafts.`} Never approve or publish to Shopify. Report the run ID and confirmed progress if interrupted.`;
+    const prompt = runId ? createAgentPrompt({ storeId, target, runId }) : startPrompt;
+    if (!prompt) return;
     await handleCopy(prompt, "Đã sao chép yêu cầu. Dán vào Codex trên máy đã kết nối.");
   }
 
@@ -100,7 +103,7 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     </>}
 
     {view === "runs" && access && <>
-      <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-900/50 p-4"><h3 className="font-semibold">Giao việc cho Codex</h3><div className="flex flex-wrap items-end gap-3"><label className="grid gap-2 text-sm">Số sản phẩm<input type="number" min={1} step={1} className={`${INPUT} w-28`} value={target} onChange={event => setTarget(Number(event.target.value))} /></label><button type="button" className={PRIMARY} disabled={!access.claimsEnabled || !Number.isSafeInteger(target) || target < 1} onClick={() => void handleCopyPrompt()}>Sao chép yêu cầu</button></div><p className="text-sm text-slate-400">Dán vào Codex trên máy đã kết nối để bắt đầu. Nút này chưa chạy SEO.</p></div>
+      <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-900/50 p-4"><h3 className="font-semibold">Giao việc cho Codex</h3><div className="flex flex-wrap items-end gap-3"><label className="grid gap-2 text-sm">Số sản phẩm<input type="number" min={1} step={1} className={`${INPUT} w-28`} value={target} onChange={event => setTarget(Number(event.target.value))} /></label><button type="button" className={PRIMARY} disabled={!access.claimsEnabled || !startPrompt} onClick={() => void handleCopyPrompt()}>Sao chép yêu cầu</button></div><label className="grid gap-2 text-sm text-slate-300">Prompt gửi Codex<textarea readOnly value={startPrompt} rows={9} className={`${INPUT} w-full resize-y leading-relaxed`} placeholder="Nhập số sản phẩm nguyên dương để xem prompt." /></label><p className="text-sm text-slate-400">Dán vào Codex trên máy đã kết nối để bắt đầu. Nút này chưa chạy SEO.</p></div>
       {runs && <><h3 className="font-semibold">Lịch sử · {runs.total} phiên</h3>{runs.runs.length === 0 && <p className="py-5 text-center text-sm text-slate-400">Chưa có phiên chạy trên trang này.</p>}{runs.runs.map(run => <article key={run.id} className="space-y-3 rounded-xl border border-slate-800 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><h4 className="break-all font-semibold">{run.workerId}</h4><span className={run.state === "COMPLETED" ? "text-sm text-emerald-300" : "text-sm text-cyan-300"}>{RUN_LABELS[run.state] ?? run.state}</span></div><p className="text-lg font-semibold">{run.successful} / {run.target} <span className="text-sm font-normal text-slate-400">bản chờ duyệt</span></p>{run.state === "PARTIAL" && <button type="button" className={BUTTON} disabled={!access.claimsEnabled} onClick={() => void handleCopyPrompt(run.id)}>Sao chép yêu cầu tiếp tục · còn {Math.max(0, run.target - run.successful)}</button>}<details className="text-sm text-slate-400"><summary className="cursor-pointer">Chi tiết phiên</summary><p className="mt-2 break-all">ID: {run.id}</p><p>Lý do dừng: {run.stopReason ?? "—"}</p><p>Tiếp tục trên máy {run.workerId}.</p></details></article>)}<div className="flex items-center justify-between text-sm text-slate-400"><span>Trang {runOffset / 50 + 1}</span><div className="flex gap-2"><button type="button" className={BUTTON} disabled={runOffset === 0} onClick={() => setRunOffset(value => Math.max(0, value - 50))}>Trước</button><button type="button" className={BUTTON} disabled={runs.nextOffset === null} onClick={() => setRunOffset(runs.nextOffset ?? runOffset)}>Sau</button></div></div></>}
     </>}
     {view === "metrics" && <WorkerMetricsPanel client={client} storeId={storeId} />}
