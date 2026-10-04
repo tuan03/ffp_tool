@@ -84,8 +84,12 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     annotations: ToolAnnotations,
     handler: (args: z.infer<z.ZodObject<T>>) => Promise<CallToolResult>,
   ) {
-    server.registerTool(primaryName, { description, inputSchema, annotations }, handler as any);
-    server.registerTool(aliasName, { description: `(Alias of ${primaryName}) ${description}`, inputSchema, annotations }, handler as any);
+    const loggedHandler = async (args: z.infer<z.ZodObject<T>>) => {
+      process.stderr.write(`[FFP-MCP] 🛠️ Executing tool: ${primaryName} (args: ${JSON.stringify(args)})\n`);
+      return handler(args);
+    };
+    server.registerTool(primaryName, { description, inputSchema, annotations }, loggedHandler as any);
+    server.registerTool(aliasName, { description: `(Alias of ${primaryName}) ${description}`, inputSchema, annotations }, loggedHandler as any);
   }
 
   // 1. Store Overview / Store Context
