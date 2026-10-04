@@ -89,6 +89,7 @@ class DistributedCrawlerAgent:
         self.crawler_factory = crawler_factory
         self.store = ClientStore(config.data_directory / "agent.sqlite3")
         self.client_id = self.store.client_id()
+        self._agent_key: str | None = None
         self._is_connected = False
         self._recovery_complete = False
         self._uploads_checked = asyncio.Event()
@@ -212,8 +213,9 @@ class DistributedCrawlerAgent:
 
     async def run(self) -> None:
         if self.config.auth_mode == "key":
-            # Until authenticated transports are installed, never fall back to legacy.
-            raise ValueError("AGENT_AUTH_TRANSPORT_PENDING")
+            from .client_credentials import enroll_agent, load_credential
+            self.client_id = await asyncio.to_thread(enroll_agent, self.store, self.config.server_url, self.config.display_name)
+            self._agent_key, _request_id = load_credential(self.store, self.config.server_url)
         for assignment in self.store.recover_assignments():
             task_id = str(assignment["taskId"])
             self.active[task_id] = assignment
@@ -288,6 +290,14 @@ class DistributedCrawlerAgent:
         self._publish_status()
 
     def stop_and_discard_local_work(self) -> int:
+        if self.config.auth_mode == "key":
+            # Local stop cannot request job-wide cancellation or discard durable uploads.
+            self.set_paused(True)
+            with self._cancel_events_lock:
+                for events in self.cancel_events.values():
+                    for event in events:
+                        event.set()
+            return len(self.active)
         assignments = {str(entry["assignment"]["taskId"]): entry["assignment"]
                        for entry in self.store.dashboard_local_tasks()}
         assignments.update(self.active)
@@ -399,6 +409,7 @@ class DistributedCrawlerAgent:
             try:
                 async with websockets.connect(
                     self.config.websocket_url,
+                    **({"additional_headers": {"Authorization": "Bearer " + self._agent_key}} if self._agent_key else {}),
                     open_timeout=15,
                     ping_interval=20,
                     ping_timeout=20,
@@ -406,19 +417,19 @@ class DistributedCrawlerAgent:
                 ) as websocket:
                     self.connection_status = "paused" if self._paused else "online"
                     self._publish_status()
-                    await websocket.send(json.dumps(hello_message(
+                    await websocket.send(json.dumps({**hello_message(
                         client_id=self.client_id,
                         display_name=self.config.display_name,
                         available_slots=self._available_slots(),
                         max_concurrent_inputs=self.config.max_concurrent_inputs,
                         limits=self.config.limits,
                         local_tasks=self.store.local_tasks(),
-                        cancel_intents=self.store.cancel_intents(),
+                        cancel_intents=[] if self._agent_key else self.store.cancel_intents(),
                         cache_generation=self.store.cache_generation(),
                         product_invalidation_generation=self.store.product_invalidation_generation(),
                         temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
                         pinterest_browser_logged_in=self.pinterest_browser_logged_in(),
-                    )))
+                    ), **({"authProtocol": 1} if self._agent_key else {})}))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
                         raise RuntimeError("Coordinator did not acknowledge the worker protocol.")
@@ -457,6 +468,12 @@ class DistributedCrawlerAgent:
             except Exception as error:
                 self._is_connected = False
                 self._recovery_complete = False
+                close_frame = getattr(error, "rcvd", None)
+                if self._agent_key and getattr(close_frame, "code", None) == 4004:
+                    self.connection_status = "NEED_REAUTH"
+                    self._publish_status()
+                    # Keep leases/outbox intact; require operator action before reconnect.
+                    return
                 self.connection_status = "offline"
                 self._dashboard_update("activity", "offline")
                 self._publish_status()
@@ -1035,7 +1052,18 @@ class DistributedCrawlerAgent:
                 self._captcha_waiting = False
             loop.call_soon_threadsafe(self._publish_status)
 
-    def _upload_asset(self, job_id: str, filename: str, data: bytes) -> None:
+    def _open_agent_request(self, request):
+        if self.config.auth_mode == "key":
+            from .client_credentials import credential_request
+            if self._agent_key is None:
+                raise ValueError("AGENT_NEED_REAUTH")
+            if not request.full_url.startswith(self.config.server_url.rstrip("/") + "/"):
+                raise ValueError("AGENT_ORIGIN_MISMATCH")
+            request.add_header("Authorization", "Bearer " + self._agent_key)
+            return credential_request(request)
+        return urllib.request.urlopen(request, timeout=60)
+
+    def _upload_asset(self, job_id: str, filename: str, data: bytes, assignment=None) -> None:
         safe_job_id = "".join(c for c in job_id if c.isalnum() or c in ("-", "_"))
         safe_filename = Path(filename).name
         request = urllib.request.Request(
@@ -1044,10 +1072,15 @@ class DistributedCrawlerAgent:
             method="POST",
             headers={"Content-Type": "application/octet-stream"},
         )
+        if self._agent_key and assignment:
+            request.add_header("X-Task-Id", str(assignment["taskId"]))
+            request.add_header("X-Lease-Id", str(assignment["leaseId"]))
         try:
-            with urllib.request.urlopen(request, timeout=60):
+            with self._open_agent_request(request):
                 pass
         except Exception:
+            if self.config.auth_mode == "key":
+                raise
             pass
 
     def pinterest_browser_logged_in(self) -> bool:
@@ -1293,13 +1326,19 @@ class DistributedCrawlerAgent:
                                 file_bytes = img_file.read_bytes()
                                 if run_id:
                                     try:
-                                        self._upload_asset(str(run_id), img_file.name, file_bytes)
+                                        self._upload_asset(str(run_id), img_file.name, file_bytes, first)
                                     except Exception:
+                                        if self.config.auth_mode == "key":
+                                            enqueue_failed("Authenticated asset upload failed; local files retained.")
+                                            return
                                         pass
                                 if job_id and str(job_id) != str(run_id):
                                     try:
-                                        self._upload_asset(str(job_id), img_file.name, file_bytes)
+                                        self._upload_asset(str(job_id), img_file.name, file_bytes, first)
                                     except Exception:
+                                        if self.config.auth_mode == "key":
+                                            enqueue_failed("Authenticated asset upload failed; local files retained.")
+                                            return
                                         pass
 
             enqueue_completed({
@@ -1416,7 +1455,7 @@ class DistributedCrawlerAgent:
                 "X-Result-Checksum": product["checksum"],
             },
         )
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with self._open_agent_request(request) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def _upload_result(self, result: dict[str, Any]) -> dict[str, Any]:
@@ -1431,5 +1470,5 @@ class DistributedCrawlerAgent:
                 "X-Result-Checksum": result["checksum"],
             },
         )
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with self._open_agent_request(request) as response:
             return json.loads(response.read())

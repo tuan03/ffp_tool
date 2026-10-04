@@ -31,6 +31,7 @@ from .coordinator_migrations import migrate_coordinator
 from .operator_authorization import OperatorCredentials, install_operator_authorization
 from .agent_keys import install_agent_key_routes
 from .agent_identity import AgentSecurity, install_enrollment_routes
+from .agent_key_lifecycle import install_key_lifecycle_routes
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -341,6 +342,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         install_enrollment_routes(app, security)
     if operator_credentials is not None:
         install_operator_authorization(app, sessions, operator_credentials)
+        install_key_lifecycle_routes(app, sessions, operator_credentials.username)
         install_agent_key_routes(app, sessions, operator_credentials.username)
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
@@ -427,6 +429,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/pinterest-assets/{job_id}/{filename}")
     @app.put("/api/v1/pinterest-assets/{job_id}/{filename}")
     async def upload_pinterest_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+        if security is not None:
+            security.authenticate(request.headers.get("authorization", ""))
+            from .agent_assets import save_agent_asset
+            try:
+                body = await read_request_body_limited(request, maximum_bytes=10 * 1024 * 1024)
+            except ResultPayloadTooLarge:
+                raise HTTPException(413, detail="ASSET_TOO_LARGE") from None
+            await asyncio.to_thread(save_agent_asset, security, request.headers.get("authorization", ""),
+                pinterest_job_root, job_id, filename, request.headers.get("x-task-id", ""),
+                request.headers.get("x-lease-id", ""), body)
+            return {"ok": True, "url": f"/api/pinterest-pod/assets/{job_id}/{filename}"}
         safe_job_id = "".join(character for character in job_id if character.isalnum() or character in ("-", "_"))
         safe_filename = Path(filename).name
         if not safe_job_id or not safe_filename:
@@ -789,6 +802,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         x_lease_id: str = Header(alias="X-Lease-Id"),
         x_result_checksum: str | None = Header(default=None, alias="X-Result-Checksum"),
     ) -> dict[str, Any]:
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != x_client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
         try:
             body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
         except ResultPayloadTooLarge as error:
@@ -841,6 +858,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         x_lease_id: str = Header(alias="X-Lease-Id"),
         x_result_checksum: str | None = Header(default=None, alias="X-Result-Checksum"),
     ) -> dict[str, Any]:
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != x_client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
         try:
             body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
             if request.headers.get("content-encoding", "").casefold() == "gzip":
@@ -1351,7 +1372,22 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         await websocket.accept()
         client_id = ""
         try:
+            principal = security.authenticate(websocket.headers.get("authorization", "")) if security else None
             hello = require_message(await asyncio.wait_for(websocket.receive_json(), timeout=15), "hello")
+            def restrict_agent_message(message):
+                if principal is None:
+                    return
+                capabilities = dict(message.get("capabilities") or {})
+                for capability, crawler in (("amazon", "amazon"), ("amazonReviews", "amazon"), ("pinterest", "pinterest")):
+                    capabilities[capability] = bool(capabilities.get(capability, False)) and crawler in principal.crawlers
+                message["capabilities"] = capabilities
+                message["maxConcurrentInputs"] = min(16, principal.max_workers, max(1, int(message.get("maxConcurrentInputs") or 1)))
+                message["availableSlots"] = min(16, principal.max_workers, max(0, int(message.get("availableSlots") or 0)))
+
+            if principal is not None:
+                if hello.get("authProtocol") != 1 or hello.get("clientId") != principal.agent_id:
+                    raise HTTPException(403, detail="AGENT_IDENTITY_MISMATCH")
+                restrict_agent_message(hello)
             if str(hello.get("protocolVersion")) not in SUPPORTED_PROTOCOL_VERSIONS:
                 await websocket.close(code=4002, reason="Unsupported protocol version.")
                 return
@@ -1368,7 +1404,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await websocket.close(code=4001, reason="This agent is already connected.")
                 return
             client = await asyncio.to_thread(store.register_client, hello)
-            cancel_intents = [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
+            cancel_intents = [] if security else [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
             acknowledged_intents: list[str] = []
             stop_clients = await manager.connected_client_ids()
             stop_clients.add(client_id)
@@ -1418,6 +1454,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             async def assign(slots: int) -> None:
                 if not is_cache_ready:
                     return
+                if security:
+                    security.authenticate(websocket.headers.get("authorization", ""))
                 leases = await asyncio.to_thread(store.lease_tasks, client_id, slots)
                 await manager.reserve_tasks(client_id, len(leases))
                 for lease in leases:
@@ -1426,7 +1464,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if is_cache_ready:
                 await assign(int(hello.get("availableSlots") or 0))
             while True:
-                message = require_message(await websocket.receive_json())
+                if security:
+                    security.authenticate(websocket.headers.get("authorization", ""))
+                    try:
+                        message = require_message(await asyncio.wait_for(websocket.receive_json(), timeout=2))
+                    except asyncio.TimeoutError:
+                        continue
+                    security.authenticate(websocket.headers.get("authorization", ""))
+                    restrict_agent_message(message)
+                else:
+                    message = require_message(await websocket.receive_json())
                 message_type = message["type"]
                 if message_type == "heartbeat":
                     running = list(message.get("running") or [])
@@ -1508,6 +1555,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                             jobId=str(message.get("jobId") or ""),
                             purgedJobs=purged,
                         )
+        except HTTPException:
+            await websocket.close(code=4004, reason="AGENT_NEED_REAUTH")
         except (WebSocketDisconnect, asyncio.TimeoutError):
             pass
         except ValueError as error:

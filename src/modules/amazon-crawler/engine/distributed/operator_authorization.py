@@ -56,14 +56,20 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
     @app.middleware("http")
     async def authorize(request, call_next):
         path = request.scope["path"]
+        if (getattr(app.state, "agent_security", None) is not None
+                and path.startswith("/api/v1/pinterest-assets/") and request.method in {"POST", "PUT"}):
+            # The asset handler authenticates the agent and fences its current lease.
+            return await call_next(request)
         if path in {"/api/v1/health", "/api/v1/ready", "/api/v1/agent-release"} or path.startswith(("/api/v1/worker/", "/api/v1/internal/")):
             # These have distinct worker/pipeline contracts, not operator rights.
             return await call_next(request)
         authenticated = credentials.accepts(request.headers.get("authorization", ""))
         origin = request.headers.get("origin")
+        forwarded_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        expected_origin = f"{forwarded_scheme}://{request.headers.get('host', '')}"
         unsafe_method = request.method not in {"GET", "HEAD", "OPTIONS"}
         cross_origin = unsafe_method and (
-            (origin is not None and origin != str(request.base_url).rstrip("/"))
+            (origin is not None and (forwarded_scheme not in {"http", "https"} or origin != expected_origin))
             or request.headers.get("sec-fetch-site") == "cross-site"
         )
         allowed = authenticated and not cross_origin

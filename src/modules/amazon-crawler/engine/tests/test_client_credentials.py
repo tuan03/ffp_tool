@@ -2,6 +2,7 @@
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from engine.distributed.client_credentials import protect_secret, unprotect_secret, validate_secure_origin
@@ -46,3 +47,21 @@ class CredentialTests(unittest.TestCase):
             store.client_id()
             store.accept_enrollment("b" * 32)
             self.assertEqual(store.client_id(), "b" * 32)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows DPAPI integration")
+    def test_key_is_not_plaintext_in_sqlite_and_cannot_move_to_another_origin(self):
+        from engine.distributed.client_credentials import store_credential, load_credential
+        from engine.distributed.client_store import ClientStore
+        key = "ffp_agent_" + "a" * 32 + "_" + "b" * 43
+        with tempfile.TemporaryDirectory() as directory:
+            store = ClientStore(Path(directory) / "agent.db")
+            request_id = store_credential(store, "https://example.test", key)
+            self.assertEqual(load_credential(store, "https://example.test"), (key, request_id))
+            self.assertNotIn(key.encode(), store.path.read_bytes())
+            with self.assertRaisesRegex(ValueError, "CREDENTIAL_UNAVAILABLE"):
+                load_credential(store, "https://different.test")
+
+    def test_non_windows_never_falls_back_to_plaintext(self):
+        with patch("engine.distributed.client_credentials.sys.platform", "linux"):
+            with self.assertRaisesRegex(ValueError, "WINDOWS_CREDENTIAL_STORE_REQUIRED"):
+                protect_secret(b"fixture")
