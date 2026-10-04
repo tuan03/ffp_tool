@@ -561,7 +561,7 @@ describe("FFP Ads Intelligence — QA & Evaluation Suite (Step 19 · FFP-ADS-019
     const resPreview = {
       statusCode: 200,
       setHeader() {},
-      end(data?: string) {
+      end(this: any, data?: string) {
         previewCode = this.statusCode;
         previewBody = data ?? "";
       },
@@ -583,7 +583,7 @@ describe("FFP Ads Intelligence — QA & Evaluation Suite (Step 19 · FFP-ADS-019
     const resGet = {
       statusCode: 200,
       setHeader() {},
-      end() {
+      end(this: any) {
         getCode = this.statusCode;
       },
     } as unknown as http.ServerResponse;
@@ -607,7 +607,7 @@ describe("FFP Ads Intelligence — QA & Evaluation Suite (Step 19 · FFP-ADS-019
     const resApprove = {
       statusCode: 200,
       setHeader() {},
-      end() {
+      end(this: any) {
         approveCode = this.statusCode;
       },
     } as unknown as http.ServerResponse;
@@ -631,7 +631,7 @@ describe("FFP Ads Intelligence — QA & Evaluation Suite (Step 19 · FFP-ADS-019
     const resExec = {
       statusCode: 200,
       setHeader() {},
-      end(data?: string) {
+      end(this: any, data?: string) {
         execCode = this.statusCode;
         execBody = data ?? "";
       },
@@ -653,7 +653,7 @@ describe("FFP Ads Intelligence — QA & Evaluation Suite (Step 19 · FFP-ADS-019
     const resAudit = {
       statusCode: 200,
       setHeader() {},
-      end(data?: string) {
+      end(this: any, data?: string) {
         auditCode = this.statusCode;
         auditBody = data ?? "";
       },

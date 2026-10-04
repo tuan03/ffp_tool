@@ -476,6 +476,27 @@ export interface AdsExperiment {
   readonly updatedAt: string;
 }
 
+export interface GuardedWriteProposal {
+  readonly proposalId: string;
+  readonly action: "PAUSE" | "ADJUST_BUDGET";
+  readonly targetType: string;
+  readonly targetId: string;
+  readonly targetName: string;
+  readonly currentBudget?: number;
+  readonly proposedBudget?: number;
+  readonly reason: string;
+  readonly previewHash?: string;
+}
+
+export interface GuardedWriteExecutionResult {
+  readonly success: boolean;
+  readonly message: string;
+  readonly auditLogId?: string;
+  readonly status?: string;
+}
+
+export type ExperimentOutcomeVerdict = "WIN" | "LOSS" | "INCONCLUSIVE";
+
 export interface AdsIntelligenceClient {
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
@@ -493,6 +514,8 @@ export interface AdsIntelligenceClient {
   getExperiments?(storeId?: string): Promise<readonly AdsExperiment[]>;
   createExperiment?(storeId: string, payload: { briefId?: string; experiment?: AdsExperiment; customOptions?: { title?: string; budgetCapUsd?: number; reviewWindowDays?: number } }): Promise<AdsExperiment>;
   updateExperimentOutcome?(experimentId: string, payload: { results?: ExperimentResults; learning?: ExperimentLearning; status?: ExperimentStatus; statusReason?: string }): Promise<AdsExperiment>;
+  proposeGuardedWrite?(storeId: string, decisionIdOrEntityId: string): Promise<GuardedWriteProposal>;
+  executeGuardedWrite?(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }): Promise<GuardedWriteExecutionResult>;
 }
 
 
