@@ -1,4 +1,4 @@
-import type { AdsDataHealth, AdsHierarchyCampaign, AdsReconciliationReport, AdsStoreSummary, CompetitorAdCard } from "../types";
+import type { AdsDataHealth, AdsHierarchyCampaign, AdsReconciliationReport, AdsStoreSummary, AiStrategicReport, CompetitorAdCard, DecisionCard } from "../types";
 
 export const mockChillgenSummary: AdsStoreSummary = {
   storeId: "chillgen",
@@ -314,4 +314,321 @@ export const mockReconciliationReport: AdsReconciliationReport = {
   fromCache: true,
   cachedAt: new Date().toISOString(),
 };
+
+export const mockDecisionCards: readonly DecisionCard[] = [
+  {
+    id: "dec-chillgen-store-maturity-gate",
+    storeId: "chillgen",
+    entity: {
+      type: "store",
+      id: "chillgen",
+      name: "Chillgen Store",
+    },
+    decision: "WAIT",
+    priority: "HIGH",
+    confidence: "HIGH",
+    title: "🛡️ Cổng kiểm soát độ chín dữ liệu (Maturity Gate: PROVISIONAL)",
+    summary: "Dữ liệu kỳ quan sát kết thúc trong vòng 2 ngày gần nhất (ngưỡng an toàn: 7 ngày). Chu kỳ ghi nhận phân bổ chuyển đổi Pixel (7-day click / 1-day view) chưa khép lại. Chặn tự động tăng ngân sách và chặn tắt quảng cáo vội vàng.",
+    observations: [
+      {
+        metric: "days_since_period_stop",
+        current: 2,
+        benchmark: 7,
+        unit: "days",
+      },
+      {
+        metric: "maturity_status",
+        current: "PROVISIONAL",
+        benchmark: "FINALIZED",
+        unit: "status",
+      },
+    ],
+    hypotheses: [
+      "Chuyển đổi từ khách hàng xem quảng cáo (view-through) và click có thể tiếp tục đổ về trong 1-7 ngày tới.",
+      "Tăng ngân sách vội vàng khi attribution window chưa đóng dễ làm thuật toán Meta đấu thầu sai lệch.",
+    ],
+    missingEvidence: [
+      "Settled Shopify settlement ledger qua 7 ngày hoàn tất",
+      "Full 7-day attribution closeout từ Meta Conversion API",
+    ],
+    recommendedNextStep:
+      "Duy trì ngân sách hiện tại, theo dõi settlement ledger trên Shopify và đợi dữ liệu đạt trạng thái FINALIZED sau 7 ngày.",
+    blockedActions: [
+      "AUTOMATIC_BUDGET_CHANGE",
+      "SCALE_CAMPAIGN_BUDGET",
+      "KILL_ON_INCOMPLETE_ATTRIBUTION",
+    ],
+    reviewTrigger: "Sau ngày 2026-10-02 đủ 7 ngày hoặc khi Shopify đối chiếu đủ đơn hàng.",
+    policyVersion: "2.0",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "dec-chillgen-ad-burn-01",
+    storeId: "chillgen",
+    entity: {
+      type: "ad",
+      id: "120252593555350699",
+      name: "ad_video_broad_pet_mess_test",
+    },
+    decision: "PAUSE_CANDIDATE",
+    priority: "HIGH",
+    confidence: "HIGH",
+    title: "🔴 Chi tiêu vượt 2× Target CPA nhưng 0 đơn hàng (ad_video_broad_pet_mess_test)",
+    summary: "Đã tiêu $42.50 vượt ngưỡng 2× Target CPA ($36.00) nhưng ghi nhận 0 đơn hàng website. Tiếp tục chạy sẽ gây thâm hụt biên lợi nhuận.",
+    observations: [
+      {
+        metric: "spend",
+        current: "$42.50",
+        benchmark: "$36.00",
+        unit: "USD",
+      },
+      {
+        metric: "purchases",
+        current: 0,
+        benchmark: 1,
+        unit: "orders",
+      },
+    ],
+    hypotheses: [
+      "Hook hoặc hình ảnh visual không tiếp cận đúng đối tượng có ý định mua sắm thực sự.",
+      "Giá bán hoặc chính sách giao hàng tại trang đích chưa đủ sức cạnh tranh.",
+    ],
+    recommendedNextStep:
+      "Tạm dừng (Pause) quảng cáo này ngay lập tức để cắt giảm lãng phí, chuyển dồn ngân sách vào các ad set có ROAS cao.",
+    blockedActions: ["SCALE_BUDGET", "ENABLE_BID_CAP"],
+    reviewTrigger: "Kiểm tra lại sau khi team creative sản xuất xong angle mới hoặc tối ưu trang đích.",
+    policyVersion: "2.0",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "dec-chillgen-ad-star-01",
+    storeId: "chillgen",
+    entity: {
+      type: "ad",
+      id: "120252593555350601",
+      name: "ad_video_unboxing_sleep_quality",
+    },
+    decision: "SCALE_CANDIDATE",
+    priority: "HIGH",
+    confidence: "MEDIUM",
+    title: "🟢 Quảng cáo hiệu quả xuất sắc — Ứng viên Scale (ad_video_unboxing_sleep_quality)",
+    summary: "ROAS đạt 3.72× và CPA $18.16 (Target CPA: $18.00) với 8 đơn hàng thành công.",
+    observations: [
+      {
+        metric: "meta_roas",
+        current: "3.72×",
+        benchmark: "2.50×",
+        unit: "ratio",
+      },
+      {
+        metric: "meta_cpa",
+        current: "$18.16",
+        benchmark: "$18.00",
+        unit: "USD",
+      },
+      {
+        metric: "purchases",
+        current: 8,
+        benchmark: 3,
+        unit: "orders",
+      },
+    ],
+    hypotheses: [
+      "Creative đánh trúng insight nỗi đau của tệp khách hàng mục tiêu, tỷ lệ click chuyển đổi cao.",
+      "Thuật toán phân phối đã tối ưu tốt nhóm đối tượng có hành vi mua sắm cao.",
+    ],
+    recommendedNextStep:
+      "Do dữ liệu PROVISIONAL, đề xuất thử nghiệm tăng nhẹ 10%-15% trong phạm vi authorized cap ($20/ngày), không tăng đột ngột.",
+    blockedActions: ["AUTOMATIC_BUDGET_CHANGE", "INCREASE_BUDGET_OVER_20PCT"],
+    reviewTrigger: "Sau 24 giờ quan sát hoặc khi CPA tăng vượt $24.00.",
+    policyVersion: "2.0",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "dec-chillgen-ad-low-hook-01",
+    storeId: "chillgen",
+    entity: {
+      type: "ad",
+      id: "120252593555350602",
+      name: "ad_image_lifestyle_weighted_cozy",
+    },
+    decision: "TEST_CREATIVE",
+    priority: "MEDIUM",
+    confidence: "HIGH",
+    title: "🟡 Tỷ lệ Link CTR thấp / Bão hòa Creative (ad_image_lifestyle_weighted_cozy)",
+    summary: "Link CTR đạt 1.25% (thấp hơn benchmark 1.50%) sau 3,900 lượt hiển thị, cho thấy móc câu (Hook) chưa tạo đủ sức hút kích thích nhấp chuột.",
+    observations: [
+      {
+        metric: "meta_link_ctr",
+        current: "1.25%",
+        benchmark: "1.50%",
+        unit: "%",
+      },
+      {
+        metric: "impressions",
+        current: 3900,
+        benchmark: 1500,
+        unit: "impressions",
+      },
+    ],
+    hypotheses: [
+      "3 giây đầu video chưa làm rõ vấn đề khách hàng đang gặp phải, tỷ lệ drop-off sớm cao.",
+      "Hình ảnh thumbnail hoặc headline thiếu điểm nhấn thị giác so với feed của đối thủ.",
+    ],
+    recommendedNextStep:
+      "Giữ nguyên cấu trúc ad set, sản xuất và A/B test 3 hook mới (tập trung vào Problem-Agitate-Solution và Social Proof review).",
+    blockedActions: ["SCALE_BUDGET"],
+    reviewTrigger: "Sau khi test creative mới đạt tối thiểu 1,000 impressions.",
+    policyVersion: "2.0",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "dec-chillgen-drop-landing-ga4",
+    storeId: "chillgen",
+    entity: {
+      type: "store",
+      id: "chillgen",
+      name: "Chillgen Store",
+    },
+    decision: "CHECK_LANDING",
+    priority: "HIGH",
+    confidence: "HIGH",
+    title: "⚠️ Tỷ lệ rơi rụng từ Click sang Session GA4 cao (34.0%)",
+    summary: "Chênh lệch giữa link clicks trên Meta (820) và phiên truy cập ghi nhận trên GA4 (541) lên tới 34.0% (vượt ngưỡng an toàn 25.0%).",
+    observations: [
+      {
+        metric: "click_to_session_drop",
+        current: "34.0%",
+        benchmark: "20.0%",
+        unit: "%",
+      },
+      {
+        metric: "meta_link_clicks",
+        current: "820",
+        benchmark: "541",
+        unit: "clicks",
+      },
+    ],
+    hypotheses: [
+      "Tốc độ tải trang trên thiết bị di động (LCP > 3.5s) khiến khách hàng thoát trang trước khi thẻ GA4/Pixel tải xong.",
+      "Lỗi chuyển hướng URL (redirect chain), hoặc trang 404 trên các biến thể UTM chiến dịch.",
+    ],
+    recommendedNextStep:
+      "Kiểm tra tốc độ tải trang mobile qua Google PageSpeed Insights, nén ảnh hero banner, và rà soát cấu hình Meta Conversions API (CAPI) Server-side.",
+    blockedActions: ["SCALE_CAMPAIGN_BUDGET"],
+    reviewTrigger: "Kiểm tra lại sau khi tối ưu web và cập nhật tracking tag.",
+    policyVersion: "2.0",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "dec-chillgen-funnel-checkout-drop",
+    storeId: "chillgen",
+    entity: {
+      type: "store",
+      id: "chillgen",
+      name: "Chillgen Store",
+    },
+    decision: "CHECK_CHECKOUT",
+    priority: "HIGH",
+    confidence: "MEDIUM",
+    title: "🛒 Rơi rụng nghiêm trọng ở bước Thanh toán (38.2% bỏ giỏ hàng)",
+    summary: "Ghi nhận 68 lượt thêm vào giỏ nhưng chỉ có 42 lượt tiến hành thanh toán. Khách hàng quan tâm sản phẩm nhưng gặp rào cản tâm lý khi chuyển sang giỏ hàng.",
+    observations: [
+      {
+        metric: "atc_to_checkout_drop",
+        current: "38.2%",
+        benchmark: "35.0%",
+        unit: "%",
+      },
+      {
+        metric: "add_to_cart_events",
+        current: 68,
+        benchmark: 42,
+        unit: "events",
+      },
+    ],
+    hypotheses: [
+      "Khách hàng thấy chi phí vận chuyển phát sinh bất ngờ ở bước checkout.",
+      "Thiếu các cổng thanh toán nhanh 1-chạm phổ biến (Apple Pay, Shop Pay, PayPal).",
+    ],
+    recommendedNextStep:
+      "Thiết lập Free Shipping progress bar trong Cart drawer, bổ sung huy hiệu an tâm (bảo hành, 30 ngày đổi trả) và kích hoạt Shop Pay.",
+    blockedActions: ["SCALE_BUDGET"],
+    reviewTrigger: "Theo dõi tỷ lệ hoàn tất checkout trong vòng 48h sau khi tinh chỉnh trang thanh toán.",
+    policyVersion: "2.0",
+    createdAt: new Date().toISOString(),
+  },
+];
+
+export const mockAiStrategicReport: AiStrategicReport = {
+  storeId: "chillgen",
+  generatedAt: new Date().toISOString(),
+  modelUsed: "gemini-2.5-flash",
+  fromCache: true,
+  executiveSummary: {
+    overallHealth: "HEALTHY",
+    merVerdict: "Chỉ số MER đạt 3.25×, vượt trội so với ngưỡng hòa vốn (2.50×). Doanh thu tổng từ Shopify chứng minh các chiến dịch đang đóng góp lợi nhuận ròng mạnh mẽ.",
+    profitLossDiagnosis: "Với tổng doanh số Shopify $1,720.00 và chi phí quảng cáo $528.60, cửa hàng tạo ra hơn $1,191.40 thặng dư gộp. Tuy nhiên tỷ lệ drop click-to-session (34.0%) đang gây lãng phí khoảng ~$180 chi phí traffic tiềm năng.",
+    totalDecisionsCount: 6,
+    highPriorityActionCount: 5,
+  },
+  rootCauseHypotheses: [
+    {
+      entityId: "chillgen",
+      entityName: "Chillgen Store",
+      entityType: "store",
+      verdict: "Cổng độ chín chặn tăng ngân sách lớn",
+      primaryHypothesis: "Dữ liệu kỳ quan sát kết thúc gần (2 ngày trước) nên attribution window 7-day click chưa khép lại.",
+      counterHypothesis: "Tỷ lệ đơn hàng settlement trên Shopify đã gần tương đương với Meta Pixel (27 vs 29 đơn).",
+      recommendedExperiment: "Giữ ngân sách hiện tại thêm 5 ngày để dữ liệu hoàn tất chu kỳ FINALIZED.",
+    },
+    {
+      entityId: "120252593555350699",
+      entityName: "ad_video_broad_pet_mess_test",
+      entityType: "ad",
+      verdict: "Tạm dừng ngay để cắt lỗ",
+      primaryHypothesis: "Angle thú cưng làm bẩn thảm thu hút người xem tò mò nhưng không có nhu cầu mua thảm mới.",
+      counterHypothesis: "Khách click nhiều nhưng giá bán hiển thị trên landing page cao hơn kỳ vọng trong video.",
+      recommendedExperiment: "Tạm dừng ad ngay; dồn $40 ngân sách tiết kiệm được vào chiến dịch unboxing đang có ROAS 3.72×.",
+    },
+    {
+      entityId: "120252593555350601",
+      entityName: "ad_video_unboxing_sleep_quality",
+      entityType: "ad",
+      verdict: "Ứng viên Scale chủ lực",
+      primaryHypothesis: "Video mở hộp chân thực đánh trúng tâm lý người mất ngủ mùa đông, tạo tỷ lệ CVR rất cao.",
+      counterHypothesis: "Nếu tăng ngân sách quá 20% mỗi ngày, ad sẽ bị phân phối ra ngoài tệp buyer cốt lõi làm CPA tăng vọt.",
+      recommendedExperiment: "Tăng ngân sách adset thêm 15% (khoảng $15/ngày) và quan sát ROAS trong 48h.",
+    },
+  ],
+  creativeBriefs: [
+    {
+      targetAdId: "120252593555350602",
+      targetAdName: "ad_image_lifestyle_weighted_cozy",
+      angle: "Vấn đề giấc ngủ lo âu & Giải pháp thảm/chăn giặt máy tiện lợi",
+      coreProblem: "Người tiêu dùng ngại mua chăn/thảm cao cấp vì lo lắng khó giặt sạch khi dính bẩn hoặc lông thú cưng.",
+      hooks: [
+        "Dừng ngay việc vứt bỏ thảm phòng khách đắt tiền khi bị đổ cà phê! Hãy xem điều kỳ diệu này...",
+        "Lý do số 1 khiến nhà bạn lúc nào trông cũng bừa bộn sau 1 tháng (và cách sửa chỉ trong 10 phút).",
+        "Tôi từng không tin chăn trọng lực có thể giặt máy... cho đến khi chú chó của tôi làm đổ nước sốt vào đây.",
+      ],
+      visualDirection: "0-3s: Cảnh quay POV đổ ly cà phê lên thảm -> ngạc nhiên. 3-15s: Cuộn thảm cho thẳng vào máy giặt cửa trước thông thường -> sấy khô. 15-25s: Trải ra phòng khách mềm mịn, thú cưng nhảy lên nằm ấm cúng. 25-30s: Text overlay giảm giá 40% + Free US Shipping.",
+      callToAction: "Nhấp 'Mua ngay' hôm nay để nhận ưu đãi giảm 40% + Miễn phí vận chuyển toàn nước Mỹ!",
+    },
+    {
+      targetAdId: "120252593555350601",
+      targetAdName: "ad_video_unboxing_sleep_quality",
+      angle: "Chữa lành chứng mất ngủ / Trải nghiệm Unboxing & Đổi trả 30 đêm",
+      coreProblem: "Khách hàng trằn trọc khó vào giấc ngủ sâu, lo lắng mua hàng online không ưng ý.",
+      hooks: [
+        "Nếu bạn mất hơn 45 phút mỗi đêm để chìm vào giấc ngủ, video này dành riêng cho bạn.",
+        "Bác sĩ tâm lý khuyên gì khi bạn bị kiệt sức nhưng nằm xuống giường lại tỉnh táo?",
+        "Mở hộp chiếc chăn trọng lực bán chạy nhất mùa đông năm nay — Cảm giác nặng 7kg êm như thế nào?",
+      ],
+      visualDirection: "Cảnh ánh sáng phòng ngủ ấm áp, người mẫu trùm chăn thở phào thư giãn, biểu đồ nhịp tim/giấc ngủ REM tăng trên smartwatch.",
+      callToAction: "Thử nghiệm 30 đêm không rủi ro — Hoàn tiền 100% nếu không cải thiện giấc ngủ.",
+    },
+  ],
+};
+
 

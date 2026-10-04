@@ -1,5 +1,13 @@
 import type { AdsIntelligenceClient } from "./types";
-import { mockCampaignHierarchy, mockChillgenSummary, mockCompetitorAds, mockDataHealth, mockReconciliationReport } from "./mocks/data";
+import {
+  mockAiStrategicReport,
+  mockCampaignHierarchy,
+  mockChillgenSummary,
+  mockCompetitorAds,
+  mockDataHealth,
+  mockDecisionCards,
+  mockReconciliationReport,
+} from "./mocks/data";
 
 export function createAdsIntelligenceClient(): AdsIntelligenceClient {
   return {
@@ -63,6 +71,34 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
       return { ...mockReconciliationReport, storeId };
     },
 
+    async getDecisionCards(storeId = "chillgen") {
+      try {
+        const res = await fetch(`/api/ads-intelligence/decisions?storeId=${encodeURIComponent(storeId)}`);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // Fall back to initialized mock decisions
+      }
+      return mockDecisionCards.map((c) => ({ ...c, storeId }));
+    },
+
+    async getAiStrategicReport(storeId = "chillgen", forceRefresh = false) {
+      try {
+        const url = `/api/ads-intelligence/ai-analyze?storeId=${encodeURIComponent(storeId)}${forceRefresh ? "&refresh=true" : ""}`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // Fall back to initialized mock report
+      }
+      return { ...mockAiStrategicReport, storeId };
+    },
+
     async syncNow(storeId = "chillgen") {
       try {
         const res = await fetch(`/api/ads-intelligence/sync?storeId=${encodeURIComponent(storeId)}`, {
@@ -82,3 +118,4 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
     },
   };
 }
+

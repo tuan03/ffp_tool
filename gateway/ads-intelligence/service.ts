@@ -10,165 +10,30 @@ import { Ga4Client } from "./ga4-client";
 import { websiteMetrics } from "./conversions";
 import { loadStoreAdsProfile } from "./store-profile";
 import { ShopifyOrdersClient } from "./shopify-client";
+import { decisionEngine } from "./decision-engine";
+import { aiStrategicAnalyst } from "./ai-analyst";
+import type {
+  AdsDataHealth,
+  AdsHierarchyAd,
+  AdsHierarchyAdSet,
+  AdsHierarchyCampaign,
+  AdsReconciliationReport,
+  AdsStoreSummary,
+  AiStrategicReport,
+  CompetitorAdCard,
+  DecisionCard,
+} from "./types";
 
-export interface AdsStoreSummary {
-  readonly storeId: string;
-  readonly accountId: string;
-  readonly accountName: string;
-  readonly currency: string;
-  readonly timezone: string;
-  readonly periodStart: string;
-  readonly periodEnd: string;
-  readonly maturity: "PROVISIONAL" | "FINALIZED";
-  readonly spend: string;
-  readonly impressions: string;
-  readonly clicks: string;
-  readonly linkClicks: string;
-  readonly linkCtr: string;
-  readonly cpc: string;
-  readonly cpm: string;
-  readonly lpv: string;
-  readonly atc: string;
-  readonly checkout: string;
-  readonly purchases: string;
-  readonly purchaseValue: string;
-  readonly cpa: string | null;
-  readonly roas: string | null;
-  readonly warnings: readonly string[];
-  readonly fromCache?: boolean;
-  readonly cachedAt?: string;
-}
+export type {
+  AdsDataHealth,
+  AdsHierarchyAd,
+  AdsHierarchyAdSet,
+  AdsHierarchyCampaign,
+  AdsReconciliationReport,
+  AdsStoreSummary,
+  CompetitorAdCard,
+};
 
-export interface AdsHierarchyAd {
-  readonly id: string;
-  readonly name: string;
-  readonly status: string;
-  readonly effectiveStatus: string;
-  readonly spend: string;
-  readonly impressions: string;
-  readonly linkClicks: string;
-  readonly linkCtr: string;
-  readonly purchases: string;
-  readonly purchaseValue: string;
-  readonly cpa: string | null;
-  readonly roas: string | null;
-}
-
-export interface AdsHierarchyAdSet {
-  readonly id: string;
-  readonly name: string;
-  readonly status: string;
-  readonly effectiveStatus: string;
-  readonly dailyBudget: string | null;
-  readonly optimizationGoal: string;
-  readonly spend: string;
-  readonly purchases: string;
-  readonly cpa: string | null;
-  readonly roas: string | null;
-  readonly ads: readonly AdsHierarchyAd[];
-}
-
-export interface AdsHierarchyCampaign {
-  readonly id: string;
-  readonly name: string;
-  readonly status: string;
-  readonly effectiveStatus: string;
-  readonly objective: string;
-  readonly budgetType: "CAMPAIGN" | "ADSET";
-  readonly dailyBudget: string | null;
-  readonly spend: string;
-  readonly purchases: string;
-  readonly purchaseValue: string;
-  readonly cpa: string | null;
-  readonly roas: string | null;
-  readonly adsets: readonly AdsHierarchyAdSet[];
-}
-
-export interface CompetitorAdCard {
-  readonly pageName: string;
-  readonly archiveId: string;
-  readonly caption: string;
-  readonly headline: string;
-  readonly cta: string;
-  readonly mediaType: "IMAGE" | "VIDEO" | "CAROUSEL";
-  readonly thumbnailUrl: string;
-  readonly inspectionLevel: "THUMBNAIL_ONLY" | "IMAGE_REVIEWED" | "VIDEO_AND_AUDIO_REVIEWED";
-  readonly firstSeen: string;
-  readonly status: "ACTIVE" | "INACTIVE";
-}
-
-export interface AdsDataHealth {
-  readonly metaConnection: {
-    readonly status: "CONNECTED" | "ERROR";
-    readonly accountId: string;
-    readonly accountName: string;
-    readonly proxyProfile: string;
-    readonly apiVersion: string;
-    readonly latencyMs?: number;
-  };
-  readonly ga4Connection: {
-    readonly status: "CONNECTED" | "PENDING" | "ERROR";
-    readonly propertyId: string;
-    readonly serviceAccount: string;
-    readonly liveSessionsLast30d?: number;
-  };
-  readonly competitorProvider: {
-    readonly provider: string;
-    readonly status: "ACTIVE";
-    readonly remainingCredits: number;
-  };
-  readonly maturity: {
-    readonly status: "PROVISIONAL" | "FINALIZED";
-    readonly reason: string;
-    readonly blockedDecisions: readonly string[];
-  };
-  readonly cacheStats?: {
-    readonly hits: number;
-    readonly misses: number;
-    readonly lastSyncedAt: string | null;
-  };
-}
-
-export interface AdsReconciliationReport {
-  readonly storeId: string;
-  readonly periodStart: string;
-  readonly periodEnd: string;
-  readonly meta: {
-    readonly spend: string;
-    readonly impressions: string;
-    readonly linkClicks: string;
-    readonly purchases: string;
-    readonly purchaseValue: string;
-    readonly cpa: string | null;
-    readonly roas: string | null;
-  };
-  readonly ga4: {
-    readonly status: "CONNECTED" | "ERROR" | "PENDING";
-    readonly sessions: number;
-    readonly ecommercePurchases: number;
-    readonly purchaseRevenue: number;
-    readonly clickToSessionDropPct: string;
-  };
-  readonly shopify: {
-    readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
-    readonly totalOrders: number;
-    readonly grossSales: string;
-    readonly totalRefunds: string;
-    readonly netSales: string;
-    readonly averageOrderValue: string;
-    readonly mer: string | null;
-    readonly blendedCpa: string | null;
-    readonly source: string;
-  };
-  readonly gaps: {
-    readonly purchaseDiscrepancy: number;
-    readonly revenueDiscrepancy: string;
-    readonly clickDropPct: string;
-    readonly notes: readonly string[];
-  };
-  readonly fromCache?: boolean;
-  readonly cachedAt?: string;
-}
 
 function ensureEnvLoaded(): void {
   if (process.env.META_ACCESS_TOKEN) return;
@@ -665,6 +530,74 @@ export class AdsIntelligenceService {
     return report;
   }
 
+  async getDecisionCards(storeId = "chillgen", forceRefresh = false): Promise<readonly DecisionCard[]> {
+    const cacheKey = `${storeId}:decisions`;
+    if (!forceRefresh) {
+      const cached = adsIntelligenceCache.get<readonly DecisionCard[]>(cacheKey);
+      if (cached) {
+        return cached.data;
+      }
+    }
+
+    const [summary, reconciliation, profile] = await Promise.all([
+      this.getStoreSummary(storeId, forceRefresh),
+      this.getReconciliationReport(storeId, forceRefresh),
+      Promise.resolve(loadStoreAdsProfile(storeId)),
+    ]);
+
+    let campaigns: readonly AdsHierarchyCampaign[] = [];
+    try {
+      campaigns = await this.getCampaignHierarchy(storeId, forceRefresh);
+    } catch {
+      // Gracefully handle if hierarchy is unavailable
+    }
+
+    const cards = decisionEngine.evaluate({
+      summary,
+      campaigns,
+      reconciliation,
+      profile,
+    });
+
+    adsIntelligenceCache.set(cacheKey, cards, 15 * 60 * 1000);
+    return cards;
+  }
+
+  async getAiStrategicReport(storeId = "chillgen", forceRefresh = false): Promise<AiStrategicReport> {
+    const cacheKey = `${storeId}:ai-report`;
+    if (!forceRefresh) {
+      const cached = adsIntelligenceCache.get<AiStrategicReport>(cacheKey);
+      if (cached) {
+        return { ...cached.data, fromCache: true };
+      }
+    }
+
+    const [summary, reconciliation, decisionCards, profile] = await Promise.all([
+      this.getStoreSummary(storeId, forceRefresh),
+      this.getReconciliationReport(storeId, forceRefresh),
+      this.getDecisionCards(storeId, forceRefresh),
+      Promise.resolve(loadStoreAdsProfile(storeId)),
+    ]);
+
+    let campaigns: readonly AdsHierarchyCampaign[] = [];
+    try {
+      campaigns = await this.getCampaignHierarchy(storeId, forceRefresh);
+    } catch {
+      // Gracefully handle
+    }
+
+    const report = await aiStrategicAnalyst.generateStrategicReport({
+      summary,
+      reconciliation,
+      campaigns,
+      decisionCards,
+      profile,
+    });
+
+    adsIntelligenceCache.set(cacheKey, report, 30 * 60 * 1000);
+    return { ...report, fromCache: false };
+  }
+
   async syncNow(storeId = "chillgen"): Promise<{ success: boolean; refreshedAt: string; message: string }> {
     adsIntelligenceCache.invalidate(storeId);
     // Pre-warm cache with fresh live data
@@ -672,6 +605,9 @@ export class AdsIntelligenceService {
       this.getStoreSummary(storeId, true),
       this.getCampaignHierarchy(storeId, true),
       this.getDataHealth(storeId, true),
+      this.getReconciliationReport(storeId, true),
+      this.getDecisionCards(storeId, true),
+      this.getAiStrategicReport(storeId, true),
     ]);
 
     const refreshedAt = new Date().toISOString();

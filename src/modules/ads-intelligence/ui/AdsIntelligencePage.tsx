@@ -7,14 +7,20 @@ import type {
   AdsIntelligenceClient,
   AdsReconciliationReport,
   AdsStoreSummary,
+  AiStrategicReport,
   CompetitorAdCard,
+  DecisionCard,
 } from "../types";
 
 export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligenceClient }): React.JSX.Element {
   const [params, setParams] = useSearchParams();
   const currentStoreId = params.get("storeId") || readActiveStoreId(window.localStorage) || "chillgen";
 
-  const [activeTab, setActiveTab] = useState<"hierarchy" | "funnel" | "competitors" | "health">("hierarchy");
+  const [activeTab, setActiveTab] = useState<"decisions" | "hierarchy" | "funnel" | "competitors" | "health">("decisions");
+  const [decisionFilter, setDecisionFilter] = useState<"ALL" | "PAUSE" | "SCALE" | "CREATIVE" | "WAIT">("ALL");
+  const [decisions, setDecisions] = useState<readonly DecisionCard[]>([]);
+  const [aiReport, setAiReport] = useState<AiStrategicReport | null>(null);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [summary, setSummary] = useState<AdsStoreSummary | null>(null);
   const [campaigns, setCampaigns] = useState<readonly AdsHierarchyCampaign[]>([]);
   const [health, setHealth] = useState<AdsDataHealth | null>(null);
@@ -25,22 +31,39 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({});
 
+  const handleAiAnalyze = async () => {
+    if (!client.getAiStrategicReport || aiAnalyzing) return;
+    setAiAnalyzing(true);
+    try {
+      const res = await client.getAiStrategicReport(currentStoreId, true);
+      setAiReport(res);
+    } catch {
+      // fallback
+    } finally {
+      setAiAnalyzing(false);
+    }
+  };
+
   const handleSync = async () => {
     if (!client.syncNow || syncing) return;
     setSyncing(true);
     setSyncMessage("Đang gọi live Meta Graph API & GA4 Data API...");
     try {
       const res = await client.syncNow(currentStoreId);
-      const [summaryData, campaignsData, healthData, reconData] = await Promise.all([
+      const [summaryData, campaignsData, healthData, reconData, decisionsData, aiData] = await Promise.all([
         client.getStoreSummary(currentStoreId),
         client.getCampaignHierarchy(currentStoreId),
         client.getDataHealth(currentStoreId),
         client.getReconciliationReport ? client.getReconciliationReport(currentStoreId) : Promise.resolve(null),
+        client.getDecisionCards ? client.getDecisionCards(currentStoreId) : Promise.resolve([]),
+        client.getAiStrategicReport ? client.getAiStrategicReport(currentStoreId) : Promise.resolve(null),
       ]);
       setSummary(summaryData);
       setCampaigns(campaignsData);
       setHealth(healthData);
       if (reconData) setReconciliation(reconData);
+      if (decisionsData) setDecisions(decisionsData);
+      if (aiData) setAiReport(aiData);
       setSyncMessage(res.message);
       setTimeout(() => setSyncMessage(null), 6000);
     } catch {
@@ -62,14 +85,18 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       client.getDataHealth(currentStoreId),
       client.getCompetitorAds(currentStoreId),
       client.getReconciliationReport ? client.getReconciliationReport(currentStoreId) : Promise.resolve(null),
+      client.getDecisionCards ? client.getDecisionCards(currentStoreId) : Promise.resolve([]),
+      client.getAiStrategicReport ? client.getAiStrategicReport(currentStoreId) : Promise.resolve(null),
     ])
-      .then(([summaryData, campaignsData, healthData, competitorsData, reconData]) => {
+      .then(([summaryData, campaignsData, healthData, competitorsData, reconData, decisionsData, aiData]) => {
         if (!isLive) return;
         setSummary(summaryData);
         setCampaigns(campaignsData);
         setHealth(healthData);
         setCompetitors(competitorsData);
         if (reconData) setReconciliation(reconData);
+        if (decisionsData) setDecisions(decisionsData);
+        if (aiData) setAiReport(aiData);
         // Expand first campaign by default
         if (campaignsData[0]) {
           setExpandedCampaigns({ [campaignsData[0].id]: true });
@@ -237,8 +264,25 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       {/* Tabs Navigation */}
       <div className="flex border-b border-slate-800 gap-2">
         <button
+          onClick={() => setActiveTab("decisions")}
+          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px flex items-center gap-1.5 cursor-pointer ${
+            activeTab === "decisions"
+              ? "border-cyan-400 text-cyan-300 bg-slate-900/50"
+              : "border-transparent text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <span>🎯</span>
+          <span>Quyết định &amp; AI Phân Tích</span>
+          {decisions.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
+              {decisions.length}
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTab("hierarchy")}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px ${
+          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px cursor-pointer ${
             activeTab === "hierarchy"
               ? "border-cyan-400 text-cyan-300 bg-slate-900/50"
               : "border-transparent text-slate-400 hover:text-slate-200"
@@ -249,7 +293,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
         <button
           onClick={() => setActiveTab("funnel")}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px ${
+          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px cursor-pointer ${
             activeTab === "funnel"
               ? "border-cyan-400 text-cyan-300 bg-slate-900/50"
               : "border-transparent text-slate-400 hover:text-slate-200"
@@ -260,7 +304,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
         <button
           onClick={() => setActiveTab("competitors")}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px ${
+          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px cursor-pointer ${
             activeTab === "competitors"
               ? "border-cyan-400 text-cyan-300 bg-slate-900/50"
               : "border-transparent text-slate-400 hover:text-slate-200"
@@ -271,7 +315,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
         <button
           onClick={() => setActiveTab("health")}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px ${
+          className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px cursor-pointer ${
             activeTab === "health"
               ? "border-cyan-400 text-cyan-300 bg-slate-900/50"
               : "border-transparent text-slate-400 hover:text-slate-200"
@@ -280,6 +324,438 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
           🛡️ Kết nối &amp; Chất lượng dữ liệu
         </button>
       </div>
+
+      {/* Tab: Decisions & AI */}
+      {activeTab === "decisions" && (
+        <div className="space-y-6">
+          {/* AI Strategic Analyst Executive Diagnosis Card */}
+          <div className="rounded-2xl border border-cyan-900/40 bg-gradient-to-b from-slate-900/90 via-slate-900/60 to-slate-950 p-5 shadow-2xl relative overflow-hidden space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-800/80 pb-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-purple-600 text-xl shadow-lg shadow-indigo-500/20">
+                  ✨
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-100 uppercase tracking-wide">
+                      Báo cáo Chiến lược AI (Senior Media Buyer Diagnosis)
+                    </h3>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-cyan-300 border border-slate-700 font-mono">
+                      {aiReport?.modelUsed || "gemini-2.5-flash"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Phân tích toàn diện hiệu quả dòng tiền, nguyên nhân gốc rễ và đề xuất kịch bản Creative 30s
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {aiReport?.executiveSummary && (
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${
+                      aiReport.executiveSummary.overallHealth === "HEALTHY"
+                        ? "bg-emerald-950/80 border-emerald-600 text-emerald-300"
+                        : aiReport.executiveSummary.overallHealth === "WATCH"
+                        ? "bg-amber-950/80 border-amber-600 text-amber-300"
+                        : "bg-rose-950/80 border-rose-600 text-rose-300"
+                    }`}
+                  >
+                    <span>
+                      {aiReport.executiveSummary.overallHealth === "HEALTHY"
+                        ? "🟢 Tăng trưởng Lành mạnh"
+                        : aiReport.executiveSummary.overallHealth === "WATCH"
+                        ? "🟡 Cần theo dõi sát"
+                        : "🔴 Cảnh báo Rủi ro"}
+                    </span>
+                  </span>
+                )}
+
+                <button
+                  onClick={handleAiAnalyze}
+                  disabled={aiAnalyzing}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                    aiAnalyzing
+                      ? "border-cyan-700 bg-cyan-950/60 text-cyan-300 cursor-not-allowed opacity-80"
+                      : "border-indigo-500/60 bg-gradient-to-r from-indigo-950 to-purple-950 text-indigo-200 hover:border-indigo-400 hover:text-white hover:shadow-md hover:shadow-indigo-500/20 active:scale-95"
+                  }`}
+                  title="Gọi AI phân tích lại toàn bộ dữ liệu mới nhất"
+                >
+                  <span className={aiAnalyzing ? "inline-block animate-spin" : ""}>✨</span>
+                  <span>{aiAnalyzing ? "Đang phân tích..." : "Phân tích lại với AI"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Executive Diagnosis Summary Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>📊</span> Đánh giá MER &amp; Hòa vốn
+                </span>
+                <p className="text-xs text-slate-200 leading-relaxed">
+                  {aiReport?.executiveSummary.merVerdict || "Đang tổng hợp dữ liệu MER từ Shopify và Meta..."}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>💰</span> Chẩn đoán Lợi nhuận Ròng / Thất thoát
+                </span>
+                <p className="text-xs text-slate-200 leading-relaxed">
+                  {aiReport?.executiveSummary.profitLossDiagnosis || "Đang kiểm tra đối chiếu lợi nhuận..."}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🚨</span> Khối lượng Hành động Cần can thiệp
+                </span>
+                <div className="flex items-baseline gap-2 pt-0.5">
+                  <span className="text-2xl font-black text-rose-400">
+                    {aiReport?.executiveSummary.highPriorityActionCount ?? 0}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    / {aiReport?.executiveSummary.totalDecisionsCount ?? decisions.length} quyết định ưu tiên cao
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Cần xử lý ngay các quảng cáo tiêu hao ngân sách cao không ra đơn trước chu kỳ chi tiêu tiếp theo.
+                </p>
+              </div>
+            </div>
+
+            {/* 30s Creative Brief Ideas Section */}
+            {aiReport?.creativeBriefs && aiReport.creativeBriefs.length > 0 && (
+              <div className="border-t border-slate-800/80 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🎬</span> Đề xuất Kịch bản Thử nghiệm Creative 30s (Actionable Video Briefs)
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    Dành cho các quảng cáo Link CTR thấp hoặc cần scale angle mới
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {aiReport.creativeBriefs.map((brief, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-amber-900/40 bg-slate-900/70 p-4 space-y-2.5 relative"
+                    >
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                        <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                          <span>💡</span> {brief.angle}
+                        </span>
+                        {brief.targetAdName && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono truncate max-w-[200px]">
+                            {brief.targetAdName}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-xs space-y-1 text-slate-300">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Vấn đề cốt lõi:</span>
+                        <p className="text-slate-300 text-xs italic">{brief.coreProblem}</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-amber-400">
+                          3 Biến thể Hook 3s đầu (Tâm lý học hành vi):
+                        </span>
+                        <div className="space-y-1">
+                          {brief.hooks.map((hook, hIdx) => (
+                            <div
+                              key={hIdx}
+                              className="text-xs text-slate-200 bg-slate-950/60 border border-slate-800 rounded px-2.5 py-1.5 flex items-start gap-2"
+                            >
+                              <span className="text-amber-400 font-mono font-bold text-[10px] mt-0.5">
+                                H{hIdx + 1}:
+                              </span>
+                              <span>{hook}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Chỉ đạo hình ảnh &amp; Pacing:</span>
+                        <p className="text-slate-300 text-[11px] leading-relaxed bg-slate-950/40 p-2 rounded border border-slate-800/60">
+                          {brief.visualDirection}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 text-xs">
+                        <span className="text-[10px] uppercase font-bold text-cyan-400">Kêu gọi hành động (CTA):</span>
+                        <span className="text-cyan-300 font-semibold text-xs">{brief.callToAction}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Filter Bar for Decision Cards */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-400 mr-1">Bộ lọc quyết định:</span>
+              <button
+                onClick={() => setDecisionFilter("ALL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  decisionFilter === "ALL"
+                    ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20"
+                    : "bg-slate-900 text-slate-300 border border-slate-800 hover:border-slate-700"
+                }`}
+              >
+                Tất cả ({decisions.length})
+              </button>
+              <button
+                onClick={() => setDecisionFilter("PAUSE")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  decisionFilter === "PAUSE"
+                    ? "bg-rose-500 text-white shadow-md shadow-rose-500/20"
+                    : "bg-slate-900 text-rose-300 border border-rose-900/60 hover:border-rose-700"
+                }`}
+              >
+                <span>🔴</span> Cần tắt / Pause ({decisions.filter((d) => d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE").length})
+              </button>
+              <button
+                onClick={() => setDecisionFilter("SCALE")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  decisionFilter === "SCALE"
+                    ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
+                    : "bg-slate-900 text-emerald-300 border border-emerald-900/60 hover:border-emerald-700"
+                }`}
+              >
+                <span>🟢</span> Cơ hội Scale ({decisions.filter((d) => d.decision === "SCALE_CANDIDATE").length})
+              </button>
+              <button
+                onClick={() => setDecisionFilter("CREATIVE")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  decisionFilter === "CREATIVE"
+                    ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
+                    : "bg-slate-900 text-amber-300 border border-amber-900/60 hover:border-amber-700"
+                }`}
+              >
+                <span>🟡</span> Cần test Creative ({decisions.filter((d) => d.decision === "TEST_CREATIVE").length})
+              </button>
+              <button
+                onClick={() => setDecisionFilter("WAIT")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  decisionFilter === "WAIT"
+                    ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
+                    : "bg-slate-900 text-sky-300 border border-sky-900/60 hover:border-sky-700"
+                }`}
+              >
+                <span>🛡️</span> Chờ độ chín ({decisions.filter((d) => d.decision === "WAIT").length})
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-400">
+              Hiển thị <strong className="text-cyan-300">{
+                decisions.filter((d) => {
+                  if (decisionFilter === "PAUSE") return d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE";
+                  if (decisionFilter === "SCALE") return d.decision === "SCALE_CANDIDATE";
+                  if (decisionFilter === "CREATIVE") return d.decision === "TEST_CREATIVE";
+                  if (decisionFilter === "WAIT") return d.decision === "WAIT";
+                  return true;
+                }).length
+              }</strong> / {decisions.length} thẻ khuyến nghị
+            </div>
+          </div>
+
+          {/* Decision Cards List */}
+          {decisions.filter((d) => {
+            if (decisionFilter === "PAUSE") return d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE";
+            if (decisionFilter === "SCALE") return d.decision === "SCALE_CANDIDATE";
+            if (decisionFilter === "CREATIVE") return d.decision === "TEST_CREATIVE";
+            if (decisionFilter === "WAIT") return d.decision === "WAIT";
+            return true;
+          }).length === 0 ? (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-10 text-center space-y-2">
+              <span className="text-3xl">🎉</span>
+              <h4 className="text-sm font-bold text-slate-200">Không có khuyến nghị trong bộ lọc này</h4>
+              <p className="text-xs text-slate-400">Tất cả đối tượng đang vận hành trong ngưỡng an toàn cho phép.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {decisions
+                .filter((d) => {
+                  if (decisionFilter === "PAUSE") return d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE";
+                  if (decisionFilter === "SCALE") return d.decision === "SCALE_CANDIDATE";
+                  if (decisionFilter === "CREATIVE") return d.decision === "TEST_CREATIVE";
+                  if (decisionFilter === "WAIT") return d.decision === "WAIT";
+                  return true;
+                })
+                .map((card) => {
+                  const isPause = card.decision === "PAUSE_CANDIDATE" || card.decision === "REDUCE_CANDIDATE";
+                  const isScale = card.decision === "SCALE_CANDIDATE";
+                  const isCreative = card.decision === "TEST_CREATIVE";
+                  const isWait = card.decision === "WAIT";
+
+                  const decisionColorClass = isPause
+                    ? "bg-rose-950/80 border-rose-600 text-rose-300"
+                    : isScale
+                    ? "bg-emerald-950/80 border-emerald-600 text-emerald-300"
+                    : isCreative
+                    ? "bg-amber-950/80 border-amber-600 text-amber-300"
+                    : isWait
+                    ? "bg-sky-950/80 border-sky-600 text-sky-300"
+                    : "bg-indigo-950/80 border-indigo-600 text-indigo-300";
+
+                  const decisionIcon = isPause
+                    ? "🔴"
+                    : isScale
+                    ? "🟢"
+                    : isCreative
+                    ? "🟡"
+                    : isWait
+                    ? "🛡️"
+                    : "🔍";
+
+                  return (
+                    <div
+                      key={card.id}
+                      className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 space-y-4 hover:border-slate-700 transition shadow-lg"
+                    >
+                      {/* Top Row: Badges */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+                            {card.entity.type}: {card.entity.name}
+                          </span>
+                          <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border flex items-center gap-1.5 ${decisionColorClass}`}>
+                            <span>{decisionIcon}</span>
+                            <span>{card.decision}</span>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded font-bold border uppercase tracking-wider ${
+                              card.priority === "HIGH"
+                                ? "bg-rose-950/50 text-rose-300 border-rose-800"
+                                : card.priority === "MEDIUM"
+                                ? "bg-amber-950/50 text-amber-300 border-amber-800"
+                                : "bg-slate-800 text-slate-400 border-slate-700"
+                            }`}
+                          >
+                            Ưu tiên: {card.priority}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-300 border border-slate-700">
+                            Tin cậy: <strong className="text-cyan-300">{card.confidence}</strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Title & Summary */}
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                          {card.title}
+                        </h4>
+                        <p className="text-xs text-slate-300 leading-relaxed">{card.summary}</p>
+                      </div>
+
+                      {/* Observations / Evidence Pack Table */}
+                      {card.observations.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <span>📋</span> Bằng chứng định lượng (Current vs Benchmark):
+                          </span>
+                          <div className="overflow-x-auto rounded-lg border border-slate-800">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-950/80 text-slate-400 text-[10px] uppercase font-mono border-b border-slate-800">
+                                <tr>
+                                  <th className="py-2 px-3">Chỉ số (Metric)</th>
+                                  <th className="py-2 px-3">Thực tế quan sát</th>
+                                  <th className="py-2 px-3">Ngưỡng chuẩn (Benchmark)</th>
+                                  <th className="py-2 px-3">Đơn vị</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800/60 font-mono text-[11px] bg-slate-900/30">
+                                {card.observations.map((obs, obsIdx) => (
+                                  <tr key={obsIdx} className="hover:bg-slate-800/40">
+                                    <td className="py-2 px-3 text-cyan-300 font-semibold">{obs.metric}</td>
+                                    <td className="py-2 px-3 text-slate-100 font-bold">{String(obs.current)}</td>
+                                    <td className="py-2 px-3 text-slate-400">{String(obs.benchmark)}</td>
+                                    <td className="py-2 px-3 text-slate-500">{obs.unit}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Hypotheses List */}
+                      {card.hypotheses.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <span>🔬</span> Giả thuyết &amp; Nguyên nhân khả dĩ:
+                          </span>
+                          <ul className="space-y-1 text-xs text-slate-300 bg-slate-950/40 p-3 rounded-lg border border-slate-800/80">
+                            {card.hypotheses.map((hyp, hIdx) => (
+                              <li key={hIdx} className="flex items-start gap-2">
+                                <span className="text-cyan-400 mt-0.5">•</span>
+                                <span>{hyp}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Action & Policy Gate Recommendations */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                        <div className="rounded-lg border border-cyan-900/50 bg-cyan-950/20 p-3 space-y-1">
+                          <span className="text-[10px] font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1">
+                            <span>💡</span> Hành động khuyến nghị:
+                          </span>
+                          <p className="text-xs text-cyan-100 leading-relaxed font-medium">
+                            {card.recommendedNextStep}
+                          </p>
+                        </div>
+
+                        <div className="rounded-lg border border-rose-900/40 bg-rose-950/20 p-3 space-y-1">
+                          <span className="text-[10px] font-bold text-rose-300 uppercase tracking-wider flex items-center gap-1">
+                            <span>⛔</span> Hành động bị chặn theo Policy:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5 pt-0.5">
+                            {card.blockedActions.length > 0 ? (
+                              card.blockedActions.map((action, aIdx) => (
+                                <span
+                                  key={aIdx}
+                                  className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-800"
+                                >
+                                  {action}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-slate-400 italic">Không có hành động bị chặn</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Review Trigger Footer */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-800/60">
+                        <span className="flex items-center gap-1.5">
+                          <span>⏱️</span>
+                          <span>Điều kiện xem xét lại: <strong className="text-slate-200">{card.reviewTrigger}</strong></span>
+                        </span>
+                        {card.policyVersion && (
+                          <span className="font-mono text-[10px] text-slate-500">
+                            Policy: v{card.policyVersion}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab 1: Hierarchy Table */}
       {activeTab === "hierarchy" && (

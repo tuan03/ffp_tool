@@ -69,6 +69,23 @@ export async function handleAdsIntelligenceHttpRequest(
       return true;
     }
 
+    if (pathname === "/api/ads-intelligence/decisions" && req.method === "GET") {
+      const decisions = await adsIntelligenceService.getDecisionCards(storeId, forceRefresh);
+      sendJson(res, 200, decisions);
+      return true;
+    }
+
+    if (
+      (pathname === "/api/ads-intelligence/ai-analyze" || pathname === "/api/ads-intelligence/ai-report") &&
+      (req.method === "POST" || req.method === "GET")
+    ) {
+      const aiReport = await adsIntelligenceService.getAiStrategicReport(storeId, forceRefresh);
+      sendJson(res, 200, aiReport, {
+        "x-ads-cache": aiReport.fromCache ? "HIT" : "MISS",
+      });
+      return true;
+    }
+
     sendJson(res, 404, {
       error: { code: "NOT_FOUND", message: `Ads Intelligence endpoint not found: ${pathname}` },
     });

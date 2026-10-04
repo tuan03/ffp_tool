@@ -150,6 +150,88 @@ export interface AdsReconciliationReport {
   readonly cachedAt?: string;
 }
 
+export type DecisionType =
+  | "WAIT"
+  | "KEEP"
+  | "SCALE_CANDIDATE"
+  | "REDUCE_CANDIDATE"
+  | "PAUSE_CANDIDATE"
+  | "TEST_CREATIVE"
+  | "CHECK_LANDING"
+  | "CHECK_OFFER"
+  | "CHECK_CHECKOUT"
+  | "INVESTIGATE_TRACKING";
+
+export type DecisionPriority = "HIGH" | "MEDIUM" | "LOW";
+
+export type DecisionConfidence = "HIGH" | "MEDIUM" | "LOW";
+
+export interface DecisionObservation {
+  readonly metric: string;
+  readonly current: string | number;
+  readonly benchmark: string | number;
+  readonly unit: string;
+  readonly evidenceId?: string;
+}
+
+export interface DecisionCard {
+  readonly id: string;
+  readonly storeId: string;
+  readonly entity: {
+    readonly type: "account" | "campaign" | "adset" | "ad" | "store";
+    readonly id: string;
+    readonly name: string;
+  };
+  readonly decision: DecisionType;
+  readonly priority: DecisionPriority;
+  readonly confidence: DecisionConfidence;
+  readonly title: string;
+  readonly summary: string;
+  readonly observations: readonly DecisionObservation[];
+  readonly hypotheses: readonly string[];
+  readonly missingEvidence?: readonly string[];
+  readonly recommendedNextStep: string;
+  readonly blockedActions: readonly string[];
+  readonly reviewTrigger: string;
+  readonly policyVersion?: string;
+  readonly createdAt?: string;
+}
+
+export interface CreativeBriefIdea {
+  readonly targetAdId?: string;
+  readonly targetAdName?: string;
+  readonly angle: string;
+  readonly coreProblem: string;
+  readonly hooks: readonly [string, string, string];
+  readonly visualDirection: string;
+  readonly callToAction: string;
+}
+
+export interface AiStrategicReport {
+  readonly storeId: string;
+  readonly generatedAt: string;
+  readonly modelUsed: string;
+  readonly fromCache?: boolean;
+  readonly executiveSummary: {
+    readonly overallHealth: "HEALTHY" | "WATCH" | "CRITICAL";
+    readonly merVerdict: string;
+    readonly profitLossDiagnosis: string;
+    readonly totalDecisionsCount: number;
+    readonly highPriorityActionCount: number;
+  };
+  readonly rootCauseHypotheses: readonly {
+    readonly entityId: string;
+    readonly entityName: string;
+    readonly entityType: string;
+    readonly verdict: string;
+    readonly primaryHypothesis: string;
+    readonly counterHypothesis: string;
+    readonly recommendedExperiment: string;
+  }[];
+  readonly creativeBriefs: readonly CreativeBriefIdea[];
+  readonly rawAnalysisText?: string;
+}
+
 export interface AdsIntelligenceClient {
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
@@ -157,5 +239,8 @@ export interface AdsIntelligenceClient {
   getCompetitorAds(storeId?: string): Promise<readonly CompetitorAdCard[]>;
   getReconciliationReport?(storeId?: string): Promise<AdsReconciliationReport>;
   syncNow?(storeId?: string): Promise<{ success: boolean; refreshedAt: string; message: string }>;
+  getDecisionCards?(storeId?: string): Promise<readonly DecisionCard[]>;
+  getAiStrategicReport?(storeId?: string, forceRefresh?: boolean): Promise<AiStrategicReport>;
 }
+
 

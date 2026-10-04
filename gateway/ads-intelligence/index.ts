@@ -13,4 +13,6 @@ export * from "./cache";
 export * from "./meta-client";
 export * from "./ga4-client";
 export * from "./service";
+export * from "./decision-engine";
+export * from "./ai-analyst";
 export * from "./http-handler";
