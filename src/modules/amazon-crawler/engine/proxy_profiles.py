@@ -63,6 +63,8 @@ def load_proxy_profiles(
 ) -> tuple[list[dict[str, Any]], bool, list[str]]:
     environment_path = os.environ.get("AMAZON_CRAWLER_PROXY_CONFIG")
     path = Path(environment_path) if environment_path else config_path or project_root / "config" / "amazon-crawler-profiles.json"
+    if not path.is_file() and not environment_path and config_path is None:
+        path = project_root / "config" / "amazon-crawler-profiles.shared.json"
     warnings: list[str] = []
     profiles: list[dict[str, Any]] = []
     should_rotate = False
@@ -74,7 +76,20 @@ def load_proxy_profiles(
             if not isinstance(raw_profiles, list):
                 warnings.append("Proxy config profiles must be an array.")
             else:
-                profiles = [item for item in raw_profiles if isinstance(item, dict)]
+                for item in raw_profiles:
+                    if not isinstance(item, dict):
+                        continue
+                    proxy = dict(item.get("proxy") or {})
+                    missing = False
+                    for field in ("server", "username", "password"):
+                        reference = proxy.get(field + "Env")
+                        if reference:
+                            proxy[field] = os.environ.get(str(reference), "")
+                            missing = missing or not proxy[field]
+                    if missing:
+                        warnings.append("Shared proxy profile skipped: required environment configuration is missing.")
+                        continue
+                    profiles.append({**item, "proxy": proxy})
         except (OSError, ValueError) as error:
             warnings.append(f"Proxy config is invalid: {error}")
     environment_profiles = _from_environment()

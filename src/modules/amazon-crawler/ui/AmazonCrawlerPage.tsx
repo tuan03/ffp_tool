@@ -5,6 +5,8 @@ import { notifyUser } from "../../../shared/utils";
 
 import {
   type AmazonCrawlerCacheClearer,
+  type AmazonCrawlerAgentRelease,
+  type AmazonCrawlerAgentReleaseLoader,
   type AmazonAsinChecker,
   type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
@@ -14,6 +16,7 @@ import {
   type AmazonCrawlerJobSnapshot,
   type AmazonCrawlerOutput,
   type AmazonCrawlerProgress,
+  type AmazonCrawlerProfile,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
   type AmazonCrawlerJobLoader,
@@ -22,6 +25,7 @@ import {
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
 } from "../types";
+import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
 
@@ -59,6 +63,7 @@ interface AmazonCrawlerPageProps {
   checkAmazonAsins?: AmazonAsinChecker;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
+  loadAmazonCrawlerAgentRelease: AmazonCrawlerAgentReleaseLoader;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   loadAmazonCrawlerJob?: AmazonCrawlerJobLoader;
@@ -81,6 +86,12 @@ const COMMON_PRODUCT_TYPES = [
   { label: "Ornament (Đồ trang trí)", value: "Ornament" },
   { label: "Sign (Biển hiệu)", value: "Sign" },
 ];
+
+const AGENT_RELEASE_FALLBACK_URL = "https://github.com/tuan03/ffp_tool/releases/latest";
+
+function formatDownloadSize(sizeBytes: number): string {
+  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function pipelineStatusLabel(status: string | undefined): string {
   return status === "waiting_review" ? "SEO complete" : status ?? "Chưa nhận";
@@ -178,6 +189,7 @@ export function AmazonCrawlerPage({
   amazonCrawlerJobs,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
+  loadAmazonCrawlerAgentRelease,
   loadAmazonCrawlerClients,
   loadAmazonCrawlerJob,
   onHandoverToSeo,
@@ -221,6 +233,9 @@ export function AmazonCrawlerPage({
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [agentRelease, setAgentRelease] = useState<AmazonCrawlerAgentRelease | null>(null);
+  const [agentReleaseError, setAgentReleaseError] = useState<string | null>(null);
+  const [isLoadingAgentRelease, setIsLoadingAgentRelease] = useState(true);
   const [jobs, setJobs] = useState<readonly AmazonCrawlerJobSnapshot[]>([]);
   const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
   const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
@@ -320,6 +335,11 @@ export function AmazonCrawlerPage({
   const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
+  const outdatedClients = agentRelease === null
+    ? []
+    : connectedClients.filter(
+      (client) => getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated",
+    );
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const coordinatorActiveJob = jobs.find((job) =>
     ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status)
@@ -366,6 +386,26 @@ export function AmazonCrawlerPage({
       window.clearInterval(intervalId);
     };
   }, [loadAmazonCrawlerClients]);
+
+  useEffect(() => {
+    let isMounted = true;
+    void loadAmazonCrawlerAgentRelease().then((release) => {
+      if (!isMounted) return;
+      setAgentRelease(release);
+      setAgentReleaseError(null);
+    }).catch((caught: unknown) => {
+      if (!isMounted) return;
+      setAgentRelease(null);
+      setAgentReleaseError(
+        caught instanceof Error ? caught.message : "Không tải được thông tin phiên bản Agent.",
+      );
+    }).finally(() => {
+      if (isMounted) setIsLoadingAgentRelease(false);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [loadAmazonCrawlerAgentRelease]);
 
   // 1. Fetch recent jobs list from coordinator
   useEffect(() => {
@@ -1157,10 +1197,48 @@ export function AmazonCrawlerPage({
             <h2 className="font-semibold text-slate-100">Crawler clients</h2>
             <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online.</p>
           </div>
-          <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
-            {connectedClients.length} đang kết nối
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
+              {connectedClients.length} đang kết nối
+            </span>
+            <a
+              className="inline-flex items-center rounded-lg bg-cyan-400 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300"
+              href={agentRelease?.downloadUrl ?? AGENT_RELEASE_FALLBACK_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Tải Agent cho Windows
+            </a>
+          </div>
         </div>
+        {isLoadingAgentRelease ? <p className="mt-3 text-xs text-slate-400">Đang kiểm tra phiên bản Agent mới nhất...</p> : null}
+        {agentRelease ? (
+          <p className="mt-3 text-xs text-slate-400">
+            Bản mới nhất: <strong className="text-slate-200">v{agentRelease.version}</strong>
+            {` · ${formatDownloadSize(agentRelease.sizeBytes)} · `}
+            <a className="text-cyan-300 hover:text-cyan-200" href={agentRelease.checksumUrl} rel="noreferrer" target="_blank">SHA-256</a>
+          </p>
+        ) : null}
+        {agentReleaseError ? (
+          <p className="mt-3 text-xs text-amber-300">
+            {agentReleaseError} Nút tải sẽ mở trang GitHub Releases.
+          </p>
+        ) : null}
+        {agentRelease && outdatedClients.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-700/70 bg-amber-950/40 p-3">
+            <p className="text-sm text-amber-200">
+              Có bản Agent v{agentRelease.version}. {outdatedClients.length} client đang dùng phiên bản cũ và cần cập nhật.
+            </p>
+            <a
+              className="rounded-lg border border-amber-500 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-900/60"
+              href={agentRelease.downloadUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Tải bản cập nhật
+            </a>
+          </div>
+        ) : null}
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
         {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
         {!isLoadingClients && !clientError && connectedClients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có client online. Hãy mở FFP Amazon Crawler Agent.</p> : null}
@@ -1171,6 +1249,24 @@ export function AmazonCrawlerPage({
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
                   <span className={`text-xs font-semibold ${!client.isConnected || client.status === "offline" ? "text-rose-300" : client.status === "waiting_captcha" ? "text-amber-300" : "text-emerald-300"}`}>{client.isConnected ? client.status : "offline"}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                  <span>Agent v{client.agentVersion}</span>
+                  {agentRelease ? (
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${
+                      getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated"
+                        ? "bg-amber-950 text-amber-300"
+                        : getAgentVersionStatus(client.agentVersion, agentRelease.version) === "unknown"
+                          ? "bg-slate-800 text-slate-400"
+                          : "bg-emerald-950 text-emerald-300"
+                    }`}>
+                      {getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated"
+                        ? "Cần cập nhật"
+                        : getAgentVersionStatus(client.agentVersion, agentRelease.version) === "unknown"
+                          ? "Không xác định"
+                          : "Mới nhất"}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="mt-1 text-xs text-slate-400">{client.activeTasks} đang chạy · {client.availableSlots}/{client.maxConcurrentInputs} slot trống</p>
                 {client.leasedTasks === client.activeTasks ? null : <p className="mt-1 text-xs text-amber-300">{client.leasedTasks} lease trên server đang chờ đồng bộ</p>}
@@ -1724,7 +1820,11 @@ export function AmazonCrawlerPage({
             className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
             value={settings.profileSlug}
             onChange={(event) => {
-              const nextProfile = event.target.value === "jeminise" ? "jeminise" : "default";
+              const selectedProfile = event.target.value;
+              const nextProfile: AmazonCrawlerProfile =
+                selectedProfile === "jeminise" || selectedProfile === "preaurem"
+                  ? selectedProfile
+                  : "default";
               updateSetting("profileSlug", nextProfile);
               if (nextProfile === "jeminise") {
                 updateSetting("applyJeminisePreset", true);
@@ -1735,6 +1835,7 @@ export function AmazonCrawlerPage({
           >
             <option value="default">Default</option>
             <option value="jeminise">Jeminise</option>
+            <option value="preaurem">Preaurem</option>
           </select>
         </label>
         <label className="flex items-center gap-3 self-end rounded-lg border border-slate-700 p-2 text-sm text-slate-200">

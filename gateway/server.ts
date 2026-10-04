@@ -10,10 +10,12 @@ import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
+import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
 import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import { bootstrapAutoSeoSchema } from "./auto-seo-startup";
 import type { AutoSeoStartupOptions } from "./auto-seo-startup";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
+import { handleReviewImageHttpRequest } from "./review-image-handler";
 import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
@@ -41,6 +43,7 @@ export interface GatewayServerOptions {
   readonly operatorUsername?: string;
   readonly operatorPassword?: string;
   readonly maxBodyBytes?: number;
+  readonly reviewImageBridgeBaseUrl?: string;
   readonly customGptHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
 }
 
@@ -183,6 +186,17 @@ export function startGatewayServer(
     }
     if (url.startsWith("/api/seo-performance/")) {
       await handlePerformanceHttp(req, res, { service: getPerformanceService(), authToken, hasStore: storeId => storeRegistry.hasStore(storeId) });
+      return;
+    }
+    if (url.startsWith("/api/review-images/")) {
+      await handleReviewImageHttpRequest(req, res, {
+        authToken,
+        bridgeToken: env.REVIEW_IMAGE_BRIDGE_TOKEN || process.env.REVIEW_IMAGE_BRIDGE_TOKEN || "change-this-token",
+        bridgeBaseUrl: options.reviewImageBridgeBaseUrl ?? env.REVIEW_IMAGE_BRIDGE_URL,
+        durableUploads: env.REVIEW_IMAGE_DURABLE_UPLOADS === "true",
+        reviewImageOutputDir: env.REVIEW_IMAGE_OUTPUT_DIR,
+        dispatcher,
+      });
       return;
     }
     if (url.startsWith("/api/v1/gpt-seo/")) {
@@ -339,6 +353,11 @@ export function startGatewayServer(
     }
     if (isAutoSeoEligibility) {
       await handleAutoSeoEligibilityHttpRequest(req, res, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (url === "/api/amazon-reviews/samples") {
+      await handleAmazonReviewsHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

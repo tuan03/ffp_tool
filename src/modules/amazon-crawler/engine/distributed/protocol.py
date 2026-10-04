@@ -114,6 +114,7 @@ def hello_message(
     cache_generation: int = 0,
     product_invalidation_generation: int = 0,
     temporary_cleanup_generation: int = 0,
+    pinterest_browser_logged_in: bool = False,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -125,7 +126,9 @@ def hello_message(
         "maxConcurrentInputs": max(1, max_concurrent_inputs),
         "capabilities": {
             "amazon": True,
+            "amazonReviews": True,
             "pinterest": True,
+            "pinterestBrowserLoggedIn": pinterest_browser_logged_in,
             "captcha": not limits.headless,
             "offlineSpool": True,
             "mediaGalleryV2": True,

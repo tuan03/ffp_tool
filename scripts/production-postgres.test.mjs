@@ -21,18 +21,18 @@ async function prepareEnvironment(t, incoming, previous = "", extraArgs = []) {
   return { command, contents: await readFile(envPath, "utf8") };
 }
 
-test("production Compose persists PostgreSQL 17 and waits before starting the existing app", async () => {
-  const compose = await readFile("compose.prod.yaml", "utf8");
+test("root Compose persists PostgreSQL 17 and waits before starting the server", async () => {
+  const compose = await readFile("docker-compose.yml", "utf8");
   assert.match(compose, /database:\s*\n\s*image: postgres:17-alpine/);
   assert.match(compose, /ffp_postgres_data:\/var\/lib\/postgresql\/data/);
   assert.match(compose, /^name: ffp-tool$/m);
-  assert.match(compose, /volumes:\s*\n\s*ffp_postgres_data:\s*$/);
+  assert.match(compose, /volumes:\s*\n\s*ffp_postgres_data:/);
   assert.match(compose, /depends_on:\s*\n\s*database:\s*\n\s*condition: service_healthy/);
   assert.match(compose, /AUTO_SEO_DATABASE_URL:/);
   assert.match(compose, /pg_isready/);
-  assert.match(compose, /\.\/data:\/app\/\.local-data/);
-  assert.match(compose, /\.\/runtime:\/app\/\.runtime/);
-  const databaseSection = compose.split("  app:")[0];
+  assert.match(compose, /ffp_data:\/app\/\.local-data/);
+  assert.match(compose, /ffp_runtime:\/app\/\.runtime/);
+  const databaseSection = compose.split("  server:")[0];
   assert.match(databaseSection, /container_name: ffp-database/);
   assert.doesNotMatch(databaseSection, /ports:/);
   assert.doesNotMatch(compose, /^\s*POSTGRES_PASSWORD:.*:-/m);
@@ -42,8 +42,9 @@ test("production deployment transfers Compose from Git instead of regenerating a
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
   const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
   assert.match(deployJob, /uses: actions\/checkout@v4/);
-  assert.match(deployJob, /base64 -w 0 compose\.prod\.yaml/);
-  assert.match(deployJob, /"\$COMPOSE_B64" \| base64 -d > compose\.prod\.yaml/);
+  assert.match(deployJob, /git ls-files -z \| tar --null -czf/);
+  assert.match(deployJob, /docker compose up -d --build --remove-orphans/);
+  assert.doesNotMatch(deployJob, /docker compose -f compose\.prod\.yaml/);
   assert.doesNotMatch(deployJob, /"services:"/);
   assert.match(deployJob, /prepare-production-postgres\.py/);
   assert.match(deployJob, /docker volume inspect ffp-tool_ffp_postgres_data/);

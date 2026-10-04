@@ -27,6 +27,7 @@ export function CandidateCard({
   const isDirectPrintable = Boolean(
     !isBreakthrough && !isRejected && (candidate.is_direct_printable || candidate.candidate_category === "direct_printable")
   );
+  const hasLowInformationWarning = candidate.quality_warnings?.includes("low_information") === true;
 
   return (
     <div
@@ -97,6 +98,13 @@ export function CandidateCard({
             <span className="flex items-center gap-1 rounded-full border border-purple-400/80 bg-purple-600 px-2 py-0.5 text-[10px] font-bold text-white shadow">
               <span>🛋️</span>
               <span>Phòng Mẫu</span>
+            </span>
+          )}
+
+          {hasLowInformationWarning && (
+            <span className="flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-950/90 px-2 py-0.5 text-[10px] font-semibold text-amber-300 shadow">
+              <span>⚠</span>
+              <span>Ít chi tiết</span>
             </span>
           )}
 

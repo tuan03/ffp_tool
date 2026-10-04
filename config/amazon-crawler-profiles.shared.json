@@ -1,0 +1,41 @@
+{
+  "rotateProfiles": true,
+  "profiles": [
+    {
+      "name": "us-proxy-1",
+      "enabled": true,
+      "proxy": {
+        "serverEnv": "FFP_PROXY_1_SERVER",
+        "usernameEnv": "FFP_PROXY_1_USERNAME",
+        "passwordEnv": "FFP_PROXY_1_PASSWORD"
+      }
+    },
+    {
+      "name": "us-proxy-2",
+      "enabled": true,
+      "proxy": {
+        "serverEnv": "FFP_PROXY_2_SERVER",
+        "usernameEnv": "FFP_PROXY_2_USERNAME",
+        "passwordEnv": "FFP_PROXY_2_PASSWORD"
+      }
+    },
+    {
+      "name": "us-proxy-3",
+      "enabled": true,
+      "proxy": {
+        "serverEnv": "FFP_PROXY_3_SERVER",
+        "usernameEnv": "FFP_PROXY_3_USERNAME",
+        "passwordEnv": "FFP_PROXY_3_PASSWORD"
+      }
+    },
+    {
+      "name": "us-proxy-4",
+      "enabled": true,
+      "proxy": {
+        "serverEnv": "FFP_PROXY_4_SERVER",
+        "usernameEnv": "FFP_PROXY_4_USERNAME",
+        "passwordEnv": "FFP_PROXY_4_PASSWORD"
+      }
+    }
+  ]
+}

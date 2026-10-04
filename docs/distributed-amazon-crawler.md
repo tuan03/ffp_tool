@@ -24,14 +24,19 @@ Completed product raw payloads are discarded as soon as Shopify confirms the syn
 
 Each streamed product is processed on the server as `customization-normalizer → SEO B1–B6 (alt-only) → Shopify`. Alt-only mode keeps the original Amazon image URLs and changes only alt text; it does not download, convert, or upload WebP files. SEO configuration is read from root `.env.local`; local development also accepts the ignored `src/modules/seo-content/.env.local`. Root values take precedence. The public result records SEO engine/fallback metadata but never exposes credentials, image buffers, local paths, or proxy credentials.
 
-PostgreSQL is the production database. Copy `deploy/amazon-crawler-coordinator/.env.example` to `.env` in that directory, replace the database password and CORS origin, then run:
+PostgreSQL is the production database. Production must use the root three-container
+topology; the Coordinator does not have a separate production Compose manifest.
+From the repository root, copy the production template, configure its database
+password, public domain and integration credentials, then start the whole system:
 
-```powershell
-docker compose --env-file deploy/amazon-crawler-coordinator/.env `
-  -f deploy/amazon-crawler-coordinator/docker-compose.yml up --build -d
+```bash
+cp .env.example .env
+docker compose up -d --build
 ```
 
-Put an HTTPS reverse proxy in front of `127.0.0.1:8766`. V1 intentionally has no authentication, so the coordinator must not be exposed directly to the public internet; restrict inbound IPs/firewall rules to the application server and known client networks wherever possible.
+The Coordinator port is internal to Docker and is never published on the host. Remote
+agents connect to the public `client` HTTP/HTTPS endpoint, whose Nginx configuration
+proxies Coordinator API and WebSocket traffic to `server:8766`.
 
 For development without Docker:
 
@@ -48,7 +53,15 @@ Copy `config/amazon-crawler-agent.example.json` to the ignored `config/amazon-cr
 npm run dev:agent
 ```
 
-The tray tooltip shows connection state, active tasks and pending uploads. A notification is emitted only when a task first enters manual CAPTCHA mode. Closing the terminal is not required for the installed version; the installer registers per-user auto-start at Windows login.
+Starting the Windows agent manually opens a light native dashboard. Left-click the tray icon or choose **Mở cửa sổ agent** to reopen it. Closing the window with X or Escape hides it in the tray; use **Thoát agent** to stop the process. Launching the EXE again with the same data directory brings up the existing dashboard instead of starting another crawler. The installer registers per-user auto-start with `--start-minimized`, so Windows login leaves the dashboard hidden. The Start menu shortcut and post-install launch open it normally.
+
+The dashboard has **Công việc**, **Lịch sử**, and **Thông tin agent** tabs. It shows Amazon ASINs separately from the variants currently crawling, and also labels Pinterest POD tasks. Task completion and server delivery are separate states. Amazon progress uses per-input variant counts; Pinterest displays its current stage without presenting the existing placeholder percentages as measured progress. Pending product uploads and task results are counted across the entire local spool. Connection readiness is separate from the pause flag; pausing while offline does not claim a live connection. Resource readings display their sample time and whether the memory sample is complete.
+
+**Tạm ngưng nhận việc** stops accepting new work while existing tasks continue. **Dừng và loại bỏ việc local** asks for confirmation, includes completed results still waiting for upload, and retains product caches. Offline cancellation intents are shown until acknowledged by the coordinator. **Mở thư mục dữ liệu** opens local logs and storage. Exiting the agent does not explicitly delete upload spool or product cache.
+
+Local history lives in two additive tables in `agent.sqlite3`: `dashboard_tasks` and `dashboard_events`. Summaries retain seven days and at most 1,000 terminal task attempts; existing live leases and spool work remain protected. Activity retains seven days and at most 5,000 events, with the latest 500 displayed. Progress is matched by input and stored at phase transitions/completion, rather than writing every variant update. History contains bounded, redacted metadata, never product payloads, cookies, or credentials. On restart, the dashboard reconciles with local leases and shows recoverable work as waiting for reconciliation rather than claiming an old task is still running. A task attempt is keyed by task ID and lease ID, so replayed uploads do not create duplicate completions.
+
+The existing tray tooltip, right-click controls, and transition-only CAPTCHA notification remain available. CAPTCHA never automatically brings the dashboard to the foreground. When a CAPTCHA event has no ASIN, a detection notice stays until the affected batch finishes; it does not mark every task as currently blocked. Tkinter/ttk uses the Python distribution's Tk/Tcl runtime and requires no new pip dependency. If dashboard initialization fails, the tray remains available and shows a notification; details go to the redacted agent debug log. `--no-tray` keeps the existing console mode on Windows and other platforms.
 
 The authoritative readiness check is the **Crawler clients** panel in the web UI, or `GET /api/v1/clients`. A client is ready only when `isConnected` is `true` and its status is `online`, `busy`, or `waiting_captcha`. An old database row alone is not treated as an active connection.
 

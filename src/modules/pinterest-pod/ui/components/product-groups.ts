@@ -59,7 +59,7 @@ export function buildProductGroups(
       const matchedCutout = deliverables.product_cutouts_white?.[idx]?.url;
       const compRow = deliverables.comparison_rows?.[idx];
       const rowPreview = compRow?.cutout_white_url || compRow?.source_url;
-      const previewUrl = cutoutPreview || matchedCutout || rowPreview || item.printMaster.rgbUrl;
+      const previewUrl = item.printMaster.rgbUrl || item.printMaster.cmykUrl || cutoutPreview || matchedCutout || rowPreview;
 
       return {
         id: item.designId,
@@ -93,14 +93,16 @@ export function buildProductGroups(
       });
 
       const matchedCutout = deliverables.product_cutouts_white?.[idx]?.url;
-      const previewUrl = row.cutout_white_url || row.source_url || matchedCutout || row.final_print_url;
+      const cmykUrl = deliverables.print_cmyk_images?.[idx]?.url || row.final_print_url;
+      const rgbUrl = deliverables.final_png_images?.[idx]?.url || row.final_print_url;
+      const previewUrl = rgbUrl || cmykUrl || row.cutout_white_url || row.source_url || matchedCutout;
 
       return {
         id: `design_${idx + 1}`,
         title: row.product_label || `Sản phẩm #${idx + 1}`,
         productType: fallbackProductType,
-        cmykUrl: row.final_print_url,
-        rgbUrl: deliverables.final_png_images?.[idx]?.url || row.final_print_url,
+        cmykUrl,
+        rgbUrl,
         previewUrl,
         cmykFilename:
           deliverables.print_cmyk_images?.[idx]?.filename || `design_${idx + 1}_cmyk_300dpi.jpg`,

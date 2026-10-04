@@ -20,7 +20,7 @@ function assertPortAvailable(port) {
 }
 
 try {
-  await Promise.all([5173, 8766, 3001].map(assertPortAvailable));
+  await Promise.all([5173, 8766, 8770, 3001].map(assertPortAvailable));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
@@ -31,6 +31,7 @@ const lanAddresses = getLanIpv4Addresses(networkInterfaces());
 console.log("Development services are available at:");
 console.log("  Local UI:          http://127.0.0.1:5173/");
 console.log("  Local coordinator: http://127.0.0.1:8766/api/v1/health");
+console.log("  Review image bridge: http://127.0.0.1:8770/health");
 for (const address of lanAddresses) {
   if (isPublicHost) {
     console.log(`  LAN UI:            http://${address}:5173/`);

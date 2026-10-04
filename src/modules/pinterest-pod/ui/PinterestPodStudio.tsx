@@ -5,6 +5,7 @@ import { inferProductTypeFromNiche, packageDeliverablesForSeo, realPinterestPodC
 import { DEFAULT_PINTEREST_POD_SHOPIFY_SETTINGS } from "../types";
 import type {
   CandidateItem,
+  CrawlerClientSummary,
   DeliverablesData,
   JobDetailResponse,
   JobStatus,
@@ -21,7 +22,9 @@ import type {
   TrendDiscoveryResult,
   TrendingKeywordItem,
 } from "../types";
+import { AgentInstallModal } from "./components/AgentInstallModal";
 import { CandidateReviewGrid } from "./components/CandidateReviewGrid";
+import { CrawlerAgentsPanel } from "./components/CrawlerAgentsPanel";
 import { HeaderBar } from "./components/HeaderBar";
 import { ImageLightboxModal, type LightboxImageItem } from "./components/ImageLightboxModal";
 import { InitForm } from "./components/InitForm";
@@ -30,16 +33,19 @@ import { ProductionStep } from "./components/ProductionStep";
 import { ProgressAndLogs } from "./components/ProgressAndLogs";
 import { RecentRunsAccordion } from "./components/RecentRunsAccordion";
 import { RoomTemplateManagerModal } from "./components/RoomTemplateManagerModal";
+import { StepOneRunSummary } from "./components/StepOneRunSummary";
 import { TrendClusterDiscovery } from "./components/TrendClusterDiscovery";
 
 interface PinterestPodStudioProps {
   readonly client?: PinterestPodClient;
   readonly onHandoverToSeo?: (payload: PinterestPodDeliverables, serverViewModels?: readonly unknown[]) => Promise<void>;
+  readonly agentInstallServerUrl?: string;
 }
 
 export function PinterestPodStudio({
   client: injectedClient,
   onHandoverToSeo,
+  agentInstallServerUrl,
 }: PinterestPodStudioProps = {}): React.JSX.Element {
   const client = useMemo(() => injectedClient ?? realPinterestPodClient, [injectedClient]);
 
@@ -50,6 +56,32 @@ export function PinterestPodStudio({
   // Distributed Agent State
   const [isAgentConnected, setIsAgentConnected] = useState(false);
   const [agentName, setAgentName] = useState<string | undefined>(undefined);
+  const [isAgentBrowserLoggedIn, setIsAgentBrowserLoggedIn] = useState(false);
+  const [crawlerAgents, setCrawlerAgents] = useState<readonly CrawlerClientSummary[]>([]);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(true);
+
+  async function handleForgetAgent(agent: CrawlerClientSummary): Promise<void> {
+    if (!client.forgetCrawlerClient) return;
+    const shouldForget = window.confirm(
+      `Quên máy "${agent.displayName || agent.id}" khỏi danh sách? Dữ liệu lịch sử job vẫn được giữ.`,
+    );
+    if (!shouldForget) return;
+    try {
+      await client.forgetCrawlerClient(agent.id);
+      setCrawlerAgents((current) => current.filter((candidate) => candidate.id !== agent.id));
+      notifyUser({
+        title: "Crawler Agent",
+        message: "Đã quên máy Crawler Agent.",
+        type: "success",
+      });
+    } catch (error) {
+      notifyUser({
+        title: "Không thể quên máy",
+        message: error instanceof Error ? error.message : "Không thể quên máy Crawler Agent.",
+        type: "error",
+      });
+    }
+  }
 
   // Form State
   const [niche, setNiche] = useState("Halloween spooky cute");
@@ -97,6 +129,7 @@ export function PinterestPodStudio({
   const [previewImage, setPreviewImage] = useState<LightboxImageItem | null>(null);
   const [isRoomManagerOpen, setIsRoomManagerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isAgentInstallModalOpen, setIsAgentInstallModalOpen] = useState(false);
 
   // Shopify & Pricing settings (persisted across sessions)
   const [shopifySettings, setShopifySettings] = useState<PinterestPodShopifySettings>(() => {
@@ -154,11 +187,22 @@ export function PinterestPodStudio({
   }
 
   // Refs for scrolling to sections and lifecycle safety
+  const trendResultsRef = useRef<HTMLDivElement | null>(null);
   const stage2Ref = useRef<HTMLDivElement | null>(null);
   const stage3Ref = useRef<HTMLDivElement | null>(null);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMountedRef = useRef(true);
   const isPollingBusyRef = useRef(false);
+
+  useEffect(() => {
+    if (!trendDiscoveryResult) return undefined;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      trendResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [trendDiscoveryResult]);
 
   // Stop polling helper
   function stopPolling(): void {
@@ -429,23 +473,35 @@ export function PinterestPodStudio({
 
     async function checkAgentStatus(): Promise<void> {
       try {
-        if (!client.getCrawlerClients) return;
+        if (!client.getCrawlerClients) {
+          setIsLoadingAgents(false);
+          return;
+        }
         const clients = await client.getCrawlerClients();
         if (!isMountedRef.current) return;
-        const activeAgent = clients.find(
+        setCrawlerAgents(clients);
+        setIsLoadingAgents(false);
+        const compatibleAgents = clients.filter(
           (c) => c.isConnected && (!c.capabilities || c.capabilities.pinterest !== false),
         );
+        const activeAgent = compatibleAgents.find((candidate) =>
+          candidate.currentTasks?.some((task) => task.jobId === jobId),
+        ) ?? compatibleAgents.find((candidate) => (candidate.activeTasks ?? 0) > 0) ?? compatibleAgents[0];
         if (activeAgent) {
           setIsAgentConnected(true);
           setAgentName(activeAgent.displayName || activeAgent.id);
+          setIsAgentBrowserLoggedIn(activeAgent.capabilities?.pinterestBrowserLoggedIn === true);
         } else {
           setIsAgentConnected(false);
           setAgentName(undefined);
+          setIsAgentBrowserLoggedIn(false);
         }
       } catch {
         if (isMountedRef.current) {
+          setIsLoadingAgents(false);
           setIsAgentConnected(false);
           setAgentName(undefined);
+          setIsAgentBrowserLoggedIn(false);
         }
       }
     }
@@ -460,7 +516,7 @@ export function PinterestPodStudio({
         clearInterval(timer);
       }
     };
-  }, [client]);
+  }, [client, jobId]);
 
   async function refreshAuthStatus(): Promise<void> {
     try {
@@ -623,13 +679,13 @@ export function PinterestPodStudio({
   }
 
   // Trend Discovery Trigger (Tier 1 & 2)
-  async function handleDiscoverTrends(): Promise<void> {
+  async function handleDiscoverTrends(source: "pinterest_api" | "internal_suggestions" = "pinterest_api"): Promise<void> {
     if (!niche.trim()) return;
     setIsDiscoveringTrends(true);
     setErrorMessage(null);
     try {
       const effectiveProduct = product || (niche.trim() ? inferProductTypeFromNiche(niche) : "bag");
-      const result = await client.discoverTrends({
+      const discoveryInput = {
         niche: niche.trim(),
         product: effectiveProduct,
         trend_type: trendType,
@@ -638,7 +694,10 @@ export function PinterestPodStudio({
         regions: selectedRegions.length > 0 ? selectedRegions : undefined,
         trend_types: selectedTrendTypes.length > 0 ? selectedTrendTypes : undefined,
         interests: selectedInterests.length > 0 ? selectedInterests : (interest ? [interest] : undefined),
-      });
+      } as const;
+      const result = source === "pinterest_api"
+        ? await client.discoverTrends(discoveryInput)
+        : await client.suggestThemes(discoveryInput);
       if (!isMountedRef.current) return;
       setTrendDiscoveryResult(result);
       const recIds = new Set(result.clusters.filter((c) => c.recommended).map((c) => c.cluster_id || c.id || ""));
@@ -707,7 +766,7 @@ export function PinterestPodStudio({
       percent: 15,
       current_message:
         customQueries && customQueries.length > 0
-          ? `Đang cào dữ liệu cho ${customQueries.length} query mục tiêu theo cụm xu hướng...`
+          ? `Đang cào dữ liệu cho ${customQueries.length} query mục tiêu (${trendDiscoveryResult?.source === "pinterest_api" ? "Pinterest Trends chính thức" : "gợi ý nội bộ/thủ công"})...`
           : `Đang quét từ khóa và cào ảnh niche "${niche}"...`,
     });
 
@@ -734,6 +793,9 @@ export function PinterestPodStudio({
         region: region || undefined,
         selected_clusters: selectedClustersList,
         custom_queries: customQueries,
+        query_source: customQueries && customQueries.length > 0
+          ? (trendDiscoveryResult?.source ?? "manual")
+          : "manual",
       });
 
       setJobId(created.jobId);
@@ -1010,26 +1072,20 @@ export function PinterestPodStudio({
         onNewJob={handleNewJob}
         isAgentConnected={isAgentConnected}
         agentName={agentName}
+        isAgentBrowserLoggedIn={isAgentBrowserLoggedIn}
+        onOpenAgentInstall={() => setIsAgentInstallModalOpen(true)}
+      />
+
+      <CrawlerAgentsPanel
+        agents={crawlerAgents}
+        isLoading={isLoadingAgents}
+        onOpenInstall={() => setIsAgentInstallModalOpen(true)}
+        onForgetAgent={handleForgetAgent}
       />
 
       {/* TAB 1: Quét Trend & Khởi tạo Job */}
       {currentStage === 1 && (
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-          {/* Agent Offline Notice Banner */}
-          {!isAgentConnected && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-slate-700/80 bg-slate-800/40 p-3 text-xs text-slate-300">
-              <div className="flex items-center gap-2.5">
-                <span className="text-base">💻</span>
-                <div>
-                  <span className="font-semibold text-slate-200">Local Agent Ngoại Tuyến: </span>
-                  <span className="text-slate-400">
-                    Để thực thi cào Playwright và render CMYK 300DPI mà không gây tải/OOM cho VPS, hãy chạy lệnh{" "}
-                    <code className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-cyan-300">npm run dev:agent</code> trên máy cá nhân của bạn.
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
           {/* Active Job Alert Banner with Stop & Unlock */}
           {(jobStatus === "running" || jobStatus === "producing") && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-cyan-500/60 bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 p-4 text-xs shadow-lg">
@@ -1085,26 +1141,13 @@ export function PinterestPodStudio({
             </div>
           )}
 
-          {/* Trend & Keyword Discovery (Tier 1 & 2) Showcase */}
-          {trendDiscoveryResult && (
-            <TrendClusterDiscovery
-              discoveryResult={trendDiscoveryResult}
-              selectedClusterIds={selectedClusterIds}
-              onToggleCluster={handleToggleCluster}
-              onSelectAllClusters={handleSelectAllClusters}
-              onDeselectAllClusters={handleDeselectAllClusters}
-              onStartCrawlWithClusters={(clusters, restoredKws, customKws) =>
-                void handleStartCrawlWithClusters(clusters, restoredKws, customKws)
-              }
-              isCrawling={jobStatus === "running"}
-              onClose={() => setTrendDiscoveryResult(null)}
-            />
-          )}
-
           {/* 2-Columns Layout: Form (Left) & Progress/Logs (Right) */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-            {/* Left Column: Form Khởi Tạo & Lịch Sử Job */}
-            <div className="lg:col-span-6 flex flex-col gap-6">
+          <div
+            data-testid="pinterest-query-layout"
+            className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start"
+          >
+            {/* Left Column: one-time configuration */}
+            <div className="lg:col-span-7 flex flex-col gap-6">
               <InitForm
                 niche={niche}
                 onNicheChange={setNiche}
@@ -1129,31 +1172,71 @@ export function PinterestPodStudio({
                 onSelectedTrendTypesChange={setSelectedTrendTypes}
                 selectedInterests={selectedInterests}
                 onSelectedInterestsChange={setSelectedInterests}
-                onDiscoverTrends={() => void handleDiscoverTrends()}
+                onDiscoverTrends={() => void handleDiscoverTrends("pinterest_api")}
+                onSuggestThemes={() => void handleDiscoverTrends("internal_suggestions")}
+                canDiscoverOfficialTrends={authStatus?.oauth_valid === true}
                 isDiscoveringTrends={isDiscoveringTrends}
               />
 
-              <RecentRunsAccordion
-                recentRuns={recentRuns}
-                activeJobId={jobId}
-                onLoadJob={(targetId) => void handleLoadJob(targetId)}
-                onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
-                isLoading={isLoadingRecent}
-                onRefresh={() => void loadRecentRuns()}
-                onPreviewThumbnail={handlePreviewThumbnail}
-                onReuseNiche={handleReuseNiche}
-              />
             </div>
 
-            {/* Right Column: Tiến Độ & Live Logs */}
-            <div className="lg:col-span-6 flex flex-col gap-6">
+            {/* Right Column: configuration summary, progress and logs */}
+            <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-24">
+              <StepOneRunSummary
+                niche={niche}
+                product={product}
+                crawlCount={crawlCount}
+                referenceImageCount={referenceImages.length}
+                regionCount={selectedRegions.length || 1}
+                trendTypeCount={selectedTrendTypes.length || 1}
+                canDiscoverOfficialTrends={authStatus?.oauth_valid === true}
+                isAgentConnected={isAgentConnected}
+                isAgentBrowserLoggedIn={isAgentBrowserLoggedIn}
+              />
               <ProgressAndLogs
                 stepper={stepper}
                 logs={logs}
                 candidateCount={candidates.length}
+                agentName={agentName}
+                jobId={jobId}
               />
             </div>
           </div>
+          <div data-testid="pinterest-query-layout-end" />
+
+          <RecentRunsAccordion
+            recentRuns={recentRuns}
+            activeJobId={jobId}
+            onLoadJob={(targetId) => void handleLoadJob(targetId)}
+            onDeleteJob={(targetId) => void handleDeleteJob(targetId)}
+            isLoading={isLoadingRecent}
+            onRefresh={() => void loadRecentRuns()}
+            onPreviewThumbnail={handlePreviewThumbnail}
+            onReuseNiche={handleReuseNiche}
+          />
+
+          {/* Results stay after the active form so their insertion does not shift the user's viewport. */}
+          {trendDiscoveryResult && (
+            <div
+              ref={trendResultsRef}
+              data-testid="pinterest-trend-results"
+              aria-live="polite"
+              className="scroll-mt-24"
+            >
+              <TrendClusterDiscovery
+                discoveryResult={trendDiscoveryResult}
+                selectedClusterIds={selectedClusterIds}
+                onToggleCluster={handleToggleCluster}
+                onSelectAllClusters={handleSelectAllClusters}
+                onDeselectAllClusters={handleDeselectAllClusters}
+                onStartCrawlWithClusters={(clusters, restoredKws, customKws) =>
+                  void handleStartCrawlWithClusters(clusters, restoredKws, customKws)
+                }
+                isCrawling={jobStatus === "running"}
+                onClose={() => setTrendDiscoveryResult(null)}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1272,6 +1355,15 @@ export function PinterestPodStudio({
         client={client}
         isLoggingIn={isLoggingIn}
         onLaunchBrowserLogin={() => void handleLaunchLogin()}
+        isAgentConnected={isAgentConnected}
+        agentName={agentName}
+        isAgentBrowserLoggedIn={isAgentBrowserLoggedIn}
+      />
+
+      <AgentInstallModal
+        isOpen={isAgentInstallModalOpen}
+        onClose={() => setIsAgentInstallModalOpen(false)}
+        initialServerUrl={agentInstallServerUrl}
       />
     </div>
   );

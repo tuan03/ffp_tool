@@ -80,5 +80,10 @@ export function getDevelopmentProcessSpecs({
         "scripts/shopify-pipeline-worker.ts",
       ],
     },
+    {
+      name: "review-image-bridge",
+      command: pythonExecutable,
+      args: ["src/modules/review-image/server/api.py"],
+    },
   ];
 }

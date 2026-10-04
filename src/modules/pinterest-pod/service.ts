@@ -89,9 +89,9 @@ async function requestJson<T>(
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status} ${response.statusText}`;
       try {
-        const errorJson = (await response.json()) as { error?: string; message?: string };
-        if (errorJson.error || errorJson.message) {
-          errorMessage = errorJson.error ?? errorJson.message ?? errorMessage;
+        const errorJson = (await response.json()) as { detail?: string; error?: string; message?: string };
+        if (errorJson.detail || errorJson.error || errorJson.message) {
+          errorMessage = errorJson.detail ?? errorJson.error ?? errorJson.message ?? errorMessage;
         }
       } catch {
         const errorText = await response.text().catch(() => "");
@@ -210,6 +210,23 @@ export async function discoverTrends(
   );
 }
 
+/** Build internal POD theme suggestions. This endpoint never returns official trend metrics. */
+export async function suggestThemes(
+  input: TrendDiscoveryInput,
+  options?: { readonly baseUrl?: string; readonly signal?: AbortSignal },
+): Promise<TrendDiscoveryResult> {
+  return requestJson<TrendDiscoveryResult>(
+    "/api/pinterest-pod/trends/suggestions",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal: options?.signal,
+    },
+    "PINTEREST_POD_SUGGEST_THEMES_FAILED",
+    options?.baseUrl,
+  );
+}
+
 /** Rescue a candidate that was categorized as rejected */
 export async function rescueCandidate(
   jobId: string,
@@ -259,6 +276,7 @@ export async function startDiscoveryJob(
         ...(input.region ? { region: input.region } : {}),
         ...(input.selected_clusters ? { selected_clusters: input.selected_clusters } : {}),
         ...(input.custom_queries ? { custom_queries: input.custom_queries } : {}),
+        ...(input.query_source ? { query_source: input.query_source } : {}),
         candidatePoolSize: poolSize,
         task5_max_downloads: poolSize,
         top_images: poolSize,
@@ -853,9 +871,9 @@ async function fetchJson<T>(url: string, init?: RequestInit, errorCode = "PINTER
     if (!response.ok) {
       let errorMessage = `HTTP ${response.status} ${response.statusText}`;
       try {
-        const errorJson = (await response.json()) as { error?: string; message?: string };
-        if (errorJson.error || errorJson.message) {
-          errorMessage = errorJson.error ?? errorJson.message ?? errorMessage;
+        const errorJson = (await response.json()) as { detail?: string; error?: string; message?: string };
+        if (errorJson.detail || errorJson.error || errorJson.message) {
+          errorMessage = errorJson.detail ?? errorJson.error ?? errorJson.message ?? errorMessage;
         }
       } catch {
         // Fallback to HTTP status text
@@ -911,6 +929,17 @@ export class RealPinterestPodClient implements PinterestPodClient {
     );
   }
 
+  public async suggestThemes(input: TrendDiscoveryInput): Promise<TrendDiscoveryResult> {
+    return fetchJson<TrendDiscoveryResult>(
+      "/api/pinterest-pod/trends/suggestions",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+      "PINTEREST_SUGGEST_THEMES_FAILED",
+    );
+  }
+
   public async rescueCandidate(jobId: string, candidateId: string): Promise<{ readonly ok: boolean; readonly candidate: PodCandidate }> {
     return fetchJson<{ readonly ok: boolean; readonly candidate: PodCandidate }>(
       `/api/pinterest-pod/jobs/${encodeURIComponent(jobId)}/rescue`,
@@ -939,6 +968,7 @@ export class RealPinterestPodClient implements PinterestPodClient {
           ...(input.region ? { region: input.region } : {}),
           ...(input.selected_clusters ? { selected_clusters: input.selected_clusters } : {}),
           ...(input.custom_queries ? { custom_queries: input.custom_queries } : {}),
+          ...(input.query_source ? { query_source: input.query_source } : {}),
           candidatePoolSize: poolSize,
           task5_max_downloads: poolSize,
           top_images: poolSize,
@@ -1018,6 +1048,10 @@ export class RealPinterestPodClient implements PinterestPodClient {
   public async getCrawlerClients(): Promise<readonly CrawlerClientSummary[]> {
     return getCrawlerClients();
   }
+
+  public async forgetCrawlerClient(clientId: string): Promise<void> {
+    return forgetCrawlerClient(clientId);
+  }
 }
 
 /** Directly synchronize deliverables to Shopify store without SEO review redirect */
@@ -1046,6 +1080,15 @@ export async function getCrawlerClients(): Promise<readonly CrawlerClientSummary
   } catch {
     return [];
   }
+}
+
+/** Remove a disconnected crawler Agent registration from the Coordinator. */
+export async function forgetCrawlerClient(clientId: string): Promise<void> {
+  await fetchJson<unknown>(
+    `/api/v1/clients/${encodeURIComponent(clientId)}`,
+    { method: "DELETE" },
+    "CRAWLER_CLIENT_FORGET_FAILED",
+  );
 }
 
 /** Hand over final deliverables to the SEO Module */

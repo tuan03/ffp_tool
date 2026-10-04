@@ -19,6 +19,8 @@ interface HeaderBarProps {
   readonly onNewJob?: () => void;
   readonly isAgentConnected?: boolean;
   readonly agentName?: string;
+  readonly isAgentBrowserLoggedIn?: boolean;
+  readonly onOpenAgentInstall?: () => void;
 }
 
 export function HeaderBar({
@@ -38,8 +40,9 @@ export function HeaderBar({
   onNewJob,
   isAgentConnected = false,
   agentName,
+  isAgentBrowserLoggedIn = false,
+  onOpenAgentInstall,
 }: HeaderBarProps): React.JSX.Element {
-  const isLoggedIn = authStatus?.logged_in ?? false;
   const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -62,8 +65,20 @@ export function HeaderBar({
     };
   }, [isJobDropdownOpen]);
 
+  function handleCrawlerStatusClick(): void {
+    if (!isAgentConnected) {
+      onOpenAgentInstall?.();
+      return;
+    }
+    if (!isAgentBrowserLoggedIn) {
+      (onOpenAuthModal ?? onLaunchLogin)();
+      return;
+    }
+    onOpenAgentInstall?.();
+  }
+
   return (
-    <header className="flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
+    <header className="relative z-40 flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
       {/* 3 Stage Wizard Tabs */}
       <nav aria-label="Các giai đoạn quy trình" className="flex items-center gap-1.5 overflow-x-auto sm:gap-2">
         {/* Step 1 */}
@@ -279,85 +294,74 @@ export function HeaderBar({
         )}
       </div>
 
-      {/* Auth Status & Login Buttons */}
+      {/* Consolidated Pinterest API and crawler controls */}
       <div className="flex items-center gap-2">
-        {/* Distributed Local Agent Status Indicator */}
-        <div
-          title={
-            isAgentConnected
-              ? `Local Client Agent: Đang trực tuyến (${agentName || "Agent online"}) - Sẵn sàng thực thi cào Playwright & Render 300DPI`
-              : "Local Client Agent: Ngoại tuyến - Khởi chạy 'npm run dev:agent' trên máy cá nhân để thực thi nhiệm vụ phân tán"
-          }
-          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-            isAgentConnected
-              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
-              : "border-slate-700/60 bg-slate-800/60 text-slate-400"
-          }`}
-        >
-          <span className={`h-2 w-2 rounded-full ${isAgentConnected ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
-          <span className="font-semibold">{isAgentConnected ? "Agent Online" : "Agent Offline"}</span>
-        </div>
-
-        {/* OAuth API Status Indicator */}
-        <button
-          type="button"
-          onClick={onOpenAuthModal}
-          title={
-            authStatus?.oauth_valid
-              ? `API Token: Đã kết nối${authStatus?.token_info?.username ? ` (@${authStatus.token_info.username})` : ""} - Bấm để quản lý`
-              : "API Token: Chưa kết nối (Bắt buộc để quét Trends) - Bấm để kết nối"
-          }
-          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition hover:opacity-90 ${
-            authStatus?.oauth_valid
-              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
-              : "border-rose-700/50 bg-rose-950/60 text-rose-300 animate-pulse"
-          }`}
-        >
-          <span className={`h-2 w-2 rounded-full ${authStatus?.oauth_valid ? "bg-emerald-400" : "bg-rose-400"}`} />
-          <span>{authStatus?.oauth_valid ? "API Token OK" : "Thiếu Token API"}</span>
-        </button>
-
-        {/* Browser Profile Indicator */}
-        <button
-          type="button"
-          onClick={onOpenAuthModal}
-          title={
-            authStatus?.browser_logged_in
-              ? "Trình duyệt cào ảnh: Đã lưu session Playwright"
-              : "Trình duyệt cào ảnh: Chưa đăng nhập - Bấm để đăng nhập"
-          }
-          className={`hidden sm:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium cursor-pointer transition hover:opacity-90 ${
-            authStatus?.browser_logged_in
-              ? "border-cyan-700/50 bg-cyan-950/60 text-cyan-300"
-              : "border-slate-700/60 bg-slate-800/60 text-slate-400"
-          }`}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${authStatus?.browser_logged_in ? "bg-cyan-400" : "bg-slate-500"}`} />
-          <span>{authStatus?.browser_logged_in ? "Crawler OK" : "Crawler chưa login"}</span>
-        </button>
-
-        {/* Manage Auth Modal Trigger */}
         <button
           type="button"
           onClick={onOpenAuthModal ?? onLaunchLogin}
           disabled={isLoggingIn}
-          title="Mở bảng cấu hình xác thực Pinterest (1-Click OAuth, Token thủ công, Trình duyệt Playwright)"
-          className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 shadow transition hover:border-cyan-500 hover:bg-slate-700 hover:text-white cursor-pointer"
+          title={
+            authStatus?.oauth_valid
+              ? `Pinterest API đã kết nối${authStatus.token_info?.username ? ` (@${authStatus.token_info.username})` : ""}. Bấm để quản lý OAuth hoặc token.`
+              : "Pinterest API chưa kết nối. Bấm để cấu hình OAuth hoặc token."
+          }
+          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70 ${
+            authStatus?.oauth_valid
+              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
+              : "border-rose-700/50 bg-rose-950/60 text-rose-300"
+          }`}
         >
           {isLoggingIn ? (
-            <>
-              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              <span>Đang mở...</span>
-            </>
+            <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
           ) : (
-            <>
-              <span>🔑</span>
-              <span>Xác thực Pinterest</span>
-            </>
+            <span className={`h-2 w-2 rounded-full ${authStatus?.oauth_valid ? "bg-emerald-400" : "bg-rose-400"}`} />
           )}
+          <span>
+            {isLoggingIn
+              ? "Pinterest API · Đang mở..."
+              : authStatus?.oauth_valid
+                ? "Pinterest API · Sẵn sàng"
+                : "Pinterest API · Cần kết nối"}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleCrawlerStatusClick}
+          title={
+            !isAgentConnected
+              ? "Chưa có Crawler Agent online. Bấm để kết nối máy cào."
+              : isAgentBrowserLoggedIn
+                ? `Crawler ${agentName || "hiện tại"} đã sẵn sàng. Bấm để quản lý máy cào.`
+                : `Crawler ${agentName || "hiện tại"} chưa đăng nhập Pinterest browser. Bấm để đăng nhập.`
+          }
+          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:brightness-110 ${
+            isAgentConnected && isAgentBrowserLoggedIn
+              ? "border-cyan-700/50 bg-cyan-950/60 text-cyan-300"
+              : isAgentConnected
+                ? "border-amber-700/50 bg-amber-950/50 text-amber-300"
+                : "border-slate-700/60 bg-slate-800/60 text-slate-400"
+          }`}
+        >
+          <span
+            className={`h-2 w-2 rounded-full ${
+              isAgentConnected && isAgentBrowserLoggedIn
+                ? "bg-cyan-400"
+                : isAgentConnected
+                  ? "bg-amber-400"
+                  : "bg-slate-500"
+            }`}
+          />
+          <span>
+            {!isAgentConnected
+              ? "Crawler · Offline"
+              : isAgentBrowserLoggedIn
+                ? "Crawler · Online · Đã login"
+                : "Crawler · Online · Chưa login"}
+          </span>
         </button>
       </div>
     </header>

@@ -17,7 +17,10 @@ import urllib.request
 from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .distributed.image_profile_repository import ImageProfileRepository
 
 from PIL import Image, ImageEnhance, ImageOps
 
@@ -109,7 +112,8 @@ def normalize_profile(value: dict[str, Any] | None, slug: str | None = None) -> 
 
 
 class ImageProfileStore:
-    def __init__(self, root: Path, *, legacy_root: Path | None = None) -> None:
+    def __init__(self, root: Path, *, legacy_root: Path | None = None, repository: ImageProfileRepository | None = None) -> None:
+        self.repository = repository
         self.root = root
         self.profile_root = root / "profiles"
         self.logo_root = root / "logos"
@@ -119,6 +123,27 @@ class ImageProfileStore:
 
     def _profile_path(self, slug: str) -> Path:
         return self.profile_root / f"{_slug(slug)}.json"
+
+    def seed_shared(self, directory: Path) -> None:
+        """Install versioned defaults without overwriting operator-owned profiles."""
+        with self._lock:
+            for source in sorted(directory.glob("*.json")):
+                profile = normalize_profile(json.loads(source.read_text(encoding="utf-8")), source.stem)
+                slug = profile["slug"]
+                exists = self.repository.read(slug) is not None if self.repository else self._profile_path(slug).exists()
+                if exists:
+                    continue
+                logo = directory / "logos" / f"{slug}.png"
+                if logo.exists():
+                    content = logo.read_bytes()
+                    with Image.open(BytesIO(content)) as image:
+                        image.verify()
+                    target = self.logo_root / slug
+                    target.mkdir(parents=True, exist_ok=True)
+                    temporary = target / ".shared-logo.part"
+                    temporary.write_bytes(content)
+                    temporary.replace(target / "logo.png")
+                self.save(profile, slug)
 
     def _logo_path(self, slug: str) -> Path | None:
         directory = self.logo_root / _slug(slug)
@@ -130,12 +155,23 @@ class ImageProfileStore:
         revision_directory = self.revision_root / profile["slug"] / profile["revision"]
         revision_directory.mkdir(parents=True, exist_ok=True)
         config_path = revision_directory / "profile.json"
-        if not config_path.exists():
-            config_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Persist referenced bytes before making their metadata visible in PostgreSQL.
         if logo_path is not None and not any(path.name.startswith("logo") for path in revision_directory.iterdir()):
-            shutil.copyfile(logo_path, revision_directory / f"logo{logo_path.suffix.lower()}")
+            temporary_logo = revision_directory / f".logo{logo_path.suffix.lower()}.part"
+            shutil.copyfile(logo_path, temporary_logo)
+            temporary_logo.replace(revision_directory / f"logo{logo_path.suffix.lower()}")
+        if self.repository is not None:
+            self.repository.write(profile["slug"], profile, profile["revision"])
+        elif not config_path.exists():
+            config_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _migrate_legacy(self) -> None:
+        if self.repository is not None:
+            # Switching storage must not silently hide existing operator profiles.
+            for path in self.profile_root.glob("*.json"):
+                if self.repository.read(path.stem) is None:
+                    raise RuntimeError("Image profiles require explicit PostgreSQL import before startup.")
+            return
         if self.profile_root.exists() or self.legacy_root is None or not self.legacy_root.exists():
             return
         self.profile_root.mkdir(parents=True, exist_ok=True)
@@ -163,6 +199,11 @@ class ImageProfileStore:
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
             self._migrate_legacy()
+            if self.repository is not None:
+                if self.repository.read(DEFAULT_PROFILE_SLUG) is None:
+                    self.save(DEFAULT_CONFIG, DEFAULT_PROFILE_SLUG)
+                return [self.load(slug) for slug in self.repository.slugs()]
+            self._migrate_legacy()
             if not self._profile_path(DEFAULT_PROFILE_SLUG).exists():
                 self.save(DEFAULT_CONFIG, DEFAULT_PROFILE_SLUG)
             profiles = [self.load(path.stem) for path in sorted(self.profile_root.glob("*.json"))]
@@ -171,7 +212,10 @@ class ImageProfileStore:
     def load(self, slug: str) -> dict[str, Any]:
         self._migrate_legacy()
         path = self._profile_path(slug)
-        if not path.exists():
+        stored = self.repository.read(_slug(slug)) if self.repository is not None else None
+        if self.repository is not None and stored is not None:
+            profile = normalize_profile(stored, _slug(slug))
+        elif self.repository is not None or not path.exists():
             if _slug(slug) != DEFAULT_PROFILE_SLUG:
                 raise KeyError(f"Unknown image profile: {slug}")
             profile = normalize_profile(DEFAULT_CONFIG)
@@ -189,6 +233,11 @@ class ImageProfileStore:
     def load_revision(self, slug: str, revision: str) -> dict[str, Any]:
         if not re.fullmatch(r"[a-f0-9]{16}", revision):
             raise KeyError("Invalid image profile revision.")
+        if self.repository is not None:
+            profile = self.repository.read(_slug(slug), revision)
+            if profile is None:
+                raise KeyError(f"Image profile revision {revision} was not found.")
+            return profile
         path = self.revision_root / _slug(slug) / revision / "profile.json"
         if not path.exists():
             current = self.load(slug)
@@ -199,6 +248,9 @@ class ImageProfileStore:
 
     def save(self, value: dict[str, Any], slug: str | None = None) -> dict[str, Any]:
         profile = normalize_profile(value, slug)
+        if self.repository is not None:
+            self.repository.write(profile["slug"], profile)
+            return self.load(profile["slug"])
         self.profile_root.mkdir(parents=True, exist_ok=True)
         temp = self._profile_path(profile["slug"]).with_suffix(".tmp")
         temp.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -225,7 +277,10 @@ class ImageProfileStore:
         normalized = _slug(slug)
         if normalized == DEFAULT_PROFILE_SLUG:
             raise ValueError("The default image profile cannot be deleted.")
-        self._profile_path(normalized).unlink(missing_ok=True)
+        if self.repository is not None:
+            self.repository.delete(normalized)
+        else:
+            self._profile_path(normalized).unlink(missing_ok=True)
         shutil.rmtree(self.logo_root / normalized, ignore_errors=True)
 
     def logo_path(self, slug: str, revision: str | None = None) -> Path | None:
@@ -347,11 +402,11 @@ def _perceptual_hash_bytes(content: bytes) -> str:
 
 
 class ImageProcessingService:
-    def __init__(self, root: Path, *, workers: int = 4, cache_ttl_minutes: int = 60, legacy_profile_root: Path | None = None) -> None:
+    def __init__(self, root: Path, *, workers: int = 4, cache_ttl_minutes: int = 60, legacy_profile_root: Path | None = None, profile_repository: ImageProfileRepository | None = None) -> None:
         self.root = root
         self.cache_root = root / "cache"
         self.cache_root.mkdir(parents=True, exist_ok=True)
-        self.profiles = ImageProfileStore(root, legacy_root=legacy_profile_root)
+        self.profiles = ImageProfileStore(root, legacy_root=legacy_profile_root, repository=profile_repository)
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="image-processing")
         self.cache_ttl_seconds = max(1, cache_ttl_minutes) * 60
         self._locks: dict[str, threading.Lock] = {}

@@ -41,6 +41,7 @@ import {
   STOREFRONT_DISPLAY_STANDARD,
   syncPinterestPodToShopify,
   getCrawlerClients,
+  forgetCrawlerClient,
 } from "..";
 import type { JobDetailResponse, PodJobStatusResponse } from "../types";
 
@@ -550,6 +551,37 @@ test("Service polling handles timeout by throwing AppError with PINTEREST_POD_PO
         return true;
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("RealPinterestPodClient.suggestThemes uses the separate internal suggestions endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    calls.push(url);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        source: "internal_suggestions",
+        isOfficialTrendData: false,
+        niche: "leather bag",
+        clusters: [],
+        rejected_keywords: [],
+        total_keywords: 0,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const result = await realPinterestPodClient.suggestThemes({ niche: "leather bag" });
+    assert.equal(result.source, "internal_suggestions");
+    assert.equal(result.isOfficialTrendData, false);
+    assert.ok(calls[0].includes("/api/pinterest-pod/trends/suggestions"));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1201,6 +1233,8 @@ test("MockPinterestPodClient.discoverTrends returns theme clusters and rejected 
   });
 
   assert.equal(result.ok, true);
+  assert.equal(result.source, "pinterest_api");
+  assert.equal(result.isOfficialTrendData, true);
   assert.equal(result.niche, "vintage distressed rug");
   assert.ok(result.clusters.length >= 3);
   assert.ok(result.rejected_keywords.length > 0);
@@ -1226,6 +1260,8 @@ test("RealPinterestPodClient.discoverTrends posts to backend and parses result",
     return new Response(
       JSON.stringify({
         ok: true,
+        source: "pinterest_api",
+        isOfficialTrendData: true,
         niche: "gothic celestial tarot",
         product: "bag",
         trend_type: "seasonal",
@@ -1494,6 +1530,8 @@ test("Mock client getCrawlerClients returns connected crawler agents", async () 
   assert.ok(clients.length > 0);
   assert.equal(clients[0].isConnected, true);
   assert.equal(clients[0].capabilities?.pinterest, true);
+  assert.equal(clients[0].capabilities?.pinterestBrowserLoggedIn, true);
+  assert.equal(clients[0].currentTasks?.[0]?.niche, "leather bag");
 });
 
 test("Real client getCrawlerClients fetches from /api/v1/clients and handles errors gracefully", async () => {
@@ -1508,7 +1546,9 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
           id: "client_node_1",
           displayName: "Worker 1",
           isConnected: true,
-          capabilities: { pinterest: true },
+          activeTasks: 1,
+          capabilities: { pinterest: true, pinterestBrowserLoggedIn: true },
+          currentTasks: [{ taskId: "task_1", jobId: "job_1", niche: "leather bag", message: "Downloading", percent: 25 }],
         },
       ]),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -1519,6 +1559,7 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
     const clients = await realPinterestPodClient.getCrawlerClients();
     assert.equal(clients.length, 1);
     assert.equal(clients[0].id, "client_node_1");
+    assert.equal(clients[0].currentTasks?.[0]?.jobId, "job_1");
     assert.ok(calls[0].url.includes("/api/v1/clients"));
 
     // Test error fallback
@@ -1527,6 +1568,25 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
     };
     const emptyClients = await getCrawlerClients();
     assert.deepEqual(emptyClients, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("forgetCrawlerClient deletes the selected offline Agent registration", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; method?: string }[] = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    await forgetCrawlerClient("client with spaces");
+    assert.deepEqual(calls, [{ url: "/api/v1/clients/client%20with%20spaces", method: "DELETE" }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

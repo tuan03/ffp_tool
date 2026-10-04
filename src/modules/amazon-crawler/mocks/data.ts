@@ -1,4 +1,14 @@
-import type { AmazonCrawlerOutput, AmazonCrawlerProduct, AmazonCrawlerSettings, AmazonFinalVariant } from "../types";
+import type { AmazonCrawlerAgentRelease, AmazonCrawlerOutput, AmazonCrawlerProduct, AmazonCrawlerSettings, AmazonFinalVariant } from "../types";
+
+export const amazonCrawlerMockAgentRelease: AmazonCrawlerAgentRelease = {
+  version: "5.1.0",
+  downloadUrl: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe",
+  checksumUrl: "https://github.com/tuan03/ffp_tool/releases/download/agent-v5.1.0/FFP-Amazon-Crawler-Setup.exe.sha256",
+  releasePageUrl: "https://github.com/tuan03/ffp_tool/releases/tag/agent-v5.1.0",
+  fileName: "FFP-Amazon-Crawler-Setup.exe",
+  sizeBytes: 125_000_000,
+  publishedAt: "2026-09-29T00:00:00Z",
+};
 
 const MOCK_SETTINGS: AmazonCrawlerSettings = {
   profileSlug: "default",
@@ -85,6 +95,38 @@ const jeminiseMockProduct: AmazonCrawlerProduct = {
   variants: jeminiseMockVariants,
   splitContext: { attribute: "Design", value: "Floral", groupKey: "mock-jeminise", sourceAsins: ["B0MOCK3001"] },
   preset: "jeminise_bedding_v2",
+};
+
+const preauremMockProduct: AmazonCrawlerProduct = {
+  ...structuredClone(regularMockProduct),
+  id: "mock-preaurem",
+  asin: "B0MOCK4001",
+  parentAsin: "B0MOCK4001",
+  canonicalUrl: "https://www.amazon.com/dp/B0MOCK4001",
+  sourceTitle: "Personalized Tote Bag",
+  title: "Personalized Tote Bag",
+  sourceVariants: [{
+    ...structuredClone(regularMockProduct.sourceVariants[0]),
+    asin: "B0MOCK4001",
+    options: {},
+    price: { raw: "$20.00", amount: 20, currency: "USD" },
+  }],
+  variants: [
+    ["medium", 'Medium (11.4" W × 7.9" H × 4.7" D)', 3],
+    ["large", 'Large (13.8" W × 10.6" H × 5.5" D)', 4],
+    ["xlarge", 'X-Large (16.1" W × 13.4" H × 7.5" D)', 5],
+    ["4xlarge", '4X-Large (16.1" W × 13.4" H × 7.5" D)', 6],
+  ].map(([sizeCode, sizeLabel, surcharge]) => ({
+    id: `B0MOCK4001-${sizeCode}`,
+    sku: `B0MOCK4001-${sizeCode}`,
+    sourceAsin: "B0MOCK4001",
+    options: { Size: String(sizeLabel) },
+    price: { raw: `$${(20 + Number(surcharge)).toFixed(2)}`, amount: 20 + Number(surcharge), currency: "USD" },
+    surcharge: { raw: `$${Number(surcharge).toFixed(2)}`, amount: Number(surcharge), currency: "USD" },
+    metadata: { customization: true },
+  })),
+  splitContext: { attribute: null, value: null, groupKey: "mock-preaurem", sourceAsins: ["B0MOCK4001"] },
+  preset: null,
 };
 
 export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
@@ -199,9 +241,10 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
     },
     matrixMockProduct,
     jeminiseMockProduct,
+    preauremMockProduct,
   ],
   errors: [],
-  completedAsins: ["B0MOCK1001", "B0MOCK0002", "B0MOCK2002", "B0MOCK2003", "B0MOCK3001"],
+  completedAsins: ["B0MOCK1001", "B0MOCK0002", "B0MOCK2002", "B0MOCK2003", "B0MOCK3001", "B0MOCK4001"],
   failedAsins: [],
   retryableAsins: [],
   nonRetryableAsins: [],
@@ -210,9 +253,9 @@ export const amazonCrawlerMockOutput: AmazonCrawlerOutput = {
     requestedInputs: 1,
     acceptedInputs: 1,
     rejectedInputs: 0,
-    products: 4,
-    sourceVariants: 5,
-    finalVariants: 52,
+    products: 5,
+    sourceVariants: 6,
+    finalVariants: 56,
     durationMs: 1000,
   },
   exportFilename: "amazon-crawl-mock-amazon-job.json",

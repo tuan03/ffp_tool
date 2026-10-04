@@ -1,9 +1,10 @@
+import { amazonCrawlerMockAgentRelease } from "./mocks/data";
 import { clearMockAmazonCrawlerCache, createMockAmazonCrawlerJobLoader, runMockAmazonCrawler } from "./mocks/runner";
 import { crawlerMockMetrics } from "./mocks/observability";
-import { createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
+import { createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
-import type { AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
+import type { AmazonCrawlerAgentReleaseLoader, AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
 
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {
   return environment === "mock" ? runMockAmazonCrawler : createAmazonCrawlerRunner({ engineUrl });
@@ -11,8 +12,17 @@ export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: s
 
 export function getAmazonCrawlerClientsLoader(environment: AppEnvironment, engineUrl: string): AmazonCrawlerClientsLoader {
   return environment === "mock"
-    ? async () => [{ id: "mock-client", displayName: "Mock crawler", status: "online", isConnected: true, maxConcurrentInputs: 4, activeTasks: 0, leasedTasks: 0, availableSlots: 4, lastSeenAt: new Date(0).toISOString() }]
+    ? async () => [{ id: "mock-client", displayName: "Mock crawler", agentVersion: "5.0.0", status: "online", isConnected: true, maxConcurrentInputs: 4, activeTasks: 0, leasedTasks: 0, availableSlots: 4, lastSeenAt: new Date(0).toISOString() }]
     : createAmazonCrawlerClientsLoader({ engineUrl });
+}
+
+export function getAmazonCrawlerAgentReleaseLoader(
+  environment: AppEnvironment,
+  releaseApiUrl: string,
+): AmazonCrawlerAgentReleaseLoader {
+  return environment === "mock"
+    ? async () => structuredClone(amazonCrawlerMockAgentRelease)
+    : createAmazonCrawlerAgentReleaseLoader({ releaseApiUrl });
 }
 
 export function getAmazonCrawlerJobController(environment: AppEnvironment, engineUrl: string): AmazonCrawlerJobController {

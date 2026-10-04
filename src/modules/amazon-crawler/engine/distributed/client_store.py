@@ -400,6 +400,20 @@ class ClientStore:
             for row in rows
         ]
 
+    def upload_counts(self) -> dict[str, int]:
+        """Count the entire spool without decoding potentially large product payloads."""
+        with self._connection() as connection:
+            return {
+                "products": int(connection.execute("SELECT COUNT(*) FROM pending_products").fetchone()[0]),
+                "results": int(connection.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0]),
+            }
+
+    def dashboard_local_tasks(self) -> list[dict[str, Any]]:
+        """Small lease metadata used to reconcile the local dashboard at startup."""
+        with self._connection() as connection:
+            rows = connection.execute("SELECT payload_json, status FROM leases").fetchall()
+        return [{"assignment": json.loads(row["payload_json"]), "status": row["status"]} for row in rows]
+
     def spool_product(
         self,
         *,

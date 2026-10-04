@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
+import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
 import type { GptSeoJob, GptSeoSettings } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
@@ -118,8 +119,10 @@ if (env.GATEWAY_AUTH_TOKEN) {
 let storeId = env.GATEWAY_STORE_ID?.trim();
 process.env.SEO_CONFLICT_CORPUS_PATH = process.env.SEO_CONFLICT_CORPUS_PATH
   || (storeId ? `.runtime/seo-conflict-corpus-${storeId}.json` : ".runtime/seo-conflict-corpus.json");
-env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG || "config/amazon-crawler-profiles.json";
-process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
+if (env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG) {
+  env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG;
+  process.env.SHOPIFY_PROXY_CONFIG = env.SHOPIFY_PROXY_CONFIG;
+}
 const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
 const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 8)));
@@ -129,6 +132,7 @@ const proxyCooldownUntil = new Map<string, number>();
 const seoCorpusCommitCoordinator = new SeoCorpusCommitCoordinator();
 const AMAZON_METAFIELD_SCHEMA_VERSION = 2;
 let seoPersistence: PostgresSeoContentRuntime | undefined;
+let reviewImageWorker: AbortController | undefined;
 
 function getSeoPersistence(): PostgresSeoContentRuntime {
   if (!seoPersistence) throw new Error("SEO Content PostgreSQL runtime is not initialized");
@@ -1270,6 +1274,7 @@ async function waitForCoordinator(): Promise<void> {
 }
 
 async function stop(): Promise<void> {
+  reviewImageWorker?.abort();
   gatewayServer?.close();
   await seoPersistence?.close().catch((error: unknown) => {
     console.warn(`[Shopify pipeline] Failed to close SEO PostgreSQL pool: ${error instanceof Error ? error.message : String(error)}`);
@@ -1293,6 +1298,12 @@ async function main(): Promise<void> {
       port: gatewayPort,
       host: "127.0.0.1",
       authToken: env.GATEWAY_AUTH_TOKEN,
+    });
+  }
+  if (env.REVIEW_IMAGE_DURABLE_UPLOADS === "true") {
+    reviewImageWorker = startReviewImageUploadWorker({
+      coordinatorUrl, gatewayUrl, pipelineToken: pipelineToken || "", gatewayToken: env.GATEWAY_AUTH_TOKEN || "",
+      outputRoot: env.REVIEW_IMAGE_OUTPUT_DIR || ".runtime/review-image/outputs",
     });
   }
   if (!storeId || !baseStore) {

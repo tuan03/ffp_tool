@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "FFP Review Image Bridge",
+  "version": "1.4.0",
+  "minimum_chrome_version": "116",
+  "description": "Connects to FFP Review Studio and executes image tasks in your pinned ChatGPT tab.",
+  "optional_host_permissions": ["https://*/*"],
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://*.oaiusercontent.com/*",
+    "https://*.openai.com/*",
+    "http://127.0.0.1:8770/*",
+    "http://localhost:8770/*",
+    "ws://127.0.0.1:8770/*",
+    "ws://localhost:8770/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FFP Review Image Bridge"
+  }
+}

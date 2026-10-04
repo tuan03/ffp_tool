@@ -1,0 +1,25 @@
+{
+  "name": "chillgen_new",
+  "enabled": true,
+  "randomPixels": 100,
+  "pixelDelta": 3,
+  "jpegQuality": 92,
+  "output": {
+    "width": 1500,
+    "height": 1500,
+    "fit": "contain",
+    "upscale": true,
+    "background": "#ffffff"
+  },
+  "logo": {
+    "enabled": true,
+    "width": 70,
+    "height": 70,
+    "maxPercent": 15.0,
+    "percentBasis": "width",
+    "padding": 50,
+    "position": "bottom-right",
+    "opacity": 1
+  },
+  "slug": "image-profile-1786649833879"
+}

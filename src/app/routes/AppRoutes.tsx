@@ -1,13 +1,17 @@
 import { useMemo } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
-import { environment } from "../../config/environment";
+import { amazonCrawlerCoordinatorUrl, environment } from "../../config/environment";
+import { agentInstallServerUrl } from "../../config/agent-install-url";
 import { createSeoPerformanceRoutes, getSeoPerformanceClient } from "../../modules/seo-performance";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
+import { getReviewClient } from "../../modules/amazon-reviews";
+import type { ReviewShopifyAccess } from "../../modules/amazon-reviews";
 import type {
   AmazonCrawlerCacheClearer,
+  AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerJobController,
   AmazonCrawlerJobLoader,
@@ -37,10 +41,11 @@ import type {
 } from "../../modules/orchestrator";
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
-import { createProductCrawlerRoutes, getProductCrawlerClient } from "../../modules/product-crawler";
+import { createReviewImageClient } from "../../modules/review-image";
 import { getBrowserSeoContentRunner } from "../../modules/seo-content/browser";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
+import { ReviewStudioPage } from "../../pages/review-studio/ReviewStudioPage";
 import {
   adaptAutoSeoItemToViewModel,
   adaptPinterestPodItemToViewModel,
@@ -55,6 +60,7 @@ interface AppRoutesProps {
   amazonCrawlerReviews: AmazonCrawlerReviewClient;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerClients: AmazonCrawlerClientsLoader;
+  loadAmazonCrawlerAgentRelease: AmazonCrawlerAgentReleaseLoader;
   runAmazonCrawler: AmazonCrawlerRunner;
   retryAmazonCrawlerSyncs: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles: ImageProcessingProfileManager;
@@ -67,6 +73,7 @@ export function AppRoutes({
   amazonCrawlerReviews,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
+  loadAmazonCrawlerAgentRelease,
   loadAmazonCrawlerClients,
   loadAmazonCrawlerJob,
   retryAmazonCrawlerSyncs,
@@ -75,9 +82,22 @@ export function AppRoutes({
 }: AppRoutesProps): React.JSX.Element {
   const router = useMemo(() => {
     const podClient = getPinterestPodClient(environment);
-    const crawlerClient = getProductCrawlerClient(environment);
-    const crawlerRoutes = createProductCrawlerRoutes(crawlerClient);
     const moduleApiRunner = getModuleApiRunner(environment);
+    const reviewShopify: ReviewShopifyAccess = {
+      async listStores() {
+        const response = await moduleApiRunner({ operation: "stores.list", payload: {} });
+        return response.data.stores.map((store) => store.storeId);
+      },
+      async findProducts(storeId, query, cursor) {
+        const response = await moduleApiRunner({ storeId, operation: "products.list", payload: { query, cursor, limit: 50 } });
+        return {
+          products: response.data.products.map((product) => ({ id: product.id, title: product.title, handle: product.handle, status: product.status })),
+          nextCursor: response.data.pageInfo.hasNextPage ? response.data.pageInfo.endCursor : undefined,
+        };
+      },
+    };
+    const reviewClient = getReviewClient(environment, amazonCrawlerCoordinatorUrl);
+    const reviewImageClient = createReviewImageClient();
     const autoSeoClient =
       environment === "mock"
         ? getAutoSeoClient("mock")
@@ -151,7 +171,7 @@ export function AppRoutes({
       }
     };
 
-    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover);
+    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl);
 
     const handleAutoSeoHandover = async (
       shopifyProducts: readonly ShopifyProductForAutoSeoUi[],
@@ -507,6 +527,7 @@ export function AppRoutes({
       runAmazonCrawler,
       clearAmazonCrawlerCache,
       loadAmazonCrawlerClients,
+      loadAmazonCrawlerAgentRelease,
       undefined,
       retryAmazonCrawlerSyncs,
       imageProcessingProfiles,
@@ -522,11 +543,17 @@ export function AppRoutes({
             index: true,
             element: <Navigate to="/amazon-crawler" replace />,
           },
-          ...crawlerRoutes,
+          { path: "product-crawler", element: <Navigate to="/amazon-crawler" replace /> },
           ...distributedCrawlerRoutes,
           ...podRoutes,
           ...autoSeoRoutes,
           ...createCustomGptSeoRoutes(getCustomGptClient(environment)),
+          {
+            path: "review-studio",
+            element: <ReviewStudioPage reviewClient={reviewClient} reviewShopify={reviewShopify} imageClient={reviewImageClient} />,
+          },
+          { path: "amazon-reviews", element: <Navigate to="/review-studio" replace /> },
+          { path: "review-images", element: <Navigate to="/review-studio" replace /> },
           ...customizationRoutes,
           ...createSeoPerformanceRoutes(getSeoPerformanceClient(environment)),
           {
@@ -550,7 +577,7 @@ export function AppRoutes({
         ],
       },
     ]);
-  }, [amazonCrawlerJobs, amazonCrawlerReviews, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
+  }, [amazonCrawlerJobs, amazonCrawlerReviews, clearAmazonCrawlerCache, imageProcessingProfiles, loadAmazonCrawlerAgentRelease, loadAmazonCrawlerClients, loadAmazonCrawlerJob, retryAmazonCrawlerSyncs, runAmazonCrawler, runWorkflow]);
 
   return <RouterProvider router={router} />;
 }

@@ -20,6 +20,25 @@ _UNAVAILABLE_RE = re.compile(
     r"currently[-_\s]+unavailable|temporarily[-_\s]+unavailable|not[-_\s]+available|unavailable)\b",
     re.I,
 )
+_PREAUREM_SMALL_RE = re.compile(r"small", re.I)
+_PREAUREM_SIZE_LABELS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"(?<![A-Za-z0-9])4\s*x[\s-]*large(?![A-Za-z0-9])", re.I),
+        '4X-Large (16.1" W × 13.4" H × 7.5" D)',
+    ),
+    (
+        re.compile(r"(?<![A-Za-z0-9])x[\s-]*large(?![A-Za-z0-9])", re.I),
+        'X-Large (16.1" W × 13.4" H × 7.5" D)',
+    ),
+    (
+        re.compile(r"(?<![A-Za-z0-9])large(?![A-Za-z0-9])", re.I),
+        'Large (13.8" W × 10.6" H × 5.5" D)',
+    ),
+    (
+        re.compile(r"(?<![A-Za-z0-9])medium(?![A-Za-z0-9])", re.I),
+        'Medium (11.4" W × 7.9" H × 4.7" D)',
+    ),
+)
 
 
 def money(value: Any, default: Decimal = Decimal("0")) -> dict[str, Any]:
@@ -300,6 +319,51 @@ def _paid_groups(customization: dict[str, Any] | None) -> list[dict[str, Any]]:
         return pricing["paidOptionGroups"]
     legacy = customization.get("pricingGroups")
     return legacy if isinstance(legacy, list) else []
+
+
+def _canonical_preaurem_size_label(label: str) -> str | None:
+    for pattern, canonical_label in _PREAUREM_SIZE_LABELS:
+        if pattern.search(label):
+            return canonical_label
+    return None
+
+
+def apply_preaurem_size_profile(
+    customization: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    if customization is None:
+        return None, []
+    profiled = deepcopy(customization)
+    warnings: list[str] = []
+    for group in _paid_groups(profiled):
+        options = group.get("options")
+        if not isinstance(options, list):
+            continue
+        filtered_options: list[dict[str, Any]] = []
+        removed_small = False
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            label = str(option.get("label") or "")
+            if _PREAUREM_SMALL_RE.search(label):
+                removed_small = True
+                continue
+            canonical_label = _canonical_preaurem_size_label(label)
+            filtered_options.append({**option, "label": canonical_label or label})
+        group["options"] = filtered_options
+        available_option_ids = {str(option.get("id") or "") for option in filtered_options}
+        if str(group.get("defaultOptionId") or "") not in available_option_ids:
+            group["defaultOptionId"] = (
+                str(filtered_options[0].get("id") or "")
+                if group.get("required") and filtered_options
+                else ""
+            )
+        if removed_small and not filtered_options:
+            group_label = str(group.get("label") or "Size")
+            warnings.append(
+                f"Customization group '{group_label}' has no Preaurem size options after removing Small."
+            )
+    return profiled, warnings
 
 
 MAX_EXPANDED_VARIANTS = 100

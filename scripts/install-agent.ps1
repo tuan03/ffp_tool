@@ -1,140 +1,134 @@
-# ==============================================================================
-# FFP Tool - 1-Command Crawler Agent Installer (Windows PowerShell)
-# Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts\install-agent.ps1
-#   Or remote one-liner:
-#   irm https://ffp.b6-team.site/install-agent.ps1 | iex
-# ==============================================================================
-
+# Windows x64 release bootstrap. Trust pins must be supplied out-of-band by the operator.
+# Source-tree development installs use install-agent-source.ps1 instead.
 param(
-    [string]$ServerUrl = "https://ffp.b6-team.site",
+    [string]$ServerUrl = $env:FFP_SERVER_URL,
     [string]$DisplayName = $env:COMPUTERNAME,
-    [switch]$NoStart
+    [string[]]$TrustedSignerThumbprints = @($env:FFP_AGENT_TRUSTED_SIGNERS -split ','),
+    [string]$ManifestUrl = 'https://github.com/tuan03/ffp_tool/releases/latest/download/latest.json'
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
-Write-Host ""
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "       FFP CRAWLER AGENT - CAI DAT 1 LENH DUY NHAT        " -ForegroundColor Yellow
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host ""
-
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $ScriptDir -or $ScriptDir -eq "") {
-    $ScriptDir = (Get-Location).Path
-}
-
-# Resolve project / agent root directory
-$AgentRoot = $ScriptDir
-if (Test-Path (Join-Path $ScriptDir "..\src\modules\amazon-crawler")) {
-    $AgentRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
-}
-Set-Location $AgentRoot
-Write-Host "-> Thu muc cai dat: $AgentRoot" -ForegroundColor Gray
-
-# 1. Kiem tra Python
-Write-Host "[1/5] Kiem tra moi truong Python..." -ForegroundColor Green
-$PythonCmd = $null
-if (Get-Command "python" -ErrorAction SilentlyContinue) {
-    $ver = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-    if ($ver -and [version]$ver -ge [version]"3.10") {
-        $PythonCmd = "python"
-        Write-Host "  Found Python $ver (OK)" -ForegroundColor Gray
+function Assert-HttpsUri([string]$Value) {
+    $uri = [Uri]$Value
+    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne 'https' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
+        $uri.Host -match '(^localhost$|(^|\.)example\.(com|org|net)$)') {
+        throw 'A real HTTPS URL without credentials, query or fragment is required.'
     }
+    return $uri
 }
 
-if (-not $PythonCmd -and (Get-Command "python3" -ErrorAction SilentlyContinue)) {
-    $ver = python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-    if ($ver -and [version]$ver -ge [version]"3.10") {
-        $PythonCmd = "python3"
-        Write-Host "  Found Python3 $ver (OK)" -ForegroundColor Gray
+function Save-HttpsFile([Uri]$Uri, [string]$Destination, [long]$MaximumBytes) {
+    # Inspect every redirect before following it; never allow HTTPS -> HTTP.
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $handler.AllowAutoRedirect = $false
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromMinutes(10)
+    try {
+        for ($redirect = 0; $redirect -le 8; $redirect++) {
+            if ($Uri.Scheme -ne 'https') { throw 'Download redirect must use HTTPS.' }
+            $response = $client.GetAsync($Uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            try {
+                if ([int]$response.StatusCode -in @(301, 302, 303, 307, 308)) {
+                    $Uri = New-Object Uri($Uri, $response.Headers.Location)
+                    continue
+                }
+                $null = $response.EnsureSuccessStatusCode()
+                if ($response.Content.Headers.ContentLength -gt $MaximumBytes) { throw 'Download exceeds size limit.' }
+                $inputStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+                $outputStream = [IO.File]::Create($Destination)
+                try {
+                    $buffer = New-Object byte[] 65536
+                    [long]$total = 0
+                    while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                        $total += $count
+                        if ($total -gt $MaximumBytes) { throw 'Download exceeds size limit.' }
+                        $outputStream.Write($buffer, 0, $count)
+                    }
+                } finally { $outputStream.Dispose(); $inputStream.Dispose() }
+                return
+            } finally { $response.Dispose() }
+        }
+        throw 'Too many download redirects.'
+    } finally { $client.Dispose(); $handler.Dispose() }
+}
+
+if (-not $ServerUrl) { throw 'Set FFP_SERVER_URL or pass -ServerUrl with your public HTTPS domain.' }
+$ServerUrl = (Assert-HttpsUri $ServerUrl.Trim().TrimEnd('/')).AbsoluteUri.TrimEnd('/')
+$null = Assert-HttpsUri $ManifestUrl
+if ($DisplayName -match '[\x00-\x1f"]') { throw 'DisplayName contains unsupported control/quote characters.' }
+$pins = @($TrustedSignerThumbprints | ForEach-Object { $_.Trim().ToUpperInvariant() })
+if ($pins.Count -eq 0 -or @($pins | Where-Object { $_ -notmatch '^[A-F0-9]{40}$' }).Count -gt 0) {
+    throw 'Set FFP_AGENT_TRUSTED_SIGNERS to the approved Authenticode certificate thumbprint. Do not trust a pin supplied only by a downloaded manifest.'
+}
+if (-not [Environment]::Is64BitOperatingSystem) { throw 'The release installer requires Windows x64.' }
+Add-Type -AssemblyName System.Net.Http
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('ffp-agent-release-' + [Guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $temporaryRoot
+$manifestPath = Join-Path $temporaryRoot 'latest.json.part'
+$partPath = Join-Path $temporaryRoot 'installer.exe.part'
+$installerPath = Join-Path $temporaryRoot 'installer.exe'
+$reportPath = Join-Path $temporaryRoot 'identity.json'
+try {
+    Save-HttpsFile ([Uri]$ManifestUrl) $manifestPath 65536
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.version -notmatch '^\d+\.\d+\.\d+$' -or
+        $manifest.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or [long]$manifest.size -le 0 -or [long]$manifest.size -gt 4GB -or
+        $manifest.signerThumbprint.ToUpperInvariant() -notin $pins) { throw 'Invalid or untrusted release manifest.' }
+    $artifactUri = Assert-HttpsUri $manifest.url
+    $expectedPath = '/tuan03/ffp_tool/releases/download/agent-v' + $manifest.version + '/FFP-Amazon-Crawler-Setup-' + $manifest.version + '.exe'
+    if ($artifactUri.Host -ne 'github.com' -or $artifactUri.AbsolutePath -ne $expectedPath) { throw 'Installer must come from the approved GitHub release.' }
+    Save-HttpsFile $artifactUri $partPath ([long]$manifest.size)
+    if ((Get-Item -LiteralPath $partPath).Length -ne [long]$manifest.size -or
+        (Get-FileHash -LiteralPath $partPath -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'Installer size or SHA-256 mismatch.' }
+    # Authenticode uses the file extension to select a SIP provider.
+    Move-Item -LiteralPath $partPath -Destination $installerPath
+    $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+    if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or
+        $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $manifest.signerThumbprint.ToUpperInvariant()) {
+        throw 'Installer signature is invalid or belongs to another signer.'
     }
-}
-
-if (-not $PythonCmd) {
-    Write-Host "  Khong tim thay Python >= 3.10! Dang thu cai dat tu dong qua winget..." -ForegroundColor Yellow
-    if (Get-Command "winget" -ErrorAction SilentlyContinue) {
-        Write-Host "  Dang chay winget install Python.Python.3.11..." -ForegroundColor Gray
-        winget install -e --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-        $PythonCmd = "python"
-    } else {
-        Write-Host "  LOI: Vui long cai dat Python 3.10 hoac 3.11 tu https://www.python.org/downloads/ va tick chon 'Add Python to PATH'." -ForegroundColor Red
-        exit 1
+    $healthPath = Join-Path $temporaryRoot 'health.json'
+    Save-HttpsFile ([Uri]"$ServerUrl/api/v1/health") $healthPath 65536
+    $health = Get-Content -LiteralPath $healthPath -Raw | ConvertFrom-Json
+    if ([int]$health.protocolVersion -lt [int]$manifest.minimumProtocolVersion) { throw 'Coordinator protocol is too old for this installer.' }
+    if ([version]$health.serverVersion -lt [version]$manifest.minimumServerVersion) { throw 'Coordinator version is too old for this installer.' }
+    $installDirectory = Join-Path $env:ProgramFiles 'FFP Amazon Crawler'
+    $executable = Join-Path $installDirectory 'FFPAmazonCrawlerAgent.exe'
+    if (Test-Path -LiteralPath $executable) {
+        throw 'An installed agent already exists. Automatic upgrade is blocked until the signed rollback flow has passed acceptance; your installation was not changed.'
     }
-}
-
-# 2. Tao Virtual Environment
-$VenvDir = Join-Path $AgentRoot ".venv"
-$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-Write-Host "[2/5] Thiet lap moi truong ao (.venv)..." -ForegroundColor Green
-if (-not (Test-Path $VenvPython)) {
-    Write-Host "  Dang tao .venv moi..." -ForegroundColor Gray
-    & $PythonCmd -m venv $VenvDir
-} else {
-    Write-Host "  .venv da ton tai, su dung san co." -ForegroundColor Gray
-}
-
-# 3. Cai dat dependencies
-Write-Host "[3/5] Dang cai dat thu vien phan mem can thiet..." -ForegroundColor Green
-& $VenvPython -m pip install --disable-pip-version-check --upgrade pip | Out-Null
-
-$ReqPath = Join-Path $AgentRoot "src\modules\amazon-crawler\engine\requirements.txt"
-if (Test-Path $ReqPath) {
-    & $VenvPython -m pip install -r $ReqPath
-} else {
-    & $VenvPython -m pip install "playwright>=1.50,<2" "fastapi==0.116.1" "uvicorn[standard]==0.35.0" "beautifulsoup4>=4.12,<5" "python-dotenv>=1,<2" "websockets>=15,<16" "pillow>=11,<12" "pystray>=0.19,<1" "httpx>=0.27.0" "numpy>=1.26,<3" "requests>=2.31,<3"
-}
-
-# 4. Cai dat Playwright Browser (Chromium)
-Write-Host "[4/5] Cai dat trinh duyet Chromium cho crawler..." -ForegroundColor Green
-& $VenvPython -m playwright install chromium
-
-# 5. Cau hinh Agent
-Write-Host "[5/5] Khoi tao cau hinh agent.json..." -ForegroundColor Green
-$ConfigDir = Join-Path $AgentRoot "config"
-New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-$ConfigFile = Join-Path $ConfigDir "amazon-crawler-agent.json"
-
-if (-not (Test-Path $ConfigFile)) {
-    $DefaultConfig = @{
-        serverUrl = $ServerUrl
-        displayName = "$DisplayName"
-        dataDirectory = ".runtime/agent-data"
-        heartbeatIntervalSeconds = 10
-    } | ConvertTo-Json -Depth 4
-    Set-Content -Path $ConfigFile -Value $DefaultConfig -Encoding UTF8
-    Write-Host "  Tao file cau hinh: $ConfigFile" -ForegroundColor Gray
-} else {
-    Write-Host "  File cau hinh da ton tai, giu nguyen: $ConfigFile" -ForegroundColor Gray
-}
-
-# Tao launcher chay nhanh
-$BatLauncher = Join-Path $AgentRoot "chay-agent.bat"
-$BatContent = @"
-@echo off
-title FFP Crawler Agent
-cd /d "%~dp0"
-echo ===================================================
-echo     DANG KHOI CHAY FFP CRAWLER AGENT
-echo ===================================================
-call .venv\Scripts\activate.bat
-python scripts\amazon-crawler-agent.py --project-root .
-pause
-"@
-Set-Content -Path $BatLauncher -Value $BatContent -Encoding ASCII
-Write-Host "  Tao file chay nhanh: chay-agent.bat" -ForegroundColor Gray
-
-Write-Host ""
-Write-Host "==========================================================" -ForegroundColor Green
-Write-Host " CAI DAT HOAN TAT THANH CONG!                             " -ForegroundColor Green
-Write-Host " Server: $ServerUrl                                       " -ForegroundColor Cyan
-Write-Host " Chay lai bat cu luc nao bang: chay-agent.bat             " -ForegroundColor Yellow
-Write-Host "==========================================================" -ForegroundColor Green
-Write-Host ""
-
-if (-not $NoStart) {
-    Write-Host "Dang khoi chay Crawler Agent..." -ForegroundColor Cyan
-    & $VenvPython (Join-Path $AgentRoot "scripts\amazon-crawler-agent.py") --project-root $AgentRoot
+    $configDirectory = Join-Path $env:PROGRAMDATA 'FFP Amazon Crawler'
+    $configPath = Join-Path $configDirectory 'agent.json'
+    $null = New-Item -ItemType Directory -Force -Path $configDirectory
+    if (-not (Test-Path -LiteralPath $configPath)) {
+        @{ serverUrl = $ServerUrl; displayName = $DisplayName; maxConcurrentInputs = 4 } |
+            ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+    }
+    $setup = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/SERVERURL=`"$ServerUrl`"", "/DISPLAYNAME=`"$DisplayName`"") -WindowStyle Hidden -Wait -PassThru
+    if ($setup.ExitCode -ne 0) { throw "Installer failed with exit code $($setup.ExitCode). Existing data was preserved." }
+    $check = Start-Process -FilePath $executable -ArgumentList @('--check-config', "--config `"$configPath`"", "--installation-report `"$reportPath`"") -WindowStyle Hidden -Wait -PassThru
+    if ($check.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $reportPath)) { throw 'Packaged agent configuration check failed.' }
+    $identity = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+    if ($identity.serverUrl.TrimEnd('/') -ne $ServerUrl) { throw 'Existing configuration targets another server. It was preserved; review it before starting.' }
+    $null = Start-Process -FilePath $executable -ArgumentList @('--start-minimized', "--config `"$configPath`"") -WindowStyle Hidden
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    $clientsPath = Join-Path $temporaryRoot 'clients.json'
+    do {
+        Save-HttpsFile ([Uri]"$ServerUrl/api/v1/clients") $clientsPath 4MB
+        $clients = Get-Content -LiteralPath $clientsPath -Raw | ConvertFrom-Json
+        $online = @($clients | Where-Object { $_.id -eq $identity.clientId -and $_.isConnected -and $_.status -in @('online', 'busy', 'waiting_captcha') })
+        if ($online.Count -gt 0) { Write-Host 'Agent installed and confirmed online.'; return }
+        Start-Sleep -Seconds 2
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Agent did not appear online within 90 seconds. Check the dashboard, HTTPS/WebSocket routing and firewall. Data has been preserved.'
+} finally {
+    # Delete only our explicit temporary files, never an install/data directory.
+    foreach ($name in @('latest.json.part', 'installer.exe.part', 'installer.exe', 'identity.json', 'health.json', 'clients.json')) {
+        $path = Join-Path $temporaryRoot $name
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+    }
+    Remove-Item -LiteralPath $temporaryRoot
 }

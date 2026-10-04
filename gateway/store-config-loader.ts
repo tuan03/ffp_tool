@@ -446,7 +446,9 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
   const baseStores = Array.from(storesByStoreId.values());
   // Legacy fallback: AMAZON_CRAWLER_PROXY_CONFIG is deprecated; prefer SHOPIFY_PROXY_CONFIG.
   const rawProxyConfigPath = env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG;
-  const proxyConfigPath = rawProxyConfigPath ? resolve(cwd, rawProxyConfigPath) : undefined;
+  const proxyConfigPath = rawProxyConfigPath ? resolve(cwd, rawProxyConfigPath)
+    : resolve(cwd, existsSync(resolve(cwd, "config/amazon-crawler-profiles.json"))
+      ? "config/amazon-crawler-profiles.json" : "config/amazon-crawler-profiles.shared.json");
   if (proxyConfigPath && existsSync(proxyConfigPath)) {
     try {
       const parsed = JSON.parse(readFileSync(proxyConfigPath, "utf-8")) as unknown;
@@ -460,7 +462,17 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
         const proxyRecord = profileRecord.proxy && typeof profileRecord.proxy === "object"
           ? profileRecord.proxy as Record<string, unknown>
           : undefined;
-        const server = typeof proxyRecord?.server === "string" ? proxyRecord.server.trim() : "";
+        const resolvedProxy = { ...proxyRecord };
+        let missingEnvironment = false;
+        for (const field of ["server", "username", "password"] as const) {
+          const reference = proxyRecord?.[`${field}Env`];
+          if (typeof reference === "string") {
+            resolvedProxy[field] = env[reference];
+            if (!env[reference]) missingEnvironment = true;
+          }
+        }
+        if (missingEnvironment) continue;
+        const server = typeof resolvedProxy.server === "string" ? resolvedProxy.server.trim() : "";
         if (!server) continue;
         const safeProfileName = profileRecord.name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-");
         if (!safeProfileName) continue;
@@ -471,8 +483,8 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
             throttleGroupId: store.throttleGroupId ?? store.storeId,
             proxy: {
               url: server,
-              username: typeof proxyRecord?.username === "string" ? proxyRecord.username : undefined,
-              password: typeof proxyRecord?.password === "string" ? proxyRecord.password : undefined,
+              username: typeof resolvedProxy.username === "string" ? resolvedProxy.username : undefined,
+              password: typeof resolvedProxy.password === "string" ? resolvedProxy.password : undefined,
               failClosed: true,
             },
           });
