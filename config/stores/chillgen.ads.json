@@ -1,0 +1,57 @@
+{
+  "storeId": "chillgen",
+  "mode": "read_only",
+  "marketCountries": ["US"],
+  "reportingCurrency": "USD",
+  "meta": {
+    "accountIds": ["act_1010295448281555"],
+    "accountTimezone": "America/Los_Angeles",
+    "apiVersion": "v26.0",
+    "purchaseActionType": "offsite_conversion.fb_pixel_purchase",
+    "secretRef": "META_ACCESS_TOKEN",
+    "proxyRef": "META_PROXY_URL",
+    "attributionPolicyRef": "7d_click_1d_view"
+  },
+  "ga4": {
+    "propertyId": "555699138",
+    "propertyTimezone": "America/Los_Angeles",
+    "credentialRef": "credentials/chillgen-service-account.json"
+  },
+  "shopify": {
+    "shopDomain": "chillgen.myshopify.com",
+    "apiVersion": "2026-07",
+    "connectionRef": "shopify_chillgen"
+  },
+  "competitors": {
+    "primaryProvider": "scrapecreators",
+    "backupProvider": "searchapi",
+    "monthlyCostCapUsd": 65.0,
+    "watchlist": [
+      "100064829182341",
+      "100083124589211",
+      "100091284751029"
+    ]
+  },
+  "business": {
+    "costProfileRef": "chillgen-rugs-standard-v1",
+    "targetCpa": 18.0,
+    "targetContributionPerOrder": 6.0,
+    "breakEvenRoas": 2.5,
+    "breakEvenCpa": 24.0
+  },
+  "rules": {
+    "policyVersion": "2.0",
+    "maturityDays": 7,
+    "allowFinancialRecommendations": true
+  },
+  "budgets": {
+    "totalDailyAuthorizedCap": 100.0,
+    "experimentAuthorizedCap": 20.0,
+    "maxChangePer24hPct": 20.0,
+    "cooldownHours": 24
+  },
+  "actions": {
+    "externalWritesEnabled": false,
+    "approvalRequired": true
+  }
+}
