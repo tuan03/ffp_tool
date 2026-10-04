@@ -1098,3 +1098,7 @@ export class AdsIntelligenceService {
 
 export const adsIntelligenceService = new AdsIntelligenceService();
 
+export function getAdsIntelligenceService(): AdsIntelligenceService {
+  return adsIntelligenceService;
+}
+

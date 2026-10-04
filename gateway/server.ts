@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
-import { handleAdsIntelligenceHttpRequest } from "./ads-intelligence";
+import { handleAdsIntelligenceHttpRequest, handleAdsMcpHttpRequest } from "./ads-intelligence";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -179,6 +179,10 @@ export function startGatewayServer(
         return;
       }
       await getCustomGptRuntime().mcpHandler(req, res);
+      return;
+    }
+    if (url === "/mcp/ads" || url === "/mcp/ads-intelligence" || url.startsWith("/mcp/ads?") || url.startsWith("/mcp/ads-intelligence?")) {
+      await handleAdsMcpHttpRequest(req, res);
       return;
     }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {

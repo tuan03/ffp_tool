@@ -54,6 +54,8 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [experimentsSubTab, setExperimentsSubTab] = useState<"ledger" | "briefs">("ledger");
   const [isGeneratingBrief, setIsGeneratingBrief] = useState(false);
   const [actionNotification, setActionNotification] = useState<string | null>(null);
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [copiedMcpText, setCopiedMcpText] = useState<string | null>(null);
 
   // Experiment Review Modal State
   const [reviewingExperiment, setReviewingExperiment] = useState<AdsExperiment | null>(null);
@@ -337,6 +339,15 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
             <option value="jeminise">Jemine / Jeminise (jeminise.com)</option>
             <option value="wrydeco">Wrydeco (wrydeco.myshopify.com)</option>
           </select>
+
+          <button
+            onClick={() => setShowMcpModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-purple-500/60 bg-gradient-to-r from-purple-950 to-indigo-950 px-3 py-1.5 text-xs font-semibold text-purple-200 hover:border-purple-400 hover:text-white hover:shadow-md hover:shadow-purple-500/20 active:scale-95 transition-all cursor-pointer"
+            title="Xem thông số kết nối Model Context Protocol (MCP) và Custom GPT Actions"
+          >
+            <span>🤖</span>
+            <span>Codex &amp; MCP</span>
+          </button>
 
           <button
             onClick={handleSync}
@@ -2553,6 +2564,150 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
                 <span className="text-slate-400">API Scope</span>
                 <span className="font-mono text-slate-300">analytics.readonly</span>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Codex & MCP Integration Modal */}
+      {showMcpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full p-6 space-y-6 shadow-2xl relative my-8">
+            <button
+              onClick={() => setShowMcpModal(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-slate-100 text-lg cursor-pointer"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-950 border border-purple-500/50 text-xl shadow-lg shadow-purple-500/20">
+                🤖
+              </span>
+              <div>
+                <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                  Codex &amp; Custom GPT Integration
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800">
+                    Step 16 &amp; 17 Live
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Kết nối AI Agents qua Model Context Protocol (Streamable HTTP) và OpenAI Custom GPT Actions
+                </p>
+              </div>
+            </div>
+
+            {/* Endpoints */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🔌</span> MCP Streamable HTTP
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-mono">
+                    StreamableHTTP
+                  </span>
+                </div>
+                <div className="font-mono text-xs bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 text-purple-200 break-all select-all flex items-center justify-between">
+                  <span>http://localhost:3001/mcp/ads</span>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText("http://localhost:3001/mcp/ads");
+                      setCopiedMcpText("mcp");
+                      setTimeout(() => setCopiedMcpText(null), 3000);
+                    }}
+                    className="ml-2 px-2 py-1 rounded bg-purple-900/60 hover:bg-purple-800 text-[10px] text-purple-200 transition-colors cursor-pointer"
+                  >
+                    {copiedMcpText === "mcp" ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Dành cho Claude Desktop, Codex CLI, hoặc bất kỳ MCP Client nào hỗ trợ Streamable HTTP transport.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🌐</span> Custom GPT OpenAPI Spec
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
+                    OpenAPI 3.1.0
+                  </span>
+                </div>
+                <div className="font-mono text-xs bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 text-cyan-200 break-all select-all flex items-center justify-between">
+                  <span>http://localhost:3001/api/ads-intelligence/openapi.json</span>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText("http://localhost:3001/api/ads-intelligence/openapi.json");
+                      setCopiedMcpText("openapi");
+                      setTimeout(() => setCopiedMcpText(null), 3000);
+                    }}
+                    className="ml-2 px-2 py-1 rounded bg-cyan-900/60 hover:bg-cyan-800 text-[10px] text-cyan-200 transition-colors cursor-pointer"
+                  >
+                    {copiedMcpText === "openapi" ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Nhập trực tiếp URL này vào ô Custom GPT Actions trong ChatGPT Builder để tích hợp đầy đủ 16 endpoints.
+                </p>
+              </div>
+            </div>
+
+            {/* MCP Tool Catalog */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <span>🧰</span> Danh mục 10 Tools chuẩn quốc tế (Hỗ trợ 20 tên: ads_* &amp; ffp_*)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {[
+                  { name: "ads_get_store_overview", alias: "ffp_get_store_context", type: "READ_ONLY", desc: "Đọc economics, targets, guardrails và overview" },
+                  { name: "ads_get_data_health", alias: "ffp_get_data_health", type: "READ_ONLY", desc: "Kiểm tra sync, độ chín dữ liệu & blocked decisions" },
+                  { name: "ads_query_performance", alias: "ffp_query_performance", type: "READ_ONLY", desc: "Truy vấn số liệu ở grain account, campaign, adset, ad" },
+                  { name: "ads_get_funnel_evidence", alias: "ffp_get_funnel_evidence", type: "READ_ONLY", desc: "Đối chiếu ba chiều Meta vs GA4 vs Shopify" },
+                  { name: "ads_get_decision_cards", alias: "ffp_get_decision_cards", type: "READ_ONLY", desc: "Nhận thẻ quyết định tổng hợp từ 6 luật nghiệp vụ" },
+                  { name: "ads_get_competitor_creative_gaps", alias: "ffp_get_creative_gaps", type: "READ_ONLY", desc: "Quét thư viện đối thủ >30 ngày và lỗ hổng sáng tạo" },
+                  { name: "ads_get_experiments", alias: "ffp_get_experiments", type: "READ_ONLY", desc: "Đọc sổ cái thử nghiệm quan sát, confounders & learnings" },
+                  { name: "ads_generate_brief", alias: "ffp_generate_brief", type: "SAFE_WRITE", desc: "Tạo Creative Brief 12 mục chuẩn quốc tế kèm storyboard" },
+                  { name: "ads_create_experiment", alias: "ffp_create_experiment", type: "SAFE_WRITE", desc: "Đăng ký thử nghiệm quan sát từ brief đã duyệt" },
+                  { name: "ads_get_evidence", alias: "ffp_get_evidence", type: "READ_ONLY", desc: "Kiểm tra snapshot bằng chứng bất biến cho kiểm toán" },
+                ].map((tool) => (
+                  <div key={tool.name} className="p-2.5 rounded-lg border border-slate-800 bg-slate-950/40 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-slate-200 text-[11px]">{tool.name}</span>
+                      <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono ${
+                        tool.type === "READ_ONLY" ? "bg-blue-950 text-blue-300 border border-blue-800" : "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                      }`}>
+                        {tool.type}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400">{tool.desc}</div>
+                    <div className="text-[9px] text-purple-400 font-mono">Alias: {tool.alias}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Operational Guardrails */}
+            <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4 space-y-2 text-xs">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                <span>🛡️</span> Nguyên tắc an toàn bất khả xâm phạm cho Codex &amp; AI Agents (DoD Step 16 &amp; 17):
+              </div>
+              <ul className="list-disc list-inside text-slate-300 space-y-1 text-[11px]">
+                <li><strong className="text-amber-200">Quan sát (OBSERVATIONAL):</strong> Meta tự động phân phối ngân sách theo thời gian thực; không ngộ nhận tương quan thành nhân quả thuần túy. Luôn ghi nhận confounders.</li>
+                <li><strong className="text-amber-200">Cổng độ chín dữ liệu (Maturity Gate):</strong> Tuyệt đối từ chối khuyến nghị tăng ngân sách khi dữ liệu còn PROVISIONAL (&lt;7 ngày).</li>
+                <li><strong className="text-amber-200">Kill Criteria phái sinh từ Target CPA:</strong> Ngắt quảng cáo khi chi tiêu vượt 2x Target CPA ($50 cho Chillgen) với 0 lượt mua, hoặc CTR &lt; 1.0% sau 2,000 lượt hiển thị.</li>
+                <li><strong className="text-amber-200">Chống đạo nhái (Anti-Plagiarism):</strong> Mọi brief tham khảo từ đối thủ phải nêu rõ khác biệt sáng tạo và sản phẩm thực tế, không copy nguyên bản.</li>
+              </ul>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowMcpModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition-colors cursor-pointer"
+              >
+                Đóng
+              </button>
             </div>
           </div>
         </div>

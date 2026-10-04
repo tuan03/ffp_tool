@@ -6,6 +6,7 @@ import type http from "node:http";
 import { adsIntelligenceService } from "./service";
 import { adsIntelligenceCache } from "./cache";
 import { formatBriefMarkdown } from "./brief-generator";
+import { generateAdsOpenApiSpec } from "./openapi-spec";
 import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStatus, AdsExperiment, CreativeBrief } from "./types";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
@@ -64,6 +65,31 @@ export async function handleAdsIntelligenceHttpRequest(
   const forceRefresh = parsedUrl.searchParams.get("refresh") === "true";
 
   try {
+    if ((pathname === "/api/ads-intelligence/openapi.json" || pathname === "/api/ads-intelligence/openapi") && req.method === "GET") {
+      const host = req.headers.host || "localhost:3001";
+      const protocol = req.headers["x-forwarded-proto"] || "http";
+      const baseUrl = `${protocol}://${host}`;
+      const spec = generateAdsOpenApiSpec(baseUrl);
+      sendJson(res, 200, spec);
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/mcp/info" && req.method === "GET") {
+      sendJson(res, 200, {
+        status: "ok",
+        server: "ffp-ads-intelligence",
+        version: "1.0.0",
+        transport: "StreamableHTTP",
+        description: "FFP Ads Intelligence MCP Server exposing performance, creative gaps, brief studio, and experiment ledger tools for Codex & AI agents.",
+        endpoints: {
+          mcpStreamableHttp: "/mcp/ads",
+          openApiSpec: "/api/ads-intelligence/openapi.json",
+        },
+        toolsCount: 20,
+      });
+      return true;
+    }
+
     if (pathname === "/api/ads-intelligence/summary" && req.method === "GET") {
       const summary = await adsIntelligenceService.getStoreSummary(storeId, forceRefresh);
       sendJson(res, 200, summary, {
