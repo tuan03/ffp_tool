@@ -52,6 +52,7 @@ CREATE INDEX IF NOT EXISTS telemetry_spool_created ON telemetry_spool(created_at
 class ClientStore:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.storage_fault = False
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connection() as connection:
             migrate_outbox(connection, path)
@@ -65,12 +66,17 @@ class ClientStore:
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
-        connection = self._connect()
+        connection = None
         try:
+            connection = self._connect()
             with connection:
                 yield connection
+        except (OSError, sqlite3.Error):
+            self.storage_fault = True
+            raise
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     def client_id(self) -> str:
         with self._connection() as connection:
@@ -345,6 +351,8 @@ class ClientStore:
         return bool(row and row["status"] == "cancelled")
 
     def spool_result(self, *, task_id: str, lease_id: str, checksum: str, payload: dict[str, Any]) -> None:
+        if self.storage_fault:
+            raise OSError("Outbox storage failure requires operator recovery before accepting new results")
         now = utc_iso()
         with self._connection() as connection:
             self._spool(connection, "pending_results", task_id, lease_id, checksum, payload)
@@ -408,6 +416,8 @@ class ClientStore:
         checksum: str,
         payload: dict[str, Any],
     ) -> None:
+        if self.storage_fault:
+            raise OSError("Outbox storage failure requires operator recovery before accepting new products")
         with self._connection() as connection:
             self._spool(connection, "pending_products", task_id, lease_id, checksum, payload, product_key)
             connection.commit()
@@ -484,3 +494,13 @@ class ClientStore:
         """Metadata only; never expose retained product payloads in diagnostics."""
         with self._connection() as connection:
             return [dict(row) for row in connection.execute("SELECT result_id AS resultId,reason,created_at AS createdAt FROM outbox_quarantine ORDER BY created_at,result_id")]
+
+    def outbox_usage(self) -> dict[str, Any]:
+        """Count retained payload bytes (including quarantine), without decoding."""
+        with self._connection() as connection:
+            row = connection.execute("""SELECT COUNT(*) AS records,
+                COALESCE(SUM(length(CAST(payload_json AS BLOB))),0) AS bytes,
+                MIN(created_at) AS oldest FROM (
+                    SELECT payload_json,created_at FROM pending_results UNION ALL
+                    SELECT payload_json,created_at FROM pending_products)""").fetchone()
+            return dict(row)

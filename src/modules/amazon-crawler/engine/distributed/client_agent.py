@@ -29,6 +29,7 @@ from . import AGENT_VERSION
 from .client_config import AgentConfig
 from .client_dashboard_state import DashboardState
 from .client_store import ClientStore
+from .client_storage_pressure import storage_pressure
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
@@ -129,7 +130,10 @@ class DistributedCrawlerAgent:
             self._telemetry_losses += 1
 
     def _telemetry_snapshot(self) -> dict[str, Any]:
-        status = self.store.telemetry_status()
+        try:
+            status = self.store.telemetry_status()
+        except (OSError, sqlite3.Error):
+            status = {"backlog": 0, "dropped": 0}
         return {"cache": self.cache.metrics_snapshot(), "resources": self._resources,
                 **status, "dropped": status["dropped"] + self._telemetry_losses}
 
@@ -141,7 +145,12 @@ class DistributedCrawlerAgent:
         return resources
 
     def status_snapshot(self) -> dict[str, Any]:
-        uploads = self.store.upload_counts()
+        try:
+            uploads = self.store.upload_counts()
+            pending_cancellations = len(self.store.cancel_intents())
+        except (OSError, sqlite3.Error):
+            uploads = {"results": 0, "products": 0}
+            pending_cancellations = 0
         try:
             dashboard = self.dashboard.snapshot() if self.dashboard is not None else {"tasks": [], "history": [], "events": []}
         except (OSError, sqlite3.Error):
@@ -157,6 +166,7 @@ class DistributedCrawlerAgent:
             "pendingUploads": uploads["results"] + uploads["products"],
             "pendingProducts": uploads["products"],
             "pendingResults": uploads["results"],
+            "storage": self._storage_pressure(),
             "isConnected": self._is_connected,
             "agentVersion": AGENT_VERSION,
             "serverUrl": redact(self.config.server_url),
@@ -164,7 +174,7 @@ class DistributedCrawlerAgent:
             "maxConcurrentInputs": self.config.max_concurrent_inputs,
             "runningTasks": len(self.executing_task_ids & self.active.keys()),
             "queuedTasks": len(self.active.keys() - self.executing_task_ids),
-            "pendingCancellations": len(self.store.cancel_intents()),
+            "pendingCancellations": pending_cancellations,
             "limits": self.config.limits.apply({}),
             "dashboard": dashboard,
             "captchaDetected": bool(dashboard.get("hasUnattributedCaptcha")),
@@ -432,6 +442,12 @@ class DistributedCrawlerAgent:
             payload = json.loads(raw)
             message_type = payload.get("type")
             if message_type == "assignment":
+                if self._storage_pressure()["blocked"]:
+                    # A lease sent before the last capacity update is not
+                    # accepted locally. The coordinator can expire/reassign it.
+                    await self.outbound_queue.put({"type": "ready", "availableSlots": 0})
+                    self._publish_status()
+                    continue
                 task_id = str(payload["taskId"])
                 if task_id not in self.active:
                     self.store.save_assignment(payload)
@@ -667,8 +683,11 @@ class DistributedCrawlerAgent:
                 await self.outbound_queue.put({"type": "telemetry", "events": events})
             await asyncio.sleep(1)
 
+    def _storage_pressure(self) -> dict[str, Any]:
+        return storage_pressure(self.store, self.config.outbox, self.project_root)
+
     def _available_slots(self) -> int:
-        if self._paused or self._pending_stop_cleanups:
+        if self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]:
             return 0
         return max(0, self.config.max_concurrent_inputs - len(self.active))
 
@@ -676,6 +695,9 @@ class DistributedCrawlerAgent:
         backlog: deque[dict[str, Any]] = deque()
         loop = asyncio.get_running_loop()
         while not self.stop_event.is_set():
+            if self._storage_pressure()["blocked"]:
+                await asyncio.sleep(1)
+                continue
             try:
                 first = backlog.popleft() if backlog else await self.assignment_queue.get()
             except asyncio.CancelledError:
@@ -700,6 +722,10 @@ class DistributedCrawlerAgent:
                     batch.append(candidate)
                 else:
                     backlog.append(candidate)
+            if self._storage_pressure()["blocked"]:
+                backlog.extendleft(reversed(batch))
+                await asyncio.sleep(1)
+                continue
             runnable: list[dict[str, Any]] = []
             for assignment in batch:
                 task_id = str(assignment["taskId"])

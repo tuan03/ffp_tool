@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .protocol import AgentLimits
+from .client_storage_pressure import OutboxLimits
 
 
 def default_data_directory() -> Path:
@@ -25,6 +26,7 @@ class AgentConfig:
     limits: AgentLimits
     data_directory: Path
     proxy_config_path: Path | None = None
+    outbox: OutboxLimits = OutboxLimits()
 
     @classmethod
     def load(cls, path: Path | None = None) -> "AgentConfig":
@@ -58,6 +60,7 @@ class AgentConfig:
             limits=AgentLimits.from_payload(payload.get("limits") if isinstance(payload.get("limits"), dict) else {}),
             data_directory=data_directory,
             proxy_config_path=proxy_config_path if proxy_config_path.is_file() else None,
+            outbox=OutboxLimits.from_payload(payload.get("outbox", {})),
         )
 
     @property

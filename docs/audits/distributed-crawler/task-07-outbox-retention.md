@@ -3,7 +3,7 @@
 - Baseline: `05fa72b`; branch `cua_pro` per user instruction (exception to the handbook's separate-branch rule).
 - Authorization: user requested the next task after Task 06. No separate Task 06 test output was supplied.
 - Original specification: **9–10, 17, 30, 33**, specifically preserving completed local results during stop/discard/orphan cleanup and preventing stale/cancelled output from automatic publication. This does not complete the later durable remote-command ledger, purge authorization or recovery-admission work.
-- Status: awaiting user verification. Task 08 has not started.
+- Status: accepted through the user's instruction to proceed, followed by explicit approval of Task 08 storage thresholds. No separate Task 07 output was supplied. Commit: `674a1e5`. The remaining text records the Task 07 handoff.
 
 ## Findings and implementation
 

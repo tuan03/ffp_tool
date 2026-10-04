@@ -21,16 +21,20 @@ from typing import Any
 
 from . import AGENT_VERSION
 from .client_agent import DistributedCrawlerAgent
+from .client_storage_pressure import storage_warning_text
 
 
 def format_status(status: dict[str, Any]) -> str:
     connection = str(status.get("connection") or "offline").replace("_", " ").title()
     if status.get("waitingCaptcha"):
         connection = "Waiting for CAPTCHA"
+    if (status.get("storage") or {}).get("blocked"):
+        connection = "Storage blocked"
     active = max(0, int(status.get("activeTasks") or 0))
     pending = max(0, int(status.get("pendingUploads") or 0))
     pending_label = "pending upload" if pending == 1 else "pending uploads"
-    return f"{connection} — {active} active — {pending} {pending_label}"
+    warning = storage_warning_text(status.get("storage"))
+    return f"{connection} — {active} active — {pending} {pending_label}" + (f" — {warning}" if warning else "")
 
 
 def should_notify_captcha(previous_waiting: bool, status: dict[str, Any]) -> bool:
