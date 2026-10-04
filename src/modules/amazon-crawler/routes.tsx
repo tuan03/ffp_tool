@@ -1,6 +1,6 @@
 import type { RouteObject } from "react-router-dom";
 
-import { AmazonCrawlerPage } from "./ui/AmazonCrawlerPage";
+import { AuthenticatedCrawlerPage } from "./ui/AuthenticatedCrawlerPage";
 import { AgentKeysPage } from "./ui/AgentKeysPage";
 import type {
   AmazonCrawlerAgentReleaseLoader,
@@ -24,12 +24,14 @@ export function amazonCrawlerRoutes(
   imageProcessingProfiles?: ImageProcessingProfileManager,
   amazonCrawlerJobs?: AmazonCrawlerJobController,
   loadAmazonCrawlerJob?: AmazonCrawlerJobLoader,
+  operatorEngineUrl?: string,
 ): RouteObject[] {
   return [
     {
       path: "amazon-crawler",
       element: (
-        <AmazonCrawlerPage
+        <AuthenticatedCrawlerPage
+          engineUrl={operatorEngineUrl}
           amazonCrawlerJobs={amazonCrawlerJobs}
           clearAmazonCrawlerCache={clearAmazonCrawlerCache}
           imageProcessingProfiles={imageProcessingProfiles}

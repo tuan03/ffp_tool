@@ -533,6 +533,7 @@ export function AppRoutes({
       imageProcessingProfiles,
       amazonCrawlerJobs,
       loadAmazonCrawlerJob,
+      environment === "mock" ? undefined : amazonCrawlerCoordinatorUrl,
     );
 
     return createBrowserRouter([

@@ -59,7 +59,7 @@ import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
 import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
-interface AmazonCrawlerPageProps {
+export interface AmazonCrawlerPageProps {
   checkAmazonAsins?: AmazonAsinChecker;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;

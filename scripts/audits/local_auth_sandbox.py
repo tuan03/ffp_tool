@@ -24,6 +24,7 @@ import uuid
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, text
+from fastapi import Request
 import uvicorn
 
 from audit_lease_baseline import local_test_url
@@ -98,7 +99,7 @@ def command(action):
     raise TimeoutError("Sandbox command still pending; check status, do not blindly retry")
 
 
-def serve():
+def serve(ui=False):
     SANDBOX.mkdir(parents=True, exist_ok=True)
     if (SANDBOX / "latest.json").exists():
         previous = current_run() / "status.json"
@@ -123,6 +124,8 @@ def serve():
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_engine(url, hide_parameters=True, connect_args={"options": "-csearch_path=" + schema})
     operator_password = secrets.token_urlsafe(32)
+    if ui:
+        write_json(directory / "operator-login.json", {"username": "sandbox", "password": operator_password})
     with patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": str(directory / "images"),
                                "PINTEREST_RUNTIME_ROOT": str(directory / "pinterest")}):
         with patch("engine.distributed.coordinator_models.create_database_engine", return_value=engine):
@@ -135,14 +138,45 @@ def serve():
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)
     origin = "https://127.0.0.1:" + str(listener.getsockname()[1])
-    server = uvicorn.Server(uvicorn.Config(app, ssl_keyfile=str(directory / "tls.key"),
+    serving_app = app
+    if ui:
+        from fastapi import FastAPI
+        from fastapi.responses import FileResponse, JSONResponse
+        from fastapi.staticfiles import StaticFiles
+        from contextlib import asynccontextmanager
+        frontend = ROOT / ".runtime" / "auth-ui-dist"
+        if not (frontend / "index.html").is_file():
+            raise RuntimeError("Build the isolated auth UI first")
+        @asynccontextmanager
+        async def lifespan(_):
+            async with app.router.lifespan_context(app):
+                yield
+        serving_app = FastAPI(lifespan=lifespan)
+        serving_app.mount("/assets", StaticFiles(directory=frontend / "assets"))
+        @serving_app.get("/")
+        @serving_app.get("/amazon-crawler")
+        async def frontend_page():
+            return FileResponse(frontend / "index.html")
+        @serving_app.post("/api/shopify")
+        async def fixture_shopify(request: Request):
+            payload = await request.json()
+            if payload.get("operation") == "stores.list":
+                return {"success": True, "data": {"stores": [{"storeId": "sandbox", "shopDomain": "sandbox.invalid"}]}}
+            if payload.get("operation") == "products.preflightAmazonAsins":
+                # Explicit test fixture, never a fallback in application code.
+                return {"success": True, "data": {"ready": True, "matches": []}}
+            return JSONResponse({"error": {"code": "SANDBOX_SHOPIFY_DISABLED"}}, status_code=503)
+        serving_app.mount("/", app)
+        # Admission-only UI testing: no leased task can reach a real crawler.
+        app.state.store.lease_tasks = lambda *_args, **_kwargs: []
+    server = uvicorn.Server(uvicorn.Config(serving_app, ssl_keyfile=str(directory / "tls.key"),
         ssl_certfile=str(directory / "tls.pem"), access_log=False, log_level="error"))
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), daemon=True)
     thread.start()
     child = None
     log = (directory / "agent.log").open("a", encoding="utf-8")
     store = ClientStore(directory / "agent" / "agent.sqlite3")
-    store.set_paused(True)
+    store.set_paused(not ui)
     config_path = directory / "agent.json"
     write_json(config_path, {"serverUrl": origin, "authMode": "key", "displayName": "FFP isolated auth test",
         "dataDirectory": str(directory / "agent"), "maxConcurrentInputs": 1})
@@ -179,7 +213,7 @@ def serve():
         write_json(directory / "status.json", {"state": phase, "updatedAt": time.time(), "origin": origin,
             "schema": schema, "agentId": agent_id, "agentPid": child.pid if child and child.poll() is None else None,
             "connected": agent_id in app.state.connection_manager.connections,
-            "paused": True, "outbox": store.upload_counts(), "directory": str(directory)})
+            "paused": store.is_paused(), "claimsDisabled": ui, "outbox": store.upload_counts(), "directory": str(directory)})
 
     try:
         for _ in range(200):
@@ -221,6 +255,8 @@ def serve():
                         stop_agent()
                         child = start_agent()
                     elif action == "test-outbox":
+                        if ui:
+                            raise ValueError("Outbox fixture requires the non-UI sandbox")
                         stop_agent()
                         backend = app.state.store
                         backend.register_client({"clientId": agent_id, "displayName": "FFP isolated auth test", "maxConcurrentInputs": 1})
@@ -252,8 +288,10 @@ def serve():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["serve", "status", "restart-agent", "rotate", "revoke", "rebind", "test-outbox", "stop"])
-    action = parser.parse_args().action
+    parser.add_argument("--ui", action="store_true", help="Serve isolated built UI; disable all real leases")
+    arguments = parser.parse_args()
+    action = arguments.action
     if action == "serve":
-        serve()
+        serve(ui=arguments.ui)
     else:
         command(action)

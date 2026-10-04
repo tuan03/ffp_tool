@@ -35,6 +35,50 @@ interface JobCreatedResponse {
   jobId: string;
 }
 
+export async function discoverCrawlerOperatorAuth(engineUrl: string, fetchImplementation: typeof fetch = fetch): Promise<boolean> {
+  const response = await fetchImplementation(`${engineUrl.replace(/\/+$/, "")}/api/v1/worker/security`, {
+    redirect: "error", cache: "no-store", signal: AbortSignal.timeout(8000),
+  });
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error("Không kiểm tra được chế độ xác thực Coordinator.");
+  const payload: unknown = await response.json();
+  if (!isRecord(payload) || payload.authRequired !== true || payload.authProtocol !== 1) {
+    throw new Error("Coordinator trả contract xác thực không hợp lệ.");
+  }
+  return true;
+}
+
+export function createCrawlerOperatorFetch(options: {
+  engineUrl: string; username: string; password: string;
+  fetchImplementation?: typeof fetch; sessionSignal?: AbortSignal;
+  onUnauthorized?: () => void;
+}): typeof fetch {
+  const base = new URL(options.engineUrl || "/", typeof window === "undefined" ? "http://127.0.0.1" : window.location.origin);
+  if (base.protocol !== "https:" && !(base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname))) {
+    throw new Error("Operator credentials require HTTPS.");
+  }
+  const authorization = `Basic ${btoa(Array.from(new TextEncoder().encode(`${options.username}:${options.password}`), (byte) => String.fromCharCode(byte)).join(""))}`;
+  return async (input, init) => {
+    const target = new URL(input instanceof Request ? input.url : String(input), base);
+    if (target.origin !== base.origin || target.username || target.password
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawler-metrics|review-jobs|product-reviews|image-profiles)(\/|$)/.test(target.pathname)) {
+      throw new Error("Operator credential destination rejected.");
+    }
+    options.sessionSignal?.throwIfAborted();
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    headers.set("Authorization", authorization);
+    const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signals = [options.sessionSignal, requestSignal].filter((signal): signal is AbortSignal => signal != null);
+    const response = await (options.fetchImplementation ?? fetch)(input instanceof Request ? input : target.href, {
+      ...init, headers, redirect: "error", cache: "no-store",
+      ...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
+    });
+    if (response.status === 401) options.onUnauthorized?.();
+    return response;
+  };
+}
+
 export interface AgentKeySummary {
   id: string;
   name: string;

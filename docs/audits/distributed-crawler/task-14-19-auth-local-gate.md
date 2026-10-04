@@ -116,6 +116,10 @@ Follow-up: [Step 02 real-agent sandbox](step-02-real-agent-sandbox.md) records t
 separate HTTPS/WSS source-agent process and its manual restart/key/outbox checks.
 This is additional evidence, not completion of the composed-runtime/public gate.
 
+Next follow-up: [Crawler operator UI](step-02-crawler-operator-ui.md) records the
+authenticated UI adapter and isolated browser create/cancel checks. User acceptance,
+Pinterest/Review Studio compatibility and the public/composed gate remain pending.
+
 Run from the repository root with Docker Desktop and the existing isolated local
 PostgreSQL test container available:
 

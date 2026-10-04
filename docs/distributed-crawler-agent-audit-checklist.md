@@ -283,3 +283,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Push/deploy/release được thực hiện | Không |
 
 **Điểm dừng hiện tại:** chạy `python scripts/audits/audit_lease_baseline.py --proxy-auth` để kiểm tra local, đọc [báo cáo batch](audits/distributed-crawler/task-14-19-auth-local-gate.md) và chốt các gate còn lại. Chưa bật auth trên VPS, chưa publish installer; không tự push/deploy hoặc chuyển Task 20.
+
+Follow-up acceptance: [Step 02 Crawler operator UI](audits/distributed-crawler/step-02-crawler-operator-ui.md)
+adds an isolated browser test and manual instructions. This is partial Task 19 evidence;
+user UI acceptance, Pinterest/Review Studio and public/composed-runtime gates remain pending.

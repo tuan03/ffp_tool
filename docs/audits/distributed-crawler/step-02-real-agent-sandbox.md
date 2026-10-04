@@ -1,7 +1,13 @@
 # Step 02 — isolated real-agent sandbox
 
 Date: 2026-10-04. User approved a separate local test environment and agent.
-Branch remains `cua_pro` by user instruction. No production source behavior changed.
+Branch remains `cua_pro` by user instruction. The original sandbox-only change did
+not change production source behavior; the UI follow-up below adds an auth adapter.
+
+Follow-up: [Crawler operator UI compatibility](step-02-crawler-operator-ui.md) adds
+an optional `serve --ui` mode and a production UI auth adapter. The current sandbox
+uses that UI mode: `paused: false`, `claimsDisabled: true`. The paused/outbox instructions
+below describe the earlier non-UI mode; do not run `test-outbox` in UI mode.
 
 ## What is running
 
