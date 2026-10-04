@@ -44,11 +44,17 @@ function createRuntime() {
   const workflow = createExternalSeoWorkflow({ queue });
   const mcpHandler = createCodexSeoMcpHandler({ workflow, mcpCredentials: config.mcpCredentials, performance: getPerformanceService });
   let isRunning = false;
+  let lastWorkerRecoveryAt = 0;
   async function tick(): Promise<void> {
     if (isRunning) return;
     isRunning = true;
     try {
       await queue.initialize();
+      if (Date.now() - lastWorkerRecoveryAt >= 60_000) {
+        try { await queue.workers.recover(); }
+        catch { console.error("[SEO Worker] Recovery failed; retry scheduled. Existing queue processing continues."); }
+        lastWorkerRecoveryAt = Date.now();
+      }
       await runCustomGptTick({
         recoverAutoSeoHandoffs: () => recoverAutoSeoHandoffs(getAutoSeoBackupRepository(), queue),
         processCustomGptJob: () => processCustomGptJob(queue),
