@@ -121,8 +121,8 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-cyan-300 focus:outline-none focus:border-cyan-500 font-medium"
           >
             <option value="chillgen">Chillgen (chillgen.myshopify.com)</option>
+            <option value="jeminise">Jemine / Jeminise (jeminise.com)</option>
             <option value="wrydeco">Wrydeco (wrydeco.myshopify.com)</option>
-            <option value="capozen">Capozen (capozen.myshopify.com)</option>
           </select>
 
           <button

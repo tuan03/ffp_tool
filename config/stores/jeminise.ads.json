@@ -1,0 +1,56 @@
+{
+  "storeId": "jeminise",
+  "mode": "read_only",
+  "marketCountries": ["US"],
+  "reportingCurrency": "USD",
+  "meta": {
+    "accountIds": ["act_1569725310249145"],
+    "accountTimezone": "Asia/Manila",
+    "apiVersion": "v26.0",
+    "purchaseActionType": "offsite_conversion.fb_pixel_purchase",
+    "secretRef": "META_ACCESS_TOKEN",
+    "proxyRef": "META_PROXY_URL",
+    "attributionPolicyRef": "7d_click_1d_view"
+  },
+  "ga4": {
+    "propertyId": "555699138",
+    "propertyTimezone": "America/Los_Angeles",
+    "credentialRef": "credentials/ga4-service-account.json"
+  },
+  "shopify": {
+    "shopDomain": "f4hgwc-hu.myshopify.com",
+    "apiVersion": "2026-07",
+    "connectionRef": "shopify_jeminise"
+  },
+  "competitors": {
+    "primaryProvider": "scrapecreators",
+    "backupProvider": "searchapi",
+    "monthlyCostCapUsd": 65.0,
+    "watchlist": [
+      "100064829182341",
+      "100083124589211"
+    ]
+  },
+  "business": {
+    "costProfileRef": "jeminise-bedding-standard-v1",
+    "targetCpa": 22.0,
+    "targetContributionPerOrder": 8.0,
+    "breakEvenRoas": 2.2,
+    "breakEvenCpa": 28.0
+  },
+  "rules": {
+    "policyVersion": "2.0",
+    "maturityDays": 7,
+    "allowFinancialRecommendations": true
+  },
+  "budgets": {
+    "totalDailyAuthorizedCap": 150.0,
+    "experimentAuthorizedCap": 30.0,
+    "maxChangePer24hPct": 20.0,
+    "cooldownHours": 24
+  },
+  "actions": {
+    "externalWritesEnabled": false,
+    "approvalRequired": true
+  }
+}
