@@ -15,6 +15,7 @@ export function createMockCustomGptClient(): CustomGptClient {
     agentRuns: async () => ({ runs: [], total: 0, nextOffset: null }),
     createAgentToken: async () => ({ token: "mock-not-a-credential", tokenId: "mock-token", expiresAt: 0 }),
     revokeAgentToken: async () => ({ revoked: true }),
+    deleteAgentToken: async () => ({ deleted: true }),
     stores: async () => [
       { storeId: "capozen", shopDomain: "capozen.myshopify.com" },
       { storeId: "chillgen", shopDomain: "bbjttb-n9.myshopify.com" },

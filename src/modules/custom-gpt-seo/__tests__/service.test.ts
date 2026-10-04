@@ -68,6 +68,18 @@ test("Agent Access client scopes tokens to store, disables cache and includes mu
   assert.equal((await mock.agentRuns("demo")).total, 0);
 });
 
+test("Agent Access deletes a revoked token through the protected store-scoped route", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/delete-token?storeId=demo");
+    assert.equal(init?.method, "POST");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { tokenId: "token-id" });
+    return new Response(JSON.stringify({ deleted: true }));
+  });
+  assert.deepEqual(await client.deleteAgentToken("demo", "token-id"), { deleted: true });
+  assert.deepEqual(await createMockCustomGptClient().deleteAgentToken("demo", "token-id"), { deleted: true });
+});
+
 test("Custom GPT client preserves store scope and reports server errors", async () => {
   let requested = "";
   const client = createCustomGptClient(async (url) => { requested = String(url); return new Response(JSON.stringify({ error: { message: "Invalid batch size" } }), { status: 400 }); });

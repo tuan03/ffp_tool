@@ -20,6 +20,7 @@ export function getSeoWorkerSchemaSql(schema: string): string {
     );
     ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS store_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS selected_store_id TEXT;
+    ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_sessions (
       id TEXT PRIMARY KEY, token_id TEXT NOT NULL REFERENCES ${prefix}seo_worker_tokens(id),
       store_id TEXT NOT NULL, worker_id TEXT NOT NULL, active BOOLEAN NOT NULL,

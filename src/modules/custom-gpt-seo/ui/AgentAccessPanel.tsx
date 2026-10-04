@@ -65,6 +65,13 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     catch { setError("Chưa thu hồi được token. Vui lòng thử lại."); }
     finally { setIsBusy(false); }
   }
+  async function handleDelete(tokenId: string): Promise<void> {
+    if (!window.confirm("Xóa token đã thu hồi khỏi danh sách? Lịch sử job và phiên chạy vẫn được giữ.")) return;
+    setIsBusy(true); setError(""); setToken(null);
+    try { await client.deleteAgentToken(storeId, tokenId); setRefresh(value => value + 1); setNotice("Đã xóa token khỏi danh sách."); }
+    catch { setError("Chỉ xóa được token đã thu hồi. Làm mới rồi thử lại."); }
+    finally { setIsBusy(false); }
+  }
 
   return <section className="space-y-5 pt-5" aria-label="Agent Access">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -93,12 +100,12 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     {token && <div className="space-y-3 rounded-xl border border-amber-700 bg-amber-950/20 p-4"><p className="text-sm text-amber-200">Token chỉ hiện lần này. Dùng để login trong terminal, không gửi vào chat.</p><code className="block break-all select-all text-sm">{token}</code><div className="flex gap-2"><button type="button" className={PRIMARY} onClick={() => void handleCopy(token, "Đã sao chép token. Chỉ dán vào lệnh login trong terminal.")}>Sao chép token</button><button type="button" className={BUTTON} onClick={() => setToken(null)}>Ẩn token</button></div></div>}
 
     {view === "connect" && access && <>
-      {access.tokens.length === 0 ? <p className="py-5 text-center text-sm text-slate-400">Chưa có máy trên trang này. Bắt đầu bằng “Kết nối máy”.</p> : <div className="grid gap-3 md:grid-cols-2">{access.tokens.map(entry => {
+      {access.tokens.length === 0 ? <p className="py-5 text-center text-sm text-slate-400">Chưa có máy trên trang này. Bắt đầu bằng “Kết nối máy”.</p> : <div className="overflow-x-auto rounded-xl border border-slate-800"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-900/80 text-xs uppercase text-slate-400"><tr><th className="px-4 py-3">Máy</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Phạm vi</th><th className="px-4 py-3">Hết hạn</th><th className="px-4 py-3 text-right">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-800">{access.tokens.map(entry => {
         const isExpired = entry.expiresAt <= Date.now();
         const isRevoked = entry.revokedAt !== null;
         const status = isRevoked ? "Đã thu hồi" : isExpired ? "Token hết hạn" : entry.jobId ? "Đang giữ công việc" : entry.lastSeenAt ? "Đã kết nối" : "Chưa đăng nhập";
-        return <article key={entry.id} className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="break-all font-semibold text-white">{entry.workerId}</h4><span className={`text-xs ${isRevoked || isExpired ? "text-slate-400" : "text-cyan-300"}`}>{status}</span></div><p className="text-sm text-slate-400">{(entry.storeIds ?? [storeId]).length} store · Hết hạn: {new Date(entry.expiresAt).toLocaleString()}</p><details className="text-sm"><summary className="cursor-pointer text-slate-400">Chi tiết & quyền truy cập</summary><div className="mt-3 space-y-3"><p className="break-all">Store: {(entry.storeIds ?? [storeId]).join(", ")}</p><p>Hoạt động cuối: {entry.lastSeenAt ? new Date(entry.lastSeenAt).toLocaleString() : "Chưa có"}</p><p className="break-all">Job: {entry.jobId ?? "Không có"}</p>{!isRevoked && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => void handleRevoke(entry.id)}>Thu hồi token</button>}</div></details></article>;
-      })}</div>}
+        return <tr key={entry.id} className="bg-slate-950/30 align-top hover:bg-slate-900/50"><td className="px-4 py-3"><p className="font-semibold text-white">{entry.workerId}</p><details className="mt-1 text-xs text-slate-400"><summary className="cursor-pointer">Chi tiết</summary><p className="mt-2 max-w-sm break-words">Store: {(entry.storeIds ?? [storeId]).join(", ")}</p><p>Hoạt động cuối: {entry.lastSeenAt ? new Date(entry.lastSeenAt).toLocaleString() : "Chưa có"}</p><p className="break-all">Job: {entry.jobId ?? "Không có"}</p></details></td><td className={`px-4 py-3 ${isRevoked || isExpired ? "text-slate-400" : "text-cyan-300"}`}>{status}</td><td className="px-4 py-3 text-slate-300">{(entry.storeIds ?? [storeId]).length} store</td><td className="whitespace-nowrap px-4 py-3 text-slate-400">{new Date(entry.expiresAt).toLocaleString()}</td><td className="px-4 py-3 text-right">{isRevoked ? <button type="button" className="rounded-lg border border-rose-800 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-950/40 disabled:opacity-40" disabled={isBusy} onClick={() => void handleDelete(entry.id)}>Xóa</button> : <button type="button" className={BUTTON} disabled={isBusy} onClick={() => void handleRevoke(entry.id)}>Thu hồi</button>}</td></tr>;
+      })}</tbody></table></div>}
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400"><span>{access.total} token · Trang {offset / 50 + 1}</span><div className="flex gap-2"><button type="button" className={BUTTON} disabled={offset === 0} onClick={() => setOffset(value => Math.max(0, value - 50))}>Trước</button><button type="button" className={BUTTON} disabled={access.nextOffset === null} onClick={() => setOffset(access.nextOffset ?? offset)}>Sau</button></div></div>
     </>}
 

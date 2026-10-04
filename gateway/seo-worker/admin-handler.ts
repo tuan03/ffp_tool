@@ -90,6 +90,10 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
         const input = z.object({ tokenId: z.string().uuid() }).strict().parse(body);
         await repository.revoke(storeId, input.tokenId); send(res, 200, { revoked: true }); return;
       }
+      if (url.pathname === "/api/seo-agent/delete-token") {
+        const input = z.object({ tokenId: z.string().uuid() }).strict().parse(body);
+        await repository.deleteRevokedToken(storeId, input.tokenId); send(res, 200, { deleted: true }); return;
+      }
     }
     send(res, 404, { error: { code: "NOT_FOUND" } });
   } catch (error) {

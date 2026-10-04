@@ -106,6 +106,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     agentRuns: (storeId: string, offset = 0) => agentRequest<AgentRunPage>(`runs?offset=${offset}`, storeId),
     createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: number }>("tokens", storeId, { workerId }),
     revokeAgentToken: (storeId: string, tokenId: string) => agentRequest<{ revoked: true }>("revoke", storeId, { tokenId }),
+    deleteAgentToken: (storeId: string, tokenId: string) => agentRequest<{ deleted: true }>("delete-token", storeId, { tokenId }),
     stores: listStores,
     settings: (storeId: string) => request<GptSeoSettings>("settings", storeId),
     configure: (storeId: string, settings: GptSeoSettings) => request<GptSeoSettings>("settings", storeId, settings),

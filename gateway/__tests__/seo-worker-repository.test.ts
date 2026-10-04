@@ -294,7 +294,7 @@ test("heartbeat cannot keep a silent worker alive forever and expiry blocks new 
 test("operator lists are store scoped, paginated and never disclose credential hashes", async () => {
   const f = await fixture();
   try {
-    await f.worker("machine-a");
+    const machine = await f.worker("machine-a");
     const other = await f.worker("machine-b", 2, "store-b");
     const page = await f.repository.listAccess("store-a", 0);
     assert.equal(page.total, 1);
@@ -305,6 +305,13 @@ test("operator lists are store scoped, paginated and never disclose credential h
     assert.equal((await f.repository.listRuns("store-a", 0)).runs.length, 1);
     await assert.rejects(f.repository.listAccess("store-a", -1), /INVALID_OFFSET/);
     await assert.rejects(f.repository.revoke("store-a", other.tokenId), /TOKEN_NOT_FOUND/);
+    await assert.rejects(f.repository.deleteRevokedToken("store-a", machine.tokenId), /REVOKED_TOKEN_NOT_FOUND/);
+    await f.repository.revoke("store-a", machine.tokenId);
+    assert.equal((await f.repository.listAccess("store-a", 0)).total, 1);
+    await f.repository.deleteRevokedToken("store-a", machine.tokenId);
+    assert.equal((await f.repository.listAccess("store-a", 0)).total, 0);
+    assert.equal((await f.repository.listRuns("store-a", 0)).runs.length, 1);
+    await assert.rejects(f.repository.deleteRevokedToken("store-a", machine.tokenId), /REVOKED_TOKEN_NOT_FOUND/);
   } finally { await f.pg.close(); }
 });
 
