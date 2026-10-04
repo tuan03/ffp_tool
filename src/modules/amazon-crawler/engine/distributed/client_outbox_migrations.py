@@ -22,8 +22,8 @@ def _create_outbox(connection, table: str) -> None:
     )""")
 
 
-def _backup(path: Path) -> None:
-    target = path.with_name(f"{path.name}.pre-outbox-v1-{uuid.uuid4().hex}.bak")
+def _backup(path: Path, version: int = 1) -> None:
+    target = path.with_name(f"{path.name}.pre-outbox-v{version}-{uuid.uuid4().hex}.bak")
     partial = target.with_suffix(".bak.part")
     # A separate reader includes committed WAL data. The migration writer holds
     # BEGIN IMMEDIATE, so no other writer can change the pre-migration snapshot.
@@ -34,12 +34,22 @@ def _backup(path: Path) -> None:
     partial.rename(target)
 
 
+def _create_retention(connection) -> None:
+    connection.execute("CREATE TABLE outbox_quarantine (result_id TEXT PRIMARY KEY, reason TEXT NOT NULL, created_at TEXT NOT NULL)")
+    connection.execute("CREATE TABLE outbox_blocks (scope TEXT NOT NULL, scope_id TEXT NOT NULL, lease_id TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(scope,scope_id,lease_id))")
+    connection.execute("PRAGMA user_version=2")
+
+
 def migrate_outbox(connection: sqlite3.Connection, path: Path) -> None:
     connection.execute("BEGIN IMMEDIATE")
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version > 1:
+    if version > 2:
         raise RuntimeError("Agent database requires a newer agent version")
+    if version == 2:
+        return
     if version == 1:
+        _backup(path, 2)
+        _create_retention(connection)
         return
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     legacy = [table for table in ("pending_results", "pending_products") if table in tables]
@@ -57,4 +67,4 @@ def migrate_outbox(connection: sqlite3.Connection, path: Path) -> None:
                 [(uuid.uuid4().hex, *row) for row in rows],
             )
             connection.execute(f"DROP TABLE {table}_legacy_task06")
-    connection.execute("PRAGMA user_version=1")
+    _create_retention(connection)

@@ -103,7 +103,7 @@ class ClientOutboxTests(unittest.TestCase):
         with closing(sqlite3.connect(backups[0])) as connection:
             self.assertEqual(connection.execute("SELECT payload_json, last_error, created_at, updated_at FROM pending_results").fetchone(), ('{"jobId":"job"}', "offline", "created", "updated"))
         with closing(sqlite3.connect(self.path)) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
 
     def test_newer_schema_fails_closed(self):
         with closing(sqlite3.connect(self.path)) as connection, connection:

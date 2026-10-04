@@ -3,7 +3,7 @@
 - Baseline: `e97b4df`, branch `cua_pro` as requested (exception to the handbook's per-task branch rule).
 - Authorization: user reported Task 05 passed and requested Task 06.
 - Original specification: **16–17, 27, 30–31** — local result durability, separation from assignment identity, reopen/retry and duplicate delivery. Partial coverage only: stop/purge, quarantine, asset retention and recovery admission remain later tasks.
-- Status: awaiting user acceptance; Task 07 has not started.
+- Status: accepted through the user's instruction to proceed to the next task on 2026-10-04; no separate user test output was supplied. Commit: `05fa72b`. The details below record the Task 06 handoff; Task 07 extends the schema and retention behavior separately.
 
 ## Implemented behavior
 

@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from .protocol import utc_iso, payload_checksum
 from .client_outbox_migrations import migrate_outbox
+from .client_outbox_retention import block_attempt, block_job, blocked_reason, quarantine_row, row_job_id
 from ..observability import safe_fields
 
 
@@ -181,52 +182,43 @@ class ClientStore:
             connection.commit()
 
     def discard_task(self, task_id: str) -> None:
-        """Remove local state after the coordinator confirms a task no longer exists."""
+        """Retire assignment authority, retaining every unacknowledged upload."""
         with self._connection() as connection:
-            connection.execute("DELETE FROM pending_products WHERE task_id = ?", (task_id,))
-            connection.execute("DELETE FROM pending_results WHERE task_id = ?", (task_id,))
+            connection.execute("BEGIN IMMEDIATE")
+            leases = connection.execute("SELECT lease_id FROM leases WHERE task_id=? UNION SELECT lease_id FROM pending_results WHERE task_id=? UNION SELECT lease_id FROM pending_products WHERE task_id=?", (task_id, task_id, task_id)).fetchall()
+            for lease in leases:
+                block_attempt(connection, task_id, lease[0], "task_discarded")
             connection.execute("DELETE FROM leases WHERE task_id = ?", (task_id,))
             connection.commit()
 
     def discard_job(self, job_id: str) -> None:
         with self._connection() as connection:
-            task_rows = connection.execute(
-                "SELECT task_id FROM leases WHERE job_id=?",
-                (job_id,),
-            ).fetchall()
-            task_ids = [str(row["task_id"]) for row in task_rows]
-            for task_id in task_ids:
-                connection.execute("DELETE FROM pending_products WHERE task_id=?", (task_id,))
-                connection.execute("DELETE FROM pending_results WHERE task_id=?", (task_id,))
+            connection.execute("BEGIN IMMEDIATE")
+            block_job(connection, job_id, "job_discarded")
             connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             connection.commit()
 
     def clear_orphaned_jobs(self, valid_job_ids: set[str]) -> int:
-        """Discard local lease and upload spool rows for jobs absent on the coordinator."""
+        """Remove orphan assignments; quarantine uploads instead of deleting them."""
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             leases = {
                 str(row["task_id"]): str(row["job_id"])
                 for row in connection.execute("SELECT task_id, job_id FROM leases").fetchall()
             }
             orphaned_job_ids = set(leases.values()) - valid_job_ids
-            for job_id in orphaned_job_ids:
-                connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             for table_name in ("pending_products", "pending_results"):
-                rows = connection.execute(f"SELECT task_id, payload_json FROM {table_name}").fetchall()
+                rows = connection.execute(f"SELECT * FROM {table_name}").fetchall()
                 for row in rows:
-                    task_id = str(row["task_id"])
-                    job_id = leases.get(task_id)
-                    if job_id is None:
-                        try:
-                            payload = json.loads(row["payload_json"])
-                            job_id = str(payload.get("jobId") or "") if isinstance(payload, dict) else ""
-                        except (TypeError, ValueError):
-                            job_id = ""
+                    job_id = row_job_id(connection, row)
                     if job_id in valid_job_ids:
                         continue
-                    connection.execute(f"DELETE FROM {table_name} WHERE task_id=?", (task_id,))
+                    block_attempt(connection, row["task_id"], row["lease_id"], "orphaned_job")
                     if job_id:
                         orphaned_job_ids.add(job_id)
+            for job_id in orphaned_job_ids:
+                block_job(connection, job_id, "orphaned_job")
+                connection.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
             cancel_intent_job_ids = {
                 str(row["job_id"])
                 for row in connection.execute("SELECT job_id FROM cancel_intents").fetchall()
@@ -342,6 +334,8 @@ class ClientStore:
 
     def cancel_job(self, job_id: str) -> None:
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            block_job(connection, job_id, "job_cancelled")
             connection.execute("UPDATE leases SET status='cancelled', updated_at=? WHERE job_id=?", (utc_iso(), job_id))
             connection.commit()
 
@@ -355,7 +349,7 @@ class ClientStore:
         with self._connection() as connection:
             self._spool(connection, "pending_results", task_id, lease_id, checksum, payload)
             connection.execute(
-                "UPDATE leases SET status='completed_pending_upload', updated_at=? WHERE task_id=? AND lease_id=?",
+                "UPDATE leases SET status='completed_pending_upload', updated_at=? WHERE task_id=? AND lease_id=? AND status!='cancelled'",
                 (now, task_id, lease_id),
             )
             connection.commit()
@@ -368,16 +362,19 @@ class ClientStore:
             (",?" if product_key is not None else "") + ")",
             (uuid.uuid4().hex, task_id, lease_id, checksum, json.dumps(payload, ensure_ascii=False), utc_iso(), utc_iso()) +
             ((product_key,) if product_key is not None else ()))
-        row = connection.execute("SELECT checksum,payload_json FROM " + table +
+        row = connection.execute("SELECT result_id,task_id,lease_id,checksum,payload_json FROM " + table +
             " WHERE task_id=? AND lease_id=?" + (" AND product_key=?" if product_key is not None else ""),
             (task_id, lease_id) + ((product_key,) if product_key is not None else ())).fetchone()
         if row is None or row["checksum"] != checksum or payload_checksum(json.loads(row["payload_json"])) != payload_checksum(payload):
             raise ValueError("Outbox content conflict for an existing attempt")
+        reason = blocked_reason(connection, task_id, lease_id, row_job_id(connection, row))
+        if reason:
+            quarantine_row(connection, row["result_id"], reason)
 
     def pending_results(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(
-                "SELECT result_id, task_id, lease_id, checksum, payload_json, attempts FROM pending_results ORDER BY created_at, rowid LIMIT ?",
+                "SELECT result_id, task_id, lease_id, checksum, payload_json, attempts FROM pending_results WHERE result_id NOT IN (SELECT result_id FROM outbox_quarantine) ORDER BY created_at, rowid LIMIT ?",
                 (limit,),
             ).fetchall()
         return [
@@ -419,7 +416,7 @@ class ClientStore:
         with self._connection() as connection:
             rows = connection.execute(
                 """SELECT result_id, task_id, product_key, lease_id, checksum, payload_json, attempts
-                   FROM pending_products ORDER BY created_at, rowid LIMIT ?""",
+                   FROM pending_products WHERE result_id NOT IN (SELECT result_id FROM outbox_quarantine) ORDER BY created_at, rowid LIMIT ?""",
                 (limit,),
             ).fetchall()
         return [
@@ -438,7 +435,7 @@ class ClientStore:
     def acknowledge_product(self, result_id: str) -> None:
         with self._connection() as connection:
             connection.execute(
-                "DELETE FROM pending_products WHERE result_id=?",
+                "DELETE FROM pending_products WHERE result_id=? AND result_id NOT IN (SELECT result_id FROM outbox_quarantine)",
                 (result_id,),
             )
             connection.commit()
@@ -463,8 +460,8 @@ class ClientStore:
 
     def acknowledge_result(self, result_id: str) -> None:
         with self._connection() as connection:
-            connection.execute("DELETE FROM leases WHERE EXISTS (SELECT 1 FROM pending_results r WHERE r.result_id=? AND r.task_id=leases.task_id AND r.lease_id=leases.lease_id)", (result_id,))
-            connection.execute("DELETE FROM pending_results WHERE result_id=?", (result_id,))
+            connection.execute("DELETE FROM leases WHERE EXISTS (SELECT 1 FROM pending_results r WHERE r.result_id=? AND r.task_id=leases.task_id AND r.lease_id=leases.lease_id AND r.result_id NOT IN (SELECT result_id FROM outbox_quarantine))", (result_id,))
+            connection.execute("DELETE FROM pending_results WHERE result_id=? AND result_id NOT IN (SELECT result_id FROM outbox_quarantine)", (result_id,))
             connection.commit()
 
     def result_failed(self, result_id: str, error: str) -> None:
@@ -474,3 +471,16 @@ class ClientStore:
                 (error[:2000], utc_iso(), result_id),
             )
             connection.commit()
+
+    def quarantine_attempt(self, task_id: str, lease_id: str, reason: str) -> None:
+        with self._connection() as connection:
+            block_attempt(connection, task_id, lease_id, reason)
+
+    def is_upload_pending(self, result_id: str) -> bool:
+        with self._connection() as connection:
+            return connection.execute("SELECT 1 FROM (SELECT result_id FROM pending_results UNION ALL SELECT result_id FROM pending_products) WHERE result_id=? AND result_id NOT IN (SELECT result_id FROM outbox_quarantine)", (result_id,)).fetchone() is not None
+
+    def quarantined_uploads(self) -> list[dict[str, str]]:
+        """Metadata only; never expose retained product payloads in diagnostics."""
+        with self._connection() as connection:
+            return [dict(row) for row in connection.execute("SELECT result_id AS resultId,reason,created_at AS createdAt FROM outbox_quarantine ORDER BY created_at,result_id")]

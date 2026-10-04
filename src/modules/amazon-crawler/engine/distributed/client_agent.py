@@ -317,6 +317,7 @@ class DistributedCrawlerAgent:
         for task_id in discard_ids:
             assignment = self.active.get(task_id) or self.store.assignment(task_id)
             if assignment is not None:
+                self.store.quarantine_attempt(task_id, str(assignment["leaseId"]), "reconcile_discarded")
                 self._dashboard_update("finish", assignment, "cancelled")
                 self._dashboard_update("delivery", task_id, str(assignment["leaseId"]), "cancelled")
             if task_id not in self.executing_task_ids:
@@ -1266,11 +1267,14 @@ class DistributedCrawlerAgent:
             pending_products = self.store.pending_products()
             for product in pending_products:
                 task_id = str(product["taskId"])
+                if not self.store.is_upload_pending(product["resultId"]):
+                    continue
                 try:
                     response = await asyncio.to_thread(self._upload_product, product)
                     self._validate_upload_receipt(product, response)
                     self.store.acknowledge_product(product["resultId"])
                 except Exception as error:
+                    self._quarantine_rejected_upload(product, error)
                     self._dashboard_update("delivery", task_id, str(product["leaseId"]), "retry")
                     self.store.product_failed(product["resultId"], redact(error))
                     upload_failed = True
@@ -1281,6 +1285,8 @@ class DistributedCrawlerAgent:
                 await asyncio.sleep(retry_delay if upload_failed else 1)
                 continue
             for result in pending:
+                if not self.store.is_upload_pending(result["resultId"]):
+                    continue
                 if self.store.has_pending_products(result["taskId"], result["leaseId"]):
                     continue
                 try:
@@ -1293,6 +1299,7 @@ class DistributedCrawlerAgent:
                         self.active.pop(result["taskId"], None)
                     await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
                 except Exception as error:
+                    self._quarantine_rejected_upload(result, error)
                     self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
                     self.store.result_failed(result["resultId"], redact(error))
                     upload_failed = True
@@ -1300,7 +1307,15 @@ class DistributedCrawlerAgent:
             self._publish_status()
             await asyncio.sleep(retry_delay if upload_failed else 1)
 
+    def _quarantine_rejected_upload(self, upload: dict[str, Any], error: Exception) -> None:
+        if isinstance(error, urllib.error.HTTPError) and error.code in {404, 409}:
+            # These are not successful receipts. Keep data for an operator;
+            # never repeatedly publish it or infer deletion permission.
+            self.store.quarantine_attempt(upload["taskId"], upload["leaseId"], f"upload_http_{error.code}")
+
     def _validate_upload_receipt(self, upload: dict[str, Any], response: dict[str, Any]) -> None:
+        if response.get("status") in {"cancelled", "stale", "conflict"}:
+            self.store.quarantine_attempt(upload["taskId"], upload["leaseId"], f"upload_{response['status']}")
         # Local resultId selects the exact immutable row. Task 05's server
         # adapter identifies that upload by attempt and canonical product key.
         is_product = "productKey" in upload

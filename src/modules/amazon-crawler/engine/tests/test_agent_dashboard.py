@@ -219,7 +219,9 @@ class DashboardAgentTests(unittest.TestCase):
         self.agent.dashboard.finish(task, "completed")
         self.agent.store.spool_result(task_id="task-a", lease_id="lease-a", checksum="sum", payload={})
         self.assertEqual(self.agent.stop_and_discard_local_work(), 1)
-        self.assertEqual(self.agent.store.upload_counts()["results"], 0)
+        self.assertEqual(self.agent.store.upload_counts()["results"], 1)
+        self.assertEqual(self.agent.store.pending_results(), [])
+        self.assertEqual(len(self.agent.store.quarantined_uploads()), 1)
         self.assertEqual(self.agent.store.cancel_intents(), ["job-a"])
         self.assertEqual(self.agent.status_snapshot()["dashboard"]["history"][0]["delivery"], "cancelled")
 

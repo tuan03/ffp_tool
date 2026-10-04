@@ -859,8 +859,10 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(asyncio.CancelledError):
                     await agent._upload_loop()
 
-            self.assertEqual(upload.call_count, 2)
-            self.assertEqual(len(agent.store.pending_products()), 2)
+            self.assertEqual(upload.call_count, 1)
+            self.assertEqual(len(agent.store.pending_products()), 0)
+            self.assertEqual(agent.store.upload_counts()["products"], 2)
+            self.assertEqual(len(agent.store.quarantined_uploads()), 2)
             self.assertEqual(len(agent.store.recover_assignments()), 1)
             self.assertIn("missing-task", agent.active)
 
