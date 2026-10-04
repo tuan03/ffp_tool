@@ -287,3 +287,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 Follow-up acceptance: [Step 02 Crawler operator UI](audits/distributed-crawler/step-02-crawler-operator-ui.md)
 adds an isolated browser test and manual instructions. This is partial Task 19 evidence;
 user UI acceptance, Pinterest/Review Studio and public/composed-runtime gates remain pending.
+
+2026-10-04 follow-up: user accepted the Crawler UI check. Pinterest operator-session
+compatibility is implemented and locally tested; see the Pinterest follow-up section
+in the batch report. User Pinterest acceptance and remaining integration gates are pending.

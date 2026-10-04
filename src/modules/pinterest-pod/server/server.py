@@ -11,6 +11,7 @@ Dedicated lightweight control-plane HTTP service on port 8768 providing:
 from __future__ import annotations
 
 import json
+import hmac
 import logging
 import os
 import re
@@ -20,6 +21,7 @@ import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +77,8 @@ from pinterest_pod_bridge import (
     validate_pinterest_oauth_state,
 )
 from job_repository import get_job_repository
+from operator_security import OperatorSessions, operator_credentials, credential_fingerprint
+from pinterest_pod_bridge import http_get_json, http_delete_json, pinterest_coordinator_url
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,12 +92,89 @@ HOST = os.getenv("PINTEREST_POD_HOST", os.getenv("HOST", "127.0.0.1"))
 
 class PinterestPodHandler(BaseHTTPRequestHandler):
     server_version = "PinterestPodStudio/1.0"
+    operator_sessions = OperatorSessions()
+
+    def _operator_gate(self) -> bool:
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/")
+        if self.command == "GET" and path in {"", "/health", "/ready", "/api/pinterest-pod/health", "/api/pinterest-pod/ready"}:
+            return True
+        if self.command == "GET" and path in {"/api/pinterest-pod/oauth/callback", "/api/v1/oauth/pinterest/callback"}:
+            # Cross-site OAuth redirects do not carry Strict cookies. The callback
+            # validates its existing signed state before exchanging any code.
+            return True
+        try:
+            credentials = operator_credentials()
+        except ValueError:
+            self.send_json({"code": "PINTEREST_OPERATOR_CONFIGURATION_REQUIRED"}, 503)
+            return False
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            pass
+        token = cookie["ffp_pinterest_operator"].value if "ffp_pinterest_operator" in cookie else ""
+        fingerprint = credential_fingerprint(credentials) if credentials else ""
+        authenticated = bool(credentials and self.operator_sessions.accepts(token, fingerprint))
+        session_path = "/api/pinterest-pod/operator-session"
+        if path == session_path and self.command == "GET":
+            self.send_json({"authRequired": credentials is not None, "authenticated": authenticated})
+            return False
+        if credentials is None:
+            return True
+        origin = self.headers.get("Origin")
+        if self.command not in {"GET", "HEAD"} and (
+            (origin is not None and origin != self._base_url())
+            or self.headers.get("Sec-Fetch-Site") == "cross-site"
+        ):
+            self.send_json({"code": "PINTEREST_OPERATOR_ORIGIN_DENIED"}, 403)
+            return False
+        if path == session_path and self.command == "POST":
+            transport = urllib.parse.urlsplit(self._base_url())
+            if transport.scheme != "https" and transport.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                self.send_json({"code": "PINTEREST_OPERATOR_HTTPS_REQUIRED"}, 403)
+                return False
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 4096:
+                    raise ValueError("Invalid login length")
+                payload = json.loads(self.rfile.read(length))
+                supplied = (str(payload.get("username", "")) + ":" + str(payload.get("password", ""))).encode()
+            except (ValueError, AttributeError):
+                self.send_json({"code": "PINTEREST_OPERATOR_INVALID_LOGIN"}, 400)
+                return False
+            if not hmac.compare_digest(credentials, supplied):
+                self.send_json({"code": "PINTEREST_OPERATOR_AUTH_REQUIRED"}, 401)
+                return False
+            if not check_pinterest_coordinator_ready():
+                self.send_json({"code": "PINTEREST_COORDINATOR_UNAVAILABLE"}, 503)
+                return False
+            self.operator_sessions.revoke(token)
+            try:
+                token = self.operator_sessions.create(fingerprint)
+            except ValueError:
+                self.send_json({"code": "PINTEREST_OPERATOR_SESSION_LIMIT"}, 503)
+                return False
+            self._operator_cookie = f"ffp_pinterest_operator={token}; Path=/api/pinterest-pod; HttpOnly; SameSite=Strict; Max-Age=3600"
+            if transport.scheme == "https":
+                self._operator_cookie += "; Secure"
+            self.send_json({"authenticated": True})
+            return False
+        if path == session_path + "/logout" and self.command == "POST":
+            self.operator_sessions.revoke(token)
+            self._operator_cookie = "ffp_pinterest_operator=; Path=/api/pinterest-pod; HttpOnly; SameSite=Strict; Max-Age=0"
+            self.send_json({"authenticated": False})
+            return False
+        if not authenticated:
+            self.send_json({"code": "PINTEREST_OPERATOR_AUTH_REQUIRED"}, 401)
+            return False
+        return True
 
     def log_message(self, format: str, *args: Any) -> None:
         logger.info("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
 
     def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if not os.getenv("PINTEREST_OPERATOR_USERNAME") and not os.getenv("PINTEREST_OPERATOR_PASSWORD"):
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
 
@@ -121,15 +202,27 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if getattr(self, "_operator_cookie", None):
+            self.send_header("Set-Cookie", self._operator_cookie)
         self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self) -> None:
+        if not self._operator_gate():
+            return
         url_parts = urllib.parse.urlsplit(self.path)
         path = url_parts.path.rstrip("/")
         if not path:
             path = "/"
+
+        if path == "/api/pinterest-pod/clients":
+            try:
+                self.send_json(http_get_json(pinterest_coordinator_url() + "/api/v1/clients"))
+            except Exception:
+                self.send_json({"code": "PINTEREST_COORDINATOR_UNAVAILABLE"}, 503)
+            return
 
         # Health check
         if path in {"/", "/health", "/api/pinterest-pod/health"}:
@@ -265,7 +358,7 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", mime_type)
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "public, max-age=3600")
+                self.send_header("Cache-Control", "private, no-store" if operator_credentials() else "public, max-age=3600")
                 self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(body)
@@ -377,8 +470,19 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
         self.send_json({"ok": False, "error": f"Endpoint not found: {path}"}, 404)
 
     def do_POST(self) -> None:
+        if not self._operator_gate():
+            return
         url_parts = urllib.parse.urlsplit(self.path)
         path = url_parts.path.rstrip("/")
+
+        forget = re.fullmatch(r"/api/pinterest-pod/clients/([a-zA-Z0-9_-]+)/forget", path)
+        if forget:
+            try:
+                status, response = http_delete_json(pinterest_coordinator_url() + "/api/v1/clients/" + forget.group(1))
+                self.send_json(response or {"ok": status < 400}, status if status != 204 else 200)
+            except Exception:
+                self.send_json({"code": "PINTEREST_COORDINATOR_UNAVAILABLE"}, 503)
+            return
 
         length = int(self.headers.get("Content-Length", "0"))
         payload: dict[str, Any] = {}

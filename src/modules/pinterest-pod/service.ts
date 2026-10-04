@@ -1070,23 +1070,19 @@ export async function syncPinterestPodToShopify(
 
 /** Fetch list of connected distributed crawler client agents */
 export async function getCrawlerClients(): Promise<readonly CrawlerClientSummary[]> {
-  try {
     const clients = await fetchJson<readonly CrawlerClientSummary[]>(
-      "/api/v1/clients",
+      "/api/pinterest-pod/clients",
       undefined,
       "CRAWLER_CLIENTS_FETCH_FAILED",
     );
     return clients ?? [];
-  } catch {
-    return [];
-  }
 }
 
 /** Remove a disconnected crawler Agent registration from the Coordinator. */
 export async function forgetCrawlerClient(clientId: string): Promise<void> {
   await fetchJson<unknown>(
-    `/api/v1/clients/${encodeURIComponent(clientId)}`,
-    { method: "DELETE" },
+    `/api/pinterest-pod/clients/${encodeURIComponent(clientId)}/forget`,
+    { method: "POST" },
     "CRAWLER_CLIENT_FORGET_FAILED",
   );
 }
@@ -1106,3 +1102,29 @@ export async function handoverToSeo(
 }
 
 export const realPinterestPodClient = new RealPinterestPodClient();
+
+export async function requestPinterestOperatorSession(
+  action: "status" | "login" | "logout",
+  credentials?: { username: string; password: string },
+): Promise<{ authRequired: boolean; authenticated: boolean }> {
+  if (action === "login" && typeof window !== "undefined" && window.location.protocol !== "https:"
+    && !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)) {
+    throw new Error("Đăng nhập operator yêu cầu HTTPS.");
+  }
+  const path = "/api/pinterest-pod/operator-session" + (action === "logout" ? "/logout" : "");
+  const response = await fetch(path, {
+    method: action === "status" ? "GET" : "POST",
+    credentials: "same-origin", redirect: "error", cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    ...(action === "login" ? { body: JSON.stringify(credentials) } : {}),
+  });
+  if (!response.ok) throw new Error("Không xác thực được Pinterest operator. Kiểm tra tài khoản và Coordinator.");
+  const payload: unknown = await response.json();
+  if (typeof payload !== "object" || payload === null || !("authenticated" in payload) || typeof payload.authenticated !== "boolean") {
+    throw new Error("Phản hồi xác thực Pinterest không hợp lệ.");
+  }
+  if (action === "status" && (!("authRequired" in payload) || typeof payload.authRequired !== "boolean")) {
+    throw new Error("Phản hồi xác thực Pinterest không hợp lệ.");
+  }
+  return { authRequired: "authRequired" in payload ? payload.authRequired === true : true, authenticated: payload.authenticated };
+}

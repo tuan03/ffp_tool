@@ -175,3 +175,97 @@ TLS/packaged-agent acceptance pending.
   imports and large chunks. They were not suppressed or repaired in this scope.
 - `git diff --check`: passed. Runtime containers remain healthy and were not restarted.
 - No public HTTPS check, clean-machine claim, production migration, push or deployment.
+
+## Pinterest compatibility follow-up (2026-10-04)
+
+The user accepted the Crawler UI checks, then approved repairing Pinterest auth
+compatibility. Work remains on `cua_pro` as instructed, not a new task branch.
+
+### Implemented boundary
+
+- Optional server-only `PINTEREST_OPERATOR_USERNAME` and `PINTEREST_OPERATOR_PASSWORD`
+  must match the secure Coordinator operator account. Both blank preserve legacy mode;
+  partial configuration fails closed. These are documented in `.env.example` but no
+  real environment, Compose process or VPS setting was changed.
+- Pinterest management and asset reads require an operator session when configured.
+  Login uses same-origin HTTPS (loopback HTTP allowed for development). The server
+  verifies the password and Coordinator access before issuing a random one-hour
+  HttpOnly, SameSite=Strict cookie; HTTPS adds Secure. Sessions are bounded, in memory,
+  and invalidated by logout, restart, expiry or credential change. Passwords are not
+  stored in browser storage; no credentials are added to asset URLs.
+- Unsafe cross-origin requests are rejected before executing handlers. Health and
+  readiness stay public. OAuth callbacks retain their existing signed-state validation
+  because a cross-site redirect does not carry the Strict cookie.
+- Backend credentials are sent only to allowlisted management paths on the configured
+  Coordinator origin, over HTTPS or loopback HTTP. Credentialed redirects are rejected.
+- Agent listing/forget now go through session-protected Pinterest endpoints rather
+  than unauthenticated browser calls to Coordinator. Auth/network errors are surfaced
+  rather than converted to an empty agent list. Job-list auth failures also propagate.
+- Readiness probes authorized `/api/v1/clients`, not just public health.
+- Asset URL paths are unchanged. In secure mode they are private/no-store and require
+  the operator cookie; in legacy mode the previous public behavior is preserved.
+
+Changed ownership: Pinterest service/UI/server and focused tests; main route composition
+only passes the mock opt-out flag; `.env.example` documents server-only configuration;
+`scripts/audits/pinterest_auth_sandbox.py` provides isolated verification. No Coordinator
+auth weakening, production database migration, new dependency or production container.
+
+### Evidence and scope
+
+- Pinterest Python suite: 22 tests passed, including session creation/logout, missing
+  auth, origin rejection, protected assets, OAuth state rejection, expiry, configuration,
+  readiness and destination/redirect checks.
+- Pinterest service tests: 50 passed; operator-session transport tests: 3 passed.
+- Real Chromium -> local HTTPS Pinterest -> local HTTPS authenticated Coordinator ->
+  private PostgreSQL schema passed repeatedly: login rejection/success, agent list,
+  readiness, create/status/cancel, asset 401/200/401, cookie flags and logout.
+  Job create/cancel in this helper uses browser fetch, not the full UI discovery wizard.
+- `audit_lease_baseline.py --proxy-auth`: two real PostgreSQL/Nginx runs passed, including
+  agent asset ownership/expiry fencing. This remains a separate HTTP Nginx test, not
+  proof of the complete Pinterest production proxy/TLS path.
+- Production build uses `--outDir .runtime/auth-ui-dist`; mock build and typecheck pass.
+  Full `npm test` passed; skipped tests are not acceptance.
+
+### Manual acceptance
+
+The active Coordinator UI sandbox must remain running with `claimsDisabled: true`.
+The assistant started a separate **test-only** Pinterest HTTPS process, using the same
+private PostgreSQL schema. It is not an extra production Compose service. Private
+runtime files and credentials remain under ignored `.runtime/auth-sandbox/<run-id>`.
+
+```powershell
+python scripts/audits/pinterest_auth_sandbox.py test
+python scripts/audits/pinterest_auth_sandbox.py manual
+```
+
+The manual helper automatically logs in and creates one queued fixture job. Check:
+
+1. Pinterest page opens without a recurring login dialog or auth error.
+2. Expand the agent panel: the existing isolated agent is listed. The general panel
+   may say an agent is online while the Pinterest-specific status says offline:
+   this test agent is Amazon-only, not a Pinterest-capable logged-in browser.
+3. Expand job history: `audit rug` is present. It does not crawl; all leases are disabled.
+4. Open `/api/pinterest-pod/assets/audit-fixture/preview.png` on the same sandbox origin
+   in that dedicated browser: the tiny fixture image is available after login.
+5. Log out and reload that asset: expect 401. Log in again by rerunning the helper.
+
+Pinterest OAuth status is deliberately a fixture with no real account. Trends, AI,
+production, Shopify writes and external browser requests are blocked. Do not treat
+disabled discovery controls or the Pinterest account warning as an auth failure.
+Close the dedicated browser after testing. Stop the Pinterest test service separately:
+
+```powershell
+python scripts/audits/pinterest_auth_sandbox.py stop
+```
+
+This retains test data/files. A stopped run has a `pinterest-ui.stop` marker; follow
+the tool's explicit restart instruction or create a fresh Coordinator sandbox.
+
+### Remaining acceptance limitations
+
+User Pinterest acceptance remains pending. Review Studio, real Pinterest agent crawl,
+OAuth login, AI production, Shopify handoff/sync, packaged agent, legacy asset ownership
+migration and public/composed TLS acceptance have not been established by this fixture.
+Secure-mode anonymous asset downloads are intentionally denied: non-browser consumers
+that currently expect public URLs need a reviewed delivery mechanism before rollout.
+Do not enable production auth or mark Task 19 complete on this evidence alone.
