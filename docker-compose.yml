@@ -111,6 +111,9 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    environment:
+      FFP_OPERATOR_USERNAME: ${FFP_OPERATOR_USERNAME:?Set FFP_OPERATOR_USERNAME in .env}
+      FFP_OPERATOR_PASSWORD: ${FFP_OPERATOR_PASSWORD:?Set FFP_OPERATOR_PASSWORD in .env}
     ports:
       - "${CLIENT_BIND_ADDRESS:-0.0.0.0}:${CLIENT_PORT:-3010}:80"
     healthcheck:
