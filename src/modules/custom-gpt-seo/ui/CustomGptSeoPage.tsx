@@ -193,7 +193,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở SEO Review →</Link>
         </div>
       </header>
-      <details className="rounded-2xl border border-slate-800 p-4"><summary className="cursor-pointer text-cyan-300">Agent Access — chỉ số vận hành, máy và token</summary><AgentAccessPanel key={storeId} client={client} storeId={storeId} /></details>
+      <details className="rounded-2xl border border-slate-800 p-4"><summary className="cursor-pointer font-medium text-cyan-300">Kết nối Codex <span className="ml-2 text-sm font-normal text-slate-400">Máy xử lý & phiên chạy</span></summary><AgentAccessPanel key={storeId} client={client} storeId={storeId} /></details>
 
       {notice && (
         <div role="status" className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${notice.kind === "success" ? "border-emerald-900 bg-emerald-950/40 text-emerald-200" : "border-rose-900 bg-rose-950/40 text-rose-200"}`}>
