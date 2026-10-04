@@ -2205,7 +2205,7 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(sorted(assignments.values()), [33, 33, 34])
 
-    def test_first_valid_result_wins_after_expired_task_is_reassigned(self) -> None:
+    def test_only_current_lease_can_complete_a_reassigned_task(self) -> None:
         self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello("client-a", slots=1))
         self.store.register_client(client_hello("client-b", slots=1))
@@ -2216,15 +2216,70 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.store.reap_expired()
         second = self.store.lease_tasks("client-b", 1)[0]
 
-        accepted = self.store.accept_result(
+        rejected = self.store.accept_result(
             first["taskId"], "client-a", first["leaseId"], "first", {"jobId": first["jobId"], "products": [{"id": "first"}]},
         )
+        self.assertEqual(rejected["status"], "stale")
+        with self.sessions() as session:
+            task = session.get(CrawlTask, first["taskId"])
+            self.assertEqual(task.assigned_client_id, "client-b")
+            self.assertEqual(task.lease_id, second["leaseId"])
+            self.assertEqual(task.status, "leased")
+            self.assertIsNone(task.result)
+            self.assertEqual(list(session.scalars(select(CrawlProductItem))), [])
+        accepted = self.store.accept_result(
+            second["taskId"], "client-b", second["leaseId"], "second", {"jobId": second["jobId"], "products": [{"id": "second"}]},
+        )
+        self.assertEqual(accepted["status"], "accepted")
         duplicate = self.store.accept_result(
             second["taskId"], "client-b", second["leaseId"], "second", {"jobId": second["jobId"], "products": [{"id": "second"}]},
         )
-
-        self.assertEqual(accepted["status"], "accepted")
         self.assertEqual(duplicate["status"], "duplicate")
+        late = self.store.accept_result(
+            first["taskId"], "client-a", first["leaseId"], "first", {"jobId": first["jobId"], "products": []},
+        )
+        self.assertEqual(late["status"], "stale")
+        with self.sessions() as session:
+            self.assertEqual(session.get(TaskResult, first["taskId"]).client_id, "client-b")
+
+    def test_final_result_rejects_expired_lease_before_reaper(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        with self.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).lease_expires_at = utc_now() - timedelta(seconds=1)
+        response = self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "checksum", {"jobId": lease["jobId"], "products": []},
+        )
+        self.assertEqual(response["status"], "stale")
+        with self.sessions() as session:
+            self.assertIsNone(session.get(TaskResult, lease["taskId"]))
+
+    def test_final_result_rejects_non_executable_or_unbounded_lease(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        for status, deadline in (("queued", utc_now() + timedelta(seconds=60)), ("failed", utc_now() + timedelta(seconds=60)), ("leased", None)):
+            with self.subTest(status=status, deadline=deadline):
+                with self.sessions.begin() as session:
+                    task = session.get(CrawlTask, lease["taskId"])
+                    task.status = status
+                    task.lease_expires_at = deadline
+                response = self.store.accept_result(
+                    lease["taskId"], "client-a", lease["leaseId"], "checksum", {"jobId": lease["jobId"], "products": []},
+                )
+                self.assertEqual(response["status"], "stale")
+
+    def test_committed_final_result_can_be_retried_without_active_lease(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        payload = {"jobId": lease["jobId"], "products": []}
+        self.assertEqual(self.store.accept_result(lease["taskId"], "client-a", lease["leaseId"], "checksum", payload)["status"], "accepted")
+        with self.sessions() as session:
+            self.assertIsNone(session.get(CrawlTask, lease["taskId"]).lease_expires_at)
+        self.assertEqual(self.store.accept_result(lease["taskId"], "client-a", lease["leaseId"], "checksum", payload)["status"], "duplicate")
+        self.assertEqual(self.store.accept_result(lease["taskId"], "forged-client", lease["leaseId"], "checksum", payload)["status"], "stale")
 
     def test_result_is_rejected_when_lease_was_never_issued_for_task(self) -> None:
         self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -2859,6 +2914,40 @@ class CoordinatorApiTests(unittest.TestCase):
         cache_override = patch.dict(os.environ, {"IMAGE_PROCESSING_CACHE_DIR": image_cache.name})
         cache_override.start()
         self.addCleanup(cache_override.stop)
+
+    def test_final_result_route_rejects_stale_lease_and_preserves_lost_ack_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                store = app.state.store
+                job = store.create_job({"urls": ["B0FR4MSS2H"]})
+                for client_id in ("client-a", "client-b"):
+                    store.register_client(client_hello(client_id, slots=1))
+                first = store.lease_tasks("client-a", 1)[0]
+                with store.sessions.begin() as session:
+                    session.get(CrawlTask, first["taskId"]).lease_expires_at = utc_now() - timedelta(seconds=1)
+                store.reap_expired()
+                second = store.lease_tasks("client-b", 1)[0]
+
+                def upload(lease, client_id):
+                    return client.put(
+                        f"/api/v1/worker/tasks/{lease['taskId']}/result",
+                        headers={"X-Client-Id": client_id, "X-Lease-Id": lease["leaseId"]},
+                        json={"taskId": lease["taskId"], "jobId": job["id"],
+                              "clientId": client_id, "leaseId": lease["leaseId"], "products": []},
+                    )
+
+                rejected = upload(first, "client-a")
+                self.assertEqual(rejected.status_code, 409)
+                self.assertIn("stale", rejected.json()["detail"])
+                accepted = upload(second, "client-b")
+                self.assertEqual(accepted.status_code, 200)
+                self.assertEqual(accepted.json()["status"], "accepted")
+                retry = upload(second, "client-b")
+                self.assertEqual(retry.status_code, 200)
+                self.assertEqual(retry.json()["status"], "duplicate")
+                self.assertEqual(upload(first, "client-a").status_code, 409)
 
     def test_summary_and_paged_product_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

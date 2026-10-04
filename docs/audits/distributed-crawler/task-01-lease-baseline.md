@@ -1,5 +1,7 @@
 # Task 01 — PostgreSQL lease baseline
 
+> Historical report: the user verified Task 01 and authorized Task 02. Its first-result-wins observations refer to the pre-fix baseline. On the Task 02 checkout, run the harness with `--expect current-lease`; see [Task 02](task-02-final-result-fencing.md). The original no-argument command intentionally asserts the old behavior and is no longer expected to pass after the fix.
+
 ## Scope and status
 
 - Baseline: `1c8d5a9`, branch `cua_pro`.

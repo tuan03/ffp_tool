@@ -944,10 +944,26 @@ class CoordinatorStore(CoordinatorObservability):
             )
             if task is None:
                 return {"status": "missing"}
-            if task.status == "completed" or task.result is not None:
+            if task.result is not None:
+                # A lost ACK may be retried after completion cleared the lease.
+                # Only the writer of the durable result can receive that ACK.
+                if task.result.client_id != client_id or task.result.lease_id != lease_id:
+                    return {"status": "stale", "taskId": task.id}
+                if str(payload.get("jobId") or "") != task.job_id:
+                    return {"status": "invalid", "taskId": task.id, "reason": "job_identity"}
                 return {"status": "duplicate", "taskId": task.id}
             if task.status in {"cancelling", "cancelled"}:
                 return {"status": "cancelled", "taskId": task.id}
+            # Historical attempts prove issuance, not current authority. Check
+            # ownership and expiry under the task row lock, before any writes.
+            if (
+                task.status not in {"leased", "running"}
+                or task.assigned_client_id != client_id
+                or task.lease_id != lease_id
+                or task.lease_expires_at is None
+                or _as_utc(task.lease_expires_at) <= utc_now()
+            ):
+                return {"status": "stale", "taskId": task.id}
             attempt = session.scalar(select(TaskAttempt).where(
                 TaskAttempt.task_id == task.id,
                 TaskAttempt.client_id == client_id,

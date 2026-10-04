@@ -1,11 +1,13 @@
-"""Task 01 characterization only: existing local PostgreSQL, disposable schema.
+"""Task 01/02 lease verification: existing local PostgreSQL, disposable schema.
 
 Run from the repository: python scripts/audits/audit_lease_baseline.py
+For Task 02: add --expect current-lease. Baseline mode expects pre-fix behavior.
 Never changes runtime code, public tables, container state, or PostgreSQL settings.
 """
 from __future__ import annotations
 
 import json
+import argparse
 import re
 import subprocess
 import sys
@@ -49,7 +51,7 @@ def local_test_url() -> URL:
     )
 
 
-def characterize(engine, run_number: int) -> None:
+def characterize(engine, run_number: int, expectation: str) -> None:
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
     job = store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -64,6 +66,13 @@ def characterize(engine, run_number: int) -> None:
         task = session.get(CrawlTask, first["taskId"])
         require(task is not None and task.assigned_client_id == "audit-a", "A must own first lease")
         task.lease_expires_at = utc_now() - timedelta(seconds=1)
+    if expectation == "current-lease":
+        expired = store.accept_result(
+            first["taskId"], "audit-a", first["leaseId"], "fixture-checksum",
+            {"jobId": job["id"], "products": []},
+        )
+        require(expired["status"] == "stale", "Expired lease must be rejected even before reaper")
+        print(f"RUN {run_number}: expired A before reaper=stale")
     reaped = store.reap_expired()
     require(reaped["requeuedTasks"] == 1, "Exactly one expired task must be requeued")
     second = store.lease_tasks("audit-b", 1)[0]
@@ -77,23 +86,40 @@ def characterize(engine, run_number: int) -> None:
     payload_a = {"jobId": job["id"], "products": [], "auditSource": "A"}
     payload_b = {"jobId": job["id"], "products": [], "auditSource": "B"}
     response_a = store.accept_result(first["taskId"], "audit-a", first["leaseId"], payload_checksum(payload_a), payload_a)
+    if expectation == "current-lease":
+        with sessions() as session:
+            task = session.get(CrawlTask, first["taskId"])
+            require(task.status == "leased" and task.lease_id == second["leaseId"], "Rejected A must leave B's lease untouched")
+            require(session.get(TaskResult, first["taskId"]) is None, "Rejected A must not persist a result")
     response_b = store.accept_result(second["taskId"], "audit-b", second["leaseId"], payload_checksum(payload_b), payload_b)
     print(f"RUN {run_number}: late A={response_a['status']}; current B={response_b['status']}")
-    require(response_a["status"] == "accepted", "Baseline changed: late A was not accepted")
-    require(response_b["status"] == "duplicate", "Baseline changed: B was not duplicate")
+    is_current = expectation == "current-lease"
+    require(response_a["status"] == ("stale" if is_current else "accepted"), "Unexpected late A response")
+    require(response_b["status"] == ("accepted" if is_current else "duplicate"), "Unexpected current B response")
+    if is_current:
+        retry = store.accept_result(second["taskId"], "audit-b", second["leaseId"], payload_checksum(payload_b), payload_b)
+        late_retry = store.accept_result(first["taskId"], "audit-a", first["leaseId"], payload_checksum(payload_a), payload_a)
+        require(retry["status"] == "duplicate", "Lost-ACK retry must stay idempotent")
+        require(late_retry["status"] == "stale", "Old writer must not receive another writer's ACK")
+        print(f"RUN {run_number}: B retries after completion=duplicate; late A retries=stale")
     with sessions() as session:
         task = session.get(CrawlTask, first["taskId"])
         results = list(session.scalars(select(TaskResult)))
         attempts = list(session.scalars(select(TaskAttempt).order_by(TaskAttempt.leased_at)))
-        require(len(results) == 1 and results[0].client_id == "audit-a", "Exactly one result from A expected")
-        require(results[0].payload["auditSource"] == "A", "B must not overwrite stored payload")
-        require(task.status == "completed" and task.lease_id == first["leaseId"], "Baseline completed task must reference A")
+        winner = "B" if is_current else "A"
+        require(len(results) == 1 and results[0].client_id == f"audit-{winner.lower()}", "Unexpected result writer or count")
+        require(results[0].payload["auditSource"] == winner, "Wrong stored payload")
+        require(task.status == "completed" and task.lease_id == (second if is_current else first)["leaseId"], "Wrong completed task lease")
         require(len(attempts) == 2, "Both attempts must remain")
-        require(attempts[0].status == "completed" and attempts[1].status == "leased", "Unexpected attempt baseline")
-        print(f"RUN {run_number}: task=completed, stored result=A, count=1; attempts A=completed B=leased")
+        require(attempts[0].status == ("abandoned" if is_current else "completed"), "Wrong A attempt state")
+        require(attempts[1].status == ("completed" if is_current else "leased"), "Wrong B attempt state")
+        print(f"RUN {run_number}: task=completed, stored result={winner}, count=1; attempts A={attempts[0].status} B={attempts[1].status}")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expect", choices=("baseline", "current-lease"), default="baseline")
+    expectation = parser.parse_args().expect
     url = local_test_url()
     admin = create_engine(url, connect_args={"connect_timeout": 5}, hide_parameters=True)
     try:
@@ -116,7 +142,7 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 Base.metadata.create_all(engine)
-                characterize(engine, run_number)
+                characterize(engine, run_number, expectation)
             finally:
                 if engine is not None:
                     engine.dispose()
@@ -130,7 +156,10 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    print("PASS: baseline reproduced twice; spec current-lease-only remains NOT MET. No runtime fix applied.")
+    if expectation == "baseline":
+        print("PASS: baseline reproduced twice; spec current-lease-only remains NOT MET. No runtime fix applied.")
+    else:
+        print("PASS: current-lease final result verified twice; product streaming and other mutation paths are NOT covered.")
 
 
 if __name__ == "__main__":

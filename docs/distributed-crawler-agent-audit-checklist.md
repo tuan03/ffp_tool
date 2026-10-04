@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **TASK 01 CHỜ NGƯỜI DÙNG KIỂM TRA**. Bài kiểm chứng lease PostgreSQL đã chạy; chưa bắt đầu Task 02.
+> Trạng thái: **TASK 02 CHỜ NGƯỜI DÙNG KIỂM TRA**. Task 01 đã được người dùng kiểm tra và cho chuyển Task 02. Chưa bắt đầu Task 03.
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -44,7 +44,7 @@ Mỗi lần bàn giao phải cung cấp lệnh/path thực tế đã thử, khô
 
 ## 3. Task 01 — kiểm chứng lease hiện tại, chưa sửa hành vi
 
-**Liên kết:** E0.1; spec 14–15. **Trạng thái:** CHỜ NGƯỜI DÙNG TEST. Xem [báo cáo Task 01 và lệnh chạy lại](audits/distributed-crawler/task-01-lease-baseline.md). Hai lần kiểm chứng đều cho A gửi muộn được accepted, B duplicate; chưa sửa runtime và chưa đáp ứng quy tắc lease mới.
+**Liên kết:** E0.1; spec 14–15. **Trạng thái:** ĐÃ NGHIỆM THU. Người dùng đã kiểm tra và cho triển khai Task 02. Xem [báo cáo lịch sử Task 01](audits/distributed-crawler/task-01-lease-baseline.md); kết quả first-result-wins thuộc baseline trước sửa. Hiện chạy [bài kiểm chứng Task 02](audits/distributed-crawler/task-02-final-result-fencing.md) với `--expect current-lease`.
 
 ### Mục tiêu
 
@@ -89,7 +89,7 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 ## 4. Backlog theo thứ tự thực hiện
 
-**Task 01 chờ người dùng test; Task 02–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
+**Task 01 đã nghiệm thu; Task 02 chờ người dùng test; Task 03–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
@@ -107,7 +107,7 @@ Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test inst
 
 | Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
 | --- | --- | --- | --- | --- | --- | --- |
-| [ ] | 01 | Tái hiện lease A/B hiện tại | 14–15 (kiểm chứng hiện trạng) | E0.1 | PostgreSQL baseline như mục 3 | Chạy lại/xem bảng A/B |
+| [x] | 01 | Tái hiện lease A/B hiện tại | 14–15 (kiểm chứng hiện trạng) | E0.1 | PostgreSQL baseline như mục 3 | Người dùng đã kiểm tra, cho chuyển Task 02 |
 | [ ] | 02 | Final result mới chỉ nhận từ lease còn quyền | 13–15, 19 (final result) | 01; duyệt D2, rule expiry; E1.1 | A stale bị reject, B accepted | Xem kết quả trước/sau, duyệt contract |
 | [ ] | 03 | Product streaming cũng chặn lease cũ | 15, 19, 31 (product streaming) | 02; E1.1 | A không tạo pipeline item, B hợp lệ | Xem số product/item và nguồn lease |
 | [ ] | 04 | Mutation phụ không hồi sinh lease cũ | 13–15, 19, 27 (mutation/reconcile) | 03; E1.1 | Progress/fail/renew/cancel ACK/reconcile với token cũ | Chạy lại bộ negative cases |
@@ -262,10 +262,11 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 01 đã kiểm chứng, chờ người dùng test/xác nhận |
-| Task 01 | PostgreSQL baseline PASS hai lần; chưa nghiệm thu; mục 15 chưa đáp ứng policy mới |
-| Task 02–53 | Chưa làm |
-| Code/runtime/DB được thay đổi trong lần viết docs | Không |
+| Task đang chạy | Task 02 chờ người dùng test/xác nhận |
+| Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
+| Task 02 | Đã sửa final result trong source và test; xem báo cáo Task 02 |
+| Task 03–53 | Chưa làm |
+| Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** người dùng chạy lại/xem báo cáo Task 01 và xác nhận. Không bắt đầu Task 02 hoặc sửa lease trước khi người dùng duyệt.
+**Điểm dừng hiện tại:** người dùng chạy lại/xem báo cáo Task 02 và xác nhận. Không bắt đầu Task 03, push hoặc deploy trước khi được duyệt.
