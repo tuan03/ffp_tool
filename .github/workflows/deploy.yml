@@ -88,7 +88,8 @@ jobs:
             EXISTING_STORE_ENV_FILE="$(mktemp)"
             EXISTING_DATABASE_ENV_FILE="$(mktemp)"
             EXISTING_SEARCH_CONSOLE_ENV_FILE="$(mktemp)"
-            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE" "$EXISTING_SEARCH_CONSOLE_ENV_FILE"' EXIT
+            EXISTING_SERVICE_TOKEN_ENV_FILE="$(mktemp)"
+            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE" "$EXISTING_SEARCH_CONSOLE_ENV_FILE" "$EXISTING_SERVICE_TOKEN_ENV_FILE"' EXIT
             if [ -f .env ]; then
               EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
@@ -97,6 +98,7 @@ jobs:
               grep -E '^STORE_[A-Z0-9_]+=' .env > "$EXISTING_STORE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|AUTO_SEO_DATABASE_URL|DATABASE_URL)[[:space:]]*=' .env > "$EXISTING_DATABASE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(SEO_PERFORMANCE_ENABLED|GSC_CLIENT_ID|GSC_CLIENT_SECRET|GSC_REDIRECT_URI|GSC_TOKEN_ENCRYPTION_KEY)[[:space:]]*=' .env > "$EXISTING_SEARCH_CONSOLE_ENV_FILE" || true
+              grep -E '^[[:space:]]*(export[[:space:]]+)?(REVIEW_IMAGE_BRIDGE_TOKEN|REVIEW_IMAGE_EXTENSION_TOKEN|SHOPIFY_PIPELINE_TOKEN)[[:space:]]*=' .env > "$EXISTING_SERVICE_TOKEN_ENV_FILE" || true
             fi
 
             if [ -n "$ENV_B64" ]; then
@@ -165,6 +167,7 @@ jobs:
             fi
             python3 scripts/prepare-production-postgres.py --env-file .env --previous-env-file "$EXISTING_DATABASE_ENV_FILE" "${POSTGRES_SETUP_ARGS[@]}"
             python3 scripts/prepare-production-search-console.py --env-file .env --previous-env-file "$EXISTING_SEARCH_CONSOLE_ENV_FILE" --redirect-uri "https://${TARGET_DOMAIN:-ffp.b6-team.site}/api/seo-performance/oauth/callback"
+            python3 scripts/prepare-production-service-tokens.py --env-file .env --previous-env-file "$EXISTING_SERVICE_TOKEN_ENV_FILE"
             chmod 755 scripts/restart-gpt-seo.sh
 
             echo "=== [4/6] Validating and starting root Compose ==="
@@ -178,7 +181,12 @@ jobs:
             docker compose config -q
             # Remove only the retired stateless container; its bind-mounted data remains on disk.
             docker rm -f ffp-tool-app >/dev/null 2>&1 || true
-            docker compose up -d --build --remove-orphans --wait --wait-timeout 180
+            if ! docker compose up -d --build --remove-orphans --wait --wait-timeout 180; then
+              echo "Server failed to become healthy; printing bounded diagnostics." >&2
+              docker compose ps || true
+              docker compose logs --no-color --tail=200 server || true
+              exit 1
+            fi
 
             echo "=== [5/6] Configuring host HTTPS reverse proxy ==="
             DOMAIN="${TARGET_DOMAIN:-ffp.b6-team.site}"
