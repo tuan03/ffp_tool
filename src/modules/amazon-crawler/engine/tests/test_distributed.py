@@ -3005,6 +3005,18 @@ class CoordinatorApiTests(unittest.TestCase):
                 retry = upload(second, "client-b")
                 self.assertEqual(retry.status_code, 200)
                 self.assertEqual(retry.json()["status"], "duplicate")
+                self.assertEqual(retry.json()["receiptId"], accepted.json()["receiptId"])
+                headers = {"X-Client-Id": "client-b", "X-Lease-Id": second["leaseId"]}
+                envelope = {"taskId": second["taskId"], "clientId": "client-b",
+                            "leaseId": second["leaseId"], "jobId": job["id"]}
+                conflict = client.put(f"/api/v1/worker/tasks/{second['taskId']}/result",
+                                      headers=headers, json={**envelope, "products": [], "changed": True})
+                self.assertEqual(conflict.status_code, 409)
+                self.assertEqual(conflict.json()["detail"]["code"], "UPLOAD_CHECKSUM_CONFLICT")
+                product_conflict = client.put(product_url, headers=headers,
+                    json={**envelope, "product": {"id": "fixture-product", "title": "Changed"}})
+                self.assertEqual(product_conflict.status_code, 409)
+                self.assertEqual(product_conflict.json()["detail"]["code"], "UPLOAD_CHECKSUM_CONFLICT")
                 self.assertEqual(upload(first, "client-a").status_code, 409)
 
     def test_summary_and_paged_product_routes(self) -> None:

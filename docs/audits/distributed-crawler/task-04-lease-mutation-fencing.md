@@ -3,7 +3,7 @@
 - Baseline: `d59af71`, working branch `cua_pro`.
 - User verified Task 03 and explicitly authorized Task 04.
 - Original specification: sections 13–15, 19 and 27; related heartbeat/recovery/cancel semantics in 7, 26, 35 and 51.
-- Status: awaiting user verification. Task 05 has not started.
+- Status: accepted through the user's instruction to proceed to the next task on 2026-10-04. No separate user-side test output was supplied; assistant verification below is the recorded evidence. Task 05 is now implemented and awaiting its own acceptance.
 
 ## Findings and runtime changes
 

@@ -806,6 +806,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=400, detail="Result checksum does not match payload.")
         response = store.accept_result(task_id, x_client_id, x_lease_id, checksum, payload)
         status = response["status"]
+        if status == "conflict":
+            raise HTTPException(status_code=409, detail={"code": "UPLOAD_CHECKSUM_CONFLICT", "reason": response.get("reason")})
         if status == "missing":
             raise HTTPException(status_code=404, detail="Crawler task was not found.")
         if status == "cancelled":
@@ -852,6 +854,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         )
         if response["status"] == "missing":
             raise HTTPException(status_code=404, detail="Crawler task was not found.")
+        if response["status"] == "conflict":
+            raise HTTPException(status_code=409, detail={"code": "UPLOAD_CHECKSUM_CONFLICT", "reason": response.get("reason")})
         if response["status"] in {"cancelled", "stale"}:
             raise HTTPException(status_code=409, detail="Crawler task is cancelled or the lease is stale.")
         if response["status"] == "invalid":

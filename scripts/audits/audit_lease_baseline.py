@@ -123,6 +123,7 @@ def main() -> None:
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--streaming", action="store_true", help="Verify Task 03 instead of final-result baseline")
     modes.add_argument("--mutations", action="store_true", help="Verify Task 04 mutation authority on PostgreSQL")
+    modes.add_argument("--receipts", action="store_true", help="Verify Task 05 durable upload acknowledgements")
     arguments = parser.parse_args()
     expectation = arguments.expect
     url = local_test_url()
@@ -147,8 +148,8 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 Base.metadata.create_all(engine)
-                if arguments.mutations:
-                    verify_mutations(engine, run_number)
+                if arguments.mutations or arguments.receipts:
+                    verify_mutations(engine, run_number, receipts=arguments.receipts)
                 elif arguments.streaming:
                     verify_streaming(engine, run_number)
                 else:
@@ -166,7 +167,9 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    if arguments.mutations:
+    if arguments.receipts:
+        print("PASS: PostgreSQL upload receipts verified twice; Task 05 awaits user acceptance.")
+    elif arguments.mutations:
         print("PASS: PostgreSQL mutation authority tests passed twice; Task 04 awaits user acceptance.")
     elif arguments.streaming:
         print("PASS: current-lease product streaming verified twice; other mutation paths remain outside Task 03.")
@@ -176,18 +179,22 @@ def main() -> None:
         print("PASS: current-lease final result verified twice; product streaming and other mutation paths are NOT covered.")
 
 
-def verify_mutations(engine, run_number: int) -> None:
+def verify_mutations(engine, run_number: int, *, receipts: bool = False) -> None:
     from engine.tests.test_lease_mutations import LeaseMutationTests
+    from engine.tests.test_upload_receipts import UploadReceiptTests
 
     with engine.connect() as connection:
         schema = connection.execute(text("SELECT current_schema()")).scalar()
     require(re.fullmatch(r"ffp_audit01_[0-9a-f]{32}", schema) is not None, "Refuse fixture reset outside audit schema")
 
-    class PostgreSqlMutationTests(LeaseMutationTests):
+    class PostgreSqlMutationTests(UploadReceiptTests if receipts else LeaseMutationTests):
         def setUp(self):
             self.engine = engine
             # Only tables in this run's verified disposable search_path schema.
             Base.metadata.drop_all(engine)
+            # Migration tests own this auxiliary table outside Base metadata.
+            from engine.distributed.coordinator_migrations import MIGRATIONS
+            MIGRATIONS.drop(engine, checkfirst=True)
             self.initialize_fixture()
 
         def tearDown(self):
@@ -196,7 +203,7 @@ def verify_mutations(engine, run_number: int) -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSqlMutationTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     require(result.wasSuccessful() and not result.skipped, "PostgreSQL mutation checks failed or skipped")
-    print(f"RUN {run_number}: mutation tests={result.testsRun}, failures=0, skipped=0")
+    print(f"RUN {run_number}: {'receipt' if receipts else 'mutation'} tests={result.testsRun}, failures=0, skipped=0")
 
 
 def verify_streaming(engine, run_number: int) -> None:

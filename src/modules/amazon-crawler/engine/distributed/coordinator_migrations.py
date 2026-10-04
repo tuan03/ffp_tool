@@ -2,10 +2,10 @@
 
 from sqlalchemy import Column, Integer, MetaData, Table, select, text
 
-from .coordinator_models import Base
+from .coordinator_models import Base, UploadReceipt
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 1
+MIGRATION_VERSION = 2
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -17,6 +17,9 @@ def migrate_coordinator(engine) -> None:
         versions = set(connection.scalars(select(MIGRATIONS.c.version)))
         if any(version > MIGRATION_VERSION for version in versions):
             raise RuntimeError("Coordinator database requires a newer server version.")
-        if MIGRATION_VERSION not in versions:
+        if 1 not in versions:
             Base.metadata.create_all(connection)
-            connection.execute(MIGRATIONS.insert().values(version=MIGRATION_VERSION))
+            connection.execute(MIGRATIONS.insert().values(version=1))
+        if 2 not in versions:
+            UploadReceipt.__table__.create(connection, checkfirst=True)
+            connection.execute(MIGRATIONS.insert().values(version=2))

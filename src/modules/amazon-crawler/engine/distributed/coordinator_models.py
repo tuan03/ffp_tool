@@ -172,6 +172,16 @@ class TaskResult(Base):
     task: Mapped[CrawlTask] = relationship(back_populates="result")
 
 
+class UploadReceipt(Base):
+    __tablename__ = "crawler_upload_receipts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"), index=True)
+    checksum: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class CrawlProductItem(Base):
     __tablename__ = "crawl_product_items"
     __table_args__ = (

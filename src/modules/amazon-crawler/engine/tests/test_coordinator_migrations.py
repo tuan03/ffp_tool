@@ -13,7 +13,8 @@ class CoordinatorMigrationTests(unittest.TestCase):
             migrate_coordinator(engine)
             self.assertIn("crawler_image_profiles", inspect(engine).get_table_names())
             with engine.connect() as connection:
-                self.assertEqual(list(connection.scalars(select(MIGRATIONS.c.version))), [1])
+                self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), [1, 2])
+            self.assertIn("crawler_upload_receipts", inspect(engine).get_table_names())
         finally:
             engine.dispose()
 
@@ -22,7 +23,7 @@ class CoordinatorMigrationTests(unittest.TestCase):
         try:
             migrate_coordinator(engine)
             with engine.begin() as connection:
-                connection.execute(MIGRATIONS.insert().values(version=2))
+                connection.execute(MIGRATIONS.insert().values(version=3))
             with self.assertRaisesRegex(RuntimeError, "newer server"):
                 migrate_coordinator(engine)
         finally:

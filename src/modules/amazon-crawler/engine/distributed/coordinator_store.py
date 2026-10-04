@@ -35,9 +35,10 @@ from .coordinator_models import (
     ShopifyProductLink,
     TaskAttempt,
     TaskResult,
+    UploadReceipt,
     CrawlTelemetryEvent,
 )
-from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, settings_fingerprint, utc_iso, utc_now
+from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
@@ -947,6 +948,26 @@ class CoordinatorStore(CoordinatorObservability):
             self._refresh_job(session, task.job_id)
             return {"status": task.status, "failureCount": task.failure_count}
 
+    @staticmethod
+    def _receipt_id(kind: str, task_id: str, client_id: str, lease_id: str, product_key: str = "") -> str:
+        return payload_checksum([kind, task_id, client_id, lease_id, product_key])
+
+    @staticmethod
+    def _replay_receipt(session, receipt_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        receipt = session.get(UploadReceipt, receipt_id)
+        if receipt is None:
+            return None
+        if receipt.checksum != payload_checksum(payload):
+            return {"status": "conflict", "reason": "checksum_mismatch", "receiptId": receipt_id}
+        return {**receipt.response, "status": "duplicate"}
+
+    @staticmethod
+    def _save_receipt(session, receipt_id: str, task_id: str, payload: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
+        digest = payload_checksum(payload)
+        acknowledged = {**response, "receiptId": receipt_id, "checksum": digest}
+        session.add(UploadReceipt(id=receipt_id, task_id=task_id, checksum=digest, response=acknowledged))
+        return acknowledged  # Caller transaction commits before the response escapes.
+
     def accept_result(self, task_id: str, client_id: str, lease_id: str, checksum: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self.sessions.begin() as session:
             task = session.scalar(
@@ -954,6 +975,10 @@ class CoordinatorStore(CoordinatorObservability):
             )
             if task is None:
                 return {"status": "missing"}
+            receipt_id = self._receipt_id("final", task_id, client_id, lease_id)
+            receipt = self._replay_receipt(session, receipt_id, payload)
+            if receipt is not None:
+                return receipt
             if task.result is not None:
                 # A lost ACK may be retried after completion cleared the lease.
                 # Only the writer of the durable result can receive that ACK.
@@ -961,7 +986,11 @@ class CoordinatorStore(CoordinatorObservability):
                     return {"status": "stale", "taskId": task.id}
                 if str(payload.get("jobId") or "") != task.job_id:
                     return {"status": "invalid", "taskId": task.id, "reason": "job_identity"}
-                return {"status": "duplicate", "taskId": task.id}
+                # Legacy results retain the original transport checksum even
+                # when raw products have been pruned. Do not hash pruned data.
+                if task.result.checksum != checksum:
+                    return {"status": "conflict", "reason": "checksum_mismatch"}
+                return self._save_receipt(session, receipt_id, task_id, payload, {"status": "duplicate", "taskId": task.id})
             if task.status in {"cancelling", "cancelled"}:
                 return {"status": "cancelled", "taskId": task.id}
             # Historical attempts prove issuance, not current authority. Check
@@ -1025,7 +1054,7 @@ class CoordinatorStore(CoordinatorObservability):
                 )
             self._event(session, task.job_id, "task_completed", completion_event)
             self._refresh_job(session, task.job_id)
-            return {"status": "accepted", "taskId": task.id}
+            return self._save_receipt(session, receipt_id, task_id, payload, {"status": "accepted", "taskId": task.id})
 
     @staticmethod
     def _upsert_product_item(
@@ -1076,6 +1105,18 @@ class CoordinatorStore(CoordinatorObservability):
             task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
                 return {"status": "missing"}
+            if str(payload.get("jobId") or "") != task.job_id:
+                return {"status": "invalid", "reason": "job_identity"}
+            product = payload.get("product")
+            if not isinstance(product, dict):
+                return {"status": "invalid", "reason": "product_payload"}
+            source_key = _source_key(product)
+            if product_key not in {source_key, str(product.get("id") or "")}:
+                return {"status": "invalid", "reason": "product_identity"}
+            receipt_id = self._receipt_id("product", task_id, client_id, lease_id, source_key)
+            receipt = self._replay_receipt(session, receipt_id, payload)
+            if receipt is not None:
+                return receipt
             if task.status in {"cancelling", "cancelled"}:
                 return {"status": "cancelled"}
             # Streaming writes must have current authority too; a historical
@@ -1095,14 +1136,11 @@ class CoordinatorStore(CoordinatorObservability):
             ))
             if attempt is None:
                 return {"status": "stale"}
-            if str(payload.get("jobId") or "") != task.job_id:
-                return {"status": "invalid", "reason": "job_identity"}
-            product = payload.get("product")
-            if not isinstance(product, dict):
-                return {"status": "invalid", "reason": "product_payload"}
-            source_key = _source_key(product)
-            if product_key not in {source_key, str(product.get("id") or "")}:
-                return {"status": "invalid", "reason": "product_identity"}
+            existing = session.scalar(select(CrawlProductItem).where(
+                CrawlProductItem.job_id == task.job_id, CrawlProductItem.source_key == source_key,
+            ))
+            if existing is not None and payload_checksum(existing.raw_payload) != payload_checksum(product):
+                return {"status": "conflict", "reason": "product_content_mismatch"}
             item, created = self._upsert_product_item(
                 session,
                 task=task,
@@ -1120,11 +1158,11 @@ class CoordinatorStore(CoordinatorObservability):
                     "status": item.status,
                 })
             self._refresh_job(session, task.job_id)
-            return {
+            return self._save_receipt(session, receipt_id, task_id, payload, {
                 "status": "accepted" if created else "duplicate",
                 "productItemId": item.id,
                 "sourceKey": item.source_key,
-            }
+            })
 
     def claim_product_items(
         self,
@@ -1992,6 +2030,7 @@ class CoordinatorStore(CoordinatorObservability):
                 session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id.in_(job_ids)))
                 session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id.in_(job_ids)))
                 if task_ids:
+                    session.execute(delete(UploadReceipt).where(UploadReceipt.task_id.in_(task_ids)))
                     session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
                     session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
                 session.execute(delete(CrawlTask).where(CrawlTask.job_id.in_(job_ids)))
@@ -2601,6 +2640,7 @@ class CoordinatorStore(CoordinatorObservability):
         session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id == job_id))
         session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id == job_id))
         if task_ids:
+            session.execute(delete(UploadReceipt).where(UploadReceipt.task_id.in_(task_ids)))
             session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
             session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
         session.execute(delete(CrawlTask).where(CrawlTask.job_id == job_id))
