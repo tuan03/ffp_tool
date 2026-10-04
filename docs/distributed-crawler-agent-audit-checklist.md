@@ -93,98 +93,108 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
+### Cách đọc cột đối chiếu với file gốc
+
+- Cột **“Mục trong đặc tả gốc / phần xử lý”** dùng số tiêu đề trong `distributed_crawler_agent_server_task_spec.md`, không phải số dòng hoặc số task của checklist này. Ví dụ **Task 02 → mục 13–15, 19**; không phải mục 2 của file gốc.
+- Phần trong ngoặc chỉ rõ phạm vi đóng góp. Đây là **phần dự kiến xử lý sau khi task được nghiệm thu**, chưa phải tuyên bố đã hoàn thành; hiện tất cả task vẫn CHƯA LÀM.
+- Một mục gốc có thể cần nhiều task: mục 15 (Lease Token) được kiểm chứng ở Task 01, xử lý qua Task 02–04 và kiểm tra chung ở Task 10. Task 01 hoàn thành chỉ chứng minh hiện trạng, không đánh dấu mục 15 đã đáp ứng yêu cầu mới.
+- Task có chữ **“nghiệm thu”** kiểm tra kết hợp các phần đã làm, không thay thế implementation hoặc test còn thiếu. Task 53 đối chiếu toàn bộ 1–58, không tự làm nốt phần thiếu trong một task tổng kết.
+- Các mục 1 (mục tiêu), 45 (database), 49 (fallback), 55 (phân công), 56 (nguyên tắc), 58 (ưu tiên/DoD) còn có tính xuyên suốt. Cột ghi liên hệ chính; khi mở task phải ghi thêm điều khoản cụ thể và test chứng minh nếu có tác động.
+- Topology ba container là ràng buộc kiến trúc FFP từ kế hoạch triển khai trước, không gán nhầm thành một yêu cầu mới chỉ có trong mục 56 của file gốc.
+- Chỉ xác nhận **một mục gốc đã hoàn thành** khi toàn bộ tiêu chí áp dụng của mục đó có bằng chứng và người dùng nghiệm thu. Ngoại lệ được duyệt phải ghi riêng, không tính thành PASS.
+
 ### A. Reliability — bảo vệ kết quả trước
 
-| Đạt | ID | Một kết quả cần đạt | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
-| --- | --- | --- | --- | --- | --- |
-| [ ] | 01 | Tái hiện lease A/B hiện tại | E0.1 | PostgreSQL baseline như mục 3 | Chạy lại/xem bảng A/B |
-| [ ] | 02 | Final result mới chỉ nhận từ lease còn quyền | 01; duyệt D2, rule expiry; E1.1 | A stale bị reject, B accepted | Xem kết quả trước/sau, duyệt contract |
-| [ ] | 03 | Product streaming cũng chặn lease cũ | 02; E1.1 | A không tạo pipeline item, B hợp lệ | Xem số product/item và nguồn lease |
-| [ ] | 04 | Mutation phụ không hồi sinh lease cũ | 03; E1.1 | Progress/fail/renew/cancel ACK/reconcile với token cũ | Chạy lại bộ negative cases |
-| [ ] | 05 | Result receipt idempotent, checksum conflict rõ | 04; E1.1 | Mất ACK gửi lại không duplicate; khác checksum reject | Xem một kết quả, nhiều lần delivery |
-| [ ] | 06 | Outbox định danh riêng, migrate không mất dữ liệu | 05; duyệt D3; E1.2 | SQLite agent cũ → mới; hai attempts không đè nhau | Xem counts/identity qua reopen |
-| [ ] | 07 | Stop/cleanup giữ kết quả và asset chưa ACK | 06; E1.2 | Discard/purge/reconcile không xóa outbox; quarantine không publish | Test dữ liệu mẫu trước/sau cleanup |
-| [ ] | 08 | Outbox có backpressure khi lỗi lưu trữ | 07; quota/retention được duyệt; E1.2 | Disk-full mô phỏng, không false SUCCESS/nhận thêm | Xem cảnh báo và backlog còn nguyên |
-| [ ] | 09 | Reconnect/restart đối chiếu trước nhận task | 08; D4, policy offline; E1.3 | Crash/mạng mất, không recrawl chỉ vì mất ACK | Xem recovery trên instance test |
-| [ ] | 10 | Nghiệm thu reliability chung | 02–09; G1 | PG race + hai agent + regression streaming/cache | Xác nhận toàn bộ flow, không chỉ từng test |
+| Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
+| --- | --- | --- | --- | --- | --- | --- |
+| [ ] | 01 | Tái hiện lease A/B hiện tại | 14–15 (kiểm chứng hiện trạng) | E0.1 | PostgreSQL baseline như mục 3 | Chạy lại/xem bảng A/B |
+| [ ] | 02 | Final result mới chỉ nhận từ lease còn quyền | 13–15, 19 (final result) | 01; duyệt D2, rule expiry; E1.1 | A stale bị reject, B accepted | Xem kết quả trước/sau, duyệt contract |
+| [ ] | 03 | Product streaming cũng chặn lease cũ | 15, 19, 31 (product streaming) | 02; E1.1 | A không tạo pipeline item, B hợp lệ | Xem số product/item và nguồn lease |
+| [ ] | 04 | Mutation phụ không hồi sinh lease cũ | 13–15, 19, 27 (mutation/reconcile) | 03; E1.1 | Progress/fail/renew/cancel ACK/reconcile với token cũ | Chạy lại bộ negative cases |
+| [ ] | 05 | Result receipt idempotent, checksum conflict rõ | 19, 30–31 (receipt/duplicate) | 04; E1.1 | Mất ACK gửi lại không duplicate; khác checksum reject | Xem một kết quả, nhiều lần delivery |
+| [ ] | 06 | Outbox định danh riêng, migrate không mất dữ liệu | 16–17, 27, 30–31 (outbox) | 05; duyệt D3; E1.2 | SQLite agent cũ → mới; hai attempts không đè nhau | Xem counts/identity qua reopen |
+| [ ] | 07 | Stop/cleanup giữ kết quả và asset chưa ACK | 9–10, 17, 30, 33 (giữ kết quả) | 06; E1.2 | Discard/purge/reconcile không xóa outbox; quarantine không publish | Test dữ liệu mẫu trước/sau cleanup |
+| [ ] | 08 | Outbox có backpressure khi lỗi lưu trữ | 16, 30, 36 (lỗi lưu trữ) | 07; quota/retention được duyệt; E1.2 | Disk-full mô phỏng, không false SUCCESS/nhận thêm | Xem cảnh báo và backlog còn nguyên |
+| [ ] | 09 | Reconnect/restart đối chiếu trước nhận task | 18, 25–27, 30, 51–52 (recovery) | 08; D4, policy offline; E1.3 | Crash/mạng mất, không recrawl chỉ vì mất ACK | Xem recovery trên instance test |
+| [ ] | 10 | Nghiệm thu reliability chung | 13–18, 25–27, 30–31, 49 (nghiệm thu nhóm) | 02–09; G1 | PG race + hai agent + regression streaming/cache | Xác nhận toàn bộ flow, không chỉ từng test |
 
 Task 05 chốt contract receipt/result ID phía server; Task 06 migrate agent dùng contract đó. Mọi ACK/disposition mới phải tương thích agent trong test hoặc có adapter; không xóa spool cũ khi triển khai giữa hai task. Task 09 chỉ dùng control hiện có; control ledger mới được tích hợp và test lại ở Task 21.
 
 ### B. Identity và bảo mật
 
-| Đạt | ID | Một kết quả cần đạt | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
-| --- | --- | --- | --- | --- | --- |
-| [ ] | 11 | Chốt identity/auth/state compatibility | 10; D1/D5/D6; E0.2/E2 | Ma trận agent cũ/mới, quyền local stop, naming states | Duyệt policy, không đổi security ngầm |
-| [ ] | 12 | Operator authorization và audit nền | 11; E2.1 | Admin allowed, agent/anonymous denied; audit không secret | Demo quyền được/không được thao tác |
-| [ ] | 13 | Tạo key chỉ hiển thị raw một lần | 12; E2.1 | Hash/verifier, expiry/capacity, không raw log | Tạo key test, kiểm danh sách metadata |
-| [ ] | 14 | Register idempotent, server cấp identity | 13; E2.1 | Mất register response không sinh ID trùng | Restart và đối chiếu ID |
-| [ ] | 15 | Setup URL/key và OS credential storage | 14; E2.2 | Identity/secret không lệch, không vào Git/log | Setup agent test và mở lại |
-| [ ] | 16 | HTTP agent xác thực và kiểm ownership | 15; E2.3 | Upload/assets/lease: key A không dùng task B | Chạy negative API demo |
-| [ ] | 17 | WSS session bị kiểm quyền cả khi đang mở | 16; E2.3 | Key invalid/revoke không claim; giữ outbox | Quan sát agent test chuyển NEED_REAUTH |
-| [ ] | 18 | Rotate/revoke/rebind/reinstall an toàn | 17; E2.1–2.2 | Copy DB không giả danh, rotate không mất outbox | Thử key test, identity và reinstall theo policy |
-| [ ] | 19 | Nghiệm thu auth qua public test URL | 11–18; G2 | Nginx routes, internal path blocked, compatibility matrix | Duyệt enrollment và phạm vi cutover; chưa bật VPS |
+| Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
+| --- | --- | --- | --- | --- | --- | --- |
+| [ ] | 11 | Chốt identity/auth/state compatibility | 2–6, 23–24, 51 (chốt contract) | 10; D1/D5/D6; E0.2/E2 | Ma trận agent cũ/mới, quyền local stop, naming states | Duyệt policy, không đổi security ngầm |
+| [ ] | 12 | Operator authorization và audit nền | 23–24, 48 (quyền operator/audit) | 11; E2.1 | Admin allowed, agent/anonymous denied; audit không secret | Demo quyền được/không được thao tác |
+| [ ] | 13 | Tạo key chỉ hiển thị raw một lần | 3, 23–24 (tạo key) | 12; E2.1 | Hash/verifier, expiry/capacity, không raw log | Tạo key test, kiểm danh sách metadata |
+| [ ] | 14 | Register idempotent, server cấp identity | 2, 4–5, 19 (register/identity) | 13; E2.1 | Mất register response không sinh ID trùng | Restart và đối chiếu ID |
+| [ ] | 15 | Setup URL/key và OS credential storage | 2, 4, 23, 51 (setup/secret) | 14; E2.2 | Identity/secret không lệch, không vào Git/log | Setup agent test và mở lại |
+| [ ] | 16 | HTTP agent xác thực và kiểm ownership | 19, 23–24 (HTTP auth) | 15; E2.3 | Upload/assets/lease: key A không dùng task B | Chạy negative API demo |
+| [ ] | 17 | WSS session bị kiểm quyền cả khi đang mở | 6–7, 23–24 (session auth) | 16; E2.3 | Key invalid/revoke không claim; giữ outbox | Quan sát agent test chuyển NEED_REAUTH |
+| [ ] | 18 | Rotate/revoke/rebind/reinstall an toàn | 3–5, 23 (key lifecycle) | 17; E2.1–2.2 | Copy DB không giả danh, rotate không mất outbox | Thử key test, identity và reinstall theo policy |
+| [ ] | 19 | Nghiệm thu auth qua public test URL | 2–5, 19, 23–24 (nghiệm thu nhóm) | 11–18; G2 | Nginx routes, internal path blocked, compatibility matrix | Duyệt enrollment và phạm vi cutover; chưa bật VPS |
 
 Task 17 dùng thao tác revoke qua fixture/backend đã bảo vệ để test; Task 18 hoàn thiện lifecycle và UI. Chỉ bật auth bắt buộc cho deployment thật sau phê duyệt riêng, không coi gate này là lệnh deploy.
 
 ### C. Điều khiển bền vững và worker an toàn
 
-| Đạt | ID | Một kết quả cần đạt | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
-| --- | --- | --- | --- | --- | --- |
-| [ ] | 20 | Command ledger server và agent bền vững | 19; E3.1 | Persist trước gửi/tác động, ACK khác completion | Xem timeline nhận/chạy/xong |
-| [ ] | 21 | Replay/priority/expiry và startup gate đúng | 20; E3.1 | Restart, duplicate, sequence gaps, offline-before-lease | Xem command không chạy lặp/bỏ sót |
-| [ ] | 22 | PAUSE/RESUME có desired/applied state | 21; E3.1 | Pause không claim; resume không vượt auth/health gate | Bấm pause/resume, xem task đang chạy |
-| [ ] | 23 | Global admission gate bền vững | 22; duyệt D7/D8; E3.2 | Stop/lease race, server restart giữ gate | Xem không cấp mới sau mốc stop |
-| [ ] | 24 | Soft stop hoàn tất running, không nhận mới | 23; E3.2 | Online/offline, không purge result; local stop không hủy job khác | Demo stop mềm và pending confirmations |
-| [ ] | 25 | Chốt thiết kế isolation và ownership worker | 24; E4.2 | Audit thread/process/IPC, Windows/CAPTCHA constraints | Duyệt phạm vi refactor nếu cần |
-| [ ] | 26 | Worker crash không làm chết agent/control loop | 25; E4.2 | Kill child test, worker khác và outbox sống | Xem agent vẫn online và recovery |
-| [ ] | 27 | Watchdog xử lý hang/crash storm đúng phạm vi | 26; E4.2 | Kill đúng process tree; bounded restart/degraded | Browser khác/ChatGPT không bị đóng |
-| [ ] | 28 | Hard stop/cancel task chỉ tác động đúng scope | 27; E3.2–3.3 | Per-task cancellation, grace/escalation, late results | Dừng một task; task khác không bị hủy |
-| [ ] | 29 | Cancel job không bị hồi sinh sau reconnect | 28; E3.3 | Queued/running/late results, downstream boundary | Hủy job mẫu, xem lý do/giới hạn tác động |
-| [ ] | 30 | Purge pending không đụng running/outbox | 29; E3.4 | Mixed queues, repeat/offline command, audit | Xác nhận counts trước/sau purge |
-| [ ] | 31 | Purge all theo scope giữ kết quả chưa ACK | 30; E3.4 | Optional running cancel, offline replay, confirmation | Thử PURGE dữ liệu test và quarantine |
-| [ ] | 32 | RESTART_WORKERS/RESTART_AGENT xác nhận sau phục hồi | 31; E3/E4.2 | Boot mới ACK completion, không mất identity/outbox | Restart agent test, xem timeline đúng |
+| Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
+| --- | --- | --- | --- | --- | --- | --- |
+| [ ] | 20 | Command ledger server và agent bền vững | 8, 20, 45, 48 (command ledger) | 19; E3.1 | Persist trước gửi/tác động, ACK khác completion | Xem timeline nhận/chạy/xong |
+| [ ] | 21 | Replay/priority/expiry và startup gate đúng | 20, 33–34, 51–52 (replay/ordering) | 20; E3.1 | Restart, duplicate, sequence gaps, offline-before-lease | Xem command không chạy lặp/bỏ sót |
+| [ ] | 22 | PAUSE/RESUME có desired/applied state | 6–9, 21, 42 (pause/resume) | 21; E3.1 | Pause không claim; resume không vượt auth/health gate | Bấm pause/resume, xem task đang chạy |
+| [ ] | 23 | Global admission gate bền vững | 11, 22, 42 (global gate) | 22; duyệt D7/D8; E3.2 | Stop/lease race, server restart giữ gate | Xem không cấp mới sau mốc stop |
+| [ ] | 24 | Soft stop hoàn tất running, không nhận mới | 9, 32 (soft stop) | 23; E3.2 | Online/offline, không purge result; local stop không hủy job khác | Demo stop mềm và pending confirmations |
+| [ ] | 25 | Chốt thiết kế isolation và ownership worker | 28–29, 35, 52 (thiết kế worker) | 24; E4.2 | Audit thread/process/IPC, Windows/CAPTCHA constraints | Duyệt phạm vi refactor nếu cần |
+| [ ] | 26 | Worker crash không làm chết agent/control loop | 27–28, 52 (worker recovery) | 25; E4.2 | Kill child test, worker khác và outbox sống | Xem agent vẫn online và recovery |
+| [ ] | 27 | Watchdog xử lý hang/crash storm đúng phạm vi | 6, 28–29, 36 (watchdog) | 26; E4.2 | Kill đúng process tree; bounded restart/degraded | Browser khác/ChatGPT không bị đóng |
+| [ ] | 28 | Hard stop/cancel task chỉ tác động đúng scope | 8–9, 32, 35 (hard stop/cancel task) | 27; E3.2–3.3 | Per-task cancellation, grace/escalation, late results | Dừng một task; task khác không bị hủy |
+| [ ] | 29 | Cancel job không bị hồi sinh sau reconnect | 12–13, 35, 46 (cancel job) | 28; E3.3 | Queued/running/late results, downstream boundary | Hủy job mẫu, xem lý do/giới hạn tác động |
+| [ ] | 30 | Purge pending không đụng running/outbox | 9–10, 17, 33, 48 (purge pending) | 29; E3.4 | Mixed queues, repeat/offline command, audit | Xác nhận counts trước/sau purge |
+| [ ] | 31 | Purge all theo scope giữ kết quả chưa ACK | 9–10, 17, 33, 48 (purge all) | 30; E3.4 | Optional running cancel, offline replay, confirmation | Thử PURGE dữ liệu test và quarantine |
+| [ ] | 32 | RESTART_WORKERS/RESTART_AGENT xác nhận sau phục hồi | 8, 20, 27–28, 51 (restart commands) | 31; E3/E4.2 | Boot mới ACK completion, không mất identity/outbox | Restart agent test, xem timeline đúng |
 
 Đưa isolation trước hard stop/cancel task để không hứa khả năng kill riêng worker khi executor chưa hỗ trợ. Nếu crash/hang chỉ chứng minh trên simulator, ghi giới hạn; chưa tick nghiệm thu Windows thực tế.
 
 ### D. Retry, quan sát và gate MVP
 
-| Đạt | ID | Một kết quả cần đạt | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
-| --- | --- | --- | --- | --- | --- |
-| [ ] | 33 | Taxonomy lỗi và retry budget thống nhất | 32; E4.1 | Permanent/transient, Retry-After, restart giữ budget | Xem lỗi và lịch retry có lý do |
-| [ ] | 34 | Attempt history/version và retention đúng | 33; D9; E4.1 | Không ghi đè lịch sử, cleanup không mất evidence cần giữ | Theo dõi một task qua nhiều attempts |
-| [ ] | 35 | DLQ có requeue/delete được phân quyền | 34; E4.1 | Hết budget vào DLQ, requeue không duplicate; delete có audit | Retry một task/bulk nhỏ và xác nhận scope |
-| [ ] | 36 | Dashboard thống nhất states/commands/backlog | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Duyệt màn agent/job/key/command hiện có |
-| [ ] | 37 | Regression consumers chung và runtime | 36; G3/G4 | Amazon Reviews/Pinterest/Review Studio/pipeline/internal routes; đúng ba container | Smoke các màn/flow liên quan trên test instance |
-| [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Xem báo cáo + demo, phân biệt giả và máy thật |
+| Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
+| --- | --- | --- | --- | --- | --- | --- |
+| [ ] | 33 | Taxonomy lỗi và retry budget thống nhất | 36–37 (errors/retry) | 32; E4.1 | Permanent/transient, Retry-After, restart giữ budget | Xem lỗi và lịch retry có lý do |
+| [ ] | 34 | Attempt history/version và retention đúng | 44–45, 48 (attempt history) | 33; D9; E4.1 | Không ghi đè lịch sử, cleanup không mất evidence cần giữ | Theo dõi một task qua nhiều attempts |
+| [ ] | 35 | DLQ có requeue/delete được phân quyền | 38, 48 (DLQ) | 34; E4.1 | Hết budget vào DLQ, requeue không duplicate; delete có audit | Retry một task/bulk nhỏ và xác nhận scope |
+| [ ] | 36 | Dashboard thống nhất states/commands/backlog | 3, 6–7, 21–22, 47–48 (UI/heartbeat) | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Duyệt màn agent/job/key/command hiện có |
+| [ ] | 37 | Regression consumers chung và runtime | 49, 56 (regression; thêm ràng buộc FFP) | 36; G3/G4 | Amazon Reviews/Pinterest/Review Studio/pipeline/internal routes; đúng ba container | Smoke các màn/flow liên quan trên test instance |
+| [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Xem báo cáo + demo, phân biệt giả và máy thật |
 
 UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhất và lấp khoảng thiếu, không dồn toàn bộ khả năng quan sát tới cuối. Nếu thiếu máy/tài nguyên cho Task 38, ghi CHỜ ĐIỀU KIỆN; không dùng test nhỏ để tự tick MVP.
 
 ### E. Vận hành và cập nhật
 
-| Đạt | ID | Một kết quả cần đạt | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
-| --- | --- | --- | --- | --- | --- |
-| [ ] | 39 | Config version và RELOAD_CONFIG giữ last-good | 38; E5.1 | Validate/ACK/rollback, timeout relationships | Đổi config test hợp lệ và không hợp lệ |
-| [ ] | 40 | DRAIN báo đúng khi hết running | 39; E5.2 | Timeout không purge, outbox policy | Drain agent test, xem DRAINING/DRAINED |
-| [ ] | 41 | RUN_SELF_TEST không tạo tác động nghiệp vụ thật | 40; E5.2 | PASS/DEGRADED/FAIL, auth/disk/worker/serialize | Chạy self-test, đọc từng nguyên nhân |
-| [ ] | 42 | Rà nhánh updater và chốt phần tái sử dụng | 41; E0.3/E5.3, owner xác nhận | Diff/compatibility/topology, không tự merge | Duyệt reuse/gap và scope tích hợp |
-| [ ] | 43 | Artifact/manifest được xác minh trước thực thi | 42; E5.3 | Hash/signature/version, partial download, disk-full | Xem artifact sai bị từ chối, bản cũ còn |
-| [ ] | 44 | UPDATE_AGENT giữ identity/data và ACK sau boot | 43; E5.3 | Drain/install/reboot journal/self-test, outbox nguyên vẹn | Update agent test, đối chiếu trước/sau |
-| [ ] | 45 | ROLLBACK_AGENT tương thích schema và dữ liệu | 44; E5.3 | Bản mới lỗi, rollback an toàn, backup recovery | Demo rollback test, không mất credential/profile |
-| [ ] | 46 | Clean-machine installer và canary rehearsal | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | Nghiệm thu trên VM/máy sạch; release thật cần duyệt riêng |
+| Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
+| --- | --- | --- | --- | --- | --- | --- |
+| [ ] | 39 | Config version và RELOAD_CONFIG giữ last-good | 7–8, 39 (config) | 38; E5.1 | Validate/ACK/rollback, timeout relationships | Đổi config test hợp lệ và không hợp lệ |
+| [ ] | 40 | DRAIN báo đúng khi hết running | 6, 8–9 (drain) | 39; E5.2 | Timeout không purge, outbox policy | Drain agent test, xem DRAINING/DRAINED |
+| [ ] | 41 | RUN_SELF_TEST không tạo tác động nghiệp vụ thật | 8, 41 (self-test) | 40; E5.2 | PASS/DEGRADED/FAIL, auth/disk/worker/serialize | Chạy self-test, đọc từng nguyên nhân |
+| [ ] | 42 | Rà nhánh updater và chốt phần tái sử dụng | 40, 54 (audit updater) | 41; E0.3/E5.3, owner xác nhận | Diff/compatibility/topology, không tự merge | Duyệt reuse/gap và scope tích hợp |
+| [ ] | 43 | Artifact/manifest được xác minh trước thực thi | 23, 40 (xác minh artifact) | 42; E5.3 | Hash/signature/version, partial download, disk-full | Xem artifact sai bị từ chối, bản cũ còn |
+| [ ] | 44 | UPDATE_AGENT giữ identity/data và ACK sau boot | 8, 40, 51 (update) | 43; E5.3 | Drain/install/reboot journal/self-test, outbox nguyên vẹn | Update agent test, đối chiếu trước/sau |
+| [ ] | 45 | ROLLBACK_AGENT tương thích schema và dữ liệu | 8, 40 (rollback) | 44; E5.3 | Bản mới lỗi, rollback an toàn, backup recovery | Demo rollback test, không mất credential/profile |
+| [ ] | 46 | Clean-machine installer và canary rehearsal | 2, 5, 40, 54 (installer/canary) | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | Nghiệm thu trên VM/máy sạch; release thật cần duyệt riêng |
 
 Task 42 là review sâu đúng lúc tích hợp; trong Task 01 chỉ ghi nhận nhánh/owner liên quan nếu cần, không tự làm luôn task updater. Thiếu chứng thư/máy sạch không được thay bằng test giả rồi công bố đạt.
 
 ### F. Quy mô và kết thúc audit
 
-| Đạt | ID | Một kết quả cần đạt | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
-| --- | --- | --- | --- | --- | --- |
-| [ ] | 47 | Groups/permissions và global filters đúng scope | 46; E6 | Job affinity/allowed crawler, bulk scope, không vượt key rights | Giao việc nhóm A/B và kiểm nút bulk |
-| [ ] | 48 | Scheduler health/capacity/fairness được đo | 47; E6 | Agent nhanh/chậm, không starvation/capacity overflow | Xem phân phối task và số liệu |
-| [ ] | 49 | Auto concurrency có giới hạn/hysteresis | 48; E6 | CPU/RAM/quota fixtures, không dao động hoặc vượt cap | Xem tăng/giảm capacity có lý do |
-| [ ] | 50 | Fleet circuit breaker với bounded probes | 49; E6 | Parser lỗi hàng loạt, half-open, admin stop thắng | Demo OPEN/HALF_OPEN/CLOSED trên fixture |
-| [ ] | 51 | Batch result delivery giữ receipt từng kết quả | 50; spec 54; E6 | Partial success, duplicate/conflict, giới hạn payload | Gửi lại batch lỗi không nhân kết quả |
-| [ ] | 52 | Metrics/load/soak và giới hạn thực tế | 51; G6 | Tải tăng dần, p95/p99/backlog/DB; không claim500 chưa đo | Duyệt báo cáo tài nguyên và ngưỡng vận hành |
-| [ ] | 53 | Đối chiếu spec và đóng audit | 52; spec 1–58 | Mỗi tiêu chí có evidence hoặc ngoại lệ được duyệt; rollback/runbook | Ký xác nhận kết quả, TODO còn lại và phạm vi release |
+| Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
+| --- | --- | --- | --- | --- | --- | --- |
+| [ ] | 47 | Groups/permissions và global filters đúng scope | 22, 24, 42–43 (groups) | 46; E6 | Job affinity/allowed crawler, bulk scope, không vượt key rights | Giao việc nhóm A/B và kiểm nút bulk |
+| [ ] | 48 | Scheduler health/capacity/fairness được đo | 6, 18, 42 (scheduler) | 47; E6 | Agent nhanh/chậm, không starvation/capacity overflow | Xem phân phối task và số liệu |
+| [ ] | 49 | Auto concurrency có giới hạn/hysteresis | 7, 39, 42, 54 (auto concurrency) | 48; E6 | CPU/RAM/quota fixtures, không dao động hoặc vượt cap | Xem tăng/giảm capacity có lý do |
+| [ ] | 50 | Fleet circuit breaker với bounded probes | 50 (fleet circuit breaker) | 49; E6 | Parser lỗi hàng loạt, half-open, admin stop thắng | Demo OPEN/HALF_OPEN/CLOSED trên fixture |
+| [ ] | 51 | Batch result delivery giữ receipt từng kết quả | 19, 30–31, 54 (batch results) | 50; spec 54; E6 | Partial success, duplicate/conflict, giới hạn payload | Gửi lại batch lỗi không nhân kết quả |
+| [ ] | 52 | Metrics/load/soak và giới hạn thực tế | 7, 47, 54, 57 (metrics/scale) | 51; G6 | Tải tăng dần, p95/p99/backlog/DB; không claim500 chưa đo | Duyệt báo cáo tài nguyên và ngưỡng vận hành |
+| [ ] | 53 | Đối chiếu spec và đóng audit | 1–58 (đối chiếu cuối; không tự triển khai phần thiếu) | 52; spec 1–58 | Mỗi tiêu chí có evidence hoặc ngoại lệ được duyệt; rollback/runbook | Ký xác nhận kết quả, TODO còn lại và phạm vi release |
 
 53 task ở đây không tương ứng 1:1 với số mục spec. Một hàng vẫn có thể cần tách nhỏ sau audit code; dùng hậu tố như `26a/26b`, giữ ID cũ và xin duyệt trước khi tách. Không thêm mục lớn vào task đang chạy chỉ vì cùng file.
 
@@ -212,6 +222,9 @@ Trạng thái:
 Baseline commit / nhánh:
 Ngày và nội dung người dùng cho phép bắt đầu:
 Spec sections / nhóm E / test R liên quan:
+Điều khoản cụ thể trong từng mục gốc được task này xử lý:
+Kết quả đối chiếu: chỉ kiểm chứng / đáp ứng một phần / đủ toàn bộ mục (kèm bằng chứng):
+Phần của mục gốc còn lại và task sẽ xử lý tiếp:
 Phụ thuộc đã nghiệm thu:
 Quyết định đã duyệt:
 Hiện trạng: đã đúng / thiếu test / thiếu tính năng / khác hợp đồng
