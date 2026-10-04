@@ -1,4 +1,4 @@
-import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
+import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, ClearQueueResult, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -122,6 +122,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     requeue: (storeId: string, jobIds: readonly string[], options?: { provider?: SeoProvider; instructions?: string }) =>
       request<{ readonly requeued: number }>("requeue", storeId, { jobIds, ...options }),
     cancelReview: (storeId: string, jobId: string) => request<{ readonly cancelled: boolean }>("cancel", storeId, { jobId }),
+    clearQueue: (storeId: string) => request<ClearQueueResult>("clear", storeId, {}),
     transfer: (storeId: string, jobId: string, provider: SeoProvider) => request<unknown>("transfer", storeId, { jobId, provider }),
     beginSync: (storeId: string, jobId: string) => request<{ token: string }>("begin-sync", storeId, { jobId }),
     finishSync: (storeId: string, jobId: string, token: string, status: "SYNCED" | "UNKNOWN") => request<unknown>("finish-sync", storeId, { jobId, token, status }),

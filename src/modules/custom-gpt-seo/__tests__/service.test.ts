@@ -103,6 +103,21 @@ test("Custom GPT client cancels a review through the store-scoped admin route", 
   assert.deepEqual(JSON.parse(String(requestedInit?.body)), { jobId: "job-123" });
 });
 
+test("Custom GPT client clears only the selected store queue", async () => {
+  let requestedUrl = "";
+  let requestedInit: RequestInit | undefined;
+  const client = createCustomGptClient(async (url, init) => {
+    requestedUrl = String(url);
+    requestedInit = init;
+    return new Response(JSON.stringify({ cleared: 12, preservedActive: 1, preservedSynced: 2 }), { status: 200 });
+  });
+
+  assert.deepEqual(await client.clearQueue("store one"), { cleared: 12, preservedActive: 1, preservedSynced: 2 });
+  assert.equal(requestedUrl, "/api/v1/gpt-seo/admin/clear?storeId=store%20one");
+  assert.equal(requestedInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), {});
+});
+
 test("Custom GPT client lists configured Shopify stores for the queue selector", async () => {
   let requestedUrl = "";
   let requestedInit: RequestInit | undefined;

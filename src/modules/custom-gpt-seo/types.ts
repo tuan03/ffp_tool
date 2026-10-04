@@ -119,6 +119,11 @@ export interface GptSeoBatch {
   readonly expiresAt: number;
   readonly jobs: readonly { readonly id: string; readonly title: string; readonly status: GptJobStatus }[];
 }
+export interface ClearQueueResult {
+  readonly cleared: number;
+  readonly preservedActive: number;
+  readonly preservedSynced: number;
+}
 export interface GptLeaseMutation {
   readonly batchId: string;
   readonly leaseToken: string;
