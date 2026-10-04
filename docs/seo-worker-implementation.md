@@ -37,6 +37,19 @@ Implemented:
 - Preview Agent Pack under `tools/seo-agent-pack`: Python STDIO HTTPS bridge,
   hidden terminal login, OS-vault-only credentials, bounded heartbeat and additive
   project MCP/skill setup. No automatic credential installation or production login.
+- Durable publish **core, not connected to the Sync button yet**: additive operation
+  and version-history tables, frozen approved fields/review fingerprint, one active
+  operation per product, expiring writer lease, and bounded read retries. An
+  uncertain write is read back, never blindly resent. Mismatching fields block the
+  operation and preserve the existing sync guard/product reservation.
+- Exactly-once local version recording after read-back confirmation, with legacy
+  browser finish/reconcile APIs prevented from overriding a backend receipt.
+  Active operations freeze Review edits. A known source baseline is retained;
+  absent historical versions are not interpreted as a count of previous SEO runs.
+- A Shopify transport allowlist for title, description, SEO metadata, existing image
+  alt text and AEO metafields; no vendor, handle, prices or variants are sent.
+  Version-guarded updates now fail closed when the current product is unreadable,
+  missing, or has no version, rather than proceeding with an unverifiable write.
 
 The compatibility adapter retains the existing PostgreSQL advisory transaction
 lock across legacy and new writers. Claims also lock selected job rows. This
@@ -46,8 +59,13 @@ API request belongs inside a worker repository transaction.
 ## Remaining implementation before activation
 
 1. Complete Review lifecycle integration: reapproval/regeneration/rollback
-   reservation handling, diff metadata, durable backend publish operation,
-   uncertain-write reconciliation, and exactly-once SEO version history.
+   reservation handling and diff metadata. Connect the tested publish core to an
+   operator-only HTTP API, background scheduler and Review UI; add manual resolution
+   for blocked operations and reconcile the existing Shopify SEO-version metafield.
+   The new publisher is deliberately not scheduled or exposed as an endpoint yet.
+   The current Sync button still uses the existing browser-driven flow.
+   This core accepts existing Shopify products only; new-product creation and
+   storefront/theme rendering are outside this increment.
 2. Guarded operator cutover command with verified backup/dry-run/report and
    integration with the latest deployment topology on `main`. No activation API
    is intentionally exposed yet.
@@ -105,6 +123,26 @@ skills documentation linked there; the skill preserves the draft-only workflow.
 
 Required regression commands remain `npm test`, `npm run typecheck`,
 `npm run build`, and `npm run build:mock`.
+
+### Publish core verification boundary
+
+`gateway/__tests__/seo-publish*.test.ts` covers lost write responses, lease expiry,
+stale-writer fencing, same-timestamp Review edits, changed source, bounded retries,
+store isolation, protected-field exclusion and exactly-once local version history.
+The optional PostgreSQL test uses two independent queue clients and tests exclusive
+claim, enqueue replay and legacy API protection. This is not an actual Shopify
+write, multi-Gateway crash drill or end-to-end UI acceptance result.
+
+On 2026-10-04 the focused worker/queue/publish suite passed 35/35 with an isolated
+PostgreSQL 17 test container. A subsequent full Gateway regression with the test
+database configured passed 425 tests, with 47 unrelated environment-dependent
+tests skipped. Test containers contain synthetic data only; no production store
+was converted and no Shopify mutation was executed against a real store.
+
+Read-back compares all intended fields (JSON metafields semantically). A mismatch
+after a possibly successful write requires operator reconciliation; the core does
+not assume that retrying is safe. Shopify read/version-check/write is not an atomic
+remote compare-and-swap. AEO metafield storage alone does not prove theme rendering.
 
 ## Defaults and operational constraints
 

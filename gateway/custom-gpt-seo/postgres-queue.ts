@@ -8,6 +8,7 @@ import type { ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBa
 import { canonicalizeJson } from "../canonical-json";
 import { getWorkerProductKey, SeoWorkerError } from "../seo-worker/protocol";
 import { SeoWorkerRepository } from "../seo-worker/repository";
+import { SeoPublishRepository } from "../seo-worker/publish-repository";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -22,9 +23,11 @@ function json(value: unknown): unknown { return JSON.parse(String(value)); }
 export class PostgresCustomGptQueue implements SeoQueue {
   private readonly db: PostgresQueueDatabase;
   readonly workers: SeoWorkerRepository;
+  readonly publisher: SeoPublishRepository;
   constructor(options: SeoQueuePostgresOptions, private readonly now: () => number = Date.now) {
     this.db = new PostgresQueueDatabase(options);
     this.workers = new SeoWorkerRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
+    this.publisher = new SeoPublishRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
   }
   private async transaction<T>(operation: () => Promise<T>): Promise<T> { return this.db.transaction(operation); }
   async settings(storeId: string): Promise<GptSeoSettings> {
@@ -401,6 +404,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async saveReviewState(storeId: string, jobId: string, state: Record<string, unknown>): Promise<void> {
     await this.transaction(async () => {
     (await this.get(storeId, jobId));
+    if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=? AND state!='SUCCEEDED'").get(jobId)) throw new Error("PUBLISH_ACTIVE: review is frozen pending backend reconciliation");
     const current = (await this.reviewState(storeId, jobId));
     if (typeof current.updatedAt === "number" && typeof state.updatedAt === "number" && state.updatedAt < current.updatedAt) throw new Error("Review conflict: a newer edit is already saved");
     (await this.db.prepare("INSERT INTO gpt_review_state VALUES (?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload").run(jobId, JSON.stringify(state)));
@@ -430,6 +434,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async finishSync(storeId: string, jobId: string, token: string, status: "SYNCED" | "UNKNOWN" | "NOT_STARTED"): Promise<void> {
     await this.transaction(async () => {
       (await this.get(storeId, jobId));
+      if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=?").get(jobId)) throw new Error("BACKEND_PUBLISH_MANAGED: browser cannot finish a durable publish");
       const result = status === "NOT_STARTED"
         ? (await this.db.prepare("DELETE FROM gpt_sync WHERE job_id=? AND token=? AND status='SYNCING'").run(jobId, token))
         : (await this.db.prepare("UPDATE gpt_sync SET status=? WHERE job_id=? AND token=? AND (status IN ('SYNCING','UNKNOWN') OR status=?)").run(status, jobId, token, status));
@@ -447,6 +452,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
     (await this.transaction(async () => {
       (await this.get(storeId, jobId));
       const current = (await this.syncState(storeId, jobId));
+      if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=?").get(jobId)) throw new Error("BACKEND_PUBLISH_MANAGED: use backend reconciliation");
       if (!current || current.token !== input.token || !["SYNCING", "UNKNOWN"].includes(current.status)) throw new Error("Stale sync reconciliation token or terminal state");
       (await this.db.prepare("UPDATE gpt_sync SET status=? WHERE job_id=? AND token=?").run(input.outcome === "SYNCED" ? "SYNCED" : "ROLLED_BACK", jobId, input.token));
       (await this.audit(storeId, jobId, `SYNC_RECONCILED_${input.outcome}: ${input.note.trim()}`));

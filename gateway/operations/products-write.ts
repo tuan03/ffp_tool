@@ -956,9 +956,17 @@ export async function executeProductsUpdate(
         const currentRes = await executeProductsGet(store, client, { id });
         currentProductSummary = currentRes.product;
       } catch (getErr: unknown) {
+        // A requested version guard must fail closed when the source cannot be read.
+        if (!force && expectedUpdatedAt) {
+          throw new GatewayError("Cannot verify the current product version; no update was sent.", "SHOPIFY_VERSION_CONFLICT", 409, undefined, getErr);
+        }
         if (getErr instanceof GatewayError && getErr.code === "SHOPIFY_NOT_FOUND") {
           throw getErr;
         }
+      }
+
+      if (!force && expectedUpdatedAt && !currentProductSummary?.updatedAt) {
+        throw new GatewayError("Cannot verify the current product version; no update was sent.", "SHOPIFY_VERSION_CONFLICT", 409);
       }
 
       if (
