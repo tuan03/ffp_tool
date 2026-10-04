@@ -5,6 +5,8 @@ import * as z from "zod/v4";
 import { SeoWorkerError } from "./protocol";
 import type { SeoWorkerRepository } from "./repository";
 import type { WorkerWorkflow } from "./workflow";
+import { registerPerformanceTools } from "../seo-performance/mcp-tools";
+import type { PerformanceService } from "../seo-performance/service";
 
 const label = z.string().min(1).max(200);
 const lease = z.object({ jobId: label, runId: label, sessionId: label, leaseId: label,
@@ -50,9 +52,10 @@ async function execute(operation: () => Promise<unknown>, observe: (code: string
   }
 }
 
-export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow: WorkerWorkflow, token: string): McpServer {
+export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow: WorkerWorkflow, token: string,
+  performance: () => PerformanceService | undefined = () => undefined): McpServer {
   const safe = (operation: () => Promise<unknown>): Promise<CallToolResult> => execute(operation, code => repository.metrics.record(token, code));
-  const server = new McpServer({ name: "ffp-seo-worker", version: "1.0.0" }, { instructions: WORKER_INSTRUCTIONS });
+  const server = new McpServer({ name: "ffp-seo-worker", version: "1.1.0" }, { instructions: "For SEO Performance audits, verify worker_status then use the performance/evidence/recommendation tools without registering a run or claiming a job. Save proposals only with current snapshotId and rulesVersion. Missing data is not zero traffic. Never approve or publish. The following instructions apply only to requested Queue processing: " + WORKER_INSTRUCTIONS });
   server.registerResource("worker-contracts", "ffp://seo-worker/contracts", { mimeType: "application/json", description: "Current common rules and schemas; job context adds store-specific rules." }, async uri => {
     await repository.identify(token);
     return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(getWorkerContracts()) }] };
@@ -80,5 +83,6 @@ export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow:
   server.registerTool("job_submit_draft", { description: "Check live source and submit to existing validators, without approval or publication.", inputSchema: { ...mutation, submission }, annotations: write }, input => safe(() => workflow.submit(token, input.lease, input.requestId, input.submission)));
   server.registerTool("job_status", { description: "Read result status of a job assigned to this machine.", inputSchema: { jobId: label }, annotations: read }, input => safe(() => repository.jobResult(token, input.jobId)));
   for (const name of ["job_release", "job_report_failure"]) server.registerTool(name, { description: "Release work with a stable error code and explicit retry decision.", inputSchema: { ...mutation, code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/), retryable: z.boolean() }, annotations: write }, input => safe(() => repository.release(token, input.lease, input)));
+  registerPerformanceTools(server, "", "", performance, () => repository.identify(token));
   return server;
 }

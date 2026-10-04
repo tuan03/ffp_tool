@@ -6,6 +6,18 @@ full worker/publish acceptance tests and an operator-selected pilot pass.
 
 ## Install
 
+One login and one `ffp_seo_worker` connection provide Queue drafts and SEO
+Performance reports, evidence, URL inspection and saved recommendations for the
+token's store. No second MCP connection or worker-side Google credentials are
+required. Google must still be connected and mapped by an operator in FFP.
+Existing unexpired worker tokens gain these tools after the server upgrade;
+restart Codex to refresh tool discovery. No approval, publishing or admin access
+is granted. Existing legacy MCP connections remain compatible and are not removed.
+
+For updated guidance, replace the installed `.agents/skills/ffp-seo/SKILL.md` with
+the ZIP's `skill/SKILL.md` after reviewing any local customizations. Do not rerun
+setup over an existing configuration or overwrite other MCP entries.
+
 Use Python 3.11+ in a dedicated virtual environment. Keep this extracted folder
 at a stable absolute path; Codex configuration references it.
 

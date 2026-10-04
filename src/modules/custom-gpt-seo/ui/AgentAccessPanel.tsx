@@ -65,7 +65,7 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
 
   return <section className="space-y-5 pt-5" aria-label="Agent Access">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h2 className="font-semibold text-white">Máy xử lý SEO</h2><p className="mt-1 text-sm text-slate-400">{storeId} · Chỉ tạo bản chờ duyệt, không tự đồng bộ Shopify.</p></div>
+      <div><h2 className="font-semibold text-white">Máy xử lý SEO</h2><p className="mt-1 text-sm text-slate-400">{storeId} · Một kết nối: xử lý SEO + đánh giá GSC. Không tự duyệt hoặc đồng bộ Shopify.</p></div>
       {view !== "metrics" && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => setRefresh(value => value + 1)}>Làm mới</button>}
     </div>
     <nav aria-label="Quản lý máy SEO" className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">

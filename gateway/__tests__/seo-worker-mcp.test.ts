@@ -25,6 +25,12 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
   try {
     const tools = (await client.listTools()).tools;
     assert.ok(tools.some(tool => tool.name === "job_submit_draft"));
+    for (const name of ["get_seo_performance", "list_seo_opportunities", "get_page_seo_evidence", "request_page_inspection", "save_seo_recommendation", "get_seo_change_history"]) {
+      assert.ok(tools.some(tool => tool.name === name));
+    }
+    const disabled = await client.callTool({ name: "get_seo_performance", arguments: {} });
+    assert.equal(disabled.isError, true);
+    assert.match(JSON.stringify(disabled), /SEO_PERFORMANCE_DISABLED/);
     assert.ok(tools.every(tool => !/publish|approve|sync|sql|configure/.test(tool.name)));
     assert.ok(tools.every(tool => !Object.hasOwn(tool.inputSchema.properties ?? {}, "storeId")));
     const contracts = await client.readResource({ uri: "ffp://seo-worker/contracts" });
@@ -52,6 +58,9 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     assert.equal(revoked.isError, true);
     assert.match(JSON.stringify(revoked), /TOKEN_REVOKED/);
     assert.equal(JSON.stringify(revoked).includes(issued.token), false);
+    const revokedAudit = await client.callTool({ name: "get_seo_performance", arguments: {} });
+    assert.equal(revokedAudit.isError, true);
+    assert.match(JSON.stringify(revokedAudit), /TOKEN_REVOKED/);
   } finally { await client.close(); await server.close(); await pg.close(); }
 });
 

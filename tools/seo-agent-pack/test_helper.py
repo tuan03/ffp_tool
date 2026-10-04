@@ -55,6 +55,9 @@ class HelperTests(unittest.TestCase):
         write = {"method": "tools/call", "params": {"name": "job_submit_draft", "arguments": {"requestId": "same"}}}
         self.assertTrue(worker.can_retry(read))
         self.assertTrue(worker.can_retry(write))
+        for name in ["get_seo_performance", "list_seo_opportunities", "get_page_seo_evidence", "get_seo_change_history"]:
+            self.assertTrue(worker.can_retry({"method": "tools/call", "params": {"name": name}}))
+        self.assertFalse(worker.can_retry({"method": "tools/call", "params": {"name": "request_page_inspection"}}))
         self.assertFalse(worker.can_retry({"method": "tools/call", "params": {"name": "job_submit_draft", "arguments": {}}}))
         self.assertEqual(worker.retry_delay("120", 0, now=0), 120)
         self.assertIsNone(worker.retry_delay("99999", 0, now=0))

@@ -6,8 +6,10 @@ import { createWorkerMcpServer } from "./mcp-server";
 import { SeoWorkerError } from "./protocol";
 import type { SeoWorkerRepository } from "./repository";
 import type { WorkerWorkflow } from "./workflow";
+import type { PerformanceService } from "../seo-performance/service";
 
-export async function handleWorkerMcp(req: IncomingMessage, res: ServerResponse, repository: SeoWorkerRepository, workflow: WorkerWorkflow): Promise<void> {
+export async function handleWorkerMcp(req: IncomingMessage, res: ServerResponse, repository: SeoWorkerRepository, workflow: WorkerWorkflow,
+  performance?: () => PerformanceService | undefined): Promise<void> {
   res.setHeader("Cache-Control", "no-store");
   const fail = (status: number, message: string): void => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32000, message } })); };
   if (req.method !== "POST") { fail(405, "METHOD_NOT_ALLOWED"); return; }
@@ -19,7 +21,7 @@ export async function handleWorkerMcp(req: IncomingMessage, res: ServerResponse,
     if (error instanceof SeoWorkerError) await repository.metrics.record(token, error.code);
     fail(error instanceof SeoWorkerError ? 401 : 503, error instanceof SeoWorkerError ? error.code : "WORKER_UNAVAILABLE"); return;
   }
-  const server = createWorkerMcpServer(repository, workflow, token);
+  const server = createWorkerMcpServer(repository, workflow, token, performance);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   try {
     const chunks: Buffer[] = []; let size = 0;

@@ -58,7 +58,8 @@ def can_retry(message):
         return True
     params = message.get("params", {})
     return message.get("method") == "tools/call" and (
-        params.get("name") in {"worker_status", "queue_status", "run_status", "job_status", "job_get_context", "job_get_image"}
+        params.get("name") in {"worker_status", "queue_status", "run_status", "job_status", "job_get_context", "job_get_image",
+                               "get_seo_performance", "list_seo_opportunities", "get_page_seo_evidence", "get_seo_change_history"}
         or bool(params.get("arguments", {}).get("requestId")))
 
 
