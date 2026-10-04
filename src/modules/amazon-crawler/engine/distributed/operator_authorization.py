@@ -63,7 +63,11 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
         if path in {"/api/v1/health", "/api/v1/ready", "/api/v1/agent-release"} or path.startswith(("/api/v1/worker/", "/api/v1/internal/")):
             # These have distinct worker/pipeline contracts, not operator rights.
             return await call_next(request)
-        authenticated = credentials.accepts(request.headers.get("authorization", ""))
+        operator_authenticated = credentials.accepts(request.headers.get("authorization", ""))
+        review_authorization = getattr(app.state, "review_image_authorization", None)
+        bridge_authenticated = bool(callable(review_authorization) and review_authorization(
+            request.scope, request.headers.get("x-bridge-token", "")))
+        authenticated = operator_authenticated or bridge_authenticated
         origin = request.headers.get("origin")
         forwarded_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
         expected_origin = f"{forwarded_scheme}://{request.headers.get('host', '')}"
@@ -88,7 +92,8 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
         audit_id = uuid.uuid4().hex
         try:
             with sessions.begin() as session:
-                session.add(OperatorAudit(id=audit_id, actor=credentials.username if authenticated else "unauthenticated",
+                actor = "review-image-bridge" if bridge_authenticated else credentials.username if operator_authenticated else "unauthenticated"
+                session.add(OperatorAudit(id=audit_id, actor=actor,
                     method=request.method, route=route_name, target_id=target,
                     outcome="authorized" if allowed else "denied", status_code=None if allowed else denial_status,
                     reason="OPERATOR_AUTH_ACCEPTED" if allowed else denial_reason))

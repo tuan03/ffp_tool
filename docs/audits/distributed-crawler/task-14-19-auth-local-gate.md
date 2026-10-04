@@ -269,3 +269,70 @@ migration and public/composed TLS acceptance have not been established by this f
 Secure-mode anonymous asset downloads are intentionally denied: non-browser consumers
 that currently expect public URLs need a reviewed delivery mechanism before rollout.
 Do not enable production auth or mark Task 19 complete on this evidence alone.
+
+## Review Studio auth-boundary follow-up (2026-10-04)
+
+The user accepted the Pinterest sandbox and approved repairing the Review Studio
+boundary after a bridge-only request was reproduced as 401 under Coordinator auth.
+Changes remain on `cua_pro` by instruction; no push, container restart or VPS change.
+
+### Implementation
+
+- The composed Review app exposes a server-side authorization callback. It checks
+  its internal bridge token, an exact registered HTTP route/method match and the
+  presence of the existing bridge-token dependency. A URL prefix is not sufficient.
+- `scripts/coordinator_app.py` registers that callback on the parent Coordinator.
+  It accepts optional injected `operator_credentials` for integration verification;
+  the default deployment call does not enable new operator auth implicitly.
+- Coordinator accepts this narrowly scoped bridge identity without also requiring
+  Basic operator credentials. Origin checks and durable audit still run; the audit
+  actor is `review-image-bridge`. The child handler independently checks its token.
+- The bridge token cannot access crawler management or replace the pipeline key.
+  Extension WebSocket authentication remains separate and unchanged. No new port,
+  process, container, route, environment variable or token in browser code.
+
+Changed files: Coordinator operator middleware, Review runtime and deployment composition;
+cross-module integration checks live in `scripts/audits/test_review_operator_boundary.py`,
+not inside another module's unit suite. No database migration or dependency change.
+
+### Reproducible local checks
+
+```powershell
+$env:FFP_REVIEW_AUDIT_POSTGRES = '1'
+python -m unittest scripts.audits.test_review_operator_boundary -v
+Remove-Item Env:FFP_REVIEW_AUDIT_POSTGRES
+```
+
+Requires the existing loopback-only `ffp-local-postgres` audit container. Two tests
+must report `OK` with no skips. The PostgreSQL test uses the actual composition factory
+and a random private schema, then drops only that schema and verifies its absence.
+The other test uses temporary SQLite solely as a focused auth fixture; this does not
+change production persistence. No application database, store or template is modified.
+
+Without the environment switch the SQLite test runs and the PostgreSQL check skips;
+that is not equivalent to full integration evidence.
+
+Verified: missing/wrong/extension token cannot call HTTP management, correct bridge
+token reads health/templates and writes a fixture template, bridge token cannot call
+crawler management or pipeline claim, wrong-origin writes are rejected, accepted
+requests have an audit record, extension rejects the wrong token with 4401 and accepts
+two successive authenticated hello/ping connections. Actual composed PostgreSQL health,
+templates, readiness and extension handshake also pass.
+
+Additional verification: 34 Review Image Python tests plus extension scripts passed;
+six Gateway handler tests passed. `npm test`, `npm run typecheck`, `npm run build`
+and `npm run build:mock` passed. The full suite retains its conditional skips;
+the dedicated two-test PostgreSQL-enabled boundary audit passed without skips.
+Existing browser externalization/large-bundle warnings remain out of scope.
+
+### Acceptance boundary
+
+These are ASGI/integration fixtures, not a browser driving a real ChatGPT tab. Existing
+image-flow tests use synthetic extension results. Store loading, actual extension DOM
+interaction, real image generation, public Nginx/WSS and Shopify writes are not newly
+accepted here. Extension tokens remain static, with no new automatic expiry/revocation
+feature. No real extension settings or tokens were changed.
+
+Next: user runs the above audit and confirms its result; coordinate a separate safe
+UI/real-extension acceptance if needed. Do not mark all Task 19 gates complete or move
+automatically to Task 20 based solely on these tests.

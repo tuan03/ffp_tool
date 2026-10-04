@@ -291,3 +291,8 @@ user UI acceptance, Pinterest/Review Studio and public/composed-runtime gates re
 2026-10-04 follow-up: user accepted the Crawler UI check. Pinterest operator-session
 compatibility is implemented and locally tested; see the Pinterest follow-up section
 in the batch report. User Pinterest acceptance and remaining integration gates are pending.
+
+Next follow-up: user accepted the Pinterest sandbox. Review Studio's bridge/operator
+boundary is repaired and checked using isolated fixtures plus the actual composed
+PostgreSQL factory. See the Review Studio section in the batch report for commands
+and limits; real ChatGPT/public TLS and remaining Task 19 gates are not marked complete.
