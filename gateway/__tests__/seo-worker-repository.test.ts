@@ -125,6 +125,33 @@ test("worker core uses the existing PostgreSQL queue and preserves lease, token 
   } finally { await pg.close(); }
 });
 
+test("reconciliation repairs a persisted Review draft once without claiming another job", async () => {
+  const f = await fixture();
+  try {
+    await f.enqueue("701");
+    await f.repository.enableStore("store-a");
+    const worker = await f.worker("repair", 1);
+    const claimed = await f.repository.claim(worker.token, worker.sessionId, worker.run.id, "claim");
+    assert.ok(claimed.lease);
+    const result = { output: { title: "Persisted draft" } };
+    await f.pg.query(`UPDATE gpt_jobs SET status='REVIEW_READY',
+      payload=(payload::jsonb || jsonb_build_object('result',$2::jsonb))::text WHERE id=$1`, [claimed.lease.jobId, JSON.stringify(result)]);
+    await f.pg.query("INSERT INTO gpt_deliveries VALUES ($1,$2,0)", [claimed.lease.jobId, JSON.stringify({ output: { title: "Different draft" } })]);
+    await f.repository.reconcileReviews();
+    assert.equal((await f.repository.runStatus(worker.token, worker.run.id)).successful, 0);
+    await f.repository.finishRun(worker.token, worker.sessionId, worker.run.id, "pause");
+    await f.pg.query("UPDATE gpt_deliveries SET payload=$2 WHERE job_id=$1", [claimed.lease.jobId, JSON.stringify(result)]);
+    await f.repository.reconcileReviews();
+    await f.repository.recover();
+    const run = await f.repository.runStatus(worker.token, worker.run.id);
+    assert.equal(run.successful, 1);
+    assert.equal(run.state, "COMPLETED");
+    assert.equal(run.stopReason, "TARGET_REACHED");
+    assert.equal((await f.pg.query("SELECT * FROM seo_worker_successes")).rows.length, 1);
+    assert.equal((await f.pg.query<{ delivered: number }>("SELECT delivered FROM gpt_deliveries")).rows[0].delivered, 1);
+  } finally { await f.pg.close(); }
+});
+
 test("review delivery delay never requeues accepted work or exceeds the run target", async () => {
   const f = await fixture();
   try {

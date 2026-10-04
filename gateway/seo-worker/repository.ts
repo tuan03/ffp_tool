@@ -441,6 +441,13 @@ export class SeoWorkerRepository {
   /** Completion is based on the existing durable Review delivery, not a client assertion. */
   private async settleReview(sql: WorkerSql, row: Record<string, unknown>): Promise<boolean> {
     if (!row.run_id) return false;
+    // Review reads the finalized result directly from gpt_jobs. Older finalizers
+    // persisted that result but left its delivery receipt pending forever.
+    // Repair only matching, durable drafts; status alone is not proof of delivery.
+    await sql.query(`UPDATE gpt_deliveries d SET delivered=1 FROM gpt_jobs j
+      WHERE d.job_id=j.id AND j.id=$1 AND j.status='REVIEW_READY' AND d.delivered=0
+      AND jsonb_typeof(j.payload::jsonb->'result'->'output')='object'
+      AND j.payload::jsonb->'result'=d.payload::jsonb`, [row.job_id]);
     const delivered = (await sql.query(`SELECT j.id,s.status AS sync_status,r.payload::jsonb->>'reviewDecision' AS decision
       FROM gpt_jobs j JOIN gpt_deliveries d ON d.job_id=j.id LEFT JOIN gpt_sync s ON s.job_id=j.id
       LEFT JOIN gpt_review_state r ON r.job_id=j.id

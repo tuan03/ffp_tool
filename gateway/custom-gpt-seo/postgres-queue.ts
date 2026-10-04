@@ -364,7 +364,8 @@ export class PostgresCustomGptQueue implements SeoQueue {
       if (finalizerToken && job.finalizerToken !== finalizerToken) throw new Error("Stale finalizer lease");
       if (job.status !== "VALIDATING") throw new Error("Job is not validating");
       (await this.write({ ...job, status: "REVIEW_READY", result, error: undefined }));
-      (await this.db.prepare("INSERT INTO gpt_deliveries(job_id,payload,delivered) VALUES (?,?,0) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload,delivered=0").run(jobId, JSON.stringify(result)));
+      // Review consumes job.result directly; the draft and its receipt commit together.
+      (await this.db.prepare("INSERT INTO gpt_deliveries(job_id,payload,delivered) VALUES (?,?,1) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload,delivered=1").run(jobId, JSON.stringify(result)));
       (await this.audit(storeId, jobId, "REVIEW_READY"));
     }));
   }
