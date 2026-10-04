@@ -134,13 +134,17 @@ export class DecisionEngine {
         : null;
 
     let dropPct = 0;
-    if (reconciliation?.gaps?.clickDropPct) {
+    if (reconciliation?.gaps?.clickDropPct && reconciliation.gaps.clickDropPct !== "N/A") {
       dropPct = parseNumeric(reconciliation.gaps.clickDropPct);
     } else if (metaClicks > 0 && ga4Sessions !== null) {
       dropPct = Math.max(0, ((metaClicks - ga4Sessions) / metaClicks) * 100);
     }
 
-    if (metaClicks >= 15 && dropPct > 25.0) {
+    const isGa4Available =
+      reconciliation?.ga4?.status !== "NOT_CONFIGURED" &&
+      ga4Sessions !== null;
+
+    if (isGa4Available && metaClicks >= 15 && dropPct > 25.0) {
       const isTrackingBreak =
         reconciliation?.ga4?.status === "ERROR" ||
         (ga4Sessions !== null && ga4Sessions === 0) ||

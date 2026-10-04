@@ -26,8 +26,8 @@ describe("Ads Intelligence: Store Profile Loader & Validator", () => {
     assert.equal(profile.meta.accountTimezone, "America/Los_Angeles");
     assert.equal(profile.meta.purchaseActionType, "offsite_conversion.fb_pixel_purchase");
 
-    // GA4 config
-    assert.equal(profile.ga4.propertyId, "555699138");
+    // GA4 config (unconfigured for chillgen)
+    assert.equal(profile.ga4.propertyId, null);
     assert.equal(profile.ga4.propertyTimezone, "America/Los_Angeles");
 
     // Shopify config

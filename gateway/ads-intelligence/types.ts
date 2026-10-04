@@ -476,10 +476,10 @@ export interface AdsDataHealth {
     readonly latencyMs?: number;
   };
   readonly ga4Connection: {
-    readonly status: "CONNECTED" | "PENDING" | "ERROR";
-    readonly propertyId: string;
+    readonly status: "CONNECTED" | "PENDING" | "ERROR" | "NOT_CONFIGURED";
+    readonly propertyId: string | null;
     readonly serviceAccount: string;
-    readonly liveSessionsLast30d?: number;
+    readonly liveSessionsLast30d?: number | null;
   };
   readonly competitorProvider: {
     readonly provider: string;
@@ -512,11 +512,11 @@ export interface AdsReconciliationReport {
     readonly roas: string | null;
   };
   readonly ga4: {
-    readonly status: "CONNECTED" | "ERROR" | "PENDING";
-    readonly sessions: number;
+    readonly status: "CONNECTED" | "ERROR" | "PENDING" | "NOT_CONFIGURED";
+    readonly sessions: number | null;
     readonly ecommercePurchases: number;
     readonly purchaseRevenue: number;
-    readonly clickToSessionDropPct: string;
+    readonly clickToSessionDropPct: string | null;
   };
   readonly shopify: {
     readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";

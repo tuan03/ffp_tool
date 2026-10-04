@@ -14,15 +14,20 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
 
   // Extract funnel numbers
   const linkClicks = Number(summary?.linkClicks || meta?.linkClicks || 970);
-  const ga4Sessions = ga4?.sessions ?? 558;
+  const isGa4Available = ga4?.status === "CONNECTED" && ga4?.sessions !== null && ga4?.sessions !== undefined;
+  const ga4Sessions = isGa4Available ? ga4.sessions : null;
   const viewContent = Number(summary?.lpv || 420);
   const atc = Number(summary?.atc || 28);
   const checkout = Number(summary?.checkout || 15);
   const shopifyPurchases = shopify?.totalOrders ?? 10;
 
   // Calculate drop rates
-  const dropClickToSession = linkClicks > 0 ? (((linkClicks - ga4Sessions) / linkClicks) * 100).toFixed(1) : "0.0";
-  const dropSessionToVc = ga4Sessions > 0 ? (((ga4Sessions - viewContent) / ga4Sessions) * 100).toFixed(1) : "0.0";
+  const dropClickToSession = isGa4Available && linkClicks > 0 && ga4Sessions !== null
+    ? (((linkClicks - ga4Sessions) / linkClicks) * 100).toFixed(1)
+    : null;
+  const dropSessionToVc = isGa4Available && ga4Sessions !== null && ga4Sessions > 0
+    ? (((ga4Sessions - viewContent) / ga4Sessions) * 100).toFixed(1)
+    : null;
   const dropVcToAtc = viewContent > 0 ? (((viewContent - atc) / viewContent) * 100).toFixed(1) : "0.0";
   const dropAtcToCheckout = atc > 0 ? (((atc - checkout) / atc) * 100).toFixed(1) : "0.0";
   const dropCheckoutToPurchase = checkout > 0 ? (((checkout - shopifyPurchases) / checkout) * 100).toFixed(1) : "0.0";
@@ -58,19 +63,33 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
           <div className="rounded-xl border border-cyan-900/60 bg-cyan-950/20 p-3 space-y-1.5 relative">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-cyan-300 uppercase">2. Sessions</span>
-              <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-rose-950 text-rose-300 border border-rose-800">
-                -{dropClickToSession}%
-              </span>
+              {dropClickToSession !== null ? (
+                <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                  -{dropClickToSession}%
+                </span>
+              ) : (
+                <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-slate-800 text-slate-400">
+                  Chưa liên kết
+                </span>
+              )}
             </div>
-            <div className="text-xl font-bold text-slate-100 font-mono">{ga4Sessions}</div>
-            <div className="text-[10px] text-slate-400">Nguồn: GA4 Data API</div>
+            <div className="text-xl font-bold text-slate-100 font-mono">
+              {ga4Sessions !== null ? ga4Sessions : "—"}
+            </div>
+            <div className="text-[10px] text-slate-400">
+              {ga4Sessions !== null ? "Nguồn: GA4 Data API" : "Chưa có Property ID"}
+            </div>
           </div>
 
           {/* Step 3: View Content */}
           <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3 space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-slate-400 uppercase">3. View Content</span>
-              <span className="text-[9px] text-slate-400 font-mono">-{dropSessionToVc}%</span>
+              {dropSessionToVc !== null ? (
+                <span className="text-[9px] text-slate-400 font-mono">-{dropSessionToVc}%</span>
+              ) : (
+                <span className="text-[9px] text-slate-500 font-mono">—</span>
+              )}
             </div>
             <div className="text-xl font-bold text-slate-200 font-mono">{viewContent}</div>
             <div className="text-[10px] text-slate-500">Xem trang sản phẩm</div>
@@ -110,14 +129,21 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
         </div>
 
         {/* Funnel Alert if Click Drop is High */}
-        {Number(dropClickToSession) > 25 && (
+        {isGa4Available && dropClickToSession !== null && Number(dropClickToSession) > 25 ? (
           <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/60 text-xs text-amber-200 flex items-start gap-2.5">
             <span className="text-base leading-none">⚠️</span>
             <div>
               <strong>Cảnh báo rơi rụng lưu lượng ({dropClickToSession}%):</strong> Khoảng cách lớn giữa Link Clicks Meta ({linkClicks}) và GA4 Sessions ({ga4Sessions}). Khuyến nghị kiểm tra tốc độ tải trang trên di động hoặc độ trễ khởi tạo Pixel/GTM.
             </div>
           </div>
-        )}
+        ) : !isGa4Available ? (
+          <div className="p-3 rounded-xl bg-slate-800/40 border border-slate-700/60 text-xs text-slate-300 flex items-start gap-2.5">
+            <span className="text-base leading-none">ℹ️</span>
+            <div>
+              <strong>GA4 chưa liên kết cho store này:</strong> Hệ thống đối soát trực tiếp giữa Meta Ads và Shopify Settlement (đơn hàng, doanh thu thực tế, MER, Blended CPA). Khi bạn có GA4 Property riêng, hãy cập nhật cấu hình để kích hoạt thêm tầng đối soát rơi rụng link-click.
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* 2. 3-Way Reconciliation Comparison Matrix */}
@@ -153,16 +179,24 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
               <tr className="hover:bg-slate-850/40">
                 <td className="py-3 px-4 font-sans font-semibold text-slate-300">Lưu lượng truy cập</td>
                 <td className="py-3 px-4 text-slate-200">{linkClicks} Link Clicks</td>
-                <td className="py-3 px-4 text-cyan-300 font-bold">{ga4Sessions} Sessions</td>
+                <td className="py-3 px-4 text-cyan-300 font-bold">
+                  {isGa4Available ? `${ga4Sessions} Sessions` : "Chưa liên kết"}
+                </td>
                 <td className="py-3 px-4 text-slate-500">—</td>
-                <td className="py-3 px-4 text-amber-300 font-sans">
-                  Lệch {linkClicks - ga4Sessions} clicks (-{gaps?.clickDropPct || "42.5%"})
+                <td className="py-3 px-4 font-sans">
+                  {isGa4Available && ga4Sessions !== null ? (
+                    <span className="text-amber-300">Lệch {linkClicks - ga4Sessions} clicks (-{gaps?.clickDropPct || "0.0%"})</span>
+                  ) : (
+                    <span className="text-slate-400">Đang chờ liên kết GA4 để đối soát link click</span>
+                  )}
                 </td>
               </tr>
               <tr className="hover:bg-slate-850/40">
                 <td className="py-3 px-4 font-sans font-semibold text-slate-300">Số đơn chuyển đổi</td>
                 <td className="py-3 px-4 text-blue-300">{summary?.purchases || meta?.purchases || 2} Pixel Purchases</td>
-                <td className="py-3 px-4 text-cyan-300">{ga4?.ecommercePurchases ?? 1} GA4 Purchases</td>
+                <td className="py-3 px-4 text-cyan-300">
+                  {isGa4Available ? `${ga4?.ecommercePurchases ?? 0} GA4 Purchases` : "Chưa liên kết"}
+                </td>
                 <td className="py-3 px-4 text-emerald-400 font-bold">{shopify?.totalOrders ?? 10} Orders Thực</td>
                 <td className="py-3 px-4 text-emerald-300 font-sans">
                   Lệch +{gaps?.purchaseDiscrepancy ?? 8} đơn so với Pixel (Attribution lag)
@@ -171,7 +205,9 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
               <tr className="hover:bg-slate-850/40">
                 <td className="py-3 px-4 font-sans font-semibold text-slate-300">Doanh thu ghi nhận</td>
                 <td className="py-3 px-4 text-slate-200">${summary?.purchaseValue || meta?.purchaseValue || "106.70"}</td>
-                <td className="py-3 px-4 text-slate-200">${ga4?.purchaseRevenue || "53.35"}</td>
+                <td className="py-3 px-4 text-slate-200">
+                  {isGa4Available ? `$${ga4?.purchaseRevenue || "0.00"}` : "Chưa liên kết"}
+                </td>
                 <td className="py-3 px-4 text-emerald-400 font-bold">${shopify?.netSales || "533.50"}</td>
                 <td className="py-3 px-4 text-slate-300 font-sans">
                   MER thực tế = <strong>{shopify?.mer || "4.90"}×</strong> (Lãi ròng)

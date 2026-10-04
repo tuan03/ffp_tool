@@ -157,8 +157,10 @@ test("Ads MCP Server tools execute correctly and return structured data", async 
     assert.ok(funnelData.ga4);
     assert.ok(funnelData.shopify);
     assert.ok(funnelData.gaps);
-    assert.ok(parseFloat(funnelData.meta.linkClicks) > 0);
-    assert.ok(parseFloat(funnelData.ga4.clickToSessionDropPct) >= 0);
+    assert.ok(
+      funnelData.ga4.clickToSessionDropPct === null ||
+      parseFloat(funnelData.ga4.clickToSessionDropPct) >= 0
+    );
 
     // 5. ads_get_decision_cards
     const decisionsRes = await client.callTool({

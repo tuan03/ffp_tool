@@ -576,11 +576,13 @@ export class AdsIntelligenceService {
       }
     }
 
-    let ga4Status: "CONNECTED" | "PENDING" | "ERROR" = "PENDING";
-    let liveSessionsLast30d = 0;
-    const ga4PropertyId = profile.ga4.propertyId ?? "555699138";
+    let ga4Status: "CONNECTED" | "PENDING" | "ERROR" | "NOT_CONFIGURED" = "PENDING";
+    let liveSessionsLast30d: number | null = null;
+    const ga4PropertyId = profile.ga4.propertyId ?? null;
 
-    if (ga4.isConfigured() && ga4PropertyId) {
+    if (!ga4PropertyId) {
+      ga4Status = "NOT_CONFIGURED";
+    } else if (ga4.isConfigured()) {
       try {
         const rep = await ga4.getOverview(ga4PropertyId, "30daysAgo", "today");
         ga4Status = "CONNECTED";
@@ -602,7 +604,7 @@ export class AdsIntelligenceService {
       ga4Connection: {
         status: ga4Status,
         propertyId: ga4PropertyId,
-        serviceAccount: "ga4-data-reader@vaulted-night-510508-j8.iam.gserviceaccount.com",
+        serviceAccount: profile.ga4.credentialRef || "ga4-service-account.json",
         liveSessionsLast30d,
       },
       competitorProvider: {
@@ -656,12 +658,13 @@ export class AdsIntelligenceService {
       this.getShopifyClient().getOrderSummary(storeId),
     ]);
 
-    const ga4Sessions = health.ga4Connection.liveSessionsLast30d ?? 0;
+    const isGa4Connected = health.ga4Connection.status === "CONNECTED";
+    const ga4Sessions = isGa4Connected ? (health.ga4Connection.liveSessionsLast30d ?? 0) : null;
     const metaLinkClicks = Number(summary.linkClicks) || 0;
     const dropPct =
-      metaLinkClicks > 0
+      isGa4Connected && metaLinkClicks > 0 && ga4Sessions !== null
         ? Math.max(0, ((metaLinkClicks - ga4Sessions) / metaLinkClicks) * 100).toFixed(1) + "%"
-        : "0.0%";
+        : null;
 
     const metaPurchases = Number(summary.purchases) || 0;
     const metaPurchaseVal = Number(summary.purchaseValue) || 0;
@@ -674,9 +677,13 @@ export class AdsIntelligenceService {
     const revenueDiscrepancy = (metaPurchaseVal - shopifyNetSales).toFixed(2);
 
     const notes: string[] = [];
-    if (metaLinkClicks > 0 && ga4Sessions > 0) {
+    if (isGa4Connected && metaLinkClicks > 0 && ga4Sessions !== null && dropPct !== null) {
       notes.push(
         `Độ rơi rụng từ Click quảng cáo sang Phiên GA4 là ${dropPct} (Mức thông thường ngành E-commerce: 15% - 25%).`
+      );
+    } else if (health.ga4Connection.status === "NOT_CONFIGURED") {
+      notes.push(
+        "Chưa liên kết GA4 Property cho store này. Đối soát phễu tập trung đối chiếu giữa Meta Ads và Shopify Settlement."
       );
     }
     if (purchaseDiscrepancy !== 0) {
@@ -736,7 +743,7 @@ export class AdsIntelligenceService {
       gaps: {
         purchaseDiscrepancy,
         revenueDiscrepancy,
-        clickDropPct: dropPct,
+        clickDropPct: dropPct ?? "N/A",
         notes,
       },
       fromCache: false,
@@ -1103,11 +1110,11 @@ export class AdsIntelligenceService {
   ): Promise<Ga4ReportResult> {
     const profile = loadStoreAdsProfile(storeId);
     const ga4 = this.getGa4Client();
-    const propertyId = profile.ga4.propertyId ?? "555699138";
+    const propertyId = profile.ga4.propertyId ?? null;
     if (!ga4.isConfigured() || !propertyId) {
       return {
         recipe,
-        propertyId: propertyId || "unknown",
+        propertyId: propertyId || "unconfigured",
         period: { startDate: options.startDate ?? "30daysAgo", endDate: options.endDate ?? "today" },
         rowCount: 0,
         rows: [],

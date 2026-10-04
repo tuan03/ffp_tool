@@ -77,25 +77,31 @@ export function SystemHealthTab({ health, summary, onSync }: SystemHealthTabProp
               <span>📊</span> Google Analytics 4
             </span>
             <span
-              className={`text-[10px] px-2 py-0.2 rounded font-bold font-mono ${
+              className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono ${
                 health?.ga4Connection.status === "CONNECTED"
                   ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                  : health?.ga4Connection.status === "NOT_CONFIGURED"
+                  ? "bg-slate-800 text-slate-300 border border-slate-700"
                   : "bg-amber-950 text-amber-300 border border-amber-800"
               }`}
             >
-              {health?.ga4Connection.status || "CONNECTED"}
+              {health?.ga4Connection.status === "NOT_CONFIGURED"
+                ? "CHƯA CẤU HÌNH"
+                : health?.ga4Connection.status || "CONNECTED"}
             </span>
           </div>
 
           <div className="space-y-1.5 text-xs font-mono">
             <div className="flex justify-between text-slate-400">
               <span>Property ID:</span>
-              <span className="text-cyan-300 font-bold">{health?.ga4Connection.propertyId || "555699138"}</span>
+              <span className={health?.ga4Connection.propertyId ? "text-cyan-300 font-bold" : "text-slate-500 italic"}>
+                {health?.ga4Connection.propertyId || "Chưa thiết lập"}
+              </span>
             </div>
             <div className="flex justify-between text-slate-400">
               <span>Xác thực:</span>
               <span className="text-slate-200 truncate max-w-[160px]">
-                {health?.ga4Connection.serviceAccount || "ga4-service-account.json"}
+                {health?.ga4Connection.serviceAccount || "chillgen-service-account.json"}
               </span>
             </div>
             <div className="flex justify-between text-slate-400">
@@ -104,7 +110,11 @@ export function SystemHealthTab({ health, summary, onSync }: SystemHealthTabProp
             </div>
             <div className="flex justify-between text-slate-400">
               <span>Lưu lượng:</span>
-              <span className="text-emerald-400">558 Sessions</span>
+              <span className={health?.ga4Connection.liveSessionsLast30d ? "text-emerald-400" : "text-slate-500"}>
+                {health?.ga4Connection.liveSessionsLast30d !== null && health?.ga4Connection.liveSessionsLast30d !== undefined
+                  ? `${health.ga4Connection.liveSessionsLast30d} Sessions`
+                  : "N/A (Chưa liên kết)"}
+              </span>
             </div>
           </div>
         </div>

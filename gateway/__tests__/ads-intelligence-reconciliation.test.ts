@@ -53,9 +53,9 @@ test("AdsIntelligenceService: getReconciliationReport computes three-way reconci
   assert.ok(typeof report.meta.purchases === "string");
   assert.ok(typeof report.meta.linkClicks === "string");
 
-  // GA4 metrics
-  assert.ok(report.ga4.sessions >= 0);
-  assert.ok(typeof report.ga4.clickToSessionDropPct === "string");
+  // GA4 metrics (Unconfigured for chillgen, handled cleanly as NOT_CONFIGURED)
+  assert.equal(report.ga4.status, "NOT_CONFIGURED");
+  assert.equal(report.ga4.sessions, null);
 
   // Shopify metrics
   assert.equal(report.shopify.totalOrders, 10);
