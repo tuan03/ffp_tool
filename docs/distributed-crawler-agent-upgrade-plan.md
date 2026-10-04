@@ -4,7 +4,7 @@
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, các mục 1–58.
 > Trạng thái: **đề xuất để duyệt, chưa phải tính năng đã triển khai hoặc kết quả nghiệm thu**.
 > Phạm vi lần làm này: đọc đặc tả, đối chiếu source/test, viết kế hoạch. Không đổi code, database, container, agent hoặc VPS.
-> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Tài liệu này giữ vai trò giải thích kiến trúc và kỹ thuật. Chưa task triển khai nào được bắt đầu; chờ người dùng đọc và duyệt docs.
+> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Tài liệu này giữ vai trò giải thích kiến trúc và kỹ thuật. Task 01 đã kiểm chứng baseline PostgreSQL và chờ người dùng nghiệm thu; chưa sửa hành vi runtime.
 
 ## 1. Kết luận trước: nên làm gì và chưa nên làm gì?
 

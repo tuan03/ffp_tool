@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **CHỜ NGƯỜI DÙNG DUYỆT TÀI LIỆU**. Chưa bắt đầu Task 01.
+> Trạng thái: **TASK 01 CHỜ NGƯỜI DÙNG KIỂM TRA**. Bài kiểm chứng lease PostgreSQL đã chạy; chưa bắt đầu Task 02.
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -44,7 +44,7 @@ Mỗi lần bàn giao phải cung cấp lệnh/path thực tế đã thử, khô
 
 ## 3. Task 01 — kiểm chứng lease hiện tại, chưa sửa hành vi
 
-**Liên kết:** E0.1; spec 14–15. **Trạng thái:** CHƯA LÀM.
+**Liên kết:** E0.1; spec 14–15. **Trạng thái:** CHỜ NGƯỜI DÙNG TEST. Xem [báo cáo Task 01 và lệnh chạy lại](audits/distributed-crawler/task-01-lease-baseline.md). Hai lần kiểm chứng đều cho A gửi muộn được accepted, B duplicate; chưa sửa runtime và chưa đáp ứng quy tắc lease mới.
 
 ### Mục tiêu
 
@@ -89,14 +89,14 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 ## 4. Backlog theo thứ tự thực hiện
 
-**Tất cả hàng dưới đang CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
+**Task 01 chờ người dùng test; Task 02–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
 ### Cách đọc cột đối chiếu với file gốc
 
 - Cột **“Mục trong đặc tả gốc / phần xử lý”** dùng số tiêu đề trong `distributed_crawler_agent_server_task_spec.md`, không phải số dòng hoặc số task của checklist này. Ví dụ **Task 02 → mục 13–15, 19**; không phải mục 2 của file gốc.
-- Phần trong ngoặc chỉ rõ phạm vi đóng góp. Đây là **phần dự kiến xử lý sau khi task được nghiệm thu**, chưa phải tuyên bố đã hoàn thành; hiện tất cả task vẫn CHƯA LÀM.
+- Phần trong ngoặc chỉ rõ phạm vi đóng góp. Đây là **phần dự kiến xử lý sau khi task được nghiệm thu**, chưa phải tuyên bố đã hoàn thành; xem trạng thái Task 01 ở mục 3 và bảng tiến độ cuối file.
 - Một mục gốc có thể cần nhiều task: mục 15 (Lease Token) được kiểm chứng ở Task 01, xử lý qua Task 02–04 và kiểm tra chung ở Task 10. Task 01 hoàn thành chỉ chứng minh hiện trạng, không đánh dấu mục 15 đã đáp ứng yêu cầu mới.
 - Task có chữ **“nghiệm thu”** kiểm tra kết hợp các phần đã làm, không thay thế implementation hoặc test còn thiếu. Task 53 đối chiếu toàn bộ 1–58, không tự làm nốt phần thiếu trong một task tổng kết.
 - Các mục 1 (mục tiêu), 45 (database), 49 (fallback), 55 (phân công), 56 (nguyên tắc), 58 (ưu tiên/DoD) còn có tính xuyên suốt. Cột ghi liên hệ chính; khi mở task phải ghi thêm điều khoản cụ thể và test chứng minh nếu có tác động.
@@ -262,10 +262,10 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Không có |
-| Task 01 | Chưa làm, chưa được bắt đầu |
+| Task đang chạy | Task 01 đã kiểm chứng, chờ người dùng test/xác nhận |
+| Task 01 | PostgreSQL baseline PASS hai lần; chưa nghiệm thu; mục 15 chưa đáp ứng policy mới |
 | Task 02–53 | Chưa làm |
 | Code/runtime/DB được thay đổi trong lần viết docs | Không |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** giao hai tài liệu để người dùng đọc. Chỉ bắt đầu Task 01 sau xác nhận tiếp theo; không chạy test audit hoặc dựng môi trường ngay trong lượt viết docs này.
+**Điểm dừng hiện tại:** người dùng chạy lại/xem báo cáo Task 01 và xác nhận. Không bắt đầu Task 02 hoặc sửa lease trước khi người dùng duyệt.
