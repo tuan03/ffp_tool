@@ -2313,6 +2313,48 @@ class CoordinatorStoreTests(unittest.TestCase):
         finally:
             restarted_engine.dispose()
 
+    def test_product_stream_rejects_expired_and_reassigned_leases(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        for client_id in ("client-a", "client-b"):
+            self.store.register_client(client_hello(client_id, slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        payload = {"jobId": job["id"], "product": {"id": "fixture-product", "title": "Current"}}
+        with self.sessions.begin() as session:
+            session.get(CrawlTask, first["taskId"]).lease_expires_at = utc_now() - timedelta(seconds=1)
+        def upload(lease, client_id):
+            return self.store.accept_product(lease["taskId"], client_id, lease["leaseId"], "fixture-product", "checksum", payload)
+        self.assertEqual(upload(first, "client-a")["status"], "stale")
+        self.store.reap_expired()
+        second = self.store.lease_tasks("client-b", 1)[0]
+        self.assertEqual(upload(first, "client-a")["status"], "stale")
+        with self.sessions() as session:
+            self.assertEqual(list(session.scalars(select(CrawlProductItem))), [])
+            self.assertEqual(session.get(CrawlTask, first["taskId"]).lease_id, second["leaseId"])
+        self.assertEqual(upload(second, "client-b")["status"], "accepted")
+        self.assertEqual(upload(second, "client-b")["status"], "duplicate")
+        payload["product"]["title"] = "Stale overwrite"
+        self.assertEqual(upload(first, "client-a")["status"], "stale")
+        with self.sessions() as session:
+            items = list(session.scalars(select(CrawlProductItem)))
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].raw_payload["title"], "Current")
+            self.assertEqual(items[0].client_id, "client-b")
+
+    def test_product_stream_rejects_terminal_queued_and_missing_deadline(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        for status, expiry in (("completed", utc_now() + timedelta(seconds=60)), ("failed", utc_now() + timedelta(seconds=60)), ("queued", utc_now() + timedelta(seconds=60)), ("leased", None)):
+            with self.subTest(status=status):
+                with self.sessions.begin() as session:
+                    task = session.get(CrawlTask, lease["taskId"])
+                    task.status = status
+                    task.lease_expires_at = expiry
+                response = self.store.accept_product(lease["taskId"], "client-a", lease["leaseId"], "fixture-product", "checksum", {"jobId": lease["jobId"], "product": {"id": "fixture-product"}})
+                self.assertEqual(response["status"], "stale")
+        with self.sessions() as session:
+            self.assertEqual(list(session.scalars(select(CrawlProductItem))), [])
+
     def test_duplicate_product_upload_creates_one_pipeline_item(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
@@ -2941,6 +2983,22 @@ class CoordinatorApiTests(unittest.TestCase):
                 rejected = upload(first, "client-a")
                 self.assertEqual(rejected.status_code, 409)
                 self.assertIn("stale", rejected.json()["detail"])
+                product_url = f"/api/v1/worker/tasks/{first['taskId']}/products/fixture-product"
+                for lease, client_id, expected_code, expected_status in (
+                    (first, "client-a", 409, None),
+                    (second, "client-b", 200, "accepted"),
+                    (second, "client-b", 200, "duplicate"),
+                    (first, "client-a", 409, None),
+                ):
+                    streamed = client.put(product_url,
+                        headers={"X-Client-Id": client_id, "X-Lease-Id": lease["leaseId"]},
+                        json={"taskId": lease["taskId"], "clientId": client_id,
+                              "leaseId": lease["leaseId"], "jobId": job["id"],
+                              "product": {"id": "fixture-product", "title": "Fixture"}},
+                    )
+                    self.assertEqual(streamed.status_code, expected_code)
+                    if expected_status is not None:
+                        self.assertEqual(streamed.json()["status"], expected_status)
                 accepted = upload(second, "client-b")
                 self.assertEqual(accepted.status_code, 200)
                 self.assertEqual(accepted.json()["status"], "accepted")

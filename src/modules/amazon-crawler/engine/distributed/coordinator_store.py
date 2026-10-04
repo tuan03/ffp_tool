@@ -1068,6 +1068,16 @@ class CoordinatorStore(CoordinatorObservability):
                 return {"status": "missing"}
             if task.status in {"cancelling", "cancelled"}:
                 return {"status": "cancelled"}
+            # Streaming writes must have current authority too; a historical
+            # attempt must not enqueue downstream work after reassignment.
+            if (
+                task.status not in {"leased", "running"}
+                or task.assigned_client_id != client_id
+                or task.lease_id != lease_id
+                or task.lease_expires_at is None
+                or _as_utc(task.lease_expires_at) <= utc_now()
+            ):
+                return {"status": "stale"}
             attempt = session.scalar(select(TaskAttempt).where(
                 TaskAttempt.task_id == task.id,
                 TaskAttempt.client_id == client_id,

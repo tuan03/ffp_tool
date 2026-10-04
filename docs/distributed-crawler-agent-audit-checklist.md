@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **TASK 02 CHỜ NGƯỜI DÙNG KIỂM TRA**. Task 01 đã được người dùng kiểm tra và cho chuyển Task 02. Chưa bắt đầu Task 03.
+> Trạng thái: **TASK 03 CHỜ NGƯỜI DÙNG KIỂM TRA**. Task 01–02 đã nghiệm thu; chưa bắt đầu Task 04. Xem [báo cáo Task 03](audits/distributed-crawler/task-03-product-stream-fencing.md).
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -89,7 +89,7 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 ## 4. Backlog theo thứ tự thực hiện
 
-**Task 01 đã nghiệm thu; Task 02 chờ người dùng test; Task 03–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
+**Task 01–02 đã nghiệm thu; Task 03 chờ người dùng test; Task 04–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
@@ -108,7 +108,7 @@ Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test inst
 | Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
 | --- | --- | --- | --- | --- | --- | --- |
 | [x] | 01 | Tái hiện lease A/B hiện tại | 14–15 (kiểm chứng hiện trạng) | E0.1 | PostgreSQL baseline như mục 3 | Người dùng đã kiểm tra, cho chuyển Task 02 |
-| [ ] | 02 | Final result mới chỉ nhận từ lease còn quyền | 13–15, 19 (final result) | 01; duyệt D2, rule expiry; E1.1 | A stale bị reject, B accepted | Xem kết quả trước/sau, duyệt contract |
+| [x] | 02 | Final result mới chỉ nhận từ lease còn quyền | 13–15, 19 (final result) | 01; duyệt D2, rule expiry; E1.1 | A stale bị reject, B accepted | Người dùng xác nhận ổn, cho triển khai Task 03 |
 | [ ] | 03 | Product streaming cũng chặn lease cũ | 15, 19, 31 (product streaming) | 02; E1.1 | A không tạo pipeline item, B hợp lệ | Xem số product/item và nguồn lease |
 | [ ] | 04 | Mutation phụ không hồi sinh lease cũ | 13–15, 19, 27 (mutation/reconcile) | 03; E1.1 | Progress/fail/renew/cancel ACK/reconcile với token cũ | Chạy lại bộ negative cases |
 | [ ] | 05 | Result receipt idempotent, checksum conflict rõ | 19, 30–31 (receipt/duplicate) | 04; E1.1 | Mất ACK gửi lại không duplicate; khác checksum reject | Xem một kết quả, nhiều lần delivery |
@@ -262,11 +262,12 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 02 chờ người dùng test/xác nhận |
+| Task đang chạy | Task 03 chờ người dùng test/xác nhận |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
-| Task 02 | Đã sửa final result trong source và test; xem báo cáo Task 02 |
-| Task 03–53 | Chưa làm |
+| Task 02 | Đã nghiệm thu final result |
+| Task 03 | Đã sửa product streaming trong source và test; xem báo cáo Task 03 |
+| Task 04–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** người dùng chạy lại/xem báo cáo Task 02 và xác nhận. Không bắt đầu Task 03, push hoặc deploy trước khi được duyệt.
+**Điểm dừng hiện tại:** người dùng chạy lại/xem báo cáo Task 03 và xác nhận. Không bắt đầu Task 04, push hoặc deploy trước khi được duyệt.

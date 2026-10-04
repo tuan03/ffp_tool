@@ -5,7 +5,7 @@
 - Baseline: `04f28ad`, branch `cua_pro`.
 - User verified Task 01 and explicitly authorized Task 02/current-lease final results.
 - Original specification: sections 13–15 and 19, **final-result path only**.
-- Status: awaiting user verification; Task 03 has not started.
+- Status: user accepted Task 02 and authorized Task 03. See [Task 03 report](task-03-product-stream-fencing.md) for the subsequent streaming changes; this report records Task 02's scope.
 - Runtime change: only `CoordinatorStore.accept_result()`; no migrations, dependencies, environment variables, or new routes.
 - No Docker rebuild/restart, VPS deployment, or push. Running application containers still use their previously built code. The audit imports the updated local checkout.
 
