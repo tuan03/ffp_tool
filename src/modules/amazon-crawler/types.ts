@@ -665,7 +665,7 @@ export interface AmazonCrawlerAgentCommandEvent {
 export interface AmazonCrawlerAgentCommandSummary {
   commandId: string;
   sequence: number;
-  type: "PAUSE" | "RESUME";
+  type: "PAUSE" | "RESUME" | "PURGE_PENDING_TASKS";
   status: string;
   createdAt: string | null;
   error: string | null;
@@ -674,7 +674,17 @@ export interface AmazonCrawlerAgentCommandSummary {
 
 export interface AmazonCrawlerCommandController {
   submit(agentId: string, type: "PAUSE" | "RESUME"): Promise<void>;
+  previewPendingPurge(agentId: string, taskIds: readonly string[]): Promise<AmazonCrawlerPendingPurgePreview>;
+  purgePending(agentId: string, taskIds: readonly string[], expectedPendingCount: number, reason: string): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
+}
+
+export interface AmazonCrawlerPendingPurgePreview {
+  scope: "pending";
+  requestedCount: number;
+  pendingCount: number;
+  eligibleTaskIds: readonly string[];
+  ineligibleCount: number;
 }
 
 export interface AmazonCrawlerAdmissionGate {

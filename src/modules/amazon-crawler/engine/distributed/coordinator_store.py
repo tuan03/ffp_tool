@@ -638,6 +638,7 @@ class CoordinatorStore(CoordinatorObservability):
         status: str = "online",
         telemetry: Any = None,
         capabilities: Any = None,
+        executing_task_ids: set[str] | None = None,
     ) -> list[str]:
         now = utc_now()
         cancelled_job_ids: set[str] = set()
@@ -673,7 +674,8 @@ class CoordinatorStore(CoordinatorObservability):
                     and task.status in {"leased", "running"} and task.result is None
                     and task.lease_expires_at is not None and _as_utc(task.lease_expires_at) > lease_now
                 ):
-                    task.status = "running"
+                    if executing_task_ids is None or task_id in executing_task_ids:
+                        task.status = "running"
                     task.lease_expires_at = self._renew_lease(session, task, lease_now)
                 elif (
                     task
@@ -2539,6 +2541,61 @@ class CoordinatorStore(CoordinatorObservability):
             self._refresh_job(session, task.job_id)
             return {"taskId": task.id, "jobId": task.job_id, "status": status,
                     "clientId": task.assigned_client_id, "leaseId": task.lease_id}
+
+    def cancel_pending_tasks(self, client_id: str, task_ids: list[str],
+                             executing_task_ids: set[str] | None = None) -> list[dict[str, Any]] | None:
+        """Atomically fence a confirmed set of this agent's never-started leases."""
+        unique_ids = list(dict.fromkeys(task_ids))
+        if (not unique_ids or len(unique_ids) != len(task_ids)
+                or bool(set(unique_ids) & (executing_task_ids or set()))):
+            return None
+        now = utc_now()
+        with self.sessions.begin() as session:
+            tasks = list(session.scalars(select(CrawlTask).where(
+                CrawlTask.id.in_(unique_ids),
+            ).order_by(CrawlTask.id).with_for_update()))
+            if len(tasks) != len(unique_ids) or any(
+                task.status != "leased" or task.assigned_client_id != client_id or not task.lease_id
+                for task in tasks
+            ):
+                return None
+            snapshots = []
+            for task in tasks:
+                task.status = "cancelled"
+                task.completed_at = now
+                task.lease_expires_at = None
+                attempt = session.scalar(select(TaskAttempt).where(
+                    TaskAttempt.task_id == task.id,
+                    TaskAttempt.client_id == client_id,
+                    TaskAttempt.lease_id == task.lease_id,
+                ).with_for_update())
+                if attempt is not None:
+                    attempt.status = "cancelled"
+                    attempt.finished_at = now
+                self._event(session, task.job_id, "pending_task_purged", {
+                    "taskId": task.id,
+                    "clientId": client_id,
+                    "scope": "pending",
+                })
+                snapshots.append({"taskId": task.id, "jobId": task.job_id,
+                                  "leaseId": task.lease_id, "status": "cancelled"})
+            for job_id in {task.job_id for task in tasks}:
+                job = session.get(CrawlJob, job_id)
+                if job is not None:
+                    self._refresh_job(session, job_id)
+            return snapshots
+
+    def preview_pending_tasks(self, client_id: str, task_ids: list[str],
+                              executing_task_ids: set[str] | None = None) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(task_ids))
+        with self.sessions() as session:
+            tasks = list(session.scalars(select(CrawlTask).where(CrawlTask.id.in_(unique_ids)))) if unique_ids else []
+            eligible = [task.id for task in tasks if task.status == "leased"
+                        and task.assigned_client_id == client_id and task.lease_id
+                        and task.id not in (executing_task_ids or set())]
+            return {"scope": "pending", "requestedCount": len(task_ids),
+                    "pendingCount": len(eligible), "eligibleTaskIds": sorted(eligible),
+                    "ineligibleCount": len(task_ids) - len(eligible)}
 
     def acknowledge_stop_cleanup(
         self,

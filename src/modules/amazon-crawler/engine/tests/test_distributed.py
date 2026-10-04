@@ -364,6 +364,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
                 "message": "Downloading images",
                 "percent": 40,
             }],
+            executing_task_ids=["task-pin-1"],
             capabilities={"pinterest": True, "pinterestBrowserLoggedIn": True, "secret": "ignored"},
         )
         await manager.reserve_tasks("client-a", 1)
@@ -380,6 +381,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
                     "message": "Downloading images",
                     "percent": 40,
                 }],
+                "executingTaskIds": ["task-pin-1"],
                 "capabilities": {"pinterest": True, "pinterestBrowserLoggedIn": True},
             },
         })
@@ -1725,6 +1727,41 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(self.store.acknowledge_task_cancel("client-a", {
             "taskId": first["taskId"], "leaseId": first["leaseId"],
         })["status"], "cancelled")
+
+    def test_pending_purge_fences_only_owned_leased_tasks_atomically(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+        self.store.register_client(client_hello(slots=2))
+        leases = self.store.lease_tasks("client-a", 2)
+        pending, running = leases
+
+        preview = self.store.preview_pending_tasks("client-a", [pending["taskId"], running["taskId"]],
+            {running["taskId"]})
+        self.assertEqual(preview["pendingCount"], 1)
+        self.assertEqual(preview["ineligibleCount"], 1)
+        self.assertIsNone(self.store.cancel_pending_tasks("client-a", [pending["taskId"], running["taskId"]],
+            {running["taskId"]}))
+        with self.sessions() as session:
+            self.assertEqual(session.get(CrawlTask, pending["taskId"]).status, "leased")
+
+        cancelled = self.store.cancel_pending_tasks("client-a", [pending["taskId"]])
+        self.assertEqual(cancelled, [{"taskId": pending["taskId"], "jobId": pending["jobId"],
+            "leaseId": pending["leaseId"], "status": "cancelled"}])
+        with self.sessions() as session:
+            self.assertEqual(session.get(CrawlTask, pending["taskId"]).status, "cancelled")
+            self.assertEqual(session.get(CrawlTask, running["taskId"]).status, "leased")
+
+    def test_heartbeat_renews_queued_lease_without_marking_it_running(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+
+        self.store.heartbeat("client-a", [{"taskId": lease["taskId"], "leaseId": lease["leaseId"]}],
+            "busy", executing_task_ids=set())
+
+        with self.sessions() as session:
+            task = session.get(CrawlTask, lease["taskId"])
+            self.assertEqual(task.status, "leased")
+            self.assertIsNotNone(task.lease_expires_at)
 
     def test_terminal_stop_waits_for_online_agent_cleanup_then_purges_job(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})

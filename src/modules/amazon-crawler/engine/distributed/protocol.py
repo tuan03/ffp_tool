@@ -129,6 +129,7 @@ def hello_message(
     last_processed_command_sequence: int = 0,
     desired_execution_state: str = "RUNNING",
     applied_execution_state: str = "RUNNING",
+    executing_task_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -146,6 +147,7 @@ def hello_message(
             "captcha": not limits.headless,
             "offlineSpool": True,
             "mediaGalleryV2": True,
+            "durablePendingPurgeV1": True,
         },
         "limits": {
             "productThreads": limits.product_threads,
@@ -156,6 +158,7 @@ def hello_message(
             "headless": limits.headless,
         },
         "localTasks": list(local_tasks or []),
+        "executingTaskIds": list(executing_task_ids or []),
         "cancelIntents": list(cancel_intents or []),
         "cacheGeneration": max(0, int(cache_generation)),
         "productInvalidationGeneration": max(0, int(product_invalidation_generation)),

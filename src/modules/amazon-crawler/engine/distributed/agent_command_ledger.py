@@ -16,7 +16,7 @@ from .protocol import utc_now
 
 
 JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
-COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4}
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "PURGE_PENDING_TASKS": 5}
 TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
 ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
 
@@ -25,8 +25,13 @@ class AgentCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requestId: uuid.UUID
-    type: Literal["PAUSE", "RESUME"]
+    type: Literal["PAUSE", "RESUME", "PURGE_PENDING_TASKS"]
     expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
+    taskIds: list[str] = Field(default_factory=list, min_length=1, max_length=500)
+    expectedPendingCount: int | None = Field(default=None, strict=True, ge=1, le=500)
+    confirmation: str | None = Field(default=None, min_length=1, max_length=80)
+    reason: str | None = Field(default=None, min_length=10, max_length=500)
+    dryRun: bool = False
 
 
 class AgentCommand(Base):
@@ -73,6 +78,13 @@ def _iso(value: datetime | None) -> str | None:
     return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _bounded_count(value: Any) -> int:
+    try:
+        return max(0, min(500, int(value)))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def command_payload(command: AgentCommand) -> dict[str, Any]:
     return {
         "commandId": command.id,
@@ -91,10 +103,11 @@ class AgentCommandLedger:
     def __init__(self, sessions):
         self.sessions = sessions
 
-    def submit(self, agent_id: str, request_id: str, command_type: str, expires_in_seconds: int) -> dict[str, Any]:
+    def submit(self, agent_id: str, request_id: str, command_type: str, expires_in_seconds: int,
+               command_payload_value: dict[str, Any] | None = None) -> dict[str, Any]:
         if command_type not in COMMAND_PRIORITY:
             raise HTTPException(422, detail="Unsupported agent command.")
-        target_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
+        target_state = "PAUSED" if command_type == "PAUSE" else "RUNNING" if command_type == "RESUME" else None
         with self.sessions.begin() as session:
             existing = session.scalar(select(AgentCommand).where(
                 AgentCommand.agent_id == agent_id, AgentCommand.request_id == request_id,
@@ -102,6 +115,8 @@ class AgentCommandLedger:
             if existing is not None:
                 if existing.command_type != command_type:
                     raise HTTPException(409, detail="Command requestId was reused with a different command.")
+                if command_type == "PURGE_PENDING_TASKS" and existing.payload != (command_payload_value or {}):
+                    raise HTTPException(409, detail="Command requestId was reused with a different purge scope.")
                 return self._snapshot(session, existing)
             agent = session.get(ClientRecord,
                                 agent_id, with_for_update=True)
@@ -112,16 +127,32 @@ class AgentCommandLedger:
             command = AgentCommand(
                 id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
                 sequence=sequence, command_type=command_type,
-                payload={"desiredExecutionState": target_state},
+                payload=(dict(command_payload_value or {}) if command_type == "PURGE_PENDING_TASKS"
+                         else {"desiredExecutionState": target_state}),
                 priority=COMMAND_PRIORITY[command_type], status="PENDING",
                 created_at=now, expires_at=now + timedelta(seconds=expires_in_seconds),
             )
             session.add(command)
             agent.command_sequence = sequence
-            agent.desired_execution_state = target_state
+            if target_state is not None:
+                agent.desired_execution_state = target_state
             self._event(session, command, "PENDING", {"source": "operator"}, now)
             session.flush()
             return self._snapshot(session, command)
+
+    def request_snapshot(self, agent_id: str, request_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            command = session.scalar(select(AgentCommand).where(
+                AgentCommand.agent_id == agent_id,
+                AgentCommand.request_id == request_id,
+            ))
+            return self._snapshot(session, command) if command is not None else None
+
+    def purge_allowed(self, agent_id: str) -> bool:
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, agent_id)
+            return bool(agent is not None and agent.applied_execution_state == "PAUSED"
+                        and agent.capabilities.get("durablePendingPurgeV1") is True)
 
     def commands_after(self, agent_id: str, sequence: int, *, limit: int = 500) -> tuple[list[dict[str, Any]], int, str, str, int]:
         now = utc_now()
@@ -205,12 +236,21 @@ class AgentCommandLedger:
             if status in {"SUCCESS", "FAILED", "EXPIRED"} and sequence != agent.last_processed_command_sequence + 1:
                 raise HTTPException(409, detail="Agent command acknowledgement has a sequence gap.")
             detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
+            result = update.get("result") if command.command_type == "PURGE_PENDING_TASKS" else None
+            event_detail = {"error": detail} if detail else {}
+            if isinstance(result, dict):
+                event_detail["result"] = {
+                    "scope": "pending",
+                    "beforeCount": _bounded_count(result.get("beforeCount")),
+                    "purgedCount": _bounded_count(result.get("purgedCount")),
+                    "afterCount": _bounded_count(result.get("afterCount")),
+                }
             if status == "ACKED":
                 command.acknowledged_at = now
             elif status == "RUNNING":
                 command.started_at = command.started_at or now
             elif status in TERMINAL_STATUSES:
-                self._finish(session, agent, command, status, detail, now)
+                self._finish(session, agent, command, status, detail, now, event_detail)
             else:
                 command.status = status
             if status not in TERMINAL_STATUSES:
@@ -266,15 +306,17 @@ class AgentCommandLedger:
             agent_id=command.agent_id, status=status, detail=detail, created_at=now))
 
     @classmethod
-    def _finish(cls, session, agent, command: AgentCommand, status: str, error: str, now: datetime) -> None:
+    def _finish(cls, session, agent, command: AgentCommand, status: str, error: str, now: datetime,
+                event_detail: dict[str, Any] | None = None) -> None:
         command.status = status
         command.completed_at = now
         command.error = error or None
         if command.sequence == agent.last_processed_command_sequence + 1:
             agent.last_processed_command_sequence = command.sequence
-        if status == "SUCCESS":
+        if status == "SUCCESS" and command.command_type in {"PAUSE", "RESUME"}:
             agent.applied_execution_state = command.payload["desiredExecutionState"]
-        elif status in {"FAILED", "EXPIRED"} and agent.desired_execution_state == command.payload["desiredExecutionState"]:
+        elif (status in {"FAILED", "EXPIRED"} and command.command_type in {"PAUSE", "RESUME"}
+              and agent.desired_execution_state == command.payload["desiredExecutionState"]):
             previous = session.scalar(select(AgentCommand).where(
                 AgentCommand.agent_id == command.agent_id,
                 AgentCommand.sequence < command.sequence,
@@ -284,7 +326,7 @@ class AgentCommandLedger:
                 str(previous.payload.get("desiredExecutionState")) if previous is not None
                 else agent.applied_execution_state
             )
-        cls._event(session, command, status, {"error": error} if error else {}, now)
+        cls._event(session, command, status, {**({"error": error} if error else {}), **(event_detail or {})}, now)
 
     @classmethod
     def _snapshot(cls, session, command: AgentCommand) -> dict[str, Any]:

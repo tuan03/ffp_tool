@@ -515,7 +515,25 @@ class DistributedCrawlerAgent:
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
                     "sequence": sequence, "status": "ACKED"})
             payload = command.get("payload")
-            desired_state = "PAUSED" if command.get("type") == "PAUSE" else "RUNNING"
+            command_type = str(command.get("type") or "")
+            desired_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
+            if command_type == "PURGE_PENDING_TASKS":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                result, error = await self._purge_pending_assignments(command.get("payload"))
+                if error:
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "FAILED", "error": error})
+                else:
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                    update = {"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "SUCCESS", "result": result}
+                    if self._remote_execution_state == "PAUSED":
+                        update["runningTaskIds"] = sorted(self.executing_task_ids)
+                    await self.outbound_queue.put(update)
+                continue
             if not isinstance(payload, dict) or payload.get("desiredExecutionState") != desired_state:
                 error = "Command payload does not match its type."
                 await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
@@ -528,8 +546,11 @@ class DistributedCrawlerAgent:
             await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", desired_state)
             self._remote_execution_state = desired_state
             self._refresh_pause_state()
-            await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
-                "sequence": sequence, "status": "SUCCESS", "appliedExecutionState": desired_state})
+            update = {"type": "command_update", "commandId": command_id,
+                "sequence": sequence, "status": "SUCCESS", "appliedExecutionState": desired_state}
+            if command_type == "PAUSE":
+                update["runningTaskIds"] = sorted(self.executing_task_ids)
+            await self.outbound_queue.put(update)
         last_sequence = self.store.last_processed_command_sequence()
         latest_sequence = int(message.get("latestCommandSequence") or last_sequence)
         desired_state = str(message.get("desiredExecutionState") or self._remote_execution_state)
@@ -548,8 +569,38 @@ class DistributedCrawlerAgent:
             self._refresh_pause_state()
         self._command_recovery_complete = True
         self._command_recovery_event.set()
-        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots(),
-            "lastProcessedCommandSequence": last_sequence, "appliedExecutionState": self._remote_execution_state})
+
+    async def _purge_pending_assignments(self, payload: Any) -> tuple[dict[str, int] | None, str | None]:
+        if not isinstance(payload, dict) or not isinstance(payload.get("taskIds"), list):
+            return None, "Purge command scope is malformed."
+        task_ids = [str(value) for value in payload["taskIds"]]
+        if not task_ids or len(task_ids) != len(set(task_ids)):
+            return None, "Purge command task scope is invalid."
+        if self._remote_execution_state != "PAUSED":
+            return None, "Agent must be paused before pending assignments can be purged."
+        if set(task_ids) & self.executing_task_ids:
+            return None, "Purge scope contains a running task; no assignments were removed."
+        local_tasks = {task["taskId"]: task for task in self.store.local_tasks()}
+        scoped = {task_id: local_tasks[task_id] for task_id in task_ids if task_id in local_tasks}
+        if any(task["status"] not in {"leased", "cancelled"} for task in scoped.values()):
+            return None, "Purge scope contains a task that is not pending; no assignments were removed."
+        before_count = len(scoped)
+        queued_assignments: list[dict[str, Any]] = []
+        while not self.assignment_queue.empty():
+            queued = self.assignment_queue.get_nowait()
+            if str(queued.get("taskId") or "") not in scoped:
+                queued_assignments.append(queued)
+        for queued in queued_assignments:
+            await self.assignment_queue.put(queued)
+        purged_count = 0
+        for task_id, local_task in scoped.items():
+            assignment = self.active.pop(task_id, None)
+            self.store.discard_task(task_id)
+            await self.outbound_queue.put({"type": "cancel_ack", "taskId": task_id,
+                "leaseId": str((assignment or local_task).get("leaseId") or "")})
+            purged_count += 1
+        return {"beforeCount": before_count, "purgedCount": purged_count,
+                "afterCount": before_count - purged_count}, None
 
     async def _recovery_gate_loop(self) -> None:
         # One bounded upload pass, not an unbounded drain of the entire spool.
@@ -595,6 +646,8 @@ class DistributedCrawlerAgent:
                         pinterest_browser_logged_in=self.pinterest_browser_logged_in(),
                         last_processed_command_sequence=self.store.last_processed_command_sequence(),
                         desired_execution_state=self.store.remote_execution_state(),
+                        applied_execution_state=self._remote_execution_state,
+                        executing_task_ids=sorted(self.executing_task_ids),
                     ), **({"authProtocol": 1} if self._agent_key else {})}))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -913,6 +966,7 @@ class DistributedCrawlerAgent:
             await asyncio.to_thread(self.cache.maintain)
             self._resources = await asyncio.to_thread(self._sample_resources)
             self._publish_status()
+            executing_task_ids = set(self.executing_task_ids)
             running = self._current_tasks_snapshot()
             await self.outbound_queue.put({
                 "type": "heartbeat",
@@ -926,6 +980,7 @@ class DistributedCrawlerAgent:
                 "lastProcessedCommandSequence": self.store.last_processed_command_sequence(),
                 "appliedExecutionState": self._remote_execution_state,
                 "running": running,
+                "executingTaskIds": sorted(executing_task_ids),
                 "capabilities": self._agent_capabilities(),
                 "observability": self._telemetry_snapshot(),
             })
@@ -1345,6 +1400,7 @@ class DistributedCrawlerAgent:
             "amazon": True,
             "pinterest": True,
             "pinterestBrowserLoggedIn": self.pinterest_browser_logged_in(),
+            "durablePendingPurgeV1": True,
         }
 
     def _current_tasks_snapshot(self) -> list[dict[str, Any]]:

@@ -15,6 +15,7 @@ import {
   type AmazonCrawlerAdmissionGate,
   type AmazonCrawlerAdmissionGateController,
   type AmazonCrawlerAgentCommandSummary,
+  type AmazonCrawlerPendingPurgePreview,
   type AmazonCrawlerHandoverHandler,
   type AmazonCrawlerJobController,
   type AmazonCrawlerJobSnapshot,
@@ -242,6 +243,9 @@ export function AmazonCrawlerPage({
   const [commandHistories, setCommandHistories] = useState<Record<string, readonly AmazonCrawlerAgentCommandSummary[]>>({});
   const [commandBusyClientId, setCommandBusyClientId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
+  const [purgeTaskScopes, setPurgeTaskScopes] = useState<Record<string, string>>({});
+  const [purgeReasons, setPurgeReasons] = useState<Record<string, string>>({});
+  const [purgePreviews, setPurgePreviews] = useState<Record<string, AmazonCrawlerPendingPurgePreview>>({});
   const [admissionGate, setAdmissionGate] = useState<AmazonCrawlerAdmissionGate | null>(null);
   const [admissionGateReason, setAdmissionGateReason] = useState("");
   const [admissionGateError, setAdmissionGateError] = useState<string | null>(null);
@@ -455,6 +459,47 @@ export function AmazonCrawlerPage({
       setCommandHistories((current) => ({ ...current, [client.id]: history }));
     } catch (error: unknown) {
       setCommandError(error instanceof Error ? error.message : "Không gửi được lệnh đến agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handlePendingPurgePreview(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    const taskIds = (purgeTaskScopes[client.id] ?? "").split(/[\s,;]+/).filter(Boolean);
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      const preview = await amazonCrawlerCommands.previewPendingPurge(client.id, taskIds);
+      setPurgePreviews((current) => ({ ...current, [client.id]: preview }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không kiểm tra được phạm vi purge.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handlePendingPurge(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    const preview = purgePreviews[client.id];
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (!preview || preview.ineligibleCount !== 0 || preview.pendingCount < 1 || reason.length < 10) return;
+    if (!window.confirm(`Xóa ${preview.pendingCount} assignment chưa chạy của agent này? Task đang chạy và outbox được giữ nguyên.`)) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.purgePending(client.id, preview.eligibleTaskIds, preview.pendingCount, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setPurgePreviews((current) => {
+        const next = { ...current };
+        delete next[client.id];
+        return next;
+      });
+      setPurgeTaskScopes((current) => ({ ...current, [client.id]: "" }));
+      setPurgeReasons((current) => ({ ...current, [client.id]: "" }));
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không purge được assignment pending.");
     } finally {
       setCommandBusyClientId(null);
     }
@@ -1412,11 +1457,53 @@ export function AmazonCrawlerPage({
                       {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" ? "Tiếp tục" : "Tạm dừng"}
                     </button>
                   </div>
-                  {(commandHistories[client.id] ?? []).slice(-3).reverse().map((command) => <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
-                    #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : "Tiếp tục"} — {command.status}
-                    {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
-                    {command.error ? <p className="text-rose-300">{command.error}</p> : null}
-                  </div>)}
+                  <div className="mt-3 space-y-2 rounded border border-slate-700 p-2">
+                    <label className="block text-[11px] text-slate-300" htmlFor={`pending-purge-tasks-${client.id}`}>
+                      Purge assignment chưa chạy (nhập task ID, cách nhau bằng dấu phẩy hoặc dòng mới)
+                    </label>
+                    <textarea id={`pending-purge-tasks-${client.id}`} rows={2}
+                      value={purgeTaskScopes[client.id] ?? ""}
+                      onChange={(event) => {
+                        setPurgeTaskScopes((current) => ({ ...current, [client.id]: event.target.value }));
+                        setPurgePreviews((current) => {
+                          const next = { ...current };
+                          delete next[client.id];
+                          return next;
+                        });
+                      }}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
+                      placeholder="task-id-1, task-id-2" />
+                    <label className="block text-[11px] text-slate-300" htmlFor={`pending-purge-reason-${client.id}`}>Lý do</label>
+                    <input id={`pending-purge-reason-${client.id}`} value={purgeReasons[client.id] ?? ""}
+                      onChange={(event) => setPurgeReasons((current) => ({ ...current, [client.id]: event.target.value }))}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
+                      placeholder="Ít nhất 10 ký tự" />
+                    <div className="flex items-center gap-2">
+                      <button type="button" disabled={commandBusyClientId !== null || client.appliedExecutionState !== "PAUSED"}
+                        onClick={() => void handlePendingPurgePreview(client)}
+                        className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
+                        {commandBusyClientId === client.id ? "Đang kiểm tra…" : "Kiểm tra phạm vi"}
+                      </button>
+                      {purgePreviews[client.id] ? <span className="text-[11px] text-slate-300">
+                        {purgePreviews[client.id].pendingCount} pending · {purgePreviews[client.id].ineligibleCount} không hợp lệ
+                      </span> : null}
+                      {purgePreviews[client.id]?.pendingCount && purgePreviews[client.id]?.ineligibleCount === 0 ?
+                        <button type="button" disabled={commandBusyClientId !== null || (purgeReasons[client.id] ?? "").trim().length < 10}
+                          onClick={() => void handlePendingPurge(client)}
+                          className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">Purge pending</button> : null}
+                    </div>
+                    <p className="text-[10px] text-slate-500">Chỉ thao tác khi agent PAUSED; task đang chạy và outbox không bị xóa.</p>
+                  </div>
+                  {(commandHistories[client.id] ?? []).slice(-3).reverse().map((command) => {
+                    const result = command.events.map((event) => event.detail.result).find((value): value is Record<string, unknown> =>
+                      typeof value === "object" && value !== null && !Array.isArray(value));
+                    return <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
+                      #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục" : "Purge pending"} — {command.status}
+                      {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
+                      {result && typeof result.beforeCount === "number" ? <p>Trước {result.beforeCount} · đã purge {typeof result.purgedCount === "number" ? result.purgedCount : 0} · còn {typeof result.afterCount === "number" ? result.afterCount : 0}</p> : null}
+                      {command.error ? <p className="text-rose-300">{command.error}</p> : null}
+                    </div>;
+                  })}
                 </div> : null}
               </article>
             ))}

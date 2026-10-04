@@ -478,7 +478,7 @@ class ClientStore:
             sequence = int(command.get("sequence"))
         except (TypeError, ValueError):
             raise ValueError("Invalid command sequence.") from None
-        if not command_id or command_type not in {"PAUSE", "RESUME"}:
+        if not command_id or command_type not in {"PAUSE", "RESUME", "PURGE_PENDING_TASKS"}:
             raise ValueError("Unsupported or malformed server command.")
         expires_at = str(command.get("expiresAt") or "")
         with self._connection() as connection:

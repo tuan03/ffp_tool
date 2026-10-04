@@ -108,6 +108,7 @@ class ConnectionManager:
         active_tasks: int,
         available_slots: int,
         current_tasks: Any = None,
+        executing_task_ids: Any = None,
         capabilities: Any = None,
     ) -> None:
         async with self.lock:
@@ -118,6 +119,7 @@ class ConnectionManager:
                 "activeTasks": max(0, int(active_tasks)),
                 "availableSlots": max(0, int(available_slots)),
                 "currentTasks": self._bounded_current_tasks(current_tasks) if current_tasks is not None else list(previous.get("currentTasks") or []),
+                "executingTaskIds": sorted({str(value) for value in executing_task_ids[:32] if isinstance(value, str) and value}) if isinstance(executing_task_ids, list) else list(previous.get("executingTaskIds") or []),
                 "capabilities": self._bounded_capabilities(capabilities) if capabilities is not None else dict(previous.get("capabilities") or {}),
             }
             self.runtime[client_id] = runtime
@@ -128,6 +130,7 @@ class ConnectionManager:
                 client_id: {
                     **status,
                     "currentTasks": [dict(task) for task in status.get("currentTasks") or []],
+                    "executingTaskIds": list(status.get("executingTaskIds") or []),
                     "capabilities": dict(status.get("capabilities") or {}),
                 }
                 for client_id, status in self.runtime.items()
@@ -138,7 +141,7 @@ class ConnectionManager:
         source = value if isinstance(value, dict) else {}
         return {
             key: bool(source.get(key))
-            for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn")
+            for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1")
             if key in source
         }
 
@@ -185,6 +188,20 @@ class ConnectionManager:
             available = max(0, min(int(available_slots), capacity))
             status["availableSlots"] = available
             status["activeTasks"] = capacity - available
+
+    async def update_running_task_ids(self, client_id: str, task_ids: list[str]) -> None:
+        async with self.lock:
+            if client_id not in self.connections:
+                return
+            previous = self.runtime.get(client_id, {})
+            current_tasks = self._bounded_current_tasks([{"taskId": task_id} for task_id in task_ids])
+            self.runtime[client_id] = {
+                "activeTasks": len(current_tasks),
+                "availableSlots": max(0, int(previous.get("availableSlots", 0))),
+                "currentTasks": current_tasks,
+                "executingTaskIds": sorted({str(value) for value in task_ids[:32] if isinstance(value, str) and value}),
+                "capabilities": dict(previous.get("capabilities") or {}),
+            }
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
         async with self.lock:
@@ -804,9 +821,55 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     async def submit_agent_command(client_id: str, payload: AgentCommandRequest) -> dict[str, Any]:
         if security is None:
             raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
+        command_payload_value: dict[str, Any] | None = None
+        if payload.type == "PURGE_PENDING_TASKS":
+            if not payload.taskIds or len(set(payload.taskIds)) != len(payload.taskIds):
+                raise HTTPException(status_code=422, detail="Purge requires a non-empty unique taskIds scope.")
+            purge_payload = {
+                "taskIds": list(payload.taskIds),
+                "expectedPendingCount": payload.expectedPendingCount,
+                "reason": payload.reason.strip() if payload.reason else "",
+            }
+            existing = await asyncio.to_thread(command_ledger.request_snapshot, client_id, payload.requestId.hex)
+            if existing is not None:
+                command = await asyncio.to_thread(
+                    command_ledger.submit, client_id, payload.requestId.hex,
+                    payload.type, payload.expiresInSeconds, purge_payload,
+                )
+                await dispatch_next_agent_command(client_id)
+                return command
+            if not command_ledger.purge_allowed(client_id):
+                raise HTTPException(status_code=409, detail="Pause the agent and wait for PAUSED acknowledgement before purging pending assignments.")
+            runtime = await manager.runtime_snapshot()
+            executing_task_ids = set((runtime.get(client_id) or {}).get("executingTaskIds") or [])
+            preview = await asyncio.to_thread(store.preview_pending_tasks, client_id, payload.taskIds, executing_task_ids)
+            if payload.dryRun:
+                return JSONResponse(status_code=200, content={"dryRun": True, **preview})
+            confirmation = f"PURGE_PENDING_TASKS:{payload.expectedPendingCount}"
+            if (payload.expectedPendingCount != preview["pendingCount"]
+                    or preview["ineligibleCount"] != 0
+                    or payload.confirmation != confirmation
+                    or not payload.reason or len(payload.reason.strip()) < 10):
+                raise HTTPException(status_code=409, detail={
+                    "message": "Purge confirmation does not match the current pending scope.",
+                    "scope": "pending", "beforeCount": preview["pendingCount"],
+                    "ineligibleCount": preview["ineligibleCount"],
+                })
+            runtime = await manager.runtime_snapshot()
+            executing_task_ids = set((runtime.get(client_id) or {}).get("executingTaskIds") or [])
+            fenced = await asyncio.to_thread(store.cancel_pending_tasks, client_id, payload.taskIds, executing_task_ids)
+            if fenced is None:
+                raise HTTPException(status_code=409, detail="Pending assignments changed during confirmation; run dry-run again.")
+            for assignment in fenced:
+                if assignment.get("status") == "cancelled":
+                    await manager.send_to_client(client_id, {
+                        "type": "cancel_task", "taskId": assignment["taskId"],
+                        "leaseId": assignment["leaseId"],
+                    })
+            command_payload_value = purge_payload
         command = await asyncio.to_thread(
             command_ledger.submit, client_id, payload.requestId.hex,
-            payload.type, payload.expiresInSeconds,
+            payload.type, payload.expiresInSeconds, command_payload_value,
         )
         await dispatch_next_agent_command(client_id)
         return command
@@ -1570,6 +1633,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 client_id,
                 active_tasks=max(0, maximum_slots - available_slots),
                 available_slots=available_slots,
+                executing_task_ids=hello.get("executingTaskIds"),
                 capabilities=hello.get("capabilities"),
             )
             await websocket.send_json({
@@ -1630,11 +1694,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     reported_available_slots = max(0, int(message.get("availableSlots") or 0))
                     reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
                     running = list(message.get("running") or [])
+                    raw_executing_task_ids = message.get("executingTaskIds")
+                    executing_task_ids = ({str(task_id) for task_id in raw_executing_task_ids[:32]
+                        if isinstance(task_id, str) and task_id}
+                        if isinstance(raw_executing_task_ids, list) else set())
                     await manager.update_runtime(
                         client_id,
                         active_tasks=len(running),
                         available_slots=int(message.get("availableSlots") or 0),
                         current_tasks=running,
+                        executing_task_ids=message.get("executingTaskIds"),
                         capabilities=message.get("capabilities"),
                     )
                     cancelled_job_ids = await asyncio.to_thread(
@@ -1644,6 +1713,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         str(message.get("status") or "online"),
                         message.get("observability"),
                         message.get("capabilities"),
+                        executing_task_ids=executing_task_ids,
                     )
                     for cancelled_job_id in cancelled_job_ids:
                         await websocket.send_json({
@@ -1687,6 +1757,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     await dispatch_next_agent_command(client_id, after_sequence)
                 elif message_type == "command_update":
                     update = await asyncio.to_thread(command_ledger.update, client_id, message)
+                    if update["status"] == "SUCCESS" and isinstance(message.get("runningTaskIds"), list):
+                        await manager.update_running_task_ids(client_id, [
+                            str(task_id) for task_id in message["runningTaskIds"]
+                            if isinstance(task_id, str) and task_id
+                        ])
                     if update["status"] in {"SUCCESS", "FAILED", "EXPIRED"}:
                         reported_command_sequence = max(reported_command_sequence,
                             max(0, int(message.get("sequence") or 0)))

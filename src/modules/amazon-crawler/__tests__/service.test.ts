@@ -325,6 +325,26 @@ test("operator command controller submits idempotency ID and reads ordered timel
   assert.equal(history[0]?.events[0]?.status, "ACKED");
 });
 
+test("pending purge controller previews and sends exact scoped confirmation", async () => {
+  const requests: Array<{ body: string; method: string }> = [];
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requests.push({ body: String(init?.body ?? ""), method: init?.method ?? "GET" });
+      return jsonResponse(requests.length === 1
+        ? { dryRun: true, scope: "pending", requestedCount: 1, pendingCount: 1,
+          eligibleTaskIds: ["task-1"], ineligibleCount: 0 }
+        : { commandId: "purge-command" }, requests.length === 1 ? 200 : 202);
+    },
+  });
+  const preview = await controller.previewPendingPurge("agent-1", ["task-1"]);
+  assert.equal(preview.pendingCount, 1);
+  await controller.purgePending("agent-1", preview.eligibleTaskIds, preview.pendingCount, "remove test assignment");
+  assert.match(requests[0]?.body ?? "", /"dryRun":true/);
+  assert.match(requests[1]?.body ?? "", /"confirmation":"PURGE_PENDING_TASKS:1"/);
+  assert.match(requests[1]?.body ?? "", /"reason":"remove test assignment"/);
+});
+
 test("global admission controller loads and changes only the crawler gate", async () => {
   const requests: Array<{ url: string; method: string; body: string }> = [];
   const controller = createAmazonCrawlerAdmissionGateController({

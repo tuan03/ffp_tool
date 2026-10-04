@@ -9,6 +9,7 @@ import type {
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
   AmazonCrawlerCommandController,
+  AmazonCrawlerPendingPurgePreview,
   AmazonCrawlerAdmissionGate,
   AmazonCrawlerAdmissionGateController,
   AmazonCrawlerHydratedJob,
@@ -438,6 +439,30 @@ export function createAmazonCrawlerCommandController({
       });
       await readJson(response);
     },
+    async previewPendingPurge(agentId, taskIds): Promise<AmazonCrawlerPendingPurgePreview> {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_PENDING_TASKS",
+          taskIds, dryRun: true }),
+      });
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || payload.scope !== "pending" || !Array.isArray(payload.eligibleTaskIds)
+          || typeof payload.requestedCount !== "number" || typeof payload.pendingCount !== "number"
+          || typeof payload.ineligibleCount !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid pending-purge preview.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { scope: "pending", requestedCount: payload.requestedCount, pendingCount: payload.pendingCount,
+        ineligibleCount: payload.ineligibleCount,
+        eligibleTaskIds: payload.eligibleTaskIds.filter((taskId): taskId is string => typeof taskId === "string") };
+    },
+    async purgePending(agentId, taskIds, expectedPendingCount, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_PENDING_TASKS", taskIds,
+          expectedPendingCount, confirmation: `PURGE_PENDING_TASKS:${expectedPendingCount}`, reason }),
+      });
+      await readJson(response);
+    },
     async history(agentId) {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
       const payload: unknown = await readJson(response);
@@ -447,7 +472,8 @@ export function createAmazonCrawlerCommandController({
       return payload.commands.filter((entry): entry is Record<string, unknown> => isRecord(entry)).map((entry) => ({
         commandId: typeof entry.commandId === "string" ? entry.commandId : "",
         sequence: typeof entry.sequence === "number" ? entry.sequence : 0,
-        type: entry.type === "PAUSE" ? "PAUSE" as const : "RESUME" as const,
+        type: entry.type === "PAUSE" ? "PAUSE" as const
+          : entry.type === "PURGE_PENDING_TASKS" ? "PURGE_PENDING_TASKS" as const : "RESUME" as const,
         status: typeof entry.status === "string" ? entry.status : "UNKNOWN",
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
         error: typeof entry.error === "string" ? entry.error : null,
