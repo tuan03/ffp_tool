@@ -4,6 +4,29 @@ import test from "node:test";
 
 import { handleSeoAgentHttp } from "../seo-worker/admin-handler";
 
+test("revision endpoint requires operator/CSRF and rejects client-supplied store or provider", async () => {
+  let calls = 0;
+  const server = http.createServer((req, res) => { void handleSeoAgentHttp(req, res, {
+    operator: req.headers.authorization === "Basic test" ? "admin" : undefined,
+    hasStore: storeId => storeId === "demo", repository: async () => { throw new Error("unused"); },
+    createRevision: async input => { calls++; assert.equal(input.storeId, "demo"); assert.equal(input.operator, "admin"); return { jobId: "new", previousJobId: input.jobId }; },
+  }); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}/api/seo-agent/revisions?storeId=demo`;
+    const input = { jobId: "old", requestId: "7a9eb972-2a47-4f59-8cb0-aa735c80ea20" };
+    const headers = { authorization: "Basic test", "x-ffp-agent": "1", "content-type": "application/json" };
+    assert.equal((await fetch(url, { method: "POST", body: "{}" })).status, 401);
+    assert.equal((await fetch(url, { method: "POST", headers: { authorization: "Basic test" }, body: "{}" })).status, 403);
+    for (const extra of [{ storeId: "other" }, { provider: "gemini" }]) assert.equal((await fetch(url, { method: "POST", headers, body: JSON.stringify({ ...input, ...extra }) })).status, 400);
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(input) });
+    assert.equal(response.status, 201);
+    assert.deepEqual(await response.json(), { jobId: "new", previousJobId: "old" });
+    assert.equal(calls, 1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test("Agent Access rejects non-operator, CSRF, cross-site and invalid store requests", async () => {
   const server = http.createServer((req, res) => { void handleSeoAgentHttp(req, res, {
     operator: req.headers.authorization === "Basic test" ? "admin" : undefined,

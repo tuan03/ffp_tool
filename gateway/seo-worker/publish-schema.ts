@@ -12,8 +12,11 @@ export function getSeoPublishSchemaSql(schema: string): string {
     created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
     UNIQUE(store_id,request_id)
   );
-  CREATE UNIQUE INDEX IF NOT EXISTS seo_publish_active_product ON ${p}seo_publish_operations(store_id,product_id) WHERE state!='SUCCEEDED';
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS superseded_by TEXT REFERENCES ${p}gpt_jobs(id);
+  DROP INDEX IF EXISTS ${p}seo_publish_active_product;
+  CREATE UNIQUE INDEX IF NOT EXISTS seo_publish_active_product_v2 ON ${p}seo_publish_operations(store_id,product_id) WHERE state!='SUCCEEDED' AND superseded_by IS NULL;
   ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS has_write_intent BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS target_version BIGINT;
   CREATE TABLE IF NOT EXISTS ${p}seo_publish_versions (
     operation_id TEXT PRIMARY KEY REFERENCES ${p}seo_publish_operations(id),
     store_id TEXT NOT NULL, product_id TEXT NOT NULL, version BIGINT NOT NULL,

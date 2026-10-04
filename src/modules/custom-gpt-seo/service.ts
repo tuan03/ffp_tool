@@ -39,10 +39,15 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!response.ok) {
-      if (route.startsWith("publish")) {
+      if (route.startsWith("publish") || route === "revisions") {
         const payload: unknown = await response.json().catch(() => null);
         const code = isRecord(payload) && isRecord(payload.error) ? payload.error.code : undefined;
         const messages: Record<string, string> = {
+          PUBLISH_UNRESOLVED: "Lần Sync trước chưa xác định kết quả. Đối chiếu Shopify trước khi tạo revision.",
+          REVISION_ALREADY_EXISTS: "Bản Review này đã có revision mới. Mở SEO Queue để tiếp tục.",
+          REVISION_PROVIDER_UNSUPPORTED: "Luồng revision Worker hiện chỉ hỗ trợ Codex MCP; không tự đổi AI xử lý.",
+          REVIEW_SUPERSEDED: "Bản Review đã có revision mới; không thể đồng bộ bản cũ.",
+          REVISION_NOT_READY: "Job đang xử lý; chưa thể tạo revision mới.",
           PUBLISH_DISABLED: "Backend publish chưa được bật. Không chuyển sang ghi từ trình duyệt.",
           SOURCE_REASSESSMENT_REQUIRED: "Nguồn hoặc bản duyệt cần được đánh giá lại; không thể gửi lại bản cũ.",
           STALE_SOURCE: "Nguồn Shopify đã thay đổi. Cần tạo revision mới để đánh giá lại.",
@@ -50,7 +55,9 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
           APPROVED_REVIEW_REQUIRED: "Cần lưu và duyệt bản Review hợp lệ trước khi Sync.",
           VERSION_CONFLICT: "Bản Review đã thay đổi. Tải lại trước khi Sync.",
         };
-        throw new Error(typeof code === "string" && messages[code] ? messages[code] : "Chưa xác nhận được tác vụ publish. Tải lại Review để kiểm tra; không ghi lại Shopify.");
+        throw new Error(typeof code === "string" && messages[code] ? messages[code] : route === "revisions"
+          ? "Chưa tạo được revision. Kiểm tra quyền quản trị, kết nối Shopify và trạng thái job; mở Queue trước khi thử lại."
+          : "Chưa xác nhận được tác vụ publish. Tải lại Review để kiểm tra; không ghi lại Shopify.");
       }
       throw new Error(response.status === 401 ? "Đăng nhập bằng tài khoản quản trị để quản lý Agent Access." : "Không thể quản lý worker. Kiểm tra kết nối và thử lại.");
     }
@@ -89,6 +96,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    createRevision: (storeId: string, jobId: string, requestId: string, instructions?: string) => agentRequest<{ jobId: string; previousJobId: string }>("revisions", storeId, { jobId, requestId, instructions }),
     reconcilePublish: (storeId: string, jobId: string) => agentRequest<SeoPublishReceipt>("publish-reconcile", storeId, { jobId }),
     publishStatus: (storeId: string, jobId: string) => agentRequest<{ managed: boolean; operation: SeoPublishReceipt | null }>(`publish?jobId=${encodeURIComponent(jobId)}`, storeId),
     publishReview: (storeId: string, jobId: string, reviewUpdatedAt: number, requestId: string) => agentRequest<SeoPublishReceipt>("publish", storeId, { jobId, reviewUpdatedAt, requestId }),

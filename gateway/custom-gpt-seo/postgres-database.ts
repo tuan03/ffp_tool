@@ -43,7 +43,7 @@ export function translateQueueSql(sql: string, schema: string): string {
         : `(payload::jsonb->>'${field}')`)
     .replace(/\browid\b/g, "queue_order")
     .replace(/\bgpt_(settings|jobs|batches|mutations|deliveries|review_state|sync|audit)\b/g, table => `"${schema}".${table}`)
-    .replace(/\bseo_worker_(stores|tokens|sessions|runs|jobs|attempts|successes|requests)\b/g, table => `"${schema}".${table}`)
+    .replace(/\bseo_worker_(stores|tokens|sessions|runs|jobs|attempts|successes|requests|revisions)\b/g, table => `"${schema}".${table}`)
     .replace(/\bseo_publish_(operations|versions)\b/g, table => `"${schema}".${table}`)
     .replace(/\?/g, () => `$${++parameter}`);
 }

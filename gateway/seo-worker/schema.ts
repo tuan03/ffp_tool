@@ -60,5 +60,12 @@ export function getSeoWorkerSchemaSql(schema: string): string {
       scope TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL,
       response JSONB NOT NULL, PRIMARY KEY(scope,request_id)
     );
+    CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_revisions (
+      store_id TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL,
+      previous_job_id TEXT NOT NULL UNIQUE REFERENCES ${prefix}gpt_jobs(id),
+      job_id TEXT NOT NULL UNIQUE REFERENCES ${prefix}gpt_jobs(id),
+      operator TEXT NOT NULL, created_at BIGINT NOT NULL,
+      PRIMARY KEY(store_id,request_id)
+    );
   `;
 }

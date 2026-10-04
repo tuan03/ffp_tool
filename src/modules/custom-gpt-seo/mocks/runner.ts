@@ -6,6 +6,7 @@ export function createMockCustomGptClient(): CustomGptClient {
   return {
     reconcilePublish: async (_storeId, jobId) => ({ id: `mock-${jobId}`, jobId, state: "SUCCEEDED", errorCode: null, seoVersion: 1 }),
     publishStatus: async () => ({ managed: false, operation: null }),
+    createRevision: async (_storeId, jobId, requestId) => ({ jobId: `mock-revision-${requestId}`, previousJobId: jobId }),
     publishReview: async (_storeId, jobId) => ({ id: `mock-${jobId}`, jobId, state: "SUCCEEDED", errorCode: null, seoVersion: 1 }),
     agentAccess: async () => ({ tokens: [], total: 0, nextOffset: null, claimsEnabled: false }),
     agentRuns: async () => ({ runs: [], total: 0, nextOffset: null }),

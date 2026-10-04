@@ -1967,8 +1967,13 @@ export function SeoReviewPage({
       const durableTargets = targets.filter((t) => isDurableAutoSeoReview(t));
 
       if (gptTargets.length > 0) {
-        const jobIds = gptTargets.map((t) => t.gptJobId as string);
-        await gptClient.requeue(effectiveStoreId, jobIds, options);
+        const revisionTargets = gptTargets.filter(target => target.backendPublishRequired);
+        if (revisionTargets.length && options.provider && options.provider !== "codex_mcp") throw new Error("Revision mới giữ Codex MCP; không tự chuyển AI xử lý.");
+        for (const target of revisionTargets) {
+          if (target.gptJobId) await gptClient.createRevision(effectiveStoreId, target.gptJobId, crypto.randomUUID(), options.instructions);
+        }
+        const jobIds = gptTargets.filter(target => !target.backendPublishRequired).map((t) => t.gptJobId as string);
+        if (jobIds.length) await gptClient.requeue(effectiveStoreId, jobIds, options);
       }
 
       if (durableTargets.length > 0) {
@@ -1981,7 +1986,7 @@ export function SeoReviewPage({
         );
       }
 
-      removeProductsFromUi(targetIdSet);
+      removeProductsFromUi(new Set(targets.filter(target => !target.backendPublishRequired).map(target => target.id)));
 
       const count = targets.length;
       setSyncFeedback({
@@ -1990,7 +1995,7 @@ export function SeoReviewPage({
       });
       notifyUser({
         title: "🔄 Đã đưa vào SEO Queue",
-        message: `${count} sản phẩm đã được reset và xếp lại vào Queue để SEO lại.`,
+        message: `${count} sản phẩm đã được đưa vào Queue. Với Worker, tạo revision mới và giữ nguyên lịch sử Review cũ.`,
         type: "success",
         sound: "chime",
         url: `/seo-queue?storeId=${encodeURIComponent(effectiveStoreId)}`,
@@ -2433,6 +2438,7 @@ export function SeoReviewPage({
 
       {/* Re-queue Modal */}
       <RequeueModal
+        isRevision={products.some(product => product.backendPublishRequired && requeueTargetIds?.includes(product.id))}
         isOpen={requeueTargetIds !== null && requeueTargetIds.length > 0}
         count={requeueTargetIds?.length ?? 0}
         onClose={() => setRequeueTargetIds(null)}

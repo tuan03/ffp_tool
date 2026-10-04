@@ -3,6 +3,19 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("revision client creates a new job through the operator endpoint with mock parity", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/revisions?storeId=demo");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { jobId: "old", requestId: "request", instructions: "Improve" });
+    return new Response(JSON.stringify({ jobId: "new", previousJobId: "old" }), { status: 201 });
+  });
+  assert.deepEqual(await client.createRevision("demo", "old", "request", "Improve"), { jobId: "new", previousJobId: "old" });
+  const mock = await createMockCustomGptClient().createRevision("demo", "old", "request");
+  assert.equal(mock.previousJobId, "old");
+  assert.notEqual(mock.jobId, "old");
+});
+
 test("backend publish client sends a revision and idempotency key without a Shopify write", async () => {
   const client = createCustomGptClient(async (url, init) => {
     assert.equal(String(url), "/api/seo-agent/publish?storeId=demo");

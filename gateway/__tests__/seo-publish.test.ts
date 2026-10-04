@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 import { getQueueSchemaSql } from "../custom-gpt-seo/postgres-database";
 import { SeoPublishRepository } from "../seo-worker/publish-repository";
+import type { PublishFields, PublishOperation } from "../seo-worker/publish-repository";
 import { processSeoPublish } from "../seo-worker/publish-worker";
 
 async function fixture() {
@@ -19,6 +20,30 @@ async function fixture() {
   const operation = await repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "sync", operator: "operator" });
   return { pg, repository, operation, review, advance: () => { now += 120_001; } };
 }
+
+test("publish preserves remote SEO baseline and recovers the same frozen version after lost response", async () => {
+  const f = await fixture();
+  let fields: PublishFields = f.operation.fields;
+  let remoteVersion = 12;
+  let writes = 0;
+  const transport = {
+    read: async () => ({ version: writes ? "v2" : "v1", fields, seoVersion: remoteVersion }),
+    write: async (op: PublishOperation) => {
+      writes++;
+      fields = op.fields;
+      remoteVersion = Number(fields.metafields?.find(field => field.key === "seo_version")?.value);
+      throw new Error("response lost");
+    },
+  };
+  try {
+    await processSeoPublish(f.repository, transport);
+    assert.equal(remoteVersion, 13);
+    f.advance();
+    await processSeoPublish(f.repository, transport);
+    assert.equal((await f.repository.get("demo", f.operation.id)).seoVersion, 13);
+    assert.equal(writes, 1);
+  } finally { await f.pg.close(); }
+});
 
 test("publish blocks a changed source and a changed review even if its timestamp is reused", async () => {
   for (const scenario of ["source", "review"] as const) {

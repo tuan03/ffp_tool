@@ -9,6 +9,7 @@ import { canonicalizeJson } from "../canonical-json";
 import { getWorkerProductKey, SeoWorkerError } from "../seo-worker/protocol";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { SeoPublishRepository } from "../seo-worker/publish-repository";
+import { SeoRevisionRepository } from "../seo-worker/revision-repository";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -24,10 +25,12 @@ export class PostgresCustomGptQueue implements SeoQueue {
   private readonly db: PostgresQueueDatabase;
   readonly workers: SeoWorkerRepository;
   readonly publisher: SeoPublishRepository;
+  readonly revisions: SeoRevisionRepository;
   constructor(options: SeoQueuePostgresOptions, private readonly now: () => number = Date.now) {
     this.db = new PostgresQueueDatabase(options);
     this.workers = new SeoWorkerRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
     this.publisher = new SeoPublishRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
+    this.revisions = new SeoRevisionRepository({ transaction: operation => this.db.withClientTransaction(operation) }, (input, previousJobId) => this.enqueueRevision(input, previousJobId), now);
   }
   private async transaction<T>(operation: () => Promise<T>): Promise<T> { return this.db.transaction(operation); }
   async settings(storeId: string): Promise<GptSeoSettings> {
@@ -45,6 +48,9 @@ export class PostgresCustomGptQueue implements SeoQueue {
     }));
   }
   async enqueue(rawInput: GptSeoEnqueue): Promise<GptSeoJob> {
+    return this.enqueueRevision(rawInput);
+  }
+  private async enqueueRevision(rawInput: GptSeoEnqueue, previousJobId?: string): Promise<GptSeoJob> {
     const input: GptSeoEnqueue = { ...rawInput, sourceIdentity: rawInput.source === "auto_seo" ? rawInput.sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "") : rawInput.sourceIdentity, input: { ...rawInput.input, productId: rawInput.input.productId?.replace(/^gid:\/\/shopify\/Product\//, "") } };
     if (!input.storeId || !input.sourceIdentity || !input.input.title) throw new Error("Missing source identity or title");
     const inputHash = hash({ input: input.input, original: input.original, revision: input.sourceRevision });
@@ -60,6 +66,8 @@ export class PostgresCustomGptQueue implements SeoQueue {
       const olderJobs = (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(input.storeId, input.source, input.sourceIdentity));
       for (const row of olderJobs) {
         const olderJob = json(row.payload) as GptSeoJob;
+        // Explicit revisions preserve the entire ancestry, not only the immediate parent.
+        if (previousJobId) continue;
         // Performance revisions preserve human review history, never requeue in place.
         if (input.performanceRecommendationId && olderJob.status === "REVIEW_READY") continue;
         await this.write({ ...olderJob, status: "CANCELLED", error: "Superseded by a newer source revision" });
@@ -414,6 +422,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async saveReviewState(storeId: string, jobId: string, state: Record<string, unknown>): Promise<void> {
     await this.transaction(async () => {
     (await this.get(storeId, jobId));
+    if (await this.db.prepare("SELECT job_id FROM seo_worker_revisions WHERE previous_job_id=?").get(jobId)) throw new Error("REVIEW_SUPERSEDED: preserve revision history");
     if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=?").get(jobId)) throw new Error("PUBLISH_ACTIVE: published review is immutable; create a new revision after reconciliation");
     const current = (await this.reviewState(storeId, jobId));
     if (typeof current.updatedAt === "number" && typeof state.updatedAt === "number" && state.updatedAt < current.updatedAt) throw new Error("Review conflict: a newer edit is already saved");

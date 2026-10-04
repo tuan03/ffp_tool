@@ -27,6 +27,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
   readonly hasStore: (storeId: string) => boolean;
   readonly repository: () => Promise<SeoWorkerRepository>;
   readonly publisher?: () => Promise<Pick<SeoPublishRepository, "status" | "enqueue" | "requestReconciliation">>;
+  readonly createRevision?: (request: import("./revision-repository").RevisionRequest) => Promise<{ jobId: string; previousJobId: string }>;
 }): Promise<void> {
   if (!options.operator) { send(res, 401, { error: { code: "OPERATOR_REQUIRED" } }); return; }
   if (req.method !== "GET" && req.method !== "POST") { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
@@ -39,6 +40,12 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
     const url = new URL(req.url ?? "/", "http://localhost");
     const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(url.searchParams.get("storeId"));
     if (!options.hasStore(storeId)) { send(res, 404, { error: { code: "STORE_NOT_FOUND" } }); return; }
+    if (url.pathname === "/api/seo-agent/revisions") {
+      if (req.method !== "POST") { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
+      if (!options.createRevision) { send(res, 503, { error: { code: "REVISION_DISABLED" } }); return; }
+      const input = z.object({ jobId: z.string().min(1).max(200), requestId: z.string().uuid(), instructions: z.string().trim().max(4000).optional() }).strict().parse(await readBody(req));
+      send(res, 201, await options.createRevision({ ...input, storeId, operator: options.operator })); return;
+    }
     if (url.pathname === "/api/seo-agent/publish" || url.pathname === "/api/seo-agent/publish-reconcile") {
       if (!options.publisher) { send(res, 503, { error: { code: "PUBLISH_DISABLED" } }); return; }
       const publisher = await options.publisher();

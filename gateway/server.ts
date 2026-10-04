@@ -8,6 +8,7 @@ import { createSeoPublishTransport } from "./seo-worker/publish-transport";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
 import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
+import { createSeoRevision } from "./seo-worker/revision-service";
 import { handleWorkerMcp } from "./seo-worker/mcp-handler";
 import { createWorkerWorkflow } from "./seo-worker/workflow";
 import { createWorkerSourceGuard } from "./seo-worker/source-guard";
@@ -205,6 +206,7 @@ export function startGatewayServer(
         hasStore: storeId => storeRegistry.hasStore(storeId),
         repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
         publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
+        createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },
       });
       return;
     }

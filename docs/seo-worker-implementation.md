@@ -71,10 +71,10 @@ API request belongs inside a worker repository transaction.
 
 ## Remaining implementation before activation
 
-1. Complete Review lifecycle integration: reapproval/regeneration/rollback
-   reservation handling and full run/worker/validation metadata. Add new-revision
-   regeneration for blocked or already published reviews and reconcile the existing
-   Shopify SEO-version metafield. Read-only reconciliation is implemented; no force
+1. Complete Review lifecycle presentation, including full run/worker/validation
+   metadata and revision-chain browsing. New-revision regeneration and the Shopify
+   SEO-version transport are implemented for converted Codex stores (see below).
+   Read-only reconciliation is implemented; no force
    overwrite or release of an unresolved write is exposed.
    Backend Sync is opt-in and only applies to converted stores. Unconverted stores
    retain the existing browser-driven flow. No production activation was performed.
@@ -188,6 +188,47 @@ before an actual Shopify write can be tested.
 The helper's five unit tests passed on Windows and inside a network-disabled Linux
 Python 3.13 container. These are not OS-vault integration or real Codex-session
 tests. macOS and actual credential vault login/logout remain unverified.
+
+## Revision and Shopify version increment (2026-10-04)
+
+- Operator-only `POST /api/seo-agent/revisions?storeId=...` accepts `jobId`, a UUID
+  `requestId`, and optional instructions. It fetches the current Shopify product
+  outside the SQL transaction. The transaction rechecks the parent, closes its
+  reservation and enqueues a fresh revision with empty checkpoints. The old job and
+  Review remain unchanged. Instructions supplement, not replace, existing rules.
+- The Review regeneration dialog selects this route for converted stores. Only
+  `codex_mcp` is supported here; Gemini/Custom GPT providers are never silently changed.
+  Legacy unconverted regeneration remains unchanged.
+- One successor per parent and store/request fingerprint prevent duplicate revisions.
+  Retry with the same key returns the stored receipt without another Shopify read.
+  Parent Reviews cannot be edited or newly published after being superseded.
+- Unresolved writes block regeneration. A pre-write BLOCKED operation can be marked
+  `superseded_by` while retaining its receipt/history; the active-product index now
+  excludes those superseded operations. This migration replaces only that index,
+  adds columns/tables and does not delete business records.
+- New publish operations read `custom.seo_version` (`number_integer`) from Shopify.
+  The frozen target is one above the maximum remote/local/baseline version. The
+  intended mutation includes that metafield; read-back must match it before local
+  success is recorded. Invalid remote versions fail closed. Operations with a write
+  intent predating this change are reconciled against their original frozen fields;
+  no extra remote write is invented to backfill their version.
+- A Windows Credential Manager write/read/delete probe passed using a temporary
+  random credential, not a production token. Python dependencies were installed in
+  an ignored `.runtime/seo-vault-test` environment. macOS/Linux vault and two physical
+  Codex sessions remain pending. Follow the pack README acceptance checklist.
+
+No production migration, approval, Shopify write, or store conversion was performed
+for this increment. A real Shopify version round-trip remains part of the pilot.
+
+Verification for this increment: `npm test` passed (tooling 42; web 845 passed/6
+skipped; Gateway 432 passed/47 skipped; engine 305 tests/1 skipped). The isolated
+PostgreSQL 17 test database was enabled for the full run, including revision
+concurrency/history preservation and publish subprocess recovery tests. Typecheck,
+production build, mock build and five helper unit tests passed. Builds retain the
+existing large-chunk warning. Live Shopify is still replaced with test transports.
+The temporary PostgreSQL container used only synthetic tmpfs data and was removed.
+The rebuilt preview ZIP has SHA-256
+`8fd094eb35fb7c462e0e854ab1d6564e5b75af369a07311bdb35ab62740e2beb`.
 
 ## Defaults and operational constraints
 

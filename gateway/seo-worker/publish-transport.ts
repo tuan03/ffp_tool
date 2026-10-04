@@ -16,13 +16,18 @@ export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "d
         images: z.array(z.object({ id: z.string(), altText: z.string().optional() })).optional() }).nullable() }).parse(response.data);
       const product = parsed.product;
       if (!product) throw new SeoWorkerError("PRODUCT_DELETED");
+      const versionResponse = await dispatcher.dispatch({ storeId: op.storeId, operation: "metafields.get", payload: { ownerId: id, namespace: "custom", key: "seo_version" } });
+      if (!versionResponse.success) throw new SeoWorkerError("SOURCE_UNAVAILABLE");
+      const remoteVersion = z.object({ value: z.string().nullable(), type: z.string().optional() }).parse(versionResponse.data);
+      const seoVersion = remoteVersion.value === null ? 0 : Number(remoteVersion.value);
+      if (!Number.isSafeInteger(seoVersion) || seoVersion < 0 || (remoteVersion.value !== null && (!/^\d+$/.test(remoteVersion.value) || remoteVersion.type !== "number_integer"))) throw new SeoWorkerError("INVALID_SEO_VERSION");
       const metafields = op.fields.metafields ? await Promise.all(op.fields.metafields.map(async expected => {
         const field = await dispatcher.dispatch({ storeId: op.storeId, operation: "metafields.get", payload: { ownerId: id, namespace: expected.namespace, key: expected.key } });
         if (!field.success) throw new SeoWorkerError("SOURCE_UNAVAILABLE");
         const actual = z.object({ value: z.string().nullable(), type: z.string().optional() }).parse(field.data);
         return { ...expected, type: actual.type ?? "", value: actual.value ?? "" };
       })) : undefined;
-      return { version: product.updatedAt, fields: { title: product.title, descriptionHtml: product.descriptionHtml ?? "",
+      return { version: product.updatedAt, seoVersion, fields: { title: product.title, descriptionHtml: product.descriptionHtml ?? "",
         seo: { title: product.seo?.title ?? "", description: product.seo?.description ?? "" },
         ...(op.fields.images ? { images: op.fields.images.map(expected => {
           const image = product.images?.find(image => image.id === expected.id);

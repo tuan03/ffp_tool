@@ -4,7 +4,7 @@ import { SeoWorkerError } from "./protocol";
 import type { PublishFields, PublishOperation, SeoPublishRepository } from "./publish-repository";
 
 export interface SeoPublishTransport {
-  read(operation: PublishOperation): Promise<{ readonly version: string; readonly fields: PublishFields }>;
+  read(operation: PublishOperation): Promise<{ readonly version: string; readonly fields: PublishFields; readonly seoVersion?: number }>;
   write(operation: PublishOperation): Promise<void>;
 }
 
@@ -17,7 +17,7 @@ function comparableFields(fields: PublishFields): string {
 }
 
 export async function processSeoPublish(repository: SeoPublishRepository, transport: SeoPublishTransport): Promise<void> {
-  const op = await repository.claim();
+  let op = await repository.claim();
   if (!op) return;
   let hasWriteIntent = op.state === "UNCERTAIN";
   try {
@@ -29,7 +29,7 @@ export async function processSeoPublish(repository: SeoPublishRepository, transp
       return;
     }
     if (current.version !== op.sourceVersion) { await repository.block(op, "STALE_SOURCE"); return; }
-    await repository.authorizeWrite(op);
+    op = await repository.authorizeWrite(op, current.seoVersion);
     hasWriteIntent = true;
     await transport.write(op);
     // A successful HTTP response alone is not confirmation of all intended fields.
@@ -37,7 +37,7 @@ export async function processSeoPublish(repository: SeoPublishRepository, transp
     if (comparableFields(confirmed.fields) !== comparableFields(op.fields)) { await repository.block(op, "RECONCILIATION_REQUIRED"); return; }
     await repository.confirm(op);
   } catch (error) {
-    if (error instanceof SeoWorkerError && ["REVIEW_CHANGED", "PRODUCT_DELETED", "SOURCE_IMAGE_MISSING"].includes(error.code)) await repository.block(op, error.code);
+    if (error instanceof SeoWorkerError && ["REVIEW_CHANGED", "PRODUCT_DELETED", "SOURCE_IMAGE_MISSING", "INVALID_SEO_VERSION"].includes(error.code)) await repository.block(op, error.code);
     else await repository.defer(op, hasWriteIntent);
   }
 }

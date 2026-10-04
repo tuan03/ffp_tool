@@ -57,6 +57,36 @@ Automated tests cover helper logic using temporary workspaces and mocked vaults.
 They are not proof of actual Windows/macOS/Linux credential round trips or two
 real Codex sessions. Those acceptance checks remain required before rollout.
 
+### Real vault probe and two-machine acceptance
+
+Run `python test_vault_live.py` with the virtual-environment interpreter on each OS.
+This opt-in probe writes a random temporary credential, reads it back and deletes
+only that entry. It never reads an FFP token and never prints the test secret.
+A missing/locked/unsupported vault is a failed prerequisite, not a plaintext fallback.
+The Windows Credential Manager probe passed on 2026-10-04. macOS Keychain and Linux
+Secret Service still need an interactive OS session; container helper tests do not
+prove vault integration.
+
+For two-machine acceptance, after a reviewed staging/cutover deployment:
+
+1. Record pack checksum, OS, Python and Codex versions on each machine. Use distinct
+   machine names and separate store-scoped tokens. Do not include tokens in evidence.
+2. Run doctor, the vault probe, login, setup and status. Open Codex in the configured
+   trusted workspace and verify the FFP MCP connection before starting a run.
+3. Enqueue two or more synthetic/test products explicitly. Start one run per machine
+   with target 1; record run/job IDs. Verify different jobs, at most one lease per
+   worker, two validated Review drafts, and no Shopify writes.
+4. Interrupt one session after a checkpoint; verify expiry/recovery and stale-lease
+   refusal. Resume its run, not a new target. Record the final successful/target counts.
+5. Revoke a token while its worker is active; verify the next mutation fails. Logout
+   on each machine and verify status no longer finds the local credential.
+6. A human reviews the draft before the separate pilot Sync. Compare the intended
+   fields and `custom.seo_version` before/after; vendor, handle, prices and variants
+   must remain unchanged. Do not simulate a production failure by blind repeat writes.
+
+Attach actual run/job IDs and redacted observations to the acceptance report. Two
+test processes or two mocked sessions are not two physical Codex machines.
+
 Configuration references: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
 [Codex skills](https://learn.chatgpt.com/docs/build-skills),
 [keyring OS backends](https://keyring.readthedocs.io/en/latest/).
