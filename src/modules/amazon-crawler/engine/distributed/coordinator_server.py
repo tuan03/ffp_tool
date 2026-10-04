@@ -30,6 +30,7 @@ from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
 from .operator_authorization import OperatorCredentials, install_operator_authorization
 from .agent_keys import install_agent_key_routes
+from .agent_identity import AgentSecurity, install_enrollment_routes
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -261,7 +262,10 @@ def find_project_root() -> Path:
 
 
 def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True,
-                           operator_credentials: OperatorCredentials | None = None) -> FastAPI:
+                           operator_credentials: OperatorCredentials | None = None,
+                           agent_environment: str | None = None) -> FastAPI:
+    if agent_environment is not None and operator_credentials is None:
+        raise ValueError("Secure agents require operator authorization")
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
@@ -331,6 +335,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.connection_manager = manager
     app.state.image_processing_service = image_service
     app.state.is_ready = False
+    security = AgentSecurity(sessions, agent_environment) if agent_environment is not None else None
+    app.state.agent_security = security
+    if security is not None:
+        install_enrollment_routes(app, security)
     if operator_credentials is not None:
         install_operator_authorization(app, sessions, operator_credentials)
         install_agent_key_routes(app, sessions, operator_credentials.username)

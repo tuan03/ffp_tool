@@ -78,7 +78,8 @@ class OperatorAuthorizationTests(unittest.TestCase):
             with sessions() as session:
                 self.assertEqual(session.get(ClientRecord, "operator-migration-fixture").display_name, "fixture")
             with engine.connect() as connection:
-                self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), [1, 2, 3, 4])
+                from engine.distributed.coordinator_migrations import MIGRATION_VERSION
+                self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), list(range(1, MIGRATION_VERSION + 1)))
         finally:
             if owns_engine:
                 engine.dispose()

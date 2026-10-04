@@ -5,9 +5,10 @@ from sqlalchemy import Column, Integer, MetaData, Table, select, text
 from .coordinator_models import Base, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
+from .agent_identity import AgentEnrollment
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 4
+MIGRATION_VERSION = 5
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -31,3 +32,6 @@ def migrate_coordinator(engine) -> None:
         if 4 not in versions:
             AgentKey.__table__.create(connection, checkfirst=True)
             connection.execute(MIGRATIONS.insert().values(version=4))
+        if 5 not in versions:
+            AgentEnrollment.__table__.create(connection, checkfirst=True)
+            connection.execute(MIGRATIONS.insert().values(version=5))

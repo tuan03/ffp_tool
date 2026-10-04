@@ -93,7 +93,8 @@ class AgentKeyTests(unittest.TestCase):
             self.assertIn("crawler_agent_keys", inspect(engine).get_table_names())
             with engine.connect() as connection:
                 self.assertEqual(connection.execute(select(OperatorAudit.actor).where(OperatorAudit.id == "migration-fixture")).scalar(), "fixture")
-                self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), [1, 2, 3, 4])
+                from engine.distributed.coordinator_migrations import MIGRATION_VERSION
+                self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), list(range(1, MIGRATION_VERSION + 1)))
         finally:
             if owns_engine:
                 engine.dispose()

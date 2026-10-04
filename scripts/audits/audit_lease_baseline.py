@@ -128,6 +128,7 @@ def main() -> None:
     modes.add_argument("--reliability", action="store_true", help="Task 10: PostgreSQL regressions and two-agent HTTP/WSS recovery")
     modes.add_argument("--operator-auth", action="store_true", help="Task 12: operator boundary and audit on PostgreSQL")
     modes.add_argument("--agent-keys", action="store_true", help="Task 13: one-time key creation and metadata on PostgreSQL")
+    modes.add_argument("--identity", action="store_true", help="Task 14: authenticated idempotent registration")
     arguments = parser.parse_args()
     expectation = arguments.expect
     url = local_test_url()
@@ -152,10 +153,11 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 Base.metadata.create_all(engine)
-                if arguments.operator_auth or arguments.agent_keys:
+                if arguments.operator_auth or arguments.agent_keys or arguments.identity:
                     from engine.tests.test_operator_authorization import OperatorAuthorizationTests
                     from engine.tests.test_agent_keys import AgentKeyTests
-                    class PostgreSqlOperatorTests(AgentKeyTests if arguments.agent_keys else OperatorAuthorizationTests):
+                    from engine.tests.test_agent_identity import AgentIdentityTests
+                    class PostgreSqlOperatorTests(AgentIdentityTests if arguments.identity else AgentKeyTests if arguments.agent_keys else OperatorAuthorizationTests):
                         external_engine = engine
                     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSqlOperatorTests))
                     require(result.wasSuccessful() and not result.skipped, "Operator authorization audit failed")
@@ -192,7 +194,9 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    if arguments.agent_keys:
+    if arguments.identity:
+        print("PASS: authenticated enrollment verified twice; no production cutover.")
+    elif arguments.agent_keys:
         print("PASS: Task 13 one-time Agent Keys verified twice; runtime authentication not enabled.")
     elif arguments.operator_auth:
         print("PASS: Task 12 operator authorization and PostgreSQL audit verified twice; runtime enforcement not enabled.")
