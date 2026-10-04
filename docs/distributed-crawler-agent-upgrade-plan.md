@@ -4,7 +4,7 @@
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, các mục 1–58.
 > Trạng thái: **đề xuất để duyệt, chưa phải tính năng đã triển khai hoặc kết quả nghiệm thu**.
 > Phạm vi lần làm này: đọc đặc tả, đối chiếu source/test, viết kế hoạch. Không đổi code, database, container, agent hoặc VPS.
-> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Tài liệu này giữ vai trò giải thích kiến trúc và hiện trạng baseline. Task 01–09 đã được người dùng cho chuyển tiếp qua hội thoại; Task 10 kiểm chứng tích hợp PostgreSQL và hai agent fixture qua HTTP/WebSocket thật, chờ người dùng test. Runtime test chạy source mới biệt lập, chưa cập nhật container/agent đang dùng. Các mô tả hành vi cũ bên dưới là baseline trước chuỗi sửa Task 02–09; xem báo cáo từng task để biết thay đổi mới.
+> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Task 01–10 đã được người dùng cho chuyển tiếp; Task 11 đã ghi nhận D1/D5/D6 được duyệt và soạn contract identity/auth/state, chờ duyệt nội dung chi tiết. Chưa bật auth hoặc cập nhật container/agent đang dùng. Các mô tả hành vi cũ bên dưới là baseline trước chuỗi sửa Task 02–09; xem báo cáo từng task để biết thay đổi mới.
 
 ## 1. Kết luận trước: nên làm gì và chưa nên làm gì?
 
@@ -118,6 +118,8 @@ Các khác biệt này là thay đổi chính sách so với hành vi cũ, khôn
 - Lần lập kế hoạch này không chạy chaos test, build hoặc test ứng dụng; chưa đưa ra kết luận nghiệm thu runtime.
 
 ## 4. Quyết định cần duyệt ở E0
+
+**Cập nhật Task 11:** người dùng đã duyệt D1, D5, D6: Agent Key là hướng đích; agent không được hủy toàn job; một key bind một identity. Đây không phải lệnh bật auth trên VPS. Xem [contract chi tiết](audits/distributed-crawler/task-11-identity-auth-contract.md) về migration, tương thích, quyền và trạng thái; các bảng đề xuất dưới đây là bối cảnh thiết kế ban đầu.
 
 | ID | Câu hỏi | Đề xuất | Hệ quả nếu chưa chốt |
 | --- | --- | --- | --- |

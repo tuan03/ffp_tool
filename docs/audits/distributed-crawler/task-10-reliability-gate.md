@@ -6,7 +6,7 @@
 - User authorized Task 10 after the Task 09 handoff; no new manual-test transcript was supplied for Task 09.
 - Original specification: **13–18, 25–27, 30–31, 49**, reliability acceptance for Tasks 02–09, not completion of all criteria in these sections.
 - Ownership: `scripts/audits/` test harness and crawler audit documents. No production implementation change was needed by the passing scenarios.
-- Status: assistant integration checks passed; user acceptance pending. Task 11 has not started.
+- Delivered in `e395231`; user accepted advancement to Task 11 through conversation, without an additional manual-test transcript. Test limitations below remain applicable.
 
 ## What runs and what does not
 
