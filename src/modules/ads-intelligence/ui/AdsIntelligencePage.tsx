@@ -9,6 +9,7 @@ import type {
   AdsStoreSummary,
   AiStrategicReport,
   CompetitorAdCard,
+  CompetitorIntelligenceReport,
   DecisionCard,
 } from "../types";
 
@@ -25,6 +26,12 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [campaigns, setCampaigns] = useState<readonly AdsHierarchyCampaign[]>([]);
   const [health, setHealth] = useState<AdsDataHealth | null>(null);
   const [competitors, setCompetitors] = useState<readonly CompetitorAdCard[]>([]);
+  const [competitorReport, setCompetitorReport] = useState<CompetitorIntelligenceReport | null>(null);
+  const [selectedCompetitorPage, setSelectedCompetitorPage] = useState<string>("ALL");
+  const [selectedCompetitorFormat, setSelectedCompetitorFormat] = useState<string>("ALL");
+  const [selectedCompetitorHook, setSelectedCompetitorHook] = useState<string>("ALL");
+  const [copiedGapId, setCopiedGapId] = useState<string | null>(null);
+  const [copiedAdId, setCopiedAdId] = useState<string | null>(null);
   const [reconciliation, setReconciliation] = useState<AdsReconciliationReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -50,13 +57,14 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
     setSyncMessage("Đang gọi live Meta Graph API & GA4 Data API...");
     try {
       const res = await client.syncNow(currentStoreId);
-      const [summaryData, campaignsData, healthData, reconData, decisionsData, aiData] = await Promise.all([
+      const [summaryData, campaignsData, healthData, reconData, decisionsData, aiData, competitorData] = await Promise.all([
         client.getStoreSummary(currentStoreId),
         client.getCampaignHierarchy(currentStoreId),
         client.getDataHealth(currentStoreId),
         client.getReconciliationReport ? client.getReconciliationReport(currentStoreId) : Promise.resolve(null),
         client.getDecisionCards ? client.getDecisionCards(currentStoreId) : Promise.resolve([]),
         client.getAiStrategicReport ? client.getAiStrategicReport(currentStoreId) : Promise.resolve(null),
+        client.getCompetitorIntelligence ? client.getCompetitorIntelligence(currentStoreId, true) : Promise.resolve(null),
       ]);
       setSummary(summaryData);
       setCampaigns(campaignsData);
@@ -64,6 +72,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       if (reconData) setReconciliation(reconData);
       if (decisionsData) setDecisions(decisionsData);
       if (aiData) setAiReport(aiData);
+      if (competitorData) setCompetitorReport(competitorData);
       setSyncMessage(res.message);
       setTimeout(() => setSyncMessage(null), 6000);
     } catch {
@@ -87,8 +96,9 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       client.getReconciliationReport ? client.getReconciliationReport(currentStoreId) : Promise.resolve(null),
       client.getDecisionCards ? client.getDecisionCards(currentStoreId) : Promise.resolve([]),
       client.getAiStrategicReport ? client.getAiStrategicReport(currentStoreId) : Promise.resolve(null),
+      client.getCompetitorIntelligence ? client.getCompetitorIntelligence(currentStoreId) : Promise.resolve(null),
     ])
-      .then(([summaryData, campaignsData, healthData, competitorsData, reconData, decisionsData, aiData]) => {
+      .then(([summaryData, campaignsData, healthData, competitorsData, reconData, decisionsData, aiData, competitorData]) => {
         if (!isLive) return;
         setSummary(summaryData);
         setCampaigns(campaignsData);
@@ -97,6 +107,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
         if (reconData) setReconciliation(reconData);
         if (decisionsData) setDecisions(decisionsData);
         if (aiData) setAiReport(aiData);
+        if (competitorData) setCompetitorReport(competitorData);
         // Expand first campaign by default
         if (campaignsData[0]) {
           setExpandedCampaigns({ [campaignsData[0].id]: true });
@@ -319,7 +330,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
               : "border-transparent text-slate-400 hover:text-slate-200"
           }`}
         >
-          🕵️ Thư viện Đối thủ (Watchlist)
+          🕵️ Đối thủ &amp; Creative Gaps
         </button>
 
         <button
@@ -1304,43 +1315,317 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
         </div>
       )}
 
-      {/* Tab 3: Competitor Watchlist */}
+      {/* Tab 3: Competitor & Creative Gaps */}
       {activeTab === "competitors" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-slate-400">
-              Provider: <strong className="text-cyan-400">ScrapeCreators</strong> (Còn lại 4.999 credits)
-            </div>
-            <div className="text-xs text-slate-500">
-              Watchlist: 3 đối thủ ngành Blanket / Home Decor
+        <div className="space-y-6">
+          {/* Regulatory Disclaimer Banner */}
+          <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4 flex items-start gap-3">
+            <span className="text-xl text-amber-400 mt-0.5">🛡️</span>
+            <div className="text-xs text-amber-200/90 leading-relaxed">
+              <strong className="text-amber-100 font-semibold uppercase tracking-wider block mb-1">
+                Quy chuẩn minh bạch dữ liệu đối thủ (Regulatory Transparency)
+              </strong>
+              Toàn bộ dữ liệu được thu thập công khai từ Facebook Ad Library. Doanh thu, ngân sách thực tế, targeting và ROAS của đối thủ là không thể xác định. Các mẫu quảng cáo chạy lâu ngày chỉ được dùng làm <em>giả thuyết sáng tạo (Creative Hypotheses)</em> để thiết kế kịch bản thử nghiệm cho store của bạn.
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {competitors.map((ad) => (
-              <div key={ad.archiveId} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-200">{ad.pageName}</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
-                    {ad.status}
-                  </span>
-                </div>
-                <div className="aspect-video w-full rounded-lg bg-slate-950 overflow-hidden relative border border-slate-800">
-                  <img src={ad.thumbnailUrl} alt={ad.headline} className="w-full h-full object-cover" />
-                  <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/80 text-[10px] font-bold text-white uppercase">
-                    {ad.mediaType}
-                  </span>
-                </div>
-                <div className="space-y-1">
-                  <h4 className="text-xs font-semibold text-slate-100 line-clamp-1">{ad.headline}</h4>
-                  <p className="text-[11px] text-slate-400 line-clamp-2">{ad.caption}</p>
-                </div>
-                <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-[10px] text-slate-500">
-                  <span>Khảo sát: {ad.inspectionLevel}</span>
-                  <span>CTA: {ad.cta}</span>
-                </div>
+          {/* Metrics Top Row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
+              <span className="text-[11px] text-slate-400 font-medium">Bên cào dữ liệu (Provider)</span>
+              <p className="text-sm font-bold text-cyan-300 truncate">
+                {competitorReport?.provider ?? "ScrapeCreators"}
+              </p>
+              <span className="text-[10px] text-slate-500 block">4.999 credits sẵn sàng</span>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
+              <span className="text-[11px] text-slate-400 font-medium">Ads đối thủ thu thập</span>
+              <p className="text-sm font-bold text-white">
+                {competitorReport?.totalAds ?? competitors.length} ads <span className="text-xs font-normal text-emerald-400">({competitorReport?.activeAds ?? competitors.length} đang chạy)</span>
+              </p>
+              <span className="text-[10px] text-slate-500 block">
+                {competitorReport?.watchlist.length ?? 3} Page trong Watchlist
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
+              <span className="text-[11px] text-slate-400 font-medium">Khoảng trống sáng tạo (Gaps)</span>
+              <p className="text-sm font-bold text-amber-300">
+                {competitorReport?.creativeGaps.length ?? 0} góc tiếp cận
+              </p>
+              <span className="text-[10px] text-amber-400/80 block">
+                {competitorReport?.creativeGaps.filter(g => g.ownStatus === "UNTESTED").length ?? 0} góc chưa từng test
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
+              <span className="text-[11px] text-slate-400 font-medium">Chi phí sync ước tính</span>
+              <p className="text-sm font-bold text-slate-200">
+                ${competitorReport?.syncCostEstimatedUsd ?? 0.0054}
+              </p>
+              <span className="text-[10px] text-slate-500 block">Hạn mức cap: ${competitorReport?.monthlyCostCapUsd ?? 65.0}/tháng</span>
+            </div>
+          </div>
+
+          {/* Section 1: Creative Gaps */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>⚡</span> Khoảng trống Sáng tạo đối chiếu đối thủ (Creative Gaps)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Các pattern quảng cáo đang được đối thủ chạy bền bỉ nhưng store của bạn chưa từng thử nghiệm hoặc cần đổi mới.
+                </p>
               </div>
-            ))}
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-950/70 border border-amber-800/80 text-amber-300">
+                Ưu tiên thử nghiệm V2
+              </span>
+            </div>
+
+            {(!competitorReport || competitorReport.creativeGaps.length === 0) ? (
+              <p className="text-xs text-slate-400 italic">Đang phân tích khoảng trống sáng tạo...</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {competitorReport.creativeGaps.map((gap) => (
+                  <div
+                    key={gap.id}
+                    className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 space-y-3 flex flex-col justify-between"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          gap.ownStatus === "UNTESTED"
+                            ? "bg-rose-950/60 text-rose-300 border-rose-800/80"
+                            : "bg-amber-950/60 text-amber-300 border-amber-800/80"
+                        }`}>
+                          {gap.ownStatus === "UNTESTED" ? "🔴 CHƯA TỪNG TEST" : "🟡 ĐANG TEST"}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{gap.format}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{gap.visualStyle}</span>
+                        </div>
+                      </div>
+
+                      <h4 className="text-xs font-bold text-white">{gap.patternName}</h4>
+
+                      <div className="rounded-lg bg-slate-950/60 p-2.5 border border-slate-800/80 text-[11px] space-y-1.5">
+                        <div className="text-slate-300">
+                          <strong className="text-cyan-400">Bằng chứng đối thủ:</strong> {gap.competitorOccurrences} mẫu ads ghi nhận từ {gap.competitorNames.join(", ")}.
+                        </div>
+                        <div className="text-slate-400 text-[10.5px] leading-relaxed">
+                          {gap.whyTestNext}
+                        </div>
+                      </div>
+
+                      {/* Suggested Brief Box */}
+                      <div className="rounded-lg bg-cyan-950/20 border border-cyan-900/40 p-2.5 text-[11px] space-y-1.5">
+                        <div className="flex items-center justify-between text-cyan-300 font-semibold text-[10.5px]">
+                          <span>🎬 Kịch bản Creative Brief gợi ý:</span>
+                          <span className="text-[10px] text-slate-400 font-normal">{gap.suggestedBrief.recommendedFormat}</span>
+                        </div>
+                        <p className="text-slate-300 text-[10.5px]">
+                          <strong className="text-slate-200">Góc Hook (0-3s):</strong> {gap.suggestedBrief.hookAngle}
+                        </p>
+                        <p className="text-slate-400 text-[10px] line-clamp-2">
+                          <strong className="text-slate-300">Storyboard (3-15s):</strong> {gap.suggestedBrief.storyboardIdea}
+                        </p>
+                        <p className="text-slate-400 text-[10px]">
+                          <strong className="text-slate-300">Kêu gọi (CTA):</strong> {gap.suggestedBrief.callToAction}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500 truncate max-w-[200px]">
+                        ID: {gap.id}
+                      </span>
+                      <button
+                        onClick={() => {
+                          const briefText = `CREATIVE BRIEF (FFP ADS V2)\nPattern: ${gap.patternName}\nFormat: ${gap.suggestedBrief.recommendedFormat}\nHook (0-3s): ${gap.suggestedBrief.hookAngle}\nStoryboard (3-15s): ${gap.suggestedBrief.storyboardIdea}\nCTA (15-30s): ${gap.suggestedBrief.callToAction}\n\nEvidence: ${gap.whyTestNext}`;
+                          void navigator.clipboard.writeText(briefText);
+                          setCopiedGapId(gap.id);
+                          setTimeout(() => setCopiedGapId(null), 2500);
+                        }}
+                        className="px-2.5 py-1 rounded text-[11px] font-semibold bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 transition cursor-pointer flex items-center gap-1"
+                      >
+                        {copiedGapId === gap.id ? "✓ Đã sao chép Brief!" : "📋 Sao chép Brief"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: Winning Trends & Distribution */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Top Winning Hooks */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <span>🏆</span> Top Hook Bền bỉ nhất thị trường
+              </h3>
+              <div className="space-y-2">
+                {competitorReport?.topWinningHooks.map((h, idx) => (
+                  <div key={h.hookType} className="flex items-center justify-between p-2 rounded-lg bg-slate-950/50 border border-slate-800 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-cyan-950 text-cyan-400 flex items-center justify-center font-bold text-[10px]">
+                        {idx + 1}
+                      </span>
+                      <span className="text-slate-200 font-medium">{h.description}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-emerald-400 font-bold block">{h.avgDaysActive} ngày chạy</span>
+                      <span className="text-[10px] text-slate-500">{h.count} ads</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Format Distribution */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <span>📊</span> Phân bổ Định dạng (Format Mix)
+              </h3>
+              <div className="space-y-3 pt-2">
+                {competitorReport?.formatDistribution.map((f) => (
+                  <div key={f.format} className="space-y-1">
+                    <div className="flex justify-between text-xs font-medium">
+                      <span className="text-slate-300">{f.format}</span>
+                      <span className="text-cyan-400 font-bold">{f.percentage}% ({f.count} ads)</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500"
+                        style={{ width: `${f.percentage}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <p className="text-[10.5px] text-slate-500 pt-2 border-t border-slate-800/80">
+                  Video ngắn (9:16) và Carousel chiếm đa số các mẫu quảng cáo chạy trên 20 ngày của các đối thủ top đầu.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Filterable Ad Library Cards */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>🖼️</span> Thư viện Quảng cáo Đối thủ (Ad Library Feed)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Bộ lọc chi tiết từng mẫu quảng cáo đã bóc tách copy, hook và media assets.
+                </p>
+              </div>
+
+              {/* Filters Bar */}
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={selectedCompetitorPage}
+                  onChange={(e) => setSelectedCompetitorPage(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500"
+                >
+                  <option value="ALL">Mọi đối thủ ({competitorReport?.totalAds ?? 0})</option>
+                  {competitorReport?.watchlist.map((w) => (
+                    <option key={w.pageId} value={w.pageId}>
+                      {w.pageName} ({w.adCount})
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedCompetitorFormat}
+                  onChange={(e) => setSelectedCompetitorFormat(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500"
+                >
+                  <option value="ALL">Mọi định dạng</option>
+                  <option value="VIDEO">Video</option>
+                  <option value="IMAGE">Ảnh tĩnh</option>
+                  <option value="CAROUSEL">Carousel</option>
+                </select>
+
+                <select
+                  value={selectedCompetitorHook}
+                  onChange={(e) => setSelectedCompetitorHook(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500"
+                >
+                  <option value="ALL">Mọi Hook</option>
+                  <option value="UNBOXING">Mở hộp (Unboxing)</option>
+                  <option value="PROBLEM_AGITATION">Nỗi đau (Problem)</option>
+                  <option value="BEFORE_AFTER">Before / After</option>
+                  <option value="FOUNDER_STORY">Founder Story</option>
+                  <option value="SOCIAL_PROOF">Social Proof (Review)</option>
+                  <option value="DISCOUNT_OFFER">Khuyến mãi (Sale)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Ads Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {((competitorReport?.ads ?? []).filter((ad) => {
+                if (selectedCompetitorPage !== "ALL" && ad.pageId !== selectedCompetitorPage) return false;
+                if (selectedCompetitorFormat !== "ALL" && ad.mediaType !== selectedCompetitorFormat) return false;
+                if (selectedCompetitorHook !== "ALL" && ad.taxonomy.hookType !== selectedCompetitorHook) return false;
+                return true;
+              })).map((ad) => (
+                <div key={ad.archiveAdId} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200 truncate max-w-[160px]">{ad.pageName}</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                        {ad.daysActive > 20 ? `🔥 Chạy ${ad.daysActive} ngày` : `Đang chạy ${ad.daysActive} ngày`}
+                      </span>
+                    </div>
+
+                    <div className="aspect-video w-full rounded-lg bg-slate-950 overflow-hidden relative border border-slate-800 group">
+                      <img src={ad.thumbnailUrl} alt={ad.headline} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+                      <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/80 text-[10px] font-bold text-white uppercase">
+                        {ad.mediaType}
+                      </span>
+                      <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-mono text-cyan-300">
+                        {ad.inspectionLevel}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-800/60 text-[9.5px] font-bold text-cyan-300">
+                          #{ad.taxonomy.hookType}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[9.5px] font-medium text-slate-300">
+                          {ad.taxonomy.visualStyle}
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-semibold text-slate-100 line-clamp-1">{ad.headline}</h4>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">{ad.copy}</p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                      <span>Bắt đầu: {ad.startDate}</span>
+                      <span className="font-semibold text-cyan-400">CTA: {ad.cta}</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const copyContent = `ANGLE: ${ad.taxonomy.angle}\nHOOK: ${ad.taxonomy.hookType}\nHEADLINE: ${ad.headline}\nCOPY: ${ad.copy}\nOFFER: ${ad.taxonomy.offer}`;
+                        void navigator.clipboard.writeText(copyContent);
+                        setCopiedAdId(ad.archiveAdId);
+                        setTimeout(() => setCopiedAdId(null), 2500);
+                      }}
+                      className="w-full py-1.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      {copiedAdId === ad.archiveAdId ? "✓ Đã sao chép Angle!" : "Sao chép Góc tiếp cận (Angle)"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

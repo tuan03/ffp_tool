@@ -97,21 +97,21 @@
 
 ### FFP-ADS-012: Decision Engine & Evidence Pack Generator
 - **Step:** 12 · **Owner:** Tech Lead · **Reviewer:** Product Owner
-- **Status:** PENDING
+- **Status:** COMPLETED (Phase 2)
 - **Inputs:** Normalized facts + Quality Gate output + Business thresholds.
 - **Outputs:** Decision card synthesizer generating structured findings with linked snapshot citations.
 - **Definition of Done:** Every recommendation links to exact entity IDs and immutable snapshot hashes; conflicting evidence flagged.
 
 ### FFP-ADS-013: Competitor Spy Provider Integration
 - **Step:** 13 · **Owner:** Competitor Lead · **Reviewer:** Tech Lead
-- **Status:** PENDING
+- **Status:** COMPLETED (Phase 3)
 - **Inputs:** ScrapeCreators API key (Primary Pilot), SearchAPI (Secondary Backup).
 - **Outputs:** Competitor watchlist ingester, rate limiter, monthly cost cap tracker.
 - **Definition of Done:** Daily tracking within $65/mo budget cap; ad deduplication by `ad_archive_id`; media asset mirroring.
 
 ### FFP-ADS-014: Creative Intelligence & Creative Gap Analysis
 - **Step:** 14 · **Owner:** Creative Strategist · **Reviewer:** Media Buyer
-- **Status:** PENDING
+- **Status:** COMPLETED (Phase 3)
 - **Inputs:** Competitor ad archive, own ad creative library.
 - **Outputs:** Creative taxonomy classifier (hooks, angles, formats, CTAs), duration tracker, Creative Gap matrix.
 - **Definition of Done:** Identifies competitor angles running >30 days with no internal equivalent.

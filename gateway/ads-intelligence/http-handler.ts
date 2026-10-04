@@ -59,8 +59,30 @@ export async function handleAdsIntelligenceHttpRequest(
     }
 
     if (pathname === "/api/ads-intelligence/competitors" && req.method === "GET") {
-      const competitors = await adsIntelligenceService.getCompetitorAds(storeId, forceRefresh);
-      sendJson(res, 200, competitors);
+      const pageId = parsedUrl.searchParams.get("pageId") || undefined;
+      const format = parsedUrl.searchParams.get("format") || undefined;
+      const hookType = parsedUrl.searchParams.get("hookType") || undefined;
+      const intelligence = await adsIntelligenceService.getCompetitorIntelligence(storeId, forceRefresh, {
+        pageId,
+        format,
+        hookType,
+      });
+      sendJson(res, 200, intelligence, {
+        "x-ads-cache": intelligence.fromCache ? "HIT" : "MISS",
+      });
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/creative-gaps" && req.method === "GET") {
+      const intelligence = await adsIntelligenceService.getCompetitorIntelligence(storeId, forceRefresh);
+      sendJson(res, 200, {
+        storeId,
+        creativeGaps: intelligence.creativeGaps,
+        topWinningHooks: intelligence.topWinningHooks,
+        formatDistribution: intelligence.formatDistribution,
+      }, {
+        "x-ads-cache": intelligence.fromCache ? "HIT" : "MISS",
+      });
       return true;
     }
 

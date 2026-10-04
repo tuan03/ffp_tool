@@ -461,7 +461,7 @@ export interface CompetitorAdCard {
   readonly cta: string;
   readonly mediaType: "IMAGE" | "VIDEO" | "CAROUSEL";
   readonly thumbnailUrl: string;
-  readonly inspectionLevel: "THUMBNAIL_ONLY" | "IMAGE_REVIEWED" | "VIDEO_AND_AUDIO_REVIEWED";
+  readonly inspectionLevel: CompetitorInspectionLevel;
   readonly firstSeen: string;
   readonly status: "ACTIVE" | "INACTIVE";
 }
@@ -535,6 +535,126 @@ export interface AdsReconciliationReport {
     readonly clickDropPct: string;
     readonly notes: readonly string[];
   };
+  readonly fromCache?: boolean;
+  readonly cachedAt?: string;
+}
+
+export type CompetitorInspectionLevel =
+  | "TEXT_ONLY"
+  | "THUMBNAIL_ONLY"
+  | "IMAGE_REVIEWED"
+  | "SAMPLED_FRAMES"
+  | "VIDEO_AND_AUDIO_REVIEWED";
+
+export type CompetitorHookType =
+  | "UNBOXING"
+  | "PROBLEM_AGITATION"
+  | "BEFORE_AFTER"
+  | "FOUNDER_STORY"
+  | "SOCIAL_PROOF"
+  | "AESTHETIC_SHOWCASE"
+  | "DISCOUNT_OFFER"
+  | "UNKNOWN";
+
+export type CompetitorVisualStyle =
+  | "UGC_LOFI"
+  | "STUDIO_PRO"
+  | "GRAPHIC_OVERLAY"
+  | "3D_RENDER";
+
+export type CompetitorMediaType = "VIDEO" | "IMAGE" | "CAROUSEL";
+
+export interface CompetitorCarouselCard {
+  readonly headline?: string;
+  readonly body?: string;
+  readonly mediaUrl?: string;
+  readonly linkUrl?: string;
+}
+
+export interface CompetitorAd {
+  readonly archiveAdId: string;
+  readonly pageId: string;
+  readonly pageName: string;
+  readonly status: "ACTIVE" | "INACTIVE";
+  readonly startDate: string;
+  readonly firstSeen: string;
+  readonly lastSeen: string;
+  readonly daysActive: number;
+  readonly copy: string;
+  readonly headline: string;
+  readonly cta: string;
+  readonly landingUrl: string;
+  readonly mediaType: CompetitorMediaType;
+  readonly mediaUrls: readonly string[];
+  readonly thumbnailUrl: string;
+  readonly cards?: readonly CompetitorCarouselCard[];
+  readonly provider: "scrapecreators" | "searchapi" | "apify" | "calibrated_benchmark";
+  readonly retrievedAt: string;
+  readonly costEstimatedUsd: number;
+  readonly inspectionLevel: CompetitorInspectionLevel;
+  readonly taxonomy: {
+    readonly niche: string;
+    readonly format: CompetitorMediaType;
+    readonly hookType: CompetitorHookType;
+    readonly angle: string;
+    readonly visualStyle: CompetitorVisualStyle;
+    readonly offer: string;
+  };
+}
+
+export interface CreativeGap {
+  readonly id: string;
+  readonly patternName: string;
+  readonly hookType: CompetitorHookType;
+  readonly visualStyle: CompetitorVisualStyle;
+  readonly format: CompetitorMediaType;
+  readonly competitorOccurrences: number;
+  readonly competitorNames: readonly string[];
+  readonly sampleCompetitorAds: readonly {
+    readonly pageName: string;
+    readonly archiveAdId: string;
+    readonly daysActive: number;
+    readonly headline: string;
+    readonly mediaUrl?: string;
+  }[];
+  readonly ownStatus: "UNTESTED" | "TESTING" | "TESTED_FAILED" | "TESTED_WON";
+  readonly whyTestNext: string;
+  readonly limitation: string;
+  readonly suggestedBrief: {
+    readonly hookAngle: string;
+    readonly storyboardIdea: string;
+    readonly recommendedFormat: string;
+    readonly callToAction: string;
+  };
+}
+
+export interface CompetitorIntelligenceReport {
+  readonly storeId: string;
+  readonly watchlist: readonly {
+    readonly pageId: string;
+    readonly pageName: string;
+    readonly adCount: number;
+    readonly activeAdCount: number;
+  }[];
+  readonly totalAds: number;
+  readonly activeAds: number;
+  readonly provider: string;
+  readonly syncCostEstimatedUsd: number;
+  readonly monthlyCostCapUsd: number;
+  readonly transparencyDisclaimer: string;
+  readonly ads: readonly CompetitorAd[];
+  readonly creativeGaps: readonly CreativeGap[];
+  readonly topWinningHooks: readonly {
+    readonly hookType: CompetitorHookType;
+    readonly count: number;
+    readonly avgDaysActive: number;
+    readonly description: string;
+  }[];
+  readonly formatDistribution: readonly {
+    readonly format: string;
+    readonly percentage: number;
+    readonly count: number;
+  }[];
   readonly fromCache?: boolean;
   readonly cachedAt?: string;
 }

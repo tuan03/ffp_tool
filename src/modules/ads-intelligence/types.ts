@@ -233,6 +233,94 @@ export interface AiStrategicReport {
   readonly rawAnalysisText?: string;
 }
 
+export interface CompetitorAd {
+  readonly archiveAdId: string;
+  readonly pageId: string;
+  readonly pageName: string;
+  readonly status: "ACTIVE" | "INACTIVE";
+  readonly startDate: string;
+  readonly firstSeen: string;
+  readonly lastSeen: string;
+  readonly daysActive: number;
+  readonly copy: string;
+  readonly headline: string;
+  readonly cta: string;
+  readonly landingUrl: string;
+  readonly mediaType: "VIDEO" | "IMAGE" | "CAROUSEL";
+  readonly mediaUrls: readonly string[];
+  readonly thumbnailUrl: string;
+  readonly cards?: readonly { readonly headline?: string; readonly body?: string; readonly mediaUrl?: string; readonly linkUrl?: string }[];
+  readonly provider: string;
+  readonly retrievedAt: string;
+  readonly costEstimatedUsd: number;
+  readonly inspectionLevel: "TEXT_ONLY" | "THUMBNAIL_ONLY" | "IMAGE_REVIEWED" | "SAMPLED_FRAMES" | "VIDEO_AND_AUDIO_REVIEWED";
+  readonly taxonomy: {
+    readonly niche: string;
+    readonly format: "VIDEO" | "IMAGE" | "CAROUSEL";
+    readonly hookType: "UNBOXING" | "PROBLEM_AGITATION" | "BEFORE_AFTER" | "FOUNDER_STORY" | "SOCIAL_PROOF" | "AESTHETIC_SHOWCASE" | "DISCOUNT_OFFER" | "UNKNOWN";
+    readonly angle: string;
+    readonly visualStyle: "UGC_LOFI" | "STUDIO_PRO" | "GRAPHIC_OVERLAY" | "3D_RENDER";
+    readonly offer: string;
+  };
+}
+
+export interface CreativeGap {
+  readonly id: string;
+  readonly patternName: string;
+  readonly hookType: string;
+  readonly visualStyle: string;
+  readonly format: string;
+  readonly competitorOccurrences: number;
+  readonly competitorNames: readonly string[];
+  readonly sampleCompetitorAds: readonly {
+    readonly pageName: string;
+    readonly archiveAdId: string;
+    readonly daysActive: number;
+    readonly headline: string;
+    readonly mediaUrl?: string;
+  }[];
+  readonly ownStatus: "UNTESTED" | "TESTING" | "TESTED_FAILED" | "TESTED_WON";
+  readonly whyTestNext: string;
+  readonly limitation: string;
+  readonly suggestedBrief: {
+    readonly hookAngle: string;
+    readonly storyboardIdea: string;
+    readonly recommendedFormat: string;
+    readonly callToAction: string;
+  };
+}
+
+export interface CompetitorIntelligenceReport {
+  readonly storeId: string;
+  readonly watchlist: readonly {
+    readonly pageId: string;
+    readonly pageName: string;
+    readonly adCount: number;
+    readonly activeAdCount: number;
+  }[];
+  readonly totalAds: number;
+  readonly activeAds: number;
+  readonly provider: string;
+  readonly syncCostEstimatedUsd: number;
+  readonly monthlyCostCapUsd: number;
+  readonly transparencyDisclaimer: string;
+  readonly ads: readonly CompetitorAd[];
+  readonly creativeGaps: readonly CreativeGap[];
+  readonly topWinningHooks: readonly {
+    readonly hookType: string;
+    readonly count: number;
+    readonly avgDaysActive: number;
+    readonly description: string;
+  }[];
+  readonly formatDistribution: readonly {
+    readonly format: string;
+    readonly percentage: number;
+    readonly count: number;
+  }[];
+  readonly fromCache?: boolean;
+  readonly cachedAt?: string;
+}
+
 export interface AdsIntelligenceClient {
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
@@ -242,6 +330,7 @@ export interface AdsIntelligenceClient {
   syncNow?(storeId?: string): Promise<{ success: boolean; refreshedAt: string; message: string }>;
   getDecisionCards?(storeId?: string): Promise<readonly DecisionCard[]>;
   getAiStrategicReport?(storeId?: string, forceRefresh?: boolean): Promise<AiStrategicReport>;
+  getCompetitorIntelligence?(storeId?: string, forceRefresh?: boolean, filters?: { pageId?: string; format?: string; hookType?: string }): Promise<CompetitorIntelligenceReport>;
 }
 
 
