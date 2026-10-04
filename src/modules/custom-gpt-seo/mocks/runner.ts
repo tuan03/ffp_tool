@@ -4,6 +4,10 @@ import { mockJobs, mockSettings } from "./data";
 export function createMockCustomGptClient(): CustomGptClient {
   let settings = structuredClone(mockSettings);
   return {
+    agentAccess: async () => ({ tokens: [], total: 0, nextOffset: null, claimsEnabled: false }),
+    agentRuns: async () => ({ runs: [], total: 0, nextOffset: null }),
+    createAgentToken: async () => ({ token: "mock-not-a-credential", tokenId: "mock-token", expiresAt: 0 }),
+    revokeAgentToken: async () => ({ revoked: true }),
     stores: async () => [
       { storeId: "capozen", shopDomain: "capozen.myshopify.com" },
       { storeId: "chillgen", shopDomain: "bbjttb-n9.myshopify.com" },

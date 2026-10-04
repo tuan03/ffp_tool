@@ -6,6 +6,10 @@ import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
+import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
+import { handleWorkerMcp } from "./seo-worker/mcp-handler";
+import { createWorkerWorkflow } from "./seo-worker/workflow";
+import { createWorkerSourceGuard } from "./seo-worker/source-guard";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -177,12 +181,27 @@ export function startGatewayServer(
       await getCustomGptRuntime().mcpHandler(req, res);
       return;
     }
+    if (url === "/mcp/seo-worker") {
+      try {
+        const runtime = getCustomGptRuntime(); await runtime.initialize();
+        await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, { checkSource: createWorkerSourceGuard(dispatcher) }));
+      } catch { if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: { code: "WORKER_UNAVAILABLE" } })); } }
+      return;
+    }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
       return;
     }
     if (url.startsWith("/api/seo-performance/")) {
       await handlePerformanceHttp(req, res, { service: getPerformanceService(), authToken, hasStore: storeId => storeRegistry.hasStore(storeId) });
+      return;
+    }
+    if (url.startsWith("/api/seo-agent/")) {
+      await handleSeoAgentHttp(req, res, {
+        operator: isAuthenticatedOperator ? operatorUsername : undefined,
+        hasStore: storeId => storeRegistry.hasStore(storeId),
+        repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
+      });
       return;
     }
     if (url.startsWith("/api/v1/gpt-seo/")) {

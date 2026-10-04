@@ -195,3 +195,44 @@ test("heartbeat cannot keep a silent worker alive forever and expiry blocks new 
     await assert.rejects(f.repository.identify(worker.token), /TOKEN_EXPIRED/);
   } finally { await f.pg.close(); }
 });
+
+test("operator lists are store scoped, paginated and never disclose credential hashes", async () => {
+  const f = await fixture();
+  try {
+    await f.worker("machine-a");
+    const other = await f.worker("machine-b", 2, "store-b");
+    const page = await f.repository.listAccess("store-a", 0);
+    assert.equal(page.total, 1);
+    assert.equal(page.tokens[0]?.workerId, "machine-a");
+    assert.equal(JSON.stringify(page).includes("token_hash"), false);
+    assert.equal(JSON.stringify(page).includes(other.token), false);
+    assert.equal((await f.repository.listAccess("store-a", 50)).tokens.length, 0);
+    assert.equal((await f.repository.listRuns("store-a", 0)).runs.length, 1);
+    await assert.rejects(f.repository.listAccess("store-a", -1), /INVALID_OFFSET/);
+    await assert.rejects(f.repository.revoke("store-a", other.tokenId), /TOKEN_NOT_FOUND/);
+  } finally { await f.pg.close(); }
+});
+
+test("worker checkpoints are fenced, ordered and submission receipts survive delivery", async () => {
+  const f = await fixture();
+  try {
+    await f.enqueue("801"); await f.repository.enableStore("store-a");
+    const worker = await f.worker("checkpoint", 1);
+    const { lease } = await f.repository.claim(worker.token, worker.sessionId, worker.run.id, "claim");
+    assert.ok(lease);
+    await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, { requestId: "early", stage: "submission", payload: {}, expectedCheckpoints: {} }), /CHECKPOINT_REQUIRED/);
+    for (const stage of ["analysis", "research", "keywords"] as const) {
+      const job = await f.repository.readJob(worker.token, lease);
+      await f.repository.saveCheckpoint(worker.token, lease, { requestId: stage, stage, payload: { stage }, expectedCheckpoints: job.checkpoints });
+    }
+    const job = await f.repository.readJob(worker.token, lease);
+    const submission = { requestId: "submit", stage: "submission" as const, payload: { draft: "test" }, expectedCheckpoints: job.checkpoints };
+    const receipt = await f.repository.saveCheckpoint(worker.token, lease, submission);
+    assert.equal(receipt.status, "VALIDATING");
+    await f.deliver(lease.jobId); await f.repository.reconcileReviews();
+    assert.deepEqual(await f.repository.saveCheckpoint(worker.token, lease, submission), receipt);
+    await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, { ...submission, payload: {} }), /IDEMPOTENCY_CONFLICT/);
+    await f.repository.revoke("store-a", worker.tokenId);
+    await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, submission), /TOKEN_REVOKED/);
+  } finally { await f.pg.close(); }
+});

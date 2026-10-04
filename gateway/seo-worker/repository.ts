@@ -1,11 +1,12 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { canonicalizeJson } from "../canonical-json";
-import type { GptSeoJob } from "../../src/modules/custom-gpt-seo";
+import type { GptSeoJob, GptStage } from "../../src/modules/custom-gpt-seo";
 
 import type { WorkerDatabase, WorkerSql } from "./database";
 import type { WorkerLease, WorkerPrincipal, WorkerRun } from "./protocol";
 import { getRetryDelay, getWorkerProductKey, SeoWorkerError, validateTargetCount, WORKER_DEFAULTS } from "./protocol";
+import type { AgentAccessPage, AgentRunPage } from "../../src/modules/custom-gpt-seo";
 
 function digest(value: unknown): string { return createHash("sha256").update(canonicalizeJson(value)).digest("hex"); }
 function requireLabel(value: string): void {
@@ -23,6 +24,31 @@ function leaseOutput(row: Record<string, unknown>): WorkerLease {
 export class SeoWorkerRepository {
   constructor(private readonly database: WorkerDatabase, private readonly now: () => number = Date.now,
     private readonly jitter: () => number = Math.random) {}
+
+  async listAccess(storeId: string, offset: number): Promise<AgentAccessPage> {
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new SeoWorkerError("INVALID_OFFSET");
+    return this.database.transaction(async sql => {
+      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE store_id=$1", [storeId])).rows[0].total);
+      const rows = (await sql.query(`SELECT t.id,t.worker_id,t.created_by,t.expires_at,t.revoked_at,t.last_used_at,
+        (SELECT w.job_id FROM seo_worker_jobs w WHERE w.token_id=t.id AND w.lease_id IS NOT NULL LIMIT 1) AS job_id
+        FROM seo_worker_tokens t WHERE t.store_id=$1 ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
+      const mode = (await sql.query("SELECT enabled FROM seo_worker_stores WHERE store_id=$1", [storeId])).rows[0];
+      return { total, nextOffset: offset + rows.length < total ? offset + rows.length : null, claimsEnabled: mode?.enabled === true,
+        tokens: rows.map(row => ({ id: String(row.id), workerId: String(row.worker_id), createdBy: String(row.created_by),
+          expiresAt: Number(row.expires_at), revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
+          lastSeenAt: row.last_used_at === null ? null : Number(row.last_used_at), jobId: row.job_id === null ? null : String(row.job_id) })) };
+    });
+  }
+
+  async listRuns(storeId: string, offset: number): Promise<AgentRunPage> {
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new SeoWorkerError("INVALID_OFFSET");
+    return this.database.transaction(async sql => {
+      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_runs WHERE store_id=$1", [storeId])).rows[0].total);
+      const rows = (await sql.query("SELECT * FROM seo_worker_runs WHERE store_id=$1 ORDER BY created_at DESC,id LIMIT 50 OFFSET $2", [storeId, offset])).rows;
+      return { total, nextOffset: offset + rows.length < total ? offset + rows.length : null,
+        runs: rows.map(row => ({ ...runOutput(row), workerId: String(row.worker_id) })) };
+    });
+  }
 
   async issueToken(input: { storeId: string; workerId: string; createdBy: string }): Promise<{ token: string; tokenId: string; expiresAt: number }> {
     for (const value of Object.values(input)) requireLabel(value);
@@ -47,6 +73,89 @@ export class SeoWorkerRepository {
 
   async identify(token: string): Promise<WorkerPrincipal> {
     return this.database.transaction(sql => this.authenticate(sql, token));
+  }
+
+  async queueStatus(token: string): Promise<{ counts: Readonly<Record<string, number>> }> {
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      const rows = (await sql.query(`SELECT w.state,count(*) AS count FROM seo_worker_jobs w JOIN gpt_jobs j ON j.id=w.job_id
+        WHERE w.store_id=$1 AND j.provider='codex_mcp' GROUP BY w.state`, [principal.storeId])).rows;
+      return { counts: Object.fromEntries(rows.map(row => [String(row.state), Number(row.count)])) };
+    });
+  }
+
+  async finishWorker(token: string, sessionId: string, requestId: string): Promise<{ finished: true }> {
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      return this.idempotent(sql, `${principal.tokenId}:worker-finish`, requestId, { sessionId }, async () => {
+        await this.session(sql, principal, sessionId);
+        for (const row of (await sql.query("SELECT * FROM seo_worker_jobs WHERE session_id=$1 AND lease_id IS NOT NULL FOR UPDATE", [sessionId])).rows) await this.endLease(sql, row, "WORKER_STOPPED", true);
+        await sql.query("UPDATE seo_worker_runs SET state='PARTIAL',stop_reason='WORKER_STOPPED',updated_at=$2 WHERE session_id=$1 AND state='RUNNING'", [sessionId, this.now()]);
+        await sql.query("UPDATE seo_worker_sessions SET active=false WHERE id=$1", [sessionId]);
+        return { finished: true as const };
+      });
+    });
+  }
+
+  async readJob(token: string, lease: WorkerLease): Promise<GptSeoJob> {
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      await this.assertLease(sql, principal, lease);
+      const row = (await sql.query("SELECT payload FROM gpt_jobs WHERE id=$1 AND store_id=$2", [lease.jobId, principal.storeId])).rows[0];
+      if (!row) throw new SeoWorkerError("JOB_NOT_FOUND");
+      return JSON.parse(String(row.payload)) as GptSeoJob;
+    });
+  }
+
+  async saveCheckpoint(token: string, lease: WorkerLease, input: {
+    readonly requestId: string; readonly stage: GptStage; readonly payload: unknown; readonly expectedCheckpoints: unknown; readonly requestPayload?: unknown;
+  }): Promise<{ jobId: string; status: string }> {
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      await this.session(sql, principal, lease.sessionId);
+      const scope = `${principal.tokenId}:${lease.jobId}:${lease.leaseVersion}:checkpoint`;
+      // A committed receipt survives completion, but only its original authenticated session can retrieve it.
+      return this.idempotent(sql, scope, input.requestId, input.requestPayload ?? { stage: input.stage, payload: input.payload }, async () => {
+        const worker = await this.assertLease(sql, principal, lease);
+        const row = (await sql.query("SELECT payload FROM gpt_jobs WHERE id=$1 FOR UPDATE", [lease.jobId])).rows[0];
+        const job = JSON.parse(String(row.payload)) as GptSeoJob;
+        if (!["IN_PROGRESS", "NEEDS_CHANGES"].includes(job.status)) throw new SeoWorkerError("JOB_NOT_EDITABLE");
+        if (digest(job.checkpoints) !== digest(input.expectedCheckpoints)) throw new SeoWorkerError("VERSION_CONFLICT");
+        const stages = ["analysis", "research", "keywords", "submission"] as const;
+        const stageIndex = stages.indexOf(input.stage);
+        if (stageIndex < 0 || stages.slice(0, stageIndex).some(stage => !job.checkpoints[stage])) throw new SeoWorkerError("CHECKPOINT_REQUIRED");
+        if (job.status === "NEEDS_CHANGES" && Number(worker.repair_count) >= WORKER_DEFAULTS.maxRepairs) throw new SeoWorkerError("REPAIR_LIMIT_REACHED");
+        const checkpoints = { ...job.checkpoints, [input.stage]: input.payload };
+        for (const later of stages.slice(stageIndex + 1)) delete checkpoints[later];
+        const status = input.stage === "submission" ? "VALIDATING" : "IN_PROGRESS";
+        await sql.query("UPDATE gpt_jobs SET status=$2,payload=$3 WHERE id=$1", [job.id, status, JSON.stringify({ ...job, status, checkpoints, error: undefined, updatedAt: this.now() })]);
+        await sql.query(`UPDATE seo_worker_jobs SET state=$2,last_progress_at=$3,updated_at=$3,
+          repair_count=repair_count+$4 WHERE job_id=$1`, [job.id, input.stage === "submission" ? "SUBMITTING" : "PROCESSING", this.now(), job.status === "NEEDS_CHANGES" ? 1 : 0]);
+        return { jobId: job.id, status };
+      });
+    });
+  }
+
+  async checkpointReceipt(token: string, lease: WorkerLease, requestId: string, payload: unknown): Promise<unknown | null> {
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      await this.session(sql, principal, lease.sessionId);
+      const row = (await sql.query("SELECT digest,response FROM seo_worker_requests WHERE scope=$1 AND request_id=$2", [`${principal.tokenId}:${lease.jobId}:${lease.leaseVersion}:checkpoint`, requestId])).rows[0];
+      if (!row) return null;
+      if (row.digest !== digest(payload)) throw new SeoWorkerError("IDEMPOTENCY_CONFLICT");
+      return row.response;
+    });
+  }
+
+  async jobResult(token: string, jobId: string): Promise<{ jobId: string; status: string; error?: string }> {
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      const row = (await sql.query(`SELECT j.status,j.payload FROM gpt_jobs j JOIN seo_worker_jobs w ON w.job_id=j.id
+        WHERE w.job_id=$1 AND w.store_id=$2 AND w.worker_id=$3`, [jobId, principal.storeId, principal.workerId])).rows[0];
+      if (!row) throw new SeoWorkerError("JOB_NOT_FOUND");
+      const job = JSON.parse(String(row.payload)) as GptSeoJob;
+      return { jobId, status: String(row.status), ...(job.error ? { error: "VALIDATION_FAILED: revise grounded SEO/AEO output or request operator review." } : {}) };
+    });
   }
 
   private async session(sql: WorkerSql, principal: WorkerPrincipal, sessionId: string): Promise<void> {
@@ -160,10 +269,11 @@ export class SeoWorkerRepository {
     await this.database.transaction(async sql => { await sql.query("UPDATE seo_worker_stores SET enabled=false WHERE store_id=$1", [storeId]); });
   }
 
-  async resumeRun(token: string, sessionId: string, runId: string): Promise<WorkerRun> {
+  async resumeRun(token: string, sessionId: string, runId: string, requestId?: string): Promise<WorkerRun> {
     return this.database.transaction(async sql => {
       const principal = await this.authenticate(sql, token);
       await this.session(sql, principal, sessionId);
+      const resume = async (): Promise<WorkerRun> => {
       const run = await this.getRun(sql, principal, runId);
       if (run.state === "COMPLETED") return runOutput(run);
       const other = (await sql.query("SELECT id FROM seo_worker_runs WHERE store_id=$1 AND worker_id=$2 AND state='RUNNING' AND id!=$3", [principal.storeId, principal.workerId, runId])).rows[0];
@@ -173,6 +283,8 @@ export class SeoWorkerRepository {
       }
       const updated = await sql.query("UPDATE seo_worker_runs SET state='RUNNING',stop_reason=NULL,session_id=$2,updated_at=$3 WHERE id=$1 RETURNING *", [runId, sessionId, this.now()]);
       return runOutput(updated.rows[0]);
+      };
+      return requestId ? this.idempotent(sql, `${sessionId}:resume`, requestId, { runId }, resume) : resume();
     });
   }
 
@@ -259,13 +371,16 @@ export class SeoWorkerRepository {
     return row;
   }
 
-  async heartbeat(token: string, lease: WorkerLease): Promise<WorkerLease> {
+  async heartbeat(token: string, lease: WorkerLease, requestId?: string): Promise<WorkerLease> {
     return this.database.transaction(async sql => {
       const principal = await this.authenticate(sql, token);
       await this.assertLease(sql, principal, lease);
+      const renew = async (): Promise<WorkerLease> => {
       const updated = (await sql.query("UPDATE seo_worker_jobs SET expires_at=LEAST($2,last_progress_at+$3),updated_at=$4 WHERE job_id=$1 RETURNING *",
         [lease.jobId, Math.min(this.now() + WORKER_DEFAULTS.leaseMs, principal.expiresAt), WORKER_DEFAULTS.idleMs, this.now()])).rows[0];
       return leaseOutput(updated);
+      };
+      return requestId ? this.idempotent(sql, `${principal.tokenId}:heartbeat`, requestId, { lease }, renew) : renew();
     });
   }
 

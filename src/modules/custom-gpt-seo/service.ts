@@ -1,4 +1,4 @@
-import type { GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider } from "./types";
+import type { AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider } from "./types";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -32,6 +32,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function createCustomGptClient(fetcher: typeof fetch = fetch) {
+  async function agentRequest<T>(route: string, storeId: string, body?: unknown): Promise<T> {
+    const response = await fetcher(`/api/seo-agent/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, {
+      method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json", "x-ffp-agent": "1" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (!response.ok) throw new Error(response.status === 401 ? "Đăng nhập bằng tài khoản quản trị để quản lý Agent Access." : "Không thể quản lý worker. Kiểm tra kết nối và thử lại.");
+    return await response.json() as T;
+  }
   async function request<T>(route: string, storeId: string, body?: unknown): Promise<T> {
     const response = await fetcher(`/api/v1/gpt-seo/admin/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const payload: unknown = await response.json();
@@ -65,6 +74,10 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    agentAccess: (storeId: string, offset = 0) => agentRequest<AgentAccessPage>(`tokens?offset=${offset}`, storeId),
+    agentRuns: (storeId: string, offset = 0) => agentRequest<AgentRunPage>(`runs?offset=${offset}`, storeId),
+    createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: number }>("tokens", storeId, { workerId }),
+    revokeAgentToken: (storeId: string, tokenId: string) => agentRequest<{ revoked: true }>("revoke", storeId, { tokenId }),
     stores: listStores,
     settings: (storeId: string) => request<GptSeoSettings>("settings", storeId),
     configure: (storeId: string, settings: GptSeoSettings) => request<GptSeoSettings>("settings", storeId, settings),

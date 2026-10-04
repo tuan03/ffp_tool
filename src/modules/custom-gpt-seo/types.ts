@@ -1,4 +1,31 @@
 export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
+export interface AgentAccessToken {
+  readonly id: string;
+  readonly workerId: string;
+  readonly createdBy: string;
+  readonly expiresAt: number;
+  readonly revokedAt: number | null;
+  readonly lastSeenAt: number | null;
+  readonly jobId: string | null;
+}
+export interface AgentAccessPage {
+  readonly tokens: readonly AgentAccessToken[];
+  readonly total: number;
+  readonly nextOffset: number | null;
+  readonly claimsEnabled: boolean;
+}
+export interface AgentRunPage {
+  readonly runs: readonly {
+    readonly id: string;
+    readonly workerId: string;
+    readonly target: number;
+    readonly successful: number;
+    readonly state: string;
+    readonly stopReason: string | null;
+  }[];
+  readonly total: number;
+  readonly nextOffset: number | null;
+}
 export type ExternalSeoProvider = Exclude<SeoProvider, "gemini">;
 export type GptJobStatus = "PENDING" | "IN_PROGRESS" | "WAITING_INPUT" | "VALIDATING" | "NEEDS_CHANGES" | "REVIEW_READY" | "FAILED" | "CANCELLED";
 export type GptStage = "analysis" | "research" | "keywords" | "submission";

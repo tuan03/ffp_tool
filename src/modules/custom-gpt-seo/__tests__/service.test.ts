@@ -3,6 +3,20 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("Agent Access client scopes tokens to store, disables cache and includes mutation protection", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/tokens?storeId=store%20one");
+    assert.equal(init?.cache, "no-store");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { workerId: "laptop" });
+    return new Response(JSON.stringify({ token: "test-only", tokenId: "id", expiresAt: 100 }));
+  });
+  assert.equal((await client.createAgentToken("store one", "laptop")).tokenId, "id");
+  const mock = createMockCustomGptClient();
+  assert.deepEqual((await mock.agentAccess("demo")).tokens, []);
+  assert.equal((await mock.agentRuns("demo")).total, 0);
+});
+
 test("Custom GPT client preserves store scope and reports server errors", async () => {
   let requested = "";
   const client = createCustomGptClient(async (url) => { requested = String(url); return new Response(JSON.stringify({ error: { message: "Invalid batch size" } }), { status: 400 }); });
