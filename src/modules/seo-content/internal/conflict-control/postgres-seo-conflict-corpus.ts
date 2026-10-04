@@ -72,6 +72,11 @@ function asStoredEmbedding(vector: StoredEmbedding | readonly number[] | undefin
     : vector as StoredEmbedding;
 }
 
+function normalizeOptionalIdentity(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
 /** PostgreSQL catalog corpus with per-store transactional serialization and unique exact claims. */
 export class PostgresSeoConflictCorpus implements SeoConflictCorpus {
   private readonly storeId: string;
@@ -143,6 +148,9 @@ export class PostgresSeoConflictCorpus implements SeoConflictCorpus {
 
   public async upsertProduct(registration: SeoProductKeywordRegistration): Promise<{ revision: number }> {
     const storeId = this.resolveStoreId(registration.identity);
+    const productId = normalizeOptionalIdentity(registration.identity.productId);
+    const handle = normalizeOptionalIdentity(registration.identity.handle);
+    const url = normalizeOptionalIdentity(registration.identity.url) ?? (handle ? `/products/${handle}` : null);
     return withSeoTransaction(this.pool, async client => {
       const revision = await this.ensureRevision(client, storeId);
       if (registration.expectedRevision !== undefined && registration.expectedRevision !== revision) {
@@ -176,9 +184,7 @@ export class PostgresSeoConflictCorpus implements SeoConflictCorpus {
          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,NOW())
          ON CONFLICT(store_id,product_key) DO UPDATE SET product_id=EXCLUDED.product_id,
            handle=EXCLUDED.handle,url=EXCLUDED.url,title=EXCLUDED.title,keywords=EXCLUDED.keywords,updated_at=NOW()`,
-        [storeId, productKey, registration.identity.productId ?? null, registration.identity.handle ?? null,
-          registration.identity.url ?? (registration.identity.handle ? `/products/${registration.identity.handle}` : null),
-          registration.title ?? null, JSON.stringify(keywords)],
+        [storeId, productKey, productId, handle, url, registration.title ?? null, JSON.stringify(keywords)],
       );
       await client.query("DELETE FROM seo_keyword_claims WHERE store_id=$1 AND product_key=$2", [storeId, productKey]);
       for (const keyword of keywords) {
