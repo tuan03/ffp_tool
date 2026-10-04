@@ -699,19 +699,44 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
 
+    async def global_admission_gate_status() -> dict[str, Any]:
+        gate = await asyncio.to_thread(store.get_global_admission_gate)
+        clients = await asyncio.to_thread(store.list_clients)
+        connected = await manager.connected_client_ids()
+        confirmations = [
+            {
+                "agentId": client["id"],
+                "displayName": client["displayName"],
+                "isConnected": client["id"] in connected,
+                "state": client["globalAdmissionGateState"],
+                "revision": client["globalAdmissionGateRevision"],
+                "status": "confirmed" if (
+                    client["globalAdmissionGateRevision"] == gate["revision"]
+                    and client["globalAdmissionGateState"] == gate["state"]
+                ) else "pending_confirmation",
+            }
+            for client in clients
+        ]
+        return {
+            **gate,
+            "confirmations": confirmations,
+            "confirmedAgents": sum(item["status"] == "confirmed" for item in confirmations),
+            "pendingAgents": sum(item["status"] != "confirmed" for item in confirmations),
+        }
+
     @app.get("/api/v1/admission-gate")
-    def get_global_admission_gate(request: Request) -> dict[str, Any]:
+    async def get_global_admission_gate(request: Request) -> dict[str, Any]:
         if operator_credentials is None:
             raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
         if not operator_credentials.accepts(request.headers.get("authorization", "")):
             raise HTTPException(status_code=401, detail="Operator authorization is required.")
         try:
-            return store.get_global_admission_gate()
+            return await global_admission_gate_status()
         except RuntimeError:
             raise HTTPException(status_code=503, detail="Global crawler admission gate is unavailable.") from None
 
     @app.post("/api/v1/admission-gate")
-    def update_global_admission_gate(
+    async def update_global_admission_gate(
         payload: GlobalAdmissionGateRequest, request: Request,
     ) -> dict[str, Any]:
         if operator_credentials is None:
@@ -719,12 +744,18 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if not operator_credentials.accepts(request.headers.get("authorization", "")):
             raise HTTPException(status_code=401, detail="Operator authorization is required.")
         try:
-            return store.set_global_admission_gate(
+            gate = await asyncio.to_thread(store.set_global_admission_gate,
                 payload.state,
                 request_id=payload.requestId.lower(),
                 actor=operator_credentials.username,
                 reason=payload.reason,
             )
+            await manager.broadcast({
+                "type": "global_admission_gate",
+                "revision": gate["revision"],
+                "state": gate["state"],
+            })
+            return await global_admission_gate_status()
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except RuntimeError:
@@ -1496,6 +1527,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     acknowledged_intents.append(job_id)
             local_tasks = [value for value in list(hello.get("localTasks") or []) if isinstance(value, dict)]
             reconciliation = await asyncio.to_thread(store.reconcile_tasks, client_id, local_tasks)
+            admission_gate = await asyncio.to_thread(store.get_global_admission_gate)
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
             client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
@@ -1538,6 +1570,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "commands": replay_commands, "latestCommandSequence": command_state[1],
                 "desiredExecutionState": command_state[2], "appliedExecutionState": command_state[3],
                 "serverLastProcessedCommandSequence": command_state[4],
+                "globalAdmissionGate": {
+                    "revision": admission_gate["revision"],
+                    "state": admission_gate["state"],
+                },
             })
             for cancelled_job_id in acknowledged_intents:
                 await manager.broadcast({
@@ -1612,6 +1648,26 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     await manager.update_available_slots(client_id, reported_available_slots)
                     if is_cache_ready:
                         await assign(reported_available_slots)
+                elif message_type == "global_gate_ack":
+                    try:
+                        acknowledged_revision = max(0, int(message.get("revision") or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    acknowledged_state = str(message.get("state") or "")
+                    acknowledged = await asyncio.to_thread(
+                        store.acknowledge_global_admission_gate,
+                        client_id, acknowledged_revision, acknowledged_state,
+                    )
+                    await websocket.send_json({
+                        "type": "global_gate_ack_received",
+                        "revision": acknowledged_revision,
+                        "accepted": acknowledged,
+                    })
+                    if acknowledged:
+                        reported_available_slots = max(0, int(message.get("availableSlots") or 0))
+                        await manager.update_available_slots(client_id, reported_available_slots)
+                        if is_cache_ready:
+                            await assign(reported_available_slots)
                 elif message_type == "command_sync":
                     after_sequence = max(0, int(message.get("afterSequence") or 0))
                     await dispatch_next_agent_command(client_id, after_sequence)

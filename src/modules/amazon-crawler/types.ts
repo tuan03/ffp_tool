@@ -670,6 +670,18 @@ export interface AmazonCrawlerAdmissionGate {
   actor: string | null;
   reason: string | null;
   updatedAt: string | null;
+  confirmedAgents: number;
+  pendingAgents: number;
+  confirmations: readonly AmazonCrawlerAdmissionConfirmation[];
+}
+
+export interface AmazonCrawlerAdmissionConfirmation {
+  agentId: string;
+  displayName: string;
+  isConnected: boolean;
+  state: "OPEN" | "STOPPED";
+  revision: number;
+  status: "confirmed" | "pending_confirmation";
 }
 
 export interface AmazonCrawlerAdmissionGateController {

@@ -16,6 +16,9 @@ class CoordinatorMigrationTests(unittest.TestCase):
             with engine.connect() as connection:
                 self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), list(range(1, MIGRATION_VERSION + 1)))
             self.assertIn("crawler_upload_receipts", inspect(engine).get_table_names())
+            self.assertIn("global_admission_gate_revision", {
+                column["name"] for column in inspect(engine).get_columns("crawler_clients")
+            })
             with engine.connect() as connection:
                 state = connection.execute(
                     select(GlobalAdmissionGate.state).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)

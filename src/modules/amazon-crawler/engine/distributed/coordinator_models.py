@@ -48,6 +48,8 @@ class ClientRecord(Base):
     applied_execution_state: Mapped[str] = mapped_column(String(16), default="RUNNING")
     command_sequence: Mapped[int] = mapped_column(Integer, default=0)
     last_processed_command_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    global_admission_gate_revision: Mapped[int] = mapped_column(Integer, default=0)
+    global_admission_gate_state: Mapped[str] = mapped_column(String(16), default="OPEN")
     capabilities: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
     limits: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

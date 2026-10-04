@@ -806,6 +806,18 @@ class CoordinatorStore(CoordinatorObservability):
             ))
             return {**self._admission_gate_payload(gate), "replayed": False}
 
+    def acknowledge_global_admission_gate(self, client_id: str, revision: int, state: str) -> bool:
+        if state not in {"OPEN", "STOPPED"} or revision < 0:
+            return False
+        with self.sessions.begin() as session:
+            gate = session.get(GlobalAdmissionGate, GLOBAL_ADMISSION_GATE_ID)
+            client = session.get(ClientRecord, client_id, with_for_update=True)
+            if gate is None or client is None or revision != gate.revision or state != gate.state:
+                return False
+            client.global_admission_gate_revision = revision
+            client.global_admission_gate_state = state
+            return True
+
     def lease_tasks(self, client_id: str, available_slots: int) -> list[dict[str, Any]]:
         count = max(0, min(32, int(available_slots)))
         if count == 0:
@@ -819,7 +831,9 @@ class CoordinatorStore(CoordinatorObservability):
             if admission_gate is None or admission_gate.state != "OPEN":
                 return []
             client = session.get(ClientRecord, client_id)
-            if client is None or client.status == "paused":
+            if (client is None or client.status == "paused"
+                    or client.global_admission_gate_revision != admission_gate.revision
+                    or client.global_admission_gate_state != admission_gate.state):
                 return []
             active_count = session.scalar(
                 select(func.count(CrawlTask.id)).where(
@@ -3167,6 +3181,8 @@ class CoordinatorStore(CoordinatorObservability):
             "appliedExecutionState": client.applied_execution_state,
             "commandSequence": client.command_sequence,
             "lastProcessedCommandSequence": client.last_processed_command_sequence,
+            "globalAdmissionGateRevision": client.global_admission_gate_revision,
+            "globalAdmissionGateState": client.global_admission_gate_state,
             "activeTasks": active_tasks,
             "limits": client.limits, "connectedAt": utc_iso(client.connected_at) if client.connected_at else None,
             "lastSeenAt": utc_iso(client.last_seen_at),

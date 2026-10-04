@@ -429,7 +429,7 @@ export function AmazonCrawlerPage({
       return;
     }
     if (nextState === "STOPPED" && !window.confirm(
-      "Dừng cấp lease mới cho toàn bộ crawler? Task đang chạy sẽ tiếp tục; SEO/Shopify không bị dừng.",
+      "Soft stop toàn bộ crawler? Task đang thực thi sẽ hoàn tất; task đã lease nhưng chưa chạy sẽ chờ. Agent offline sẽ hiện pending confirmation. Không purge kết quả và không dừng SEO/Shopify.",
     )) return;
     setIsChangingAdmissionGate(true);
     setAdmissionGateError(null);
@@ -1320,7 +1320,13 @@ export function AmazonCrawlerPage({
                 <p className="text-sm font-semibold text-slate-100">
                   Global crawler admission: {admissionGate?.state === "STOPPED" ? "STOPPED" : admissionGate ? "OPEN" : "đang tải…"}
                 </p>
-                <p className="mt-1 text-xs text-slate-400">Chỉ chặn cấp lease mới. Task đã nhận vẫn chạy; không hủy job và không dừng SEO/Shopify.</p>
+                <p className="mt-1 text-xs text-slate-400">Soft stop chặn lease mới và không cho bắt đầu task đang chờ; task đang thực thi được hoàn tất. Không hủy job, purge kết quả hoặc dừng SEO/Shopify.</p>
+                {admissionGate ? <p className="mt-1 text-xs text-slate-300">Agent xác nhận gate: {admissionGate.confirmedAgents} đã xác nhận · {admissionGate.pendingAgents} đang chờ.</p> : null}
+                {admissionGate?.pendingAgents ? <ul className="mt-1 text-xs text-amber-300" aria-label="Agent chờ xác nhận global gate">
+                  {admissionGate.confirmations.filter((agent) => agent.status === "pending_confirmation").map((agent) => (
+                    <li key={agent.agentId}>{agent.displayName} — {agent.isConnected ? "đang xác nhận" : "offline, sẽ nhận gate khi kết nối lại"}</li>
+                  ))}
+                </ul> : null}
                 {admissionGate?.actor ? <p className="mt-1 text-xs text-slate-500">Cập nhật bởi {admissionGate.actor} · {admissionGate.reason}</p> : null}
               </div>
               <button type="button" disabled={!admissionGate || isChangingAdmissionGate || admissionGateReason.trim().length < 3}

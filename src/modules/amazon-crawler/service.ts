@@ -461,6 +461,18 @@ function readAdmissionGate(value: unknown): AmazonCrawlerAdmissionGate {
     actor: typeof value.actor === "string" ? value.actor : null,
     reason: typeof value.reason === "string" ? value.reason : null,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+    confirmedAgents: typeof value.confirmedAgents === "number" ? value.confirmedAgents : 0,
+    pendingAgents: typeof value.pendingAgents === "number" ? value.pendingAgents : 0,
+    confirmations: Array.isArray(value.confirmations) ? value.confirmations
+      .filter((item): item is Record<string, unknown> => isRecord(item))
+      .map((item) => ({
+        agentId: typeof item.agentId === "string" ? item.agentId : "",
+        displayName: typeof item.displayName === "string" ? item.displayName : "Unknown agent",
+        isConnected: item.isConnected === true,
+        state: item.state === "STOPPED" ? "STOPPED" as const : "OPEN" as const,
+        revision: typeof item.revision === "number" ? item.revision : 0,
+        status: item.status === "confirmed" ? "confirmed" as const : "pending_confirmation" as const,
+      })).filter((item) => item.agentId.length > 0) : [],
   };
 }
 

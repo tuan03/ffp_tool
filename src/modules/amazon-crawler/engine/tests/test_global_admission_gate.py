@@ -69,6 +69,10 @@ class GlobalAdmissionGateStoreTests(unittest.TestCase):
                 "OPEN", request_id=uuid.uuid4().hex, actor="operator", reason="maintenance complete",
             )
             self.assertEqual(opened["state"], "OPEN")
+            self.assertEqual(restarted_store.lease_tasks("agent-1", 1), [])
+            self.assertTrue(restarted_store.acknowledge_global_admission_gate(
+                "agent-1", opened["revision"], "OPEN",
+            ))
             self.assertEqual(len(restarted_store.lease_tasks("agent-1", 1)), 1)
         finally:
             restarted_engine.dispose()
@@ -86,6 +90,26 @@ class GlobalAdmissionGateStoreTests(unittest.TestCase):
             self.store.set_global_admission_gate(
                 "OPEN", request_id=request_id, actor="operator", reason="different request",
             )
+
+    def test_reopening_waits_until_each_agent_confirms_the_new_revision(self) -> None:
+        prior_lease = self.store.lease_tasks("agent-1", 1)
+        stopped = self.store.set_global_admission_gate(
+            "STOPPED", request_id=uuid.uuid4().hex, actor="operator", reason="soft stop",
+        )
+        self.assertFalse(self.store.acknowledge_global_admission_gate("agent-1", stopped["revision"] - 1, "OPEN"))
+        self.assertTrue(self.store.acknowledge_global_admission_gate("agent-1", stopped["revision"], "STOPPED"))
+        self.assertEqual(self.store.lease_tasks("agent-1", 1), [])
+
+        opened = self.store.set_global_admission_gate(
+            "OPEN", request_id=uuid.uuid4().hex, actor="operator", reason="resume intake",
+        )
+        self.assertEqual(self.store.lease_tasks("agent-1", 1), [])
+        self.assertTrue(self.store.acknowledge_global_admission_gate("agent-1", opened["revision"], "OPEN"))
+        next_lease = self.store.lease_tasks("agent-1", 1)
+        self.assertEqual(len(next_lease), 1)
+        with self.sessions() as session:
+            still_leased = session.get(CrawlTask, prior_lease[0]["taskId"])
+            self.assertEqual(still_leased.status, "leased")
 
     def test_postgres_lease_gate_lock_is_shared_so_agents_do_not_serialize_each_other(self) -> None:
         from engine.distributed.global_admission_gate import GlobalAdmissionGate, GLOBAL_ADMISSION_GATE_ID
@@ -141,13 +165,56 @@ class GlobalAdmissionGateHttpTests(unittest.TestCase):
             self.assertEqual(current.status_code, 200, current.text)
             self.assertEqual(current.json()["state"], "OPEN")
 
+            with app.state.store.sessions.begin() as session:
+                session.add(ClientRecord(id="offline-agent", display_name="Offline agent", status="offline"))
+
             response = client.post("/api/v1/admission-gate", auth=auth, json={
                 "requestId": uuid.uuid4().hex, "state": "STOPPED", "reason": "operator maintenance",
             })
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["actor"], "operator")
             self.assertEqual(response.json()["state"], "STOPPED")
+            self.assertEqual(response.json()["pendingAgents"], 1)
+            confirmation = response.json()["confirmations"][0]
+            self.assertEqual(confirmation["status"], "pending_confirmation")
+            self.assertFalse(confirmation["isConnected"])
             self.assertEqual(client.get("/api/v1/admission-gate", auth=auth).json()["state"], "STOPPED")
+
+    def test_connected_agent_confirms_soft_stop_over_websocket(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(
+                database_url=f"sqlite:///{(root / 'connected-gate.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"),
+            )
+            client = stack.enter_context(TestClient(app))
+            with client.websocket_connect("/api/v1/worker/connect") as socket:
+                socket.send_json({"type": "hello", "protocolVersion": "5", "clientId": "online-agent",
+                    "displayName": "Online agent", "maxConcurrentInputs": 1, "availableSlots": 1,
+                    "capabilities": {"mediaGalleryV2": True, "amazon": True}})
+                hello = socket.receive_json()
+                self.assertEqual(hello["globalAdmissionGate"], {"revision": 0, "state": "OPEN"})
+
+                response = client.post("/api/v1/admission-gate", auth=("operator", "fixture"), json={
+                    "requestId": uuid.uuid4().hex, "state": "STOPPED", "reason": "soft stop test",
+                })
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["pendingAgents"], 1)
+                self.assertTrue(response.json()["confirmations"][0]["isConnected"])
+
+                update = socket.receive_json()
+                self.assertEqual(update["type"], "global_admission_gate")
+                self.assertEqual(update["state"], "STOPPED")
+                socket.send_json({"type": "global_gate_ack", "revision": update["revision"],
+                    "state": update["state"], "availableSlots": 0})
+                acknowledgement = socket.receive_json()
+                self.assertEqual(acknowledgement["type"], "global_gate_ack_received")
+                self.assertTrue(acknowledgement["accepted"])
+                confirmed = client.get("/api/v1/admission-gate", auth=("operator", "fixture"))
+                self.assertEqual(confirmed.status_code, 200, confirmed.text)
+                self.assertEqual(confirmed.json()["pendingAgents"], 0)
+                self.assertEqual(confirmed.json()["confirmedAgents"], 1)
 
 
 @unittest.skipUnless(os.environ.get("CRAWLER_TEST_DATABASE_URL"), "Requires isolated audit PostgreSQL")
@@ -166,7 +233,7 @@ class GlobalAdmissionGatePostgresRaceTests(unittest.TestCase):
             migrate_coordinator(engine)
             store = CoordinatorStore(create_session_factory(engine))
             store.create_job({"urls": ["B0FR4MSS2H", "B0HG4NRG98"]})
-            store.register_client({"clientId": "race-agent", "displayName": "Race agent", "availableSlots": 1})
+            store.register_client({"clientId": "race-agent", "displayName": "Race agent", "availableSlots": 2})
 
             lease_has_shared_gate_lock = threading.Event()
             stop_is_requesting_exclusive_lock = threading.Event()
@@ -217,6 +284,14 @@ class GlobalAdmissionGatePostgresRaceTests(unittest.TestCase):
             restarted_store = CoordinatorStore(create_session_factory(engine))
             self.assertEqual(restarted_store.get_global_admission_gate()["state"], "STOPPED")
             self.assertEqual(restarted_store.lease_tasks("race-agent", 1), [])
+            opened = restarted_store.set_global_admission_gate(
+                "OPEN", request_id=uuid.uuid4().hex, actor="operator", reason="resume test",
+            )
+            self.assertEqual(restarted_store.lease_tasks("race-agent", 1), [])
+            self.assertTrue(restarted_store.acknowledge_global_admission_gate(
+                "race-agent", opened["revision"], "OPEN",
+            ))
+            self.assertEqual(len(restarted_store.lease_tasks("race-agent", 1)), 1)
         finally:
             engine.dispose()
             with admin_engine.begin() as connection:

@@ -314,13 +314,19 @@ test("global admission controller loads and changes only the crawler gate", asyn
     fetchImplementation: async (input, init) => {
       requests.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
       return jsonResponse({ state: init?.method === "POST" ? "STOPPED" : "OPEN", scope: "crawler", revision: 3,
-        actor: "operator", reason: "planned maintenance", updatedAt: "2026-10-05T00:00:00Z" });
+        actor: "operator", reason: "planned maintenance", updatedAt: "2026-10-05T00:00:00Z",
+        confirmedAgents: 1, pendingAgents: 1, confirmations: [{ agentId: "offline-agent",
+          displayName: "Offline agent", isConnected: false, state: "OPEN", revision: 2,
+          status: "pending_confirmation" }] });
     },
   });
   assert.equal((await controller.load()).state, "OPEN");
   const stopped = await controller.setState("STOPPED", "planned maintenance");
   assert.equal(stopped.scope, "crawler");
   assert.equal(stopped.state, "STOPPED");
+  assert.equal(stopped.confirmedAgents, 1);
+  assert.equal(stopped.pendingAgents, 1);
+  assert.equal(stopped.confirmations[0]?.displayName, "Offline agent");
   assert.equal(requests[0]?.url, "https://coordinator.test/api/v1/admission-gate");
   assert.equal(requests[1]?.method, "POST");
   assert.match(requests[1]?.body ?? "", /"state":"STOPPED"/);

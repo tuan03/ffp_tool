@@ -11,7 +11,7 @@ from .agent_command_ledger import AgentCommand, AgentCommandEvent
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 8
+MIGRATION_VERSION = 9
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -67,3 +67,14 @@ def migrate_coordinator(engine) -> None:
                     id=GLOBAL_ADMISSION_GATE_ID, state="OPEN", scope="crawler", revision=0,
                 ))
             connection.execute(MIGRATIONS.insert().values(version=8))
+            versions.add(8)
+        if 9 not in versions:
+            columns = {column["name"] for column in inspect(connection).get_columns("crawler_clients")}
+            additions = {
+                "global_admission_gate_revision": "INTEGER NOT NULL DEFAULT 0",
+                "global_admission_gate_state": "VARCHAR(16) NOT NULL DEFAULT 'OPEN'",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE crawler_clients ADD COLUMN {name} {definition}"))
+            connection.execute(MIGRATIONS.insert().values(version=9))

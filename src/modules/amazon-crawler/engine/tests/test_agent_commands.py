@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import threading
 import unittest
 import uuid
 import os
@@ -112,6 +113,37 @@ class AgentCommandInboxTests(unittest.TestCase):
 
 
 class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_global_soft_stop_persists_without_cancelling_running_or_queued_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AgentConfig(server_url="http://127.0.0.1:9999", display_name="fixture",
+                max_concurrent_inputs=2, limits=AgentLimits(), data_directory=root / "agent")
+            agent = DistributedCrawlerAgent(project_root=root, config=config)
+            running_assignment = {"taskId": "running-task", "jobId": "job-1", "leaseId": "lease-1"}
+            queued_assignment = {"taskId": "queued-task", "jobId": "job-1", "leaseId": "lease-2"}
+            agent.active["running-task"] = running_assignment
+            agent.executing_task_ids.add("running-task")
+            agent.assignment_queue.put_nowait(queued_assignment)
+            agent.store.spool_result(task_id="completed-task", lease_id="lease-result",
+                checksum="sha256-fixture", payload={"products": [{"id": "fixture"}]})
+            cancellation = threading.Event()
+            agent.cancel_events["job-1"] = {cancellation}
+
+            await agent._apply_global_admission_gate(1, "STOPPED")
+            self.assertTrue(agent._paused)
+            self.assertEqual(agent.active["running-task"], running_assignment)
+            self.assertEqual(agent.assignment_queue.qsize(), 1)
+            self.assertEqual(agent.store.upload_counts()["results"], 1)
+            self.assertFalse(cancellation.is_set())
+            self.assertEqual(ClientStore(config.data_directory / "agent.sqlite3").global_admission_gate(),
+                {"revision": 1, "state": "STOPPED"})
+
+            await agent._apply_global_admission_gate(2, "OPEN")
+            self.assertFalse(agent._paused)
+            self.assertIn("running-task", agent.executing_task_ids)
+            self.assertFalse(cancellation.is_set())
+            self.assertEqual(agent.store.upload_counts()["results"], 1)
+
     async def test_resume_command_does_not_clear_local_operator_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

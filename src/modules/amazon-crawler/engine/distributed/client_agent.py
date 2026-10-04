@@ -112,7 +112,9 @@ class DistributedCrawlerAgent:
         self.connection_status = "offline"
         self._locally_paused = self.store.is_paused()
         self._remote_execution_state = self.store.remote_execution_state()
-        self._paused = self._locally_paused or self._remote_execution_state == "PAUSED"
+        self._global_admission_gate = self.store.global_admission_gate()
+        self._global_admission_stopped = self._global_admission_gate["state"] == "STOPPED"
+        self._paused = self._locally_paused or self._remote_execution_state == "PAUSED" or self._global_admission_stopped
         self._command_recovery_complete = False
         self._command_recovery_event = asyncio.Event()
         self._captcha_waiting = False
@@ -195,6 +197,7 @@ class DistributedCrawlerAgent:
             "desiredExecutionState": self._remote_execution_state,
             "appliedExecutionState": self._remote_execution_state,
             "lastProcessedCommandSequence": last_processed_command_sequence,
+            "globalAdmissionGate": dict(self._global_admission_gate),
             "capabilities": self._agent_capabilities(),
             "currentTasks": self._current_tasks_snapshot(),
             "cache": self.cache.metrics_snapshot(),
@@ -297,7 +300,8 @@ class DistributedCrawlerAgent:
 
     def _refresh_pause_state(self) -> None:
         was_paused = self._paused
-        self._paused = self._locally_paused or self._remote_execution_state == "PAUSED"
+        self._paused = (self._locally_paused or self._remote_execution_state == "PAUSED"
+                        or self._global_admission_stopped)
         if self._paused:
             self.connection_status = "paused"
         elif self.connection_status == "paused":
@@ -305,6 +309,18 @@ class DistributedCrawlerAgent:
         if was_paused != self._paused:
             self._dashboard_update("activity", "paused" if self._paused else "resumed")
             self._publish_status()
+
+    async def _apply_global_admission_gate(self, revision: int, state: str) -> None:
+        self._global_admission_gate = await asyncio.to_thread(
+            self.store.apply_global_admission_gate, revision, state,
+        )
+        self._global_admission_stopped = self._global_admission_gate["state"] == "STOPPED"
+        self._refresh_pause_state()
+        await self.outbound_queue.put({
+            "type": "global_gate_ack",
+            **self._global_admission_gate,
+            "availableSlots": self._available_slots(),
+        })
 
     def stop_and_discard_local_work(self) -> int:
         if self.config.auth_mode == "key":
@@ -341,6 +357,15 @@ class DistributedCrawlerAgent:
         self._recovery_complete = False
         self._command_recovery_complete = False
         self._command_recovery_event.clear()
+        gate = acknowledgement.get("globalAdmissionGate")
+        if isinstance(gate, dict):
+            try:
+                revision = max(0, int(gate.get("revision") or 0))
+            except (TypeError, ValueError):
+                revision = -1
+            state = str(gate.get("state") or "")
+            if revision >= 0 and state in {"OPEN", "STOPPED"}:
+                await self._apply_global_admission_gate(revision, state)
         command_batch = acknowledgement.get("commands")
         if isinstance(command_batch, list):
             await self._process_command_batch({
@@ -625,6 +650,15 @@ class DistributedCrawlerAgent:
                     "type": "command_sync",
                     "afterSequence": self.store.last_processed_command_sequence(),
                 })
+            elif message_type == "global_admission_gate":
+                try:
+                    revision = max(0, int(payload.get("revision") or 0))
+                except (TypeError, ValueError):
+                    continue
+                state = str(payload.get("state") or "")
+                if state not in {"OPEN", "STOPPED"}:
+                    continue
+                await self._apply_global_admission_gate(revision, state)
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
                 generation = max(0, int(payload.get("cacheGeneration") or 0))

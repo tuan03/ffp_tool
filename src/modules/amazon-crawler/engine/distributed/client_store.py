@@ -412,6 +412,38 @@ class ClientStore:
         state = str(rows.get("remote_execution_state", "RUNNING"))
         return state if state in {"RUNNING", "PAUSED"} else "RUNNING"
 
+    def global_admission_gate(self) -> dict[str, Any]:
+        with self._connection() as connection:
+            rows = dict(connection.execute(
+                "SELECT key,value FROM agent_state WHERE key IN ('global_admission_gate_revision','global_admission_gate_state')"
+            ).fetchall())
+        try:
+            revision = max(0, int(rows.get("global_admission_gate_revision", "0")))
+        except (TypeError, ValueError):
+            revision = 0
+        state = str(rows.get("global_admission_gate_state", "OPEN"))
+        return {"revision": revision, "state": state if state in {"OPEN", "STOPPED"} else "OPEN"}
+
+    def apply_global_admission_gate(self, revision: int, state: str) -> dict[str, Any]:
+        if revision < 0 or state not in {"OPEN", "STOPPED"}:
+            raise ValueError("Global admission gate update is invalid.")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = dict(connection.execute(
+                "SELECT key,value FROM agent_state WHERE key IN ('global_admission_gate_revision','global_admission_gate_state')"
+            ).fetchall())
+            try:
+                current_revision = max(0, int(current.get("global_admission_gate_revision", "0")))
+            except (TypeError, ValueError):
+                current_revision = 0
+            if revision >= current_revision:
+                connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('global_admission_gate_revision',?)",
+                                   (str(revision),))
+                connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('global_admission_gate_state',?)",
+                                   (state,))
+            connection.commit()
+        return self.global_admission_gate()
+
     def reconcile_remote_execution_state(self, execution_state: str) -> None:
         if execution_state not in {"RUNNING", "PAUSED"}:
             raise ValueError("Remote execution state is invalid.")
