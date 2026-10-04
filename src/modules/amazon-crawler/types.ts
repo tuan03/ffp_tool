@@ -623,7 +623,16 @@ export interface AmazonCrawlerCacheClearer {
   (): Promise<AmazonCrawlerCacheClearResult>;
 }
 
-export type AmazonCrawlerClientStatus = "online" | "offline" | "busy" | "waiting_captcha" | "paused";
+export type AmazonCrawlerClientStatus = "online" | "offline" | "busy" | "waiting_captcha" | "paused" | "degraded";
+
+export interface AmazonCrawlerWorkerHealth {
+  state: "healthy" | "degraded";
+  failuresInWindow: number;
+  failureLimit: number;
+  windowSeconds: number;
+  configuredConcurrency: number;
+  effectiveConcurrency: number;
+}
 
 export interface AmazonCrawlerClientSummary {
   id: string;
@@ -640,6 +649,9 @@ export interface AmazonCrawlerClientSummary {
   appliedExecutionState?: "RUNNING" | "PAUSED";
   commandSequence?: number;
   lastProcessedCommandSequence?: number;
+  observability?: {
+    workerHealth?: AmazonCrawlerWorkerHealth;
+  };
 }
 
 export interface AmazonCrawlerAgentCommandEvent {

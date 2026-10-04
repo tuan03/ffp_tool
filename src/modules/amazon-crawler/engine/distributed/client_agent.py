@@ -30,6 +30,7 @@ from .client_config import AgentConfig
 from .client_dashboard_state import DashboardState
 from .client_store import ClientStore
 from .client_storage_pressure import storage_pressure
+from .worker_health import WorkerHealth
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
@@ -125,6 +126,7 @@ class DistributedCrawlerAgent:
         self._debug_log_lock = threading.Lock()
         self._debug_log_path = config.data_directory / "agent-debug.jsonl"
         self._resources: dict[str, Any] = {}
+        self.worker_health = WorkerHealth()
         self._telemetry_losses = 0
         self._task_activity: dict[str, dict[str, Any]] = {}
         self._task_activity_lock = threading.Lock()
@@ -145,7 +147,17 @@ class DistributedCrawlerAgent:
         except (OSError, sqlite3.Error):
             status = {"backlog": 0, "dropped": 0}
         return {"cache": self.cache.metrics_snapshot(), "resources": self._resources,
+                "workerHealth": self._worker_health_snapshot(),
                 **status, "dropped": status["dropped"] + self._telemetry_losses}
+
+    def _worker_health_snapshot(self) -> dict[str, Any]:
+        return self.worker_health.snapshot(self.config.max_concurrent_inputs)
+
+    def _record_worker_failure(self, event: dict[str, Any]) -> None:
+        reason = str(event.get("reason") or "worker_failure")
+        self.worker_health.record_failure(reason)
+        self._debug_event("crawler_worker_failure", reason=reason,
+                          workerHealth=self._worker_health_snapshot())
 
     def _sample_resources(self) -> dict[str, Any]:
         resources = sample_resources()
@@ -176,6 +188,7 @@ class DistributedCrawlerAgent:
             "connection": self.connection_status,
             "activeTasks": len(self.active),
             "availableSlots": self._available_slots(),
+            "workerHealth": self._worker_health_snapshot(),
             "waitingCaptcha": self._captcha_waiting,
             "pendingUploads": uploads["results"] + uploads["products"],
             "pendingProducts": uploads["products"],
@@ -867,7 +880,10 @@ class DistributedCrawlerAgent:
             await self.outbound_queue.put({
                 "type": "heartbeat",
                 "status": "paused" if self._paused else (
-                    "waiting_captcha" if self._captcha_waiting else ("busy" if running else "online")
+                    "waiting_captcha" if self._captcha_waiting else (
+                        "degraded" if self._worker_health_snapshot()["state"] == "degraded"
+                        else ("busy" if running else "online")
+                    )
                 ),
                 "availableSlots": self._available_slots(),
                 "lastProcessedCommandSequence": self.store.last_processed_command_sequence(),
@@ -892,7 +908,8 @@ class DistributedCrawlerAgent:
         if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
                 or self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]):
             return 0
-        return max(0, self.config.max_concurrent_inputs - len(self.active))
+        effective_concurrency = int(self._worker_health_snapshot()["effectiveConcurrency"])
+        return max(0, effective_concurrency - len(self.active))
 
     async def _execution_loop(self) -> None:
         backlog: deque[dict[str, Any]] = deque()
@@ -912,7 +929,8 @@ class DistributedCrawlerAgent:
             batch = [first]
             batch_key = (first["jobId"], first["settingsFingerprint"])
             deadline = loop.time() + 0.4
-            while len(batch) < self.config.max_concurrent_inputs:
+            effective_concurrency = int(self._worker_health_snapshot()["effectiveConcurrency"])
+            while len(batch) < effective_concurrency:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
                     break
@@ -1162,6 +1180,7 @@ class DistributedCrawlerAgent:
             "job_deadline_at": min((str(assignment["jobDeadlineAt"]) for assignment in batch if assignment.get("jobDeadlineAt")), default=None),
             "asin_deadline_at": min((str(assignment["asinDeadlineAt"]) for assignment in batch if assignment.get("asinDeadlineAt")), default=None),
         } if factory is ProcessCrawler else {}
+        worker_health_arguments = {"on_worker_failure": self._record_worker_failure} if factory is ProcessCrawler else {}
         crawler = factory(
             root=self.project_root,
             settings=settings,
@@ -1169,6 +1188,7 @@ class DistributedCrawlerAgent:
             cancel_event=cancel_event,
             proxy_config_path=self.config.proxy_config_path,
             **deadline_arguments,
+            **worker_health_arguments,
         )
         with self._running_crawlers_lock:
             self._running_crawlers[str(first["jobId"])] = crawler

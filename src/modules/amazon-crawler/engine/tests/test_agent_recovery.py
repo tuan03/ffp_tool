@@ -3,6 +3,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 import websockets
 from pathlib import Path
 from unittest.mock import patch
@@ -42,6 +43,21 @@ class AgentRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.agent._available_slots(), 0)
             self.agent._command_recovery_complete = True
             self.assertEqual(self.agent._available_slots(), 1)
+
+    def test_worker_crash_storm_reduces_admission_without_touching_outbox(self):
+        self.agent.store.spool_result(task_id="task-a", lease_id="lease-a", checksum="checksum-a", payload={"value": 1})
+        self.agent.config = replace(self.agent.config, max_concurrent_inputs=8)
+        self.agent._is_connected = True
+        self.agent._recovery_complete = True
+        self.agent._command_recovery_complete = True
+
+        for failure in range(5):
+            self.agent._record_worker_failure({"reason": f"worker_exit_{failure}"})
+
+        with patch.object(self.agent, "_storage_pressure", return_value={"blocked": False}):
+            self.assertEqual(self.agent._available_slots(), 4)
+            self.assertEqual(self.agent.status_snapshot()["workerHealth"]["state"], "degraded")
+        self.assertEqual(len(self.agent.store.pending_results()), 1)
 
     async def test_offline_queue_does_not_start(self):
         self.agent.assignment_queue.put_nowait({"taskId": "task"})

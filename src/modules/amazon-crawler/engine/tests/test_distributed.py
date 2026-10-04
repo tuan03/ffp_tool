@@ -1419,6 +1419,22 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.engine.dispose()
         self.temporary_directory.cleanup()
 
+    def test_degraded_worker_health_is_persisted_as_bounded_agent_telemetry(self) -> None:
+        self.store.register_client(client_hello(slots=8))
+        self.store.heartbeat("client-a", [], "degraded", telemetry={
+            "workerHealth": {
+                "state": "degraded", "failuresInWindow": 5, "failureLimit": 5,
+                "windowSeconds": 600, "configuredConcurrency": 8, "effectiveConcurrency": 4,
+                "lastFailureAt": "2026-10-05T12:00:00+00:00", "secret": "must-not-persist",
+            },
+        })
+
+        client = self.store.list_clients()[0]
+        self.assertEqual(client["status"], "degraded")
+        self.assertEqual(client["observability"]["workerHealth"]["state"], "degraded")
+        self.assertEqual(client["observability"]["workerHealth"]["effectiveConcurrency"], 4)
+        self.assertNotIn("secret", client["observability"]["workerHealth"])
+
     def _create_four_task_job(self) -> dict[str, object]:
         return self.store.create_job({
             "urls": ["B0FR4MSS2H", "B0HG4NRG98", "B0GVDXGVVB", "B0GQ33XWW7"],

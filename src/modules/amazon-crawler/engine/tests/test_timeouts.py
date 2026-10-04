@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -55,6 +57,11 @@ class ConcurrentStreamCrawler(HungCheckpointCrawler):
             list(executor.map(send_progress, range(32)))
         on_input_complete({"asin": "B012345678", "source": sources[0], "status": "completed", "products": [], "errors": []})
         return {"status": "completed", "products": [], "errors": []}
+
+
+class ExitedWorkerCrawler(HungCheckpointCrawler):
+    def run(self, **_kwargs):
+        os._exit(17)
 
 
 class HungBatchCrawler(HungCheckpointCrawler):
@@ -174,6 +181,49 @@ class TimeoutTests(unittest.TestCase):
             self.assertEqual(output["errors"][0]["stage"], "asin")
             self.assertTrue(output["errors"][0]["isRetryable"])
             self.assertIsNotNone(RawFamilyCache(Path(directory) / ".runtime" / "cache").load_checkpoint("B012345678:90001:us-v1"))
+
+    def test_unexpected_worker_exit_is_reported_and_a_new_worker_can_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            failures = []
+            failed = ProcessCrawler(root=Path(directory), settings=CrawlSettings(),
+                                    crawler_factory=ExitedWorkerCrawler,
+                                    on_worker_failure=failures.append)
+            output = failed.run(job_id="worker-exit", sources=["B012345678"], write_export=False)
+            self.assertEqual(output["errors"][0]["code"], "CRAWLER_WORKER_EXITED")
+            self.assertEqual(failures, [{"reason": "worker_exited"}])
+            self.assertFalse(failed._process.is_alive())
+
+            healthy = ProcessCrawler(root=Path(directory), settings=CrawlSettings(),
+                                     crawler_factory=ConcurrentStreamCrawler,
+                                     on_worker_failure=failures.append)
+            recovered = healthy.run(job_id="worker-recovered", sources=["B012345678"], write_export=False)
+            self.assertEqual(recovered["status"], "completed")
+            self.assertEqual(failures, [{"reason": "worker_exited"}])
+
+    def test_windows_watchdog_targets_only_the_worker_process_tree(self) -> None:
+        class FakeProcess:
+            pid = 4567
+            alive = True
+
+            def is_alive(self):
+                return self.alive
+
+            def kill(self):
+                self.alive = False
+
+            def join(self, timeout=None):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = ProcessCrawler(root=Path(directory), settings=CrawlSettings())
+            crawler._process = FakeProcess()
+            with patch("engine.process_crawler.os.name", "nt"), \
+                    patch("engine.process_crawler.subprocess.CREATE_NO_WINDOW", 0, create=True), \
+                    patch("engine.process_crawler.subprocess.run") as run:
+                crawler.close()
+
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4567", "/T", "/F"])
+        self.assertNotIn("/IM", run.call_args.args[0])
 
     def test_worker_enforces_child_deadline_before_longer_family_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

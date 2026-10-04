@@ -58,7 +58,8 @@ def _crawl_process(connection, factory, root: str, settings: dict[str, Any], pro
 class ProcessCrawler:
     def __init__(self, *, root: Path, settings: CrawlSettings, progress=None, cancel_event=None,
                  proxy_config_path: Path | None = None, crawler_factory=AmazonCrawler,
-                 job_deadline_at: str | None = None, asin_deadline_at: str | None = None) -> None:
+                 job_deadline_at: str | None = None, asin_deadline_at: str | None = None,
+                 on_worker_failure=None) -> None:
         self.root = root
         self.settings = settings
         self.progress = progress or (lambda _: None)
@@ -67,11 +68,21 @@ class ProcessCrawler:
         self.factory = crawler_factory
         self.job_deadline_at = job_deadline_at
         self.asin_deadline_at = asin_deadline_at
+        self.on_worker_failure = on_worker_failure
         self.browser_pool = self
         self._process = None
         self._process_lock = threading.Lock()
         self._closed = threading.Event()
         self.browser_pool_state: dict[str, Any] = {}
+
+    def _report_worker_failure(self, reason: str) -> None:
+        if self.on_worker_failure is None:
+            return
+        try:
+            self.on_worker_failure({"reason": reason[:80]})
+        except Exception:
+            # Health reporting must never turn a crawl failure into an agent failure.
+            pass
 
     def close(self) -> None:
         """Terminate only this worker and its browser descendants, before reusing capacity."""
@@ -135,7 +146,13 @@ class ProcessCrawler:
             reader.close()
             writer.close()
             raise InterruptedError("Crawler cancelled before worker startup.")
-        process.start()
+        try:
+            process.start()
+        except Exception:
+            self._report_worker_failure("worker_start_failed")
+            reader.close()
+            writer.close()
+            raise
         writer.close()
         messages: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=16)
         reader_stop = threading.Event()
@@ -198,6 +215,7 @@ class ProcessCrawler:
                         worker_error["asin"] = expired_child[1]
                     elif expired_stage and expired_stage.get("childAsin"):
                         worker_error["asin"] = expired_stage["childAsin"]
+                    self._report_worker_failure("worker_deadline_" + str(stage))
                     self.close()
                     break
                 try:
@@ -205,6 +223,7 @@ class ProcessCrawler:
                 except queue.Empty:
                     if not process.is_alive():
                         worker_error = {"code": "CRAWLER_WORKER_EXITED", "message": "Crawler worker exited without completing its inputs.", "retryable": True}
+                        self._report_worker_failure("worker_exited")
                         break
                     continue
                 if kind == "telemetry":

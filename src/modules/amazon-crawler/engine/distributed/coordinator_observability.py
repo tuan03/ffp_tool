@@ -39,6 +39,18 @@ def bounded_agent_telemetry(payload: Any) -> dict[str, Any]:
     for key in ("backlog", "dropped"):
         value = payload.get(key)
         snapshot[key] = max(0, min(2**53 - 1, value)) if isinstance(value, int) else 0
+    worker_health = payload.get("workerHealth")
+    worker_health = worker_health if isinstance(worker_health, dict) else {}
+    worker_state = worker_health.get("state")
+    snapshot["workerHealth"] = {
+        "state": worker_state if isinstance(worker_state, str) and worker_state in {"healthy", "degraded"} else "healthy",
+        **{
+            key: max(0, min(2**53 - 1, value))
+            for key in ("failuresInWindow", "failureLimit", "windowSeconds", "configuredConcurrency", "effectiveConcurrency")
+            if isinstance((value := worker_health.get(key)), int) and not isinstance(value, bool)
+        },
+        "lastFailureAt": worker_health.get("lastFailureAt")[:40] if isinstance(worker_health.get("lastFailureAt"), str) else None,
+    }
     snapshot["sampledAt"] = utc_iso()
     return snapshot
 

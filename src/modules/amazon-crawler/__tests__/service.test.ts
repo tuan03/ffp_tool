@@ -288,6 +288,24 @@ test("client loader returns coordinator client capacity and status", async () =>
   assert.equal(clients[0]?.activeTasks, 2);
 });
 
+test("client loader preserves degraded worker health from coordinator observability", async () => {
+  const loadClients = createAmazonCrawlerClientsLoader({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async () => jsonResponse([{
+      id: "client-a", displayName: "Agent A", agentVersion: "5.0.0", status: "degraded", isConnected: true,
+      maxConcurrentInputs: 8, activeTasks: 0, leasedTasks: 0, availableSlots: 4,
+      observability: { workerHealth: {
+        state: "degraded", failuresInWindow: 5, failureLimit: 5, windowSeconds: 600,
+        configuredConcurrency: 8, effectiveConcurrency: 4,
+      } },
+    }]),
+  });
+
+  const [client] = await loadClients();
+  assert.equal(client?.status, "degraded");
+  assert.equal(client?.observability?.workerHealth?.effectiveConcurrency, 4);
+});
+
 test("operator command controller submits idempotency ID and reads ordered timeline", async () => {
   const requests: Array<{ url: string; method: string; body: string }> = [];
   const controller = createAmazonCrawlerCommandController({

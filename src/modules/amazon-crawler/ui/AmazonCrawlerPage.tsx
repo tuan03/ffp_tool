@@ -1351,7 +1351,7 @@ export function AmazonCrawlerPage({
               <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
-                  <span className={`text-xs font-semibold ${!client.isConnected || client.status === "offline" ? "text-rose-300" : client.status === "waiting_captcha" ? "text-amber-300" : "text-emerald-300"}`}>{client.isConnected ? client.status : "offline"}</span>
+                  <span className={`text-xs font-semibold ${!client.isConnected || client.status === "offline" ? "text-rose-300" : client.status === "waiting_captcha" || client.status === "degraded" ? "text-amber-300" : "text-emerald-300"}`}>{client.isConnected ? client.status : "offline"}</span>
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
                   <span>Agent v{client.agentVersion}</span>
@@ -1372,6 +1372,11 @@ export function AmazonCrawlerPage({
                   ) : null}
                 </div>
                 <p className="mt-1 text-xs text-slate-400">{client.activeTasks} đang chạy · {client.availableSlots}/{client.maxConcurrentInputs} slot trống</p>
+                {client.observability?.workerHealth?.state === "degraded" ? (
+                  <p className="mt-1 text-xs text-amber-300" role="status">
+                    Worker degraded: {client.observability.workerHealth.failuresInWindow}/{client.observability.workerHealth.failureLimit} lỗi trong {Math.round(client.observability.workerHealth.windowSeconds / 60)} phút · concurrency giảm còn {client.observability.workerHealth.effectiveConcurrency}/{client.observability.workerHealth.configuredConcurrency}.
+                  </p>
+                ) : null}
                 {client.leasedTasks === client.activeTasks ? null : <p className="mt-1 text-xs text-amber-300">{client.leasedTasks} lease trên server đang chờ đồng bộ</p>}
                 {amazonCrawlerCommands ? <div className="mt-3 border-t border-slate-700 pt-3">
                   <div className="flex items-center justify-between gap-2 text-xs">

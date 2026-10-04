@@ -650,7 +650,7 @@ class CoordinatorStore(CoordinatorObservability):
             client = session.get(ClientRecord, client_id)
             if client is None:
                 return []
-            client.status = status if status in {"online", "busy", "waiting_captcha", "paused"} else "online"
+            client.status = status if status in {"online", "busy", "waiting_captcha", "paused", "degraded"} else "online"
             client.last_seen_at = now
             if telemetry is not None:
                 client.capabilities = {**client.capabilities, "observability": bounded_agent_telemetry(telemetry)}

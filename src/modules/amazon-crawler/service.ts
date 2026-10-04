@@ -386,7 +386,7 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
   };
 }
 
-const AVAILABLE_CLIENT_STATUSES = new Set(["online", "busy", "waiting_captcha"]);
+const AVAILABLE_CLIENT_STATUSES = new Set(["online", "busy", "waiting_captcha", "degraded"]);
 
 function readClients(value: unknown): AmazonCrawlerClientSummary[] {
   if (!Array.isArray(value)) throw new AmazonCrawlerServiceError("Coordinator returned an invalid client list.", "INVALID_ENGINE_RESPONSE");
@@ -409,6 +409,18 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
       appliedExecutionState: client.appliedExecutionState === "PAUSED" ? "PAUSED" : "RUNNING",
       commandSequence: typeof client.commandSequence === "number" ? client.commandSequence : 0,
       lastProcessedCommandSequence: typeof client.lastProcessedCommandSequence === "number" ? client.lastProcessedCommandSequence : 0,
+      observability: isRecord(client.observability) && isRecord(client.observability.workerHealth)
+        ? {
+          workerHealth: {
+            state: client.observability.workerHealth.state === "degraded" ? "degraded" : "healthy",
+            failuresInWindow: typeof client.observability.workerHealth.failuresInWindow === "number" ? client.observability.workerHealth.failuresInWindow : 0,
+            failureLimit: typeof client.observability.workerHealth.failureLimit === "number" ? client.observability.workerHealth.failureLimit : 5,
+            windowSeconds: typeof client.observability.workerHealth.windowSeconds === "number" ? client.observability.workerHealth.windowSeconds : 600,
+            configuredConcurrency: typeof client.observability.workerHealth.configuredConcurrency === "number" ? client.observability.workerHealth.configuredConcurrency : 0,
+            effectiveConcurrency: typeof client.observability.workerHealth.effectiveConcurrency === "number" ? client.observability.workerHealth.effectiveConcurrency : 0,
+          },
+        }
+        : undefined,
     };
   });
 }
