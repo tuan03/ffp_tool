@@ -46,6 +46,7 @@ export function AppLayout(): React.JSX.Element {
   const autoSeoPath = buildStoreAwarePath("/auto-seo", activeStoreId);
   const reviewPath = buildStoreAwarePath("/seo-review", activeStoreId);
   const performancePath = buildStoreAwarePath("/seo-performance", activeStoreId);
+  const adsIntelligencePath = buildStoreAwarePath("/ads-intelligence", activeStoreId);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
@@ -63,6 +64,18 @@ export function AppLayout(): React.JSX.Element {
             </NavLink>
 
             <nav aria-label="Điều hướng ứng dụng" className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-xs font-medium lg:whitespace-normal [&>a]:shrink-0 lg:[&>a]:shrink">
+              <NavLink
+                to={adsIntelligencePath}
+                className={({ isActive }) =>
+                  `rounded-lg px-3 py-1.5 transition ${
+                    isActive
+                      ? "bg-slate-800 font-semibold text-cyan-300 shadow-sm shadow-cyan-500/20"
+                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                  }`
+                }
+              >
+                🎯 Ads Intelligence
+              </NavLink>
               <NavLink to={performancePath} className={({ isActive }) => `rounded-lg px-3 py-1.5 ${isActive ? "bg-slate-800 text-cyan-300" : "text-slate-400 hover:text-slate-200"}`}>SEO Performance</NavLink>
               <NavLink
                 to={queuePath}
