@@ -4,7 +4,7 @@
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, các mục 1–58.
 > Trạng thái: **đề xuất để duyệt, chưa phải tính năng đã triển khai hoặc kết quả nghiệm thu**.
 > Phạm vi lần làm này: đọc đặc tả, đối chiếu source/test, viết kế hoạch. Không đổi code, database, container, agent hoặc VPS.
-> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Task 01–10 đã được người dùng cho chuyển tiếp; Task 11 đã ghi nhận D1/D5/D6 được duyệt và soạn contract identity/auth/state, chờ duyệt nội dung chi tiết. Chưa bật auth hoặc cập nhật container/agent đang dùng. Các mô tả hành vi cũ bên dưới là baseline trước chuỗi sửa Task 02–09; xem báo cáo từng task để biết thay đổi mới.
+> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Task 01–11 đã được người dùng cho chuyển tiếp; Task 12 thêm operator boundary opt-in và audit PostgreSQL v3, chờ test. Chưa bật auth hoặc cập nhật container/agent đang dùng. Các mô tả hành vi cũ bên dưới là baseline trước chuỗi sửa Task 02–09; xem báo cáo từng task để biết thay đổi mới.
 
 ## 1. Kết luận trước: nên làm gì và chưa nên làm gì?
 

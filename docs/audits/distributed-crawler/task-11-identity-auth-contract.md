@@ -142,7 +142,7 @@ One key/identity is an authorization binding, not hardware attestation. Blocking
 - [x] Legacy/new compatibility matrix and fail-closed transition documented.
 - [x] Pending results, immutable checksums and historical receipts preserved in migration design.
 - [x] State dimensions, permissions and implementation ownership separated.
-- [ ] User confirms this detailed contract before Task 12.
+- [x] User confirmed this contract by requesting Task 12 after handoff (`8f1ff04`).
 - [ ] Tasks 12–19 implement and verify it; production enforcement still requires separate approval.
 
 Verification for this documentation-only task: source inspection, decision/spec cross-check, Markdown link existence and `git diff --check`. No runtime tests/builds were run for this change; Task 10 results are historical, not new evidence for authentication. No secrets are needed from the user for this task.

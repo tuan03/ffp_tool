@@ -3,9 +3,10 @@
 from sqlalchemy import Column, Integer, MetaData, Table, select, text
 
 from .coordinator_models import Base, UploadReceipt
+from .operator_authorization import OperatorAudit
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 2
+MIGRATION_VERSION = 3
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -23,3 +24,6 @@ def migrate_coordinator(engine) -> None:
         if 2 not in versions:
             UploadReceipt.__table__.create(connection, checkfirst=True)
             connection.execute(MIGRATIONS.insert().values(version=2))
+        if 3 not in versions:
+            OperatorAudit.__table__.create(connection, checkfirst=True)
+            connection.execute(MIGRATIONS.insert().values(version=3))

@@ -28,6 +28,7 @@ from .coordinator_models import Base, create_database_engine, create_session_fac
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
+from .operator_authorization import OperatorCredentials, install_operator_authorization
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -258,7 +259,8 @@ def find_project_root() -> Path:
     return current.parent
 
 
-def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True) -> FastAPI:
+def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True,
+                           operator_credentials: OperatorCredentials | None = None) -> FastAPI:
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
@@ -328,6 +330,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.connection_manager = manager
     app.state.image_processing_service = image_service
     app.state.is_ready = False
+    if operator_credentials is not None:
+        install_operator_authorization(app, sessions, operator_credentials)
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
         "" if os.environ.get("NODE_ENV") == "production" else "http://localhost:5173,http://127.0.0.1:5173",

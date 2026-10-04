@@ -126,6 +126,7 @@ def main() -> None:
     modes.add_argument("--mutations", action="store_true", help="Verify Task 04 mutation authority on PostgreSQL")
     modes.add_argument("--receipts", action="store_true", help="Verify Task 05 durable upload acknowledgements")
     modes.add_argument("--reliability", action="store_true", help="Task 10: PostgreSQL regressions and two-agent HTTP/WSS recovery")
+    modes.add_argument("--operator-auth", action="store_true", help="Task 12: operator boundary and audit on PostgreSQL")
     arguments = parser.parse_args()
     expectation = arguments.expect
     url = local_test_url()
@@ -150,7 +151,14 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 Base.metadata.create_all(engine)
-                if arguments.reliability:
+                if arguments.operator_auth:
+                    from engine.tests.test_operator_authorization import OperatorAuthorizationTests
+                    class PostgreSqlOperatorTests(OperatorAuthorizationTests):
+                        external_engine = engine
+                    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSqlOperatorTests))
+                    require(result.wasSuccessful() and not result.skipped, "Operator authorization audit failed")
+                    print(f"RUN {run_number}: operator authorization tests={result.testsRun}, failures=0, skipped=0")
+                elif arguments.reliability:
                     verify_mutations(engine, run_number)
                     verify_mutations(engine, run_number, receipts=True)
                     Base.metadata.drop_all(engine)
@@ -182,7 +190,9 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    if arguments.reliability:
+    if arguments.operator_auth:
+        print("PASS: Task 12 operator authorization and PostgreSQL audit verified twice; runtime enforcement not enabled.")
+    elif arguments.reliability:
         print("PASS: Task 10 PostgreSQL and two-agent HTTP/WSS recovery verified twice; awaiting user acceptance.")
     elif arguments.receipts:
         print("PASS: PostgreSQL upload receipts verified twice; Task 05 awaits user acceptance.")
