@@ -19,6 +19,8 @@ Tool_crawer_New_update/
 .DS_Store
 stores.local.json
 stores.config.json
+credentials/
+*credentials*.json
 *zip
 
 # Python & Local Server Artifacts

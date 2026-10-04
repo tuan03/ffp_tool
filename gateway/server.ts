@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
+import { handleAdsIntelligenceHttpRequest } from "./ads-intelligence";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -187,6 +188,10 @@ export function startGatewayServer(
     if (url.startsWith("/api/seo-performance/")) {
       await handlePerformanceHttp(req, res, { service: getPerformanceService(), authToken, hasStore: storeId => storeRegistry.hasStore(storeId) });
       return;
+    }
+    if (url.startsWith("/api/ads-intelligence/")) {
+      const handled = await handleAdsIntelligenceHttpRequest(req, res);
+      if (handled) return;
     }
     if (url.startsWith("/api/review-images/")) {
       await handleReviewImageHttpRequest(req, res, {

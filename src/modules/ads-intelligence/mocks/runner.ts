@@ -15,5 +15,12 @@ export function createMockAdsIntelligenceClient(): AdsIntelligenceClient {
     async getCompetitorAds() {
       return mockCompetitorAds;
     },
+    async syncNow() {
+      return {
+        success: true,
+        refreshedAt: new Date().toISOString(),
+        message: "Mock data refreshed successfully",
+      };
+    },
   };
 }

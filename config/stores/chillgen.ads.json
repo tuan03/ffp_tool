@@ -15,7 +15,7 @@
   "ga4": {
     "propertyId": "555699138",
     "propertyTimezone": "America/Los_Angeles",
-    "credentialRef": "credentials/chillgen-service-account.json"
+    "credentialRef": "credentials/ga4-service-account.json"
   },
   "shopify": {
     "shopDomain": "chillgen.myshopify.com",

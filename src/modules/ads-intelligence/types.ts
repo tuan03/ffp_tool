@@ -22,6 +22,8 @@ export interface AdsStoreSummary {
   readonly cpa: string | null;
   readonly roas: string | null;
   readonly warnings: readonly string[];
+  readonly fromCache?: boolean;
+  readonly cachedAt?: string;
 }
 
 export interface AdsHierarchyAd {
@@ -112,4 +114,5 @@ export interface AdsIntelligenceClient {
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
   getDataHealth(storeId?: string): Promise<AdsDataHealth>;
   getCompetitorAds(storeId?: string): Promise<readonly CompetitorAdCard[]>;
+  syncNow?(storeId?: string): Promise<{ success: boolean; refreshedAt: string; message: string }>;
 }

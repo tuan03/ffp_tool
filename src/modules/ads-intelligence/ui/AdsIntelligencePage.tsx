@@ -19,7 +19,33 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [health, setHealth] = useState<AdsDataHealth | null>(null);
   const [competitors, setCompetitors] = useState<readonly CompetitorAdCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({});
+
+  const handleSync = async () => {
+    if (!client.syncNow || syncing) return;
+    setSyncing(true);
+    setSyncMessage("Đang gọi live Meta Graph API & GA4 Data API...");
+    try {
+      const res = await client.syncNow(currentStoreId);
+      const [summaryData, campaignsData, healthData] = await Promise.all([
+        client.getStoreSummary(currentStoreId),
+        client.getCampaignHierarchy(currentStoreId),
+        client.getDataHealth(currentStoreId),
+      ]);
+      setSummary(summaryData);
+      setCampaigns(campaignsData);
+      setHealth(healthData);
+      setSyncMessage(res.message);
+      setTimeout(() => setSyncMessage(null), 6000);
+    } catch {
+      setSyncMessage("Đồng bộ thất bại, vui lòng kiểm tra kết nối API.");
+      setTimeout(() => setSyncMessage(null), 6000);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     let isLive = true;
@@ -98,7 +124,46 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
             <option value="wrydeco">Wrydeco (wrydeco.myshopify.com)</option>
             <option value="capozen">Capozen (capozen.myshopify.com)</option>
           </select>
+
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+              syncing
+                ? "border-cyan-700 bg-cyan-950/60 text-cyan-300 cursor-not-allowed opacity-80"
+                : "border-cyan-500/60 bg-gradient-to-r from-cyan-950 to-blue-950 text-cyan-200 hover:border-cyan-400 hover:text-white hover:shadow-md hover:shadow-cyan-500/20 active:scale-95"
+            }`}
+            title="Xóa cache và gọi live Meta & GA4 API ngay lập tức"
+          >
+            <span className={syncing ? "inline-block animate-spin" : ""}>🔄</span>
+            <span>{syncing ? "Đang đồng bộ..." : "Đồng bộ mới"}</span>
+          </button>
         </div>
+      </div>
+
+      {/* Live / Cache Source Status Indicator */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs shadow-sm">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className={`inline-block h-2.5 w-2.5 rounded-full ${summary?.fromCache ? "bg-amber-400 ring-2 ring-amber-400/20" : "bg-emerald-400 animate-pulse ring-2 ring-emerald-400/20"}`} />
+          <span className="text-slate-300">
+            Nguồn dữ liệu:{" "}
+            <strong className={summary?.fromCache ? "text-amber-300 font-semibold" : "text-emerald-300 font-semibold"}>
+              {summary?.fromCache ? "⚡ Bộ nhớ đệm Gateway (Tiết kiệm Token & Quota API)" : "🟢 Live Meta Graph API v26.0 & GA4"}
+            </strong>
+          </span>
+          {summary?.cachedAt && (
+            <span className="text-slate-500 text-[11px] font-mono">
+              [Cập nhật: {new Date(summary.cachedAt).toLocaleTimeString("vi-VN")}]
+            </span>
+          )}
+        </div>
+        {syncMessage ? (
+          <div className="text-xs text-cyan-300 font-medium animate-pulse">{syncMessage}</div>
+        ) : (
+          <div className="text-slate-400 text-[11px]">
+            {summary?.fromCache ? "Cache TTL: 15 phút (Bấm \"Đồng bộ mới\" để gọi live)" : "Số liệu trực tiếp từ tài khoản quảng cáo"}
+          </div>
+        )}
       </div>
 
       {/* Warnings & Data Maturity Gate Banner */}
