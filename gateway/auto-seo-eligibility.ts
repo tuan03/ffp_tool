@@ -28,6 +28,7 @@ export interface AutoSeoEligibilityRequest {
 
 export interface AutoSeoEligibilityItem {
   readonly productId: string;
+  readonly jobId?: string;
   readonly state: AutoSeoEligibilityState;
   readonly reason:
     | "NO_HISTORY"
@@ -269,7 +270,12 @@ function buildAutoSeoEligibility(
       queueJob?.shopifySyncStatus === "SYNCED" &&
       isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))
     ) {
-      return { productId: product.productId, state: "current", reason: "SHOPIFY_SYNCED" };
+      return {
+        productId: product.productId,
+        jobId: queueJob.id,
+        state: "current",
+        reason: "SHOPIFY_SYNCED",
+      };
     }
     if (
       queueJob?.status === "CANCELLED" &&

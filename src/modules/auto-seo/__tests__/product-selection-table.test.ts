@@ -958,6 +958,34 @@ test("AutoSeoToolbar: enables Run Auto SEO and clear action only when items are 
   assert.ok(posHtml.includes("Đã chọn:"));
 });
 
+test("AutoSeoToolbar: enables SEO lại only for selected synced products", () => {
+  const disabledHtml = renderToStaticMarkup(React.createElement(AutoSeoToolbar, {
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 2,
+    selectedCount: 1,
+    reSeoCount: 0,
+    onLoadProducts: () => undefined,
+    onRunAutoSeo: () => undefined,
+    onReSeo: () => undefined,
+  }));
+  assert.match(disabledHtml, /SEO lại/);
+  assert.match(disabledHtml, /<button type="button" disabled="" title="Tạo bản SEO mới/);
+
+  const enabledHtml = renderToStaticMarkup(React.createElement(AutoSeoToolbar, {
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 2,
+    selectedCount: 1,
+    reSeoCount: 1,
+    onLoadProducts: () => undefined,
+    onRunAutoSeo: () => undefined,
+    onReSeo: () => undefined,
+  }));
+  assert.match(enabledHtml, /SEO lại \(1\)/);
+  assert.match(enabledHtml, /<button type="button" title="Tạo bản SEO mới/);
+});
+
 test("filterAutoSeoProducts: matches status case-insensitively ('active' matches 'ACTIVE')", () => {
   const products: readonly ShopifyProductForAutoSeoUi[] = [
     {

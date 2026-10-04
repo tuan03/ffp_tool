@@ -5,7 +5,7 @@ import type {
   AutoSeoEligibilityItem,
   ShopifyProductForAutoSeoUi,
 } from "../types";
-import { selectNextAutoSeoBatch } from "../ui/smart-batch";
+import { selectNextAutoSeoBatch, selectSeoRevisionJobs } from "../ui/smart-batch";
 
 function product(id: string, updatedAt?: string): ShopifyProductForAutoSeoUi {
   return { id, title: id, handle: id, ...(updatedAt ? { updatedAt } : {}) };
@@ -70,4 +70,16 @@ test("smart batch honors every supported batch cap", () => {
     assert.equal(selectedIds.length, size);
     assert.equal(new Set(selectedIds).size, size);
   }
+});
+
+test("revision selection includes only synced products with a current job", () => {
+  assert.deepEqual(selectSeoRevisionJobs(
+    ["synced", "legacy-current", "active", "synced"],
+    [
+      { productId: "synced", jobId: "job-synced", state: "current", reason: "SHOPIFY_SYNCED" },
+      { productId: "synced", jobId: "job-synced", state: "current", reason: "SHOPIFY_SYNCED" },
+      { productId: "legacy-current", state: "current", reason: "UP_TO_DATE" },
+      { productId: "active", jobId: "job-active", state: "active", reason: "ACTIVE_QUEUE" },
+    ],
+  ), [{ productId: "synced", jobId: "job-synced" }]);
 });

@@ -6,6 +6,11 @@ import type {
 export type AutoSeoBatchSize = 10 | 20 | 50 | 100;
 export type AutoSeoEligibilityFilter = "needs_seo" | "active" | "current" | "all";
 
+export interface SelectedSeoRevision {
+  readonly productId: string;
+  readonly jobId: string;
+}
+
 const ELIGIBLE_PRIORITIES: Readonly<Record<string, number>> = {
   never_processed: 0,
   changed: 1,
@@ -42,6 +47,27 @@ export function selectNextAutoSeoBatch(
     })
     .slice(0, batchSize)
     .map(product => product.id);
+}
+
+export function selectSeoRevisionJobs(
+  selectedProductIds: readonly string[],
+  eligibilityItems: readonly AutoSeoEligibilityItem[],
+): readonly SelectedSeoRevision[] {
+  const selectedIds = new Set(selectedProductIds);
+  const seenJobIds = new Set<string>();
+  return eligibilityItems.flatMap((item): readonly SelectedSeoRevision[] => {
+    if (
+      !selectedIds.has(item.productId) ||
+      item.state !== "current" ||
+      item.reason !== "SHOPIFY_SYNCED" ||
+      !item.jobId ||
+      seenJobIds.has(item.jobId)
+    ) {
+      return [];
+    }
+    seenJobIds.add(item.jobId);
+    return [{ productId: item.productId, jobId: item.jobId }];
+  });
 }
 
 function parseTimestamp(value?: string): number {

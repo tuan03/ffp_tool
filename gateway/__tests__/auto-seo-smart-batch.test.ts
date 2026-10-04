@@ -423,6 +423,7 @@ test("eligibility marks a confirmed Shopify sync as current SEO", () => {
 
   assert.deepEqual(response.items[0], {
     productId: "synced-product",
+    jobId: job.id,
     state: "current",
     reason: "SHOPIFY_SYNCED",
   });

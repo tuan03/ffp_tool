@@ -197,6 +197,7 @@ export interface AutoSeoEligibilityRequest {
 
 export interface AutoSeoEligibilityItem {
   readonly productId: string;
+  readonly jobId?: string;
   readonly state: AutoSeoEligibilityState;
   readonly reason: AutoSeoEligibilityReason;
   readonly lastSuccessfulShopifyUpdatedAt?: string;
@@ -235,6 +236,11 @@ export interface AutoSeoClient {
   loadProductDetailFresh?(storeId: string, productId: string): Promise<ShopifyProductForAutoSeoUi>;
   runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput>;
   getProductEligibility?(request: AutoSeoEligibilityRequest): Promise<AutoSeoEligibilityResponse>;
+  createSeoRevision?(
+    storeId: string,
+    jobId: string,
+    requestId: string,
+  ): Promise<{ readonly jobId: string; readonly previousJobId: string }>;
   runAutoSeoBackup(request: AutoSeoBackupRequest): Promise<AutoSeoBackupResponse>;
   hydrateSelectedProductsFresh(
     productIds: readonly string[],
