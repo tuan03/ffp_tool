@@ -97,23 +97,54 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return json(row.payload) as GptSeoJob;
   }
   async findLatestSourceJobs(storeId: string, source: string, productIds: readonly string[]): Promise<ReadonlyMap<string, GptSeoJob>> {
-    const rows = await this.db.prepare("SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=ANY(?::text[]) AND (status!='CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR') ORDER BY json_extract(payload,'$.sourceIdentity'),created_at DESC,id DESC").all(storeId, source, productIds);
-    return new Map(rows.map(row => { const job = json(row.payload) as GptSeoJob; return [job.sourceIdentity, job]; }));
+    const rows = await this.db.prepare(`SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) gpt_jobs.payload,
+      CASE WHEN seo_publish_operations.state='SUCCEEDED' THEN 'SYNCED'
+        WHEN seo_publish_operations.state IN ('QUEUED','CHECKING','WRITING') THEN 'SYNCING'
+        WHEN seo_publish_operations.state='UNCERTAIN' THEN 'UNKNOWN'
+        WHEN seo_publish_operations.state='BLOCKED' THEN 'FAILED'
+        ELSE gpt_sync.status END AS sync_status
+      FROM gpt_jobs
+      LEFT JOIN gpt_sync ON gpt_sync.job_id=gpt_jobs.id
+      LEFT JOIN seo_publish_operations ON seo_publish_operations.job_id=gpt_jobs.id
+      WHERE gpt_jobs.store_id=? AND json_extract(payload,'$.source')=?
+        AND json_extract(payload,'$.sourceIdentity')=ANY(?::text[])
+        AND (gpt_jobs.status!='CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
+      ORDER BY json_extract(payload,'$.sourceIdentity'),gpt_jobs.created_at DESC,gpt_jobs.id DESC`).all(storeId, source, productIds);
+    return new Map(rows.map(row => {
+      const job = json(row.payload) as GptSeoJob;
+      const syncStatus = String(row.sync_status ?? "");
+      return [job.sourceIdentity, ["SYNCING", "UNKNOWN", "SYNCED", "ROLLED_BACK", "FAILED"].includes(syncStatus)
+        ? { ...job, shopifySyncStatus: syncStatus as GptSeoJob["shopifySyncStatus"] }
+        : job];
+    }));
   }
   async findLatestSourceJob(storeId: string, source: string, sourceIdentity: string): Promise<GptSeoJob | null> {
     const normalizedIdentity = source === "auto_seo"
       ? sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "")
       : sourceIdentity;
     const row = (await this.db.prepare(`
-      SELECT payload FROM gpt_jobs
-      WHERE store_id=?
+      SELECT gpt_jobs.payload,
+        CASE WHEN seo_publish_operations.state='SUCCEEDED' THEN 'SYNCED'
+          WHEN seo_publish_operations.state IN ('QUEUED','CHECKING','WRITING') THEN 'SYNCING'
+          WHEN seo_publish_operations.state='UNCERTAIN' THEN 'UNKNOWN'
+          WHEN seo_publish_operations.state='BLOCKED' THEN 'FAILED'
+          ELSE gpt_sync.status END AS sync_status
+      FROM gpt_jobs
+      LEFT JOIN gpt_sync ON gpt_sync.job_id=gpt_jobs.id
+      LEFT JOIN seo_publish_operations ON seo_publish_operations.job_id=gpt_jobs.id
+      WHERE gpt_jobs.store_id=?
         AND json_extract(payload,'$.source')=?
         AND json_extract(payload,'$.sourceIdentity')=?
-        AND (status != 'CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
-      ORDER BY created_at DESC, id DESC
+        AND (gpt_jobs.status != 'CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
+      ORDER BY gpt_jobs.created_at DESC, gpt_jobs.id DESC
       LIMIT 1
     `).get(storeId, source, normalizedIdentity));
-    return row ? json(row.payload) as GptSeoJob : null;
+    if (!row) return null;
+    const job = json(row.payload) as GptSeoJob;
+    const syncStatus = String(row.sync_status ?? "");
+    return ["SYNCING", "UNKNOWN", "SYNCED", "ROLLED_BACK", "FAILED"].includes(syncStatus)
+      ? { ...job, shopifySyncStatus: syncStatus as GptSeoJob["shopifySyncStatus"] }
+      : job;
   }
   async list(storeId: string, status?: GptJobStatus, offset = 0, provider?: ExternalSeoProvider): Promise<readonly GptSeoJob[]> {
     const rows = provider

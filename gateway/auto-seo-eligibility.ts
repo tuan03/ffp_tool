@@ -34,6 +34,7 @@ export interface AutoSeoEligibilityItem {
     | "LAST_DISPATCH_FAILED"
     | "SHOPIFY_UPDATED"
     | "UP_TO_DATE"
+    | "SHOPIFY_SYNCED"
     | "HASH_VERIFICATION_REQUIRED"
     | "SOURCE_TIMESTAMP_UNKNOWN"
     | "BASELINE_TIMESTAMP_UNKNOWN"
@@ -264,6 +265,12 @@ function buildAutoSeoEligibility(
       "auto_seo",
       normalizeProductId(product.productId),
     );
+    if (
+      queueJob?.shopifySyncStatus === "SYNCED" &&
+      isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))
+    ) {
+      return { productId: product.productId, state: "current", reason: "SHOPIFY_SYNCED" };
+    }
     if (
       queueJob?.status === "CANCELLED" &&
       queueJob.cancellationReason === "OPERATOR_QUEUE_CLEAR" &&

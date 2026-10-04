@@ -102,6 +102,7 @@ export interface GptSeoJob extends GptSeoEnqueue {
   readonly settings: GptSeoSettings;
   readonly status: GptJobStatus;
   readonly cancellationReason?: "OPERATOR_QUEUE_CLEAR";
+  readonly shopifySyncStatus?: "SYNCING" | "UNKNOWN" | "SYNCED" | "ROLLED_BACK" | "FAILED";
   readonly checkpoints: Partial<Record<GptStage, unknown>>;
   readonly result?: unknown;
   readonly error?: string;

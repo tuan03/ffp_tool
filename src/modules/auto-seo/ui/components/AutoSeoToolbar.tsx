@@ -221,12 +221,12 @@ export function AutoSeoToolbar({
                 }`}
                 title={
                   eligibilityFilter === "current"
-                    ? "Đang lọc: Đã cập nhật (click để bỏ lọc)"
+                    ? "Đang lọc: Đã SEO (click để bỏ lọc)"
                     : "Click để lọc các sản phẩm đã cập nhật SEO"
                 }
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                Đã cập nhật: {eligibilityCounts.current}
+                Đã SEO: {eligibilityCounts.current}
               </button>
 
               <button

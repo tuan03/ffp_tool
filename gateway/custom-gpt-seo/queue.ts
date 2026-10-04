@@ -96,15 +96,21 @@ export class CustomGptQueue {
       ? sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "")
       : sourceIdentity;
     const row = this.db.prepare(`
-      SELECT payload FROM gpt_jobs
-      WHERE store_id=?
-        AND json_extract(payload,'$.source')=?
-        AND json_extract(payload,'$.sourceIdentity')=?
-        AND (status != 'CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
-      ORDER BY created_at DESC, id DESC
+      SELECT gpt_jobs.payload,gpt_sync.status AS sync_status FROM gpt_jobs
+      LEFT JOIN gpt_sync ON gpt_sync.job_id=gpt_jobs.id
+      WHERE gpt_jobs.store_id=?
+        AND json_extract(gpt_jobs.payload,'$.source')=?
+        AND json_extract(gpt_jobs.payload,'$.sourceIdentity')=?
+        AND (gpt_jobs.status != 'CANCELLED' OR json_extract(gpt_jobs.payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
+      ORDER BY gpt_jobs.created_at DESC, gpt_jobs.id DESC
       LIMIT 1
     `).get(storeId, source, normalizedIdentity);
-    return row ? json(row.payload) as GptSeoJob : null;
+    if (!row) return null;
+    const job = json(row.payload) as GptSeoJob;
+    const syncStatus = String(row.sync_status ?? "");
+    return ["SYNCING", "UNKNOWN", "SYNCED", "ROLLED_BACK"].includes(syncStatus)
+      ? { ...job, shopifySyncStatus: syncStatus as GptSeoJob["shopifySyncStatus"] }
+      : job;
   }
   list(storeId: string, status?: GptJobStatus, offset = 0, provider?: ExternalSeoProvider): readonly GptSeoJob[] {
     const rows = provider

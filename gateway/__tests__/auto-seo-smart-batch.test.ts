@@ -389,6 +389,47 @@ test("eligibility marks matching queue and pending review revisions active", () 
   db.close();
 });
 
+test("eligibility marks a confirmed Shopify sync as current SEO", () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+  insertBackup(db, {
+    backupId: "synced-base",
+    productId: "synced-product",
+    status: "SENT",
+    updatedAt: "2026-10-01T00:00:00Z",
+    inputHash: "synced-hash",
+  });
+  const job = queue.enqueue({
+    storeId: "capozen",
+    source: "auto_seo",
+    sourceIdentity: "synced-product",
+    input: {
+      productId: "synced-product",
+      title: "Synced product",
+      description: "Description",
+      handle: "synced-product",
+      niche: "Rug",
+      images: [],
+    },
+    original: { updatedAt: "2026-10-01T00:00:00Z" },
+  });
+  db.prepare("INSERT INTO gpt_sync(job_id,token,status) VALUES (?,?,?)").run(job.id, "sync-token", "SYNCED");
+
+  const response = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [{ productId: "synced-product", updatedAt: "2026-10-01T00:00:00Z" }],
+  }, queue);
+
+  assert.deepEqual(response.items[0], {
+    productId: "synced-product",
+    state: "current",
+    reason: "SHOPIFY_SYNCED",
+  });
+  assert.deepEqual(queue.clearQueue("capozen"), { cleared: 0, preservedActive: 0, preservedSynced: 1 });
+  db.close();
+});
+
 interface HttpTestResponse {
   statusCode: number;
   readonly headers: Record<string, string>;
