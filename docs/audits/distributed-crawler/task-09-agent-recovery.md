@@ -5,7 +5,7 @@
 - Baseline: `8217bbe`; branch `cua_pro`, retained by explicit user instruction instead of creating a per-task branch.
 - Original specification: **18, 25–27, 30, 51–52**, specifically reconnect/restart and durable-result recovery. This does not finish every criterion in these sections.
 - Ownership: crawler agent, Coordinator reconciliation, focused tests and audit documentation only.
-- Status: implemented; awaiting user acceptance. Task 10 has not started.
+- Delivered in `fdae665`. User authorized Task 10 through conversation; no additional manual-test transcript was supplied. See the Task 10 report for integrated evidence.
 
 ## Behavior
 

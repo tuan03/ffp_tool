@@ -7,6 +7,7 @@ Never changes runtime code, public tables, container state, or PostgreSQL settin
 from __future__ import annotations
 
 import json
+import asyncio
 import argparse
 import re
 import subprocess
@@ -124,6 +125,7 @@ def main() -> None:
     modes.add_argument("--streaming", action="store_true", help="Verify Task 03 instead of final-result baseline")
     modes.add_argument("--mutations", action="store_true", help="Verify Task 04 mutation authority on PostgreSQL")
     modes.add_argument("--receipts", action="store_true", help="Verify Task 05 durable upload acknowledgements")
+    modes.add_argument("--reliability", action="store_true", help="Task 10: PostgreSQL regressions and two-agent HTTP/WSS recovery")
     arguments = parser.parse_args()
     expectation = arguments.expect
     url = local_test_url()
@@ -148,7 +150,20 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 Base.metadata.create_all(engine)
-                if arguments.mutations or arguments.receipts:
+                if arguments.reliability:
+                    verify_mutations(engine, run_number)
+                    verify_mutations(engine, run_number, receipts=True)
+                    Base.metadata.drop_all(engine)
+                    Base.metadata.create_all(engine)
+                    verify_streaming(engine, run_number)
+                    Base.metadata.drop_all(engine)
+                    Base.metadata.create_all(engine)
+                    from reliability_scenario import verify_claim_race, verify_reliability
+                    verify_claim_race(engine)
+                    Base.metadata.drop_all(engine)
+                    Base.metadata.create_all(engine)
+                    asyncio.run(verify_reliability(engine, run_number))
+                elif arguments.mutations or arguments.receipts:
                     verify_mutations(engine, run_number, receipts=arguments.receipts)
                 elif arguments.streaming:
                     verify_streaming(engine, run_number)
@@ -167,7 +182,9 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    if arguments.receipts:
+    if arguments.reliability:
+        print("PASS: Task 10 PostgreSQL and two-agent HTTP/WSS recovery verified twice; awaiting user acceptance.")
+    elif arguments.receipts:
         print("PASS: PostgreSQL upload receipts verified twice; Task 05 awaits user acceptance.")
     elif arguments.mutations:
         print("PASS: PostgreSQL mutation authority tests passed twice; Task 04 awaits user acceptance.")
