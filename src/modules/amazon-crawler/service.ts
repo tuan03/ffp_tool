@@ -34,6 +34,55 @@ import { readCrawlerMetrics, readCrawlerTrace } from "./observability-response";
 interface JobCreatedResponse {
   jobId: string;
 }
+
+export interface AgentKeySummary {
+  id: string;
+  name: string;
+  status: string;
+  agentId: string | null;
+  maxWorkers: number;
+  crawlers: string[];
+  environment: string;
+}
+
+export async function requestAgentKeyManagement(options: {
+  username: string;
+  password: string;
+  action: "list" | "create" | "rotate" | "revoke";
+  keyId?: string;
+  payload?: Readonly<Record<string, unknown>>;
+  fetchImplementation?: typeof fetch;
+}): Promise<{ keys: AgentKeySummary[]; key?: string }> {
+  const suffix = options.action === "rotate" || options.action === "revoke"
+    ? `/${encodeURIComponent(options.keyId ?? "")}/${options.action}` : "";
+  const encoded = btoa(Array.from(new TextEncoder().encode(`${options.username}:${options.password}`),
+    (byte) => String.fromCharCode(byte)).join(""));
+  const response = await (options.fetchImplementation ?? fetch)(`/api/v1/agent-keys${suffix}`, {
+    method: options.action === "list" ? "GET" : "POST",
+    headers: { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" },
+    cache: "no-store",
+    redirect: "error",
+    ...(options.action === "list" ? {} : { body: JSON.stringify(options.payload ?? {}) }),
+  });
+  if (!response.ok) {
+    throw new Error(`Agent key operation failed (HTTP ${response.status}). No automatic retry was made.`);
+  }
+  const payload: unknown = await response.json();
+  if (!isRecord(payload)) throw new Error("Invalid agent key response.");
+  const keys: AgentKeySummary[] = [];
+  if (Array.isArray(payload.keys)) {
+    for (const key of payload.keys) {
+      if (!isRecord(key) || typeof key.id !== "string" || typeof key.name !== "string" || typeof key.status !== "string"
+        || typeof key.maxWorkers !== "number" || typeof key.environment !== "string"
+        || !Array.isArray(key.crawlers) || !key.crawlers.every((crawler: unknown) => typeof crawler === "string")) {
+        throw new Error("Invalid agent key metadata.");
+      }
+      keys.push({ id: key.id, name: key.name, status: key.status, agentId: typeof key.agentId === "string" ? key.agentId : null,
+        maxWorkers: key.maxWorkers, environment: key.environment, crawlers: key.crawlers.filter((crawler: unknown): crawler is string => typeof crawler === "string") });
+    }
+  }
+  return { keys, ...(typeof payload.key === "string" ? { key: payload.key } : {}) };
+}
 function readCacheClearResult(value: unknown): AmazonCrawlerCacheClearResult {
   if (!isRecord(value) || typeof value.removedFiles !== "number" || typeof value.removedBytes !== "number") {
     throw new AmazonCrawlerServiceError("Engine returned an invalid cache response.", "INVALID_ENGINE_RESPONSE");

@@ -1,6 +1,7 @@
 import type { RouteObject } from "react-router-dom";
 
 import { AmazonCrawlerPage } from "./ui/AmazonCrawlerPage";
+import { AgentKeysPage } from "./ui/AgentKeysPage";
 import type {
   AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerCacheClearer,
@@ -41,5 +42,6 @@ export function amazonCrawlerRoutes(
         />
       ),
     },
+    { path: "amazon-crawler/agent-keys", element: <AgentKeysPage /> },
   ];
 }
