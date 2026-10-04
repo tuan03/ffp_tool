@@ -3,6 +3,71 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("worker metrics preserve store scope and window with independent mock snapshots", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/metrics?hours=168&storeId=store%20one");
+    assert.equal(init?.cache, "no-store");
+    assert.equal(init?.credentials, "same-origin");
+    return Response.json(await createMockCustomGptClient().workerMetrics("store one", 168));
+  });
+  const report = await client.workerMetrics("store one", 168);
+  assert.equal(report.series.length, 7);
+  assert.equal(report.series.reduce((sum, bucket) => sum + bucket.completed, 0), report.successfulJobs);
+  const mock = createMockCustomGptClient();
+  assert.notEqual(await mock.workerMetrics("a"), await mock.workerMetrics("a"));
+  await assert.rejects(mock.workerMetrics("a", 2), /INVALID_METRICS_WINDOW/);
+});
+
+test("worker review history is store-scoped, paginated and has fresh mock results", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/review-history?jobId=job%2F1&offset=50&storeId=store%20one");
+    assert.equal(init?.cache, "no-store");
+    return new Response(JSON.stringify({ total: 51, nextOffset: null, entries: [] }));
+  });
+  assert.equal((await client.workerReviewHistory("store one", "job/1", 50)).total, 51);
+  const mock = createMockCustomGptClient();
+  assert.notEqual(await mock.workerReviewHistory("a", "1"), await mock.workerReviewHistory("a", "1"));
+});
+
+test("revision client creates a new job through the operator endpoint with mock parity", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/revisions?storeId=demo");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { jobId: "old", requestId: "request", instructions: "Improve" });
+    return new Response(JSON.stringify({ jobId: "new", previousJobId: "old" }), { status: 201 });
+  });
+  assert.deepEqual(await client.createRevision("demo", "old", "request", "Improve"), { jobId: "new", previousJobId: "old" });
+  const mock = await createMockCustomGptClient().createRevision("demo", "old", "request");
+  assert.equal(mock.previousJobId, "old");
+  assert.notEqual(mock.jobId, "old");
+});
+
+test("backend publish client sends a revision and idempotency key without a Shopify write", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/publish?storeId=demo");
+    assert.equal(init?.credentials, "same-origin");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { jobId: "job", reviewUpdatedAt: 7, requestId: "sync" });
+    return new Response(JSON.stringify({ id: "receipt", jobId: "job", state: "QUEUED", errorCode: null, seoVersion: null }), { status: 202 });
+  });
+  assert.equal((await client.publishReview("demo", "job", 7, "sync")).state, "QUEUED");
+  assert.equal((await createMockCustomGptClient().publishStatus("demo", "job")).managed, false);
+});
+
+test("Agent Access client scopes tokens to store, disables cache and includes mutation protection", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/tokens?storeId=store%20one");
+    assert.equal(init?.cache, "no-store");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { workerId: "laptop" });
+    return new Response(JSON.stringify({ token: "test-only", tokenId: "id", expiresAt: 100 }));
+  });
+  assert.equal((await client.createAgentToken("store one", "laptop")).tokenId, "id");
+  const mock = createMockCustomGptClient();
+  assert.deepEqual((await mock.agentAccess("demo")).tokens, []);
+  assert.equal((await mock.agentRuns("demo")).total, 0);
+});
+
 test("Custom GPT client preserves store scope and reports server errors", async () => {
   let requested = "";
   const client = createCustomGptClient(async (url) => { requested = String(url); return new Response(JSON.stringify({ error: { message: "Invalid batch size" } }), { status: 400 }); });

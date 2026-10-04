@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
+test("merged client preserves worker and review routes without duplicating static cache", async () => {
+  const nginxConfig = await readFile("deploy/client/nginx.conf", "utf8");
+  for (const route of ["location = /mcp/seo-worker", "location ^~ /api/seo-agent/", "location ^~ /seo-agent-pack/", "location ^~ /api/v1/pinterest-assets/", "location = /api/review-images/extension"]) {
+    assert.equal(nginxConfig.split(route).length - 1, 1, route);
+  }
+  assert.equal(nginxConfig.split('expires 1M;').length - 1, 1);
+  const server = await readFile("gateway/server.ts", "utf8");
+  assert.match(server, /if \(url.startsWith\("\/api\/review-images\/"\)\) \{[\s\S]*?handleReviewImageHttpRequest[\s\S]*?return;\s+\}\s+if \(url.startsWith\("\/api\/seo-agent\/"\)\) \{/);
+});
+
 test("production client challenges operators before serving the SPA and protected APIs", async () => {
   const nginxConfig = await readFile("deploy/client/nginx.conf", "utf8");
 

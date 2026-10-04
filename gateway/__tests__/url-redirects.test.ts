@@ -20,6 +20,20 @@ const testStore: StoreConfig = {
   auth: { type: "static", staticToken: "shpat_test_token" },
 };
 
+test("version-guarded product update refuses an unverifiable source without sending a mutation", async () => {
+  for (const response of [{ product: null }, { product: { id: "gid://shopify/Product/123", title: "Old", variants: { edges: [] }, media: { nodes: [] } } }]) {
+    let mutations = 0;
+    const client = createMockClient(query => {
+      if (query.includes("mutation")) mutations++;
+      return response;
+    });
+    await assert.rejects(executeProductsUpdate(testStore, client, {
+      id: "gid://shopify/Product/123", expectedUpdatedAt: "2026-09-28T10:00:00Z", product: { title: "New" },
+    }));
+    assert.equal(mutations, 0);
+  }
+});
+
 function createMockClient(
   handler: (queryStr: string, variables?: Record<string, unknown>) => unknown,
 ): ShopifyGraphqlClient {
