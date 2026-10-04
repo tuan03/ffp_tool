@@ -17,7 +17,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const currentStoreId = params.get("storeId") || readActiveStoreId(window.localStorage) || "chillgen";
 
   const [activeTab, setActiveTab] = useState<"decisions" | "hierarchy" | "funnel" | "competitors" | "health">("decisions");
-  const [decisionFilter, setDecisionFilter] = useState<"ALL" | "PAUSE" | "SCALE" | "CREATIVE" | "WAIT">("ALL");
+  const [decisionFilter, setDecisionFilter] = useState<"ALL" | "PAUSE" | "SCALE" | "CREATIVE" | "WAIT" | "FUNNEL">("ALL");
   const [decisions, setDecisions] = useState<readonly DecisionCard[]>([]);
   const [aiReport, setAiReport] = useState<AiStrategicReport | null>(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
@@ -113,6 +113,15 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
   const toggleCampaign = (id: string) => {
     setExpandedCampaigns((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const filterDecision = (card: DecisionCard): boolean => {
+    if (decisionFilter === "PAUSE") return card.decision === "PAUSE_CANDIDATE" || card.decision === "REDUCE_CANDIDATE";
+    if (decisionFilter === "SCALE") return card.decision === "SCALE_CANDIDATE";
+    if (decisionFilter === "CREATIVE") return card.decision === "TEST_CREATIVE";
+    if (decisionFilter === "WAIT") return card.decision === "WAIT";
+    if (decisionFilter === "FUNNEL") return card.decision === "CHECK_LANDING" || card.decision === "CHECK_CHECKOUT" || card.decision === "INVESTIGATE_TRACKING" || card.decision === "CHECK_OFFER";
+    return true;
   };
 
   return (
@@ -425,6 +434,53 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
               </div>
             </div>
 
+            {/* AI Root-Cause Hypotheses Section */}
+            {aiReport?.rootCauseHypotheses && aiReport.rootCauseHypotheses.length > 0 && (
+              <div className="border-t border-slate-800/80 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🔬</span> Giả thuyết Nguyên nhân Gốc rễ &amp; Phản biện (Root-Cause &amp; Counter-Hypotheses)
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    Phân định rạch ròi giữa giả thuyết chính và kịch bản đối lập
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {aiReport.rootCauseHypotheses.slice(0, 4).map((hyp, hIdx) => (
+                    <div
+                      key={hIdx}
+                      className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-1.5">
+                        <span className="font-semibold text-slate-200 truncate">
+                          {hyp.entityName || hyp.entityId}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800">
+                          {hyp.verdict}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-cyan-400 uppercase">Giả thuyết chính:</span>
+                        <p className="text-slate-300 text-xs leading-relaxed">{hyp.primaryHypothesis}</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-amber-400 uppercase">Giả thuyết phản biện:</span>
+                        <p className="text-slate-400 text-xs leading-relaxed italic">{hyp.counterHypothesis}</p>
+                      </div>
+
+                      <div className="pt-1 border-t border-slate-800/60 text-[11px] text-emerald-300 flex items-start gap-1.5">
+                        <span className="font-bold shrink-0">🧪 Thử nghiệm:</span>
+                        <span>{hyp.recommendedExperiment}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 30s Creative Brief Ideas Section */}
             {aiReport?.creativeBriefs && aiReport.creativeBriefs.length > 0 && (
               <div className="border-t border-slate-800/80 pt-4 space-y-3">
@@ -550,29 +606,25 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
               >
                 <span>🛡️</span> Chờ độ chín ({decisions.filter((d) => d.decision === "WAIT").length})
               </button>
+              <button
+                onClick={() => setDecisionFilter("FUNNEL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                  decisionFilter === "FUNNEL"
+                    ? "bg-purple-500 text-white shadow-md shadow-purple-500/20"
+                    : "bg-slate-900 text-purple-300 border border-purple-900/60 hover:border-purple-700"
+                }`}
+              >
+                <span>🔍</span> Phễu &amp; Tracking ({decisions.filter((d) => d.decision === "CHECK_LANDING" || d.decision === "CHECK_CHECKOUT" || d.decision === "INVESTIGATE_TRACKING" || d.decision === "CHECK_OFFER").length})
+              </button>
             </div>
 
             <div className="text-xs text-slate-400">
-              Hiển thị <strong className="text-cyan-300">{
-                decisions.filter((d) => {
-                  if (decisionFilter === "PAUSE") return d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE";
-                  if (decisionFilter === "SCALE") return d.decision === "SCALE_CANDIDATE";
-                  if (decisionFilter === "CREATIVE") return d.decision === "TEST_CREATIVE";
-                  if (decisionFilter === "WAIT") return d.decision === "WAIT";
-                  return true;
-                }).length
-              }</strong> / {decisions.length} thẻ khuyến nghị
+              Hiển thị <strong className="text-cyan-300">{decisions.filter(filterDecision).length}</strong> / {decisions.length} thẻ khuyến nghị
             </div>
           </div>
 
           {/* Decision Cards List */}
-          {decisions.filter((d) => {
-            if (decisionFilter === "PAUSE") return d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE";
-            if (decisionFilter === "SCALE") return d.decision === "SCALE_CANDIDATE";
-            if (decisionFilter === "CREATIVE") return d.decision === "TEST_CREATIVE";
-            if (decisionFilter === "WAIT") return d.decision === "WAIT";
-            return true;
-          }).length === 0 ? (
+          {decisions.filter(filterDecision).length === 0 ? (
             <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-10 text-center space-y-2">
               <span className="text-3xl">🎉</span>
               <h4 className="text-sm font-bold text-slate-200">Không có khuyến nghị trong bộ lọc này</h4>
@@ -581,18 +633,14 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {decisions
-                .filter((d) => {
-                  if (decisionFilter === "PAUSE") return d.decision === "PAUSE_CANDIDATE" || d.decision === "REDUCE_CANDIDATE";
-                  if (decisionFilter === "SCALE") return d.decision === "SCALE_CANDIDATE";
-                  if (decisionFilter === "CREATIVE") return d.decision === "TEST_CREATIVE";
-                  if (decisionFilter === "WAIT") return d.decision === "WAIT";
-                  return true;
-                })
+                .filter(filterDecision)
                 .map((card) => {
                   const isPause = card.decision === "PAUSE_CANDIDATE" || card.decision === "REDUCE_CANDIDATE";
                   const isScale = card.decision === "SCALE_CANDIDATE";
                   const isCreative = card.decision === "TEST_CREATIVE";
                   const isWait = card.decision === "WAIT";
+                  const isTracking = card.decision === "INVESTIGATE_TRACKING";
+                  const isFunnel = card.decision === "CHECK_LANDING" || card.decision === "CHECK_CHECKOUT" || card.decision === "CHECK_OFFER";
 
                   const decisionColorClass = isPause
                     ? "bg-rose-950/80 border-rose-600 text-rose-300"
@@ -602,6 +650,10 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
                     ? "bg-amber-950/80 border-amber-600 text-amber-300"
                     : isWait
                     ? "bg-sky-950/80 border-sky-600 text-sky-300"
+                    : isTracking
+                    ? "bg-purple-950/80 border-purple-600 text-purple-300"
+                    : isFunnel
+                    ? "bg-orange-950/80 border-orange-600 text-orange-300"
                     : "bg-indigo-950/80 border-indigo-600 text-indigo-300";
 
                   const decisionIcon = isPause
@@ -612,7 +664,11 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
                     ? "🟡"
                     : isWait
                     ? "🛡️"
-                    : "🔍";
+                    : isTracking
+                    ? "🔍"
+                    : isFunnel
+                    ? "🛒"
+                    : "💡";
 
                   return (
                     <div
@@ -702,6 +758,25 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
                               </li>
                             ))}
                           </ul>
+                        </div>
+                      )}
+
+                      {/* Missing Evidence Badges */}
+                      {card.missingEvidence && card.missingEvidence.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <span>🔎</span> Bằng chứng cần kiểm tra bổ sung (Missing Evidence):
+                          </span>
+                          <div className="flex flex-wrap gap-1.5 pt-0.5">
+                            {card.missingEvidence.map((ev, evIdx) => (
+                              <span
+                                key={evIdx}
+                                className="px-2 py-0.5 rounded text-[10px] bg-slate-950/80 text-amber-200/90 border border-amber-900/40"
+                              >
+                                {ev}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       )}
 

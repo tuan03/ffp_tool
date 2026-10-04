@@ -317,6 +317,7 @@ export interface DecisionObservation {
   readonly metric: string;
   readonly current: string | number;
   readonly benchmark: string | number;
+  readonly baseline?: string | number;
   readonly unit: string;
   readonly evidenceId?: string;
 }

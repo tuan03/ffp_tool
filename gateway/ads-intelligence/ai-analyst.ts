@@ -44,7 +44,7 @@ export class AiStrategicAnalyst {
   }
 
   /**
-   * Calls Gemini 2.5 Flash via @google/genai
+   * Calls Gemini via @google/genai with resilient model selection and markdown stripping
    */
   private async callGemini(apiKey: string, input: AiAnalystInput): Promise<AiStrategicReport | null> {
     const ai = new GoogleGenAI({ apiKey });
@@ -71,7 +71,7 @@ INPUT DATA:
 - GA4 Sessions: ${reconciliation?.ga4?.sessions ?? "N/A"}, Drop: ${reconciliation?.gaps?.clickDropPct ?? "N/A"}
 - Shopify Net Sales: $${reconciliation?.shopify?.netSales ?? "N/A"}, Orders: ${reconciliation?.shopify?.totalOrders ?? "N/A"}
 - MER (Blended): ${reconciliation?.shopify?.mer ?? "N/A"}×, Blended CPA: $${reconciliation?.shopify?.blendedCpa ?? "N/A"}
-- Target CPA Benchmark: $${profile.business.targetCpa ?? 20.0}, Break-Even ROAS: ${profile.business.breakEvenRoas ?? 2.50}×
+- Target CPA Benchmark: $${profile.business?.targetCpa ?? 20.0}, Break-Even ROAS: ${profile.business?.breakEvenRoas ?? 2.50}×
 
 DECISION CARDS FROM ENGINE:
 ${JSON.stringify(
@@ -92,7 +92,7 @@ JSON OUTPUT SCHEMA:
 {
   "storeId": "${profile.storeId}",
   "generatedAt": "${new Date().toISOString()}",
-  "modelUsed": "gemini-2.5-flash",
+  "modelUsed": "gemini-2.0-flash",
   "executiveSummary": {
     "overallHealth": "HEALTHY" | "WATCH" | "CRITICAL",
     "merVerdict": "Detailed analysis of MER vs break-even ROAS",
@@ -125,29 +125,43 @@ JSON OUTPUT SCHEMA:
 }
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    // Try primary and secondary models
+    const modelsToTry = [
+      process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      "gemini-1.5-flash",
+    ];
 
-    const responseText = response.text?.trim();
-    if (!responseText) return null;
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+          },
+        });
 
-    try {
-      const parsed = JSON.parse(responseText) as AiStrategicReport;
-      if (parsed.executiveSummary && Array.isArray(parsed.rootCauseHypotheses)) {
-        return {
-          ...parsed,
-          storeId: profile.storeId,
-          generatedAt: new Date().toISOString(),
-          modelUsed: "gemini-2.5-flash",
-        };
+        const rawText = response.text?.trim();
+        if (!rawText) continue;
+
+        // Strip markdown fences if present
+        let cleanJson = rawText;
+        if (cleanJson.startsWith("```")) {
+          cleanJson = cleanJson.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        }
+
+        const parsed = JSON.parse(cleanJson) as AiStrategicReport;
+        if (parsed.executiveSummary && Array.isArray(parsed.rootCauseHypotheses)) {
+          return {
+            ...parsed,
+            storeId: profile.storeId,
+            generatedAt: new Date().toISOString(),
+            modelUsed: modelName,
+          };
+        }
+      } catch (modelErr) {
+        console.warn(`[AiStrategicAnalyst] Call with model ${modelName} failed:`, modelErr);
       }
-    } catch (parseError) {
-      console.warn("[AiStrategicAnalyst] Failed to parse Gemini response as JSON:", parseError);
     }
 
     return null;
@@ -163,8 +177,8 @@ JSON OUTPUT SCHEMA:
     const nowIso = new Date().toISOString();
 
     const merNum = reconciliation?.shopify?.mer ? Number(reconciliation.shopify.mer) : 0;
-    const breakEvenRoas = profile.business.breakEvenRoas ?? 2.50;
-    const targetCpa = profile.business.targetCpa ?? 20.0;
+    const breakEvenRoas = profile.business?.breakEvenRoas ?? 2.50;
+    const targetCpa = profile.business?.targetCpa ?? 20.0;
     const dropPctNum = reconciliation?.gaps?.clickDropPct ? parseFloat(reconciliation.gaps.clickDropPct) : 0;
 
     let overallHealth: "HEALTHY" | "WATCH" | "CRITICAL" = "WATCH";
@@ -228,6 +242,14 @@ JSON OUTPUT SCHEMA:
           "Dữ liệu có thể ổn định sớm nếu tất cả giao dịch đều thanh toán trực tiếp qua cổng thẻ trong ngày.";
         recommendedExperiment =
           "Duy trì ngân sách hiện tại, đối chiếu định kỳ với bảng đơn hàng settled trên Shopify.";
+      } else if (card.decision === "INVESTIGATE_TRACKING") {
+        verdict = "Đứt gãy đo lường kỹ thuật";
+        primaryHypothesis =
+          "Thẻ Google Tag (gtag.js) hoặc GA4 Measurement Protocol không được kích hoạt đúng cách trên các trang đích.";
+        counterHypothesis =
+          "Người dùng sử dụng ad blocker hoặc trình duyệt có chính sách bảo mật ngắt kết nối session.";
+        recommendedExperiment =
+          "Dùng GA4 DebugView kiểm tra real-time event và thiết lập Meta CAPI Server-side.";
       }
 
       return {
@@ -241,14 +263,17 @@ JSON OUTPUT SCHEMA:
       };
     });
 
-    // Generate actionable 30s video Creative Brief ideas tailored to store niche
+    // Generate actionable 30s video Creative Brief ideas tailored to store niche or flagged creative ads
     const creativeBriefs: CreativeBriefIdea[] = [];
+    const fatiguedCards = decisionCards.filter((c) => c.decision === "TEST_CREATIVE");
 
-    // Store specific niche customization
     if (storeId === "chillgen") {
+      const targetAd1 = fatiguedCards[0]?.entity.id ?? "120252593555350602";
+      const targetAdName1 = fatiguedCards[0]?.entity.name ?? "ad_image_lifestyle_weighted_cozy";
+
       creativeBriefs.push({
-        targetAdId: "120252593555350602",
-        targetAdName: "ad_image_lifestyle_weighted_cozy",
+        targetAdId: targetAd1,
+        targetAdName: targetAdName1,
         angle: "Vấn đề giấc ngủ lo âu & Giải pháp thảm/chăn giặt máy tiện lợi",
         coreProblem: "Người tiêu dùng ngại mua chăn/thảm cao cấp vì lo lắng khó giặt sạch khi dính bẩn hoặc lông thú cưng.",
         hooks: [
@@ -276,9 +301,12 @@ JSON OUTPUT SCHEMA:
         callToAction: "Thử nghiệm 30 đêm không rủi ro — Hoàn tiền 100% nếu không cải thiện giấc ngủ.",
       });
     } else if (storeId === "wrydeco") {
+      const targetAd = fatiguedCards[0]?.entity.id ?? "wrydeco-ad-001";
+      const targetAdName = fatiguedCards[0]?.entity.name ?? "wrydeco_modern_wall_art_canvas";
+
       creativeBriefs.push({
-        targetAdId: "wrydeco-ad-001",
-        targetAdName: "wrydeco_modern_wall_art_canvas",
+        targetAdId: targetAd,
+        targetAdName: targetAdName,
         angle: "Biến đổi không gian phòng khách chỉ với 1 bức tranh canvas cao cấp",
         coreProblem: "Bức tường trắng trơn đơn điệu làm ngôi nhà trông lạnh lẽo và thiếu cá tính thẩm mỹ.",
         hooks: [
@@ -291,9 +319,12 @@ JSON OUTPUT SCHEMA:
         callToAction: "Khám phá bộ sưu tập Wall Art mới nhất — Giảm thêm 20% cho đơn hàng đầu tiên.",
       });
     } else {
+      const targetAd = fatiguedCards[0]?.entity.id ?? "jeminise-ad-001";
+      const targetAdName = fatiguedCards[0]?.entity.name ?? "jeminise_custom_jewelry_gift";
+
       creativeBriefs.push({
-        targetAdId: "jeminise-ad-001",
-        targetAdName: "jeminise_custom_jewelry_gift",
+        targetAdId: targetAd,
+        targetAdName: targetAdName,
         angle: "Món quà tình cảm cá nhân hóa khắc tên làm nàng rơi nước mắt hạnh phúc",
         coreProblem: "Tặng quà dịp kỷ niệm khó tìm được món đồ vừa ý nghĩa, vừa sang trọng và độc bản.",
         hooks: [

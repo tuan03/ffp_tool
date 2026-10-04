@@ -392,6 +392,142 @@ test("AiStrategicAnalyst: produces executive diagnosis, root causes, and 30s cre
   assert.ok(firstBrief.callToAction);
 });
 
+test("DecisionEngine Rule 5: flags INVESTIGATE_TRACKING when GA4 connection fails or drop >= 50%", () => {
+  const engine = new DecisionEngine();
+  const profile = loadStoreAdsProfile("chillgen");
+  const summary = createMockSummary();
+  const reconciliation = createMockReconciliation({
+    ga4: {
+      status: "ERROR",
+      sessions: 0,
+      ecommercePurchases: 0,
+      purchaseRevenue: 0,
+      clickToSessionDropPct: "100.0%",
+    },
+    gaps: {
+      purchaseDiscrepancy: 0,
+      revenueDiscrepancy: "0.00",
+      clickDropPct: "100.0%",
+      notes: [],
+    },
+  });
+
+  const cards = engine.evaluate({
+    summary,
+    campaigns: [],
+    reconciliation,
+    profile,
+  });
+
+  const trackingCard = cards.find((c) => c.decision === "INVESTIGATE_TRACKING");
+  assert.ok(trackingCard, "Expected an INVESTIGATE_TRACKING card when GA4 status is ERROR and drop is 100%");
+  assert.equal(trackingCard.priority, "HIGH");
+  assert.ok(trackingCard.blockedActions.includes("SCALE_CAMPAIGN_BUDGET"));
+  assert.ok(trackingCard.observations.some((obs) => obs.metric === "ga4_connection_status" && obs.current === "ERROR"));
+});
+
+test("DecisionEngine Campaign-Level Rules: evaluates Rule 2 burn and Rule 3 scale with >= 3 purchases", () => {
+  const engine = new DecisionEngine();
+  const profile = loadStoreAdsProfile("chillgen");
+  const summary = createMockSummary();
+
+  const campaigns: readonly AdsHierarchyCampaign[] = [
+    {
+      id: "camp-burn-only",
+      name: "High Spend Zero Purchase Campaign",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+      objective: "OUTCOME_SALES",
+      budgetType: "CAMPAIGN",
+      dailyBudget: "100.00",
+      spend: "120.00", // > 2 * 18 = 36 USD
+      purchases: "0",
+      purchaseValue: "0.00",
+      cpa: null,
+      roas: null,
+      adsets: [],
+    },
+    {
+      id: "camp-scale-3-purchases",
+      name: "Star Campaign with 3 Purchases",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+      objective: "OUTCOME_SALES",
+      budgetType: "CAMPAIGN",
+      dailyBudget: "100.00",
+      spend: "45.00",
+      purchases: "3", // exactly 3 purchases
+      purchaseValue: "180.00",
+      cpa: "15.00", // <= 18 target
+      roas: "4.00", // >= 2.50
+      adsets: [],
+    },
+  ];
+
+  const cards = engine.evaluate({
+    summary,
+    campaigns,
+    reconciliation: createMockReconciliation(),
+    profile,
+  });
+
+  const burnCampCard = cards.find((c) => c.entity.id === "camp-burn-only");
+  assert.ok(burnCampCard, "Expected PAUSE_CANDIDATE for burned campaign");
+  assert.equal(burnCampCard.decision, "PAUSE_CANDIDATE");
+
+  const scaleCampCard = cards.find((c) => c.entity.id === "camp-scale-3-purchases");
+  assert.ok(scaleCampCard, "Expected SCALE_CANDIDATE for 3-purchase star campaign");
+  assert.equal(scaleCampCard.decision, "SCALE_CANDIDATE");
+});
+
+test("DecisionEngine Edge Cases: handles undefined adsets, undefined ads, and invalid periodEnd safely without NaN or crash", () => {
+  const engine = new DecisionEngine();
+  const profile = loadStoreAdsProfile("chillgen");
+  const summary = createMockSummary({
+    periodEnd: "invalid-date-string",
+    atc: "1,200", // Comma-formatted
+    checkout: "300",
+  });
+
+  const campaignsWithMissingAdsets = [
+    {
+      id: "camp-no-adsets",
+      name: "Campaign without adsets",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+      objective: "OUTCOME_SALES",
+      budgetType: "CAMPAIGN" as const,
+      dailyBudget: "50.00",
+      spend: "10.00",
+      purchases: "0",
+      purchaseValue: "0.00",
+      cpa: null,
+      roas: null,
+      adsets: undefined as any,
+    },
+  ];
+
+  const cards = engine.evaluate({
+    summary,
+    campaigns: campaignsWithMissingAdsets,
+    reconciliation: null,
+    profile,
+  });
+
+  assert.ok(cards.length > 0);
+  const waitCard = cards.find((c) => c.decision === "WAIT");
+  assert.ok(waitCard, "Expected WAIT card");
+  // Ensure no NaN in string summary or observations
+  assert.ok(!waitCard.summary.includes("NaN"), "Summary must not contain NaN");
+  const ageObs = waitCard.observations.find((obs) => obs.metric === "data_maturity_age_days");
+  assert.ok(typeof ageObs?.current === "number" && !isNaN(ageObs.current), "Age must be valid number");
+
+  const checkoutCard = cards.find((c) => c.decision === "CHECK_CHECKOUT");
+  assert.ok(checkoutCard, "Expected CHECK_CHECKOUT card with comma-formatted atc 1,200");
+  const atcObs = checkoutCard.observations.find((obs) => obs.metric === "add_to_cart_events");
+  assert.equal(atcObs?.current, 1200);
+});
+
 test("HTTP Endpoints: /api/ads-intelligence/decisions and /ai-analyze respond with JSON and headers", async () => {
   // Test GET /api/ads-intelligence/decisions?storeId=chillgen
   const decReq = new http.IncomingMessage(null as any);
@@ -400,9 +536,12 @@ test("HTTP Endpoints: /api/ads-intelligence/decisions and /ai-analyze respond wi
 
   let decStatus = 0;
   let decBody = "";
+  const decHeaders: Record<string, string> = {};
   const decRes = {
     statusCode: 200,
-    setHeader: () => {},
+    setHeader: (k: string, v: string) => {
+      decHeaders[k.toLowerCase()] = v;
+    },
     end: (chunk: string) => {
       decBody = chunk;
     },
@@ -416,6 +555,8 @@ test("HTTP Endpoints: /api/ads-intelligence/decisions and /ai-analyze respond wi
   const decHandled = await handleAdsIntelligenceHttpRequest(decReq, decRes);
   assert.equal(decHandled, true);
   assert.equal(decStatus, 200);
+  assert.ok(decHeaders["content-type"].includes("application/json"));
+  assert.ok(decHeaders["x-ads-cache"] === "HIT" || decHeaders["x-ads-cache"] === "MISS");
   const parsedDec = JSON.parse(decBody);
   assert.ok(Array.isArray(parsedDec));
   assert.ok(parsedDec.length > 0);
@@ -427,9 +568,12 @@ test("HTTP Endpoints: /api/ads-intelligence/decisions and /ai-analyze respond wi
 
   let aiStatus = 0;
   let aiBody = "";
+  const aiHeaders: Record<string, string> = {};
   const aiRes = {
     statusCode: 200,
-    setHeader: () => {},
+    setHeader: (k: string, v: string) => {
+      aiHeaders[k.toLowerCase()] = v;
+    },
     end: (chunk: string) => {
       aiBody = chunk;
     },
@@ -443,8 +587,10 @@ test("HTTP Endpoints: /api/ads-intelligence/decisions and /ai-analyze respond wi
   const aiHandled = await handleAdsIntelligenceHttpRequest(aiReq, aiRes);
   assert.equal(aiHandled, true);
   assert.equal(aiStatus, 200);
+  assert.ok(aiHeaders["x-ads-cache"] === "HIT" || aiHeaders["x-ads-cache"] === "MISS");
   const parsedAi = JSON.parse(aiBody);
   assert.equal(parsedAi.storeId, "chillgen");
   assert.ok(parsedAi.executiveSummary);
   assert.ok(Array.isArray(parsedAi.creativeBriefs));
 });
+

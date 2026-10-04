@@ -4,6 +4,7 @@
  */
 import type http from "node:http";
 import { adsIntelligenceService } from "./service";
+import { adsIntelligenceCache } from "./cache";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = statusCode;
@@ -69,9 +70,12 @@ export async function handleAdsIntelligenceHttpRequest(
       return true;
     }
 
-    if (pathname === "/api/ads-intelligence/decisions" && req.method === "GET") {
+    if (pathname === "/api/ads-intelligence/decisions" && (req.method === "GET" || req.method === "POST")) {
+      const isCached = !forceRefresh && adsIntelligenceCache.get(`${storeId}:decisions`) !== null;
       const decisions = await adsIntelligenceService.getDecisionCards(storeId, forceRefresh);
-      sendJson(res, 200, decisions);
+      sendJson(res, 200, decisions, {
+        "x-ads-cache": isCached ? "HIT" : "MISS",
+      });
       return true;
     }
 
