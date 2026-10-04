@@ -387,6 +387,14 @@ class ClientStore:
             connection.execute("UPDATE leases SET status='cancelled', updated_at=? WHERE job_id=?", (utc_iso(), job_id))
             connection.commit()
 
+    def cancel_task(self, task_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE leases SET status='cancelled', updated_at=? WHERE task_id=?",
+                (utc_iso(), task_id),
+            )
+            connection.commit()
+
     def is_task_cancelled(self, task_id: str) -> bool:
         with self._connection() as connection:
             row = connection.execute("SELECT status FROM leases WHERE task_id=?", (task_id,)).fetchone()

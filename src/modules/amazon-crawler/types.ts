@@ -74,6 +74,7 @@ export interface AmazonCrawlerActiveVariant {
 }
 
 export interface AmazonCrawlerProgressItem {
+  taskId?: string;
   source: string;
   asin: string;
   phase: AmazonCrawlerProgress["phase"];
@@ -482,6 +483,7 @@ export interface AmazonCrawlerJobController {
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
   cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
+  cancelTask(taskId: string): Promise<void>;
   invalidateProductCache(asin: string, amazonZip: string): Promise<AmazonCrawlerCacheClearResult>;
   clearTemporaryData(): Promise<AmazonCrawlerCacheClearResult>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;

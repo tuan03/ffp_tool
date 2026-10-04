@@ -643,6 +643,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         await asyncio.to_thread(store.purge_stopped_jobs)
         return snapshot
 
+    @app.post("/api/v1/crawl-tasks/{task_id}/cancel")
+    async def cancel_task(task_id: str) -> dict[str, Any]:
+        connected_client_ids = await manager.connected_client_ids()
+        cancellation = await asyncio.to_thread(store.cancel_task, task_id, connected_client_ids)
+        if cancellation is None:
+            raise HTTPException(status_code=404, detail="Crawl task was not found.")
+        if cancellation["status"] == "cancelling" and cancellation.get("clientId"):
+            await manager.send_to_client(str(cancellation["clientId"]), {
+                "type": "cancel_task",
+                "taskId": cancellation["taskId"],
+                "leaseId": cancellation["leaseId"],
+            })
+        return cancellation
+
     @app.post("/api/v1/crawl-jobs/{job_id}/replace", status_code=202)
     async def replace_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         source_job = store.get_job(job_id)

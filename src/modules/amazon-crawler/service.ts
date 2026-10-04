@@ -732,6 +732,12 @@ export function createAmazonCrawlerJobController({
       const response = await fetchImplementation(`${jobUrl(jobId)}/cancel${query}`, { method: "POST" });
       return readJobSnapshot(await readJson(response));
     },
+    async cancelTask(taskId) {
+      await readJson(await fetchImplementation(
+        `${baseUrl}/api/v1/crawl-tasks/${encodeURIComponent(taskId)}/cancel`,
+        { method: "POST" },
+      ));
+    },
     async invalidateProductCache(asin, amazonZip) {
       const path = `${baseUrl}/api/v1/clients/cache/products/${encodeURIComponent(asin)}`;
       const response = await fetchImplementation(`${path}?amazonZip=${encodeURIComponent(amazonZip)}`, { method: "DELETE" });

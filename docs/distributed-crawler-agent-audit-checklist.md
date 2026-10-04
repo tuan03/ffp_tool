@@ -148,7 +148,7 @@ Task 17 dùng thao tác revoke qua fixture/backend đã bảo vệ để test; T
 | [x] | 25 | Chốt thiết kế isolation và ownership worker | 28–29, 35, 52 (thiết kế worker) | 24; E4.2 | Audit thread/process/IPC, Windows/CAPTCHA constraints | QA tự động; xem báo cáo nhóm 25–27 |
 | [x] | 26 | Worker crash không làm chết agent/control loop | 27–28, 52 (worker recovery) | 25; E4.2 | Kill child test, worker khác và outbox sống | QA tự động; không restart agent |
 | [x] | 27 | Watchdog xử lý hang/crash storm đúng phạm vi | 6, 28–29, 36 (watchdog) | 26; E4.2 | Kill đúng process tree; bounded restart/degraded | QA tự động; không đụng browser ngoài worker tree |
-| [ ] | 28 | Hard stop/cancel task chỉ tác động đúng scope | 8–9, 32, 35 (hard stop/cancel task) | 27; E3.2–3.3 | Per-task cancellation, grace/escalation, late results | Dừng một task; task khác không bị hủy |
+| [x] | 28 | Hard stop/cancel task chỉ tác động đúng scope | 8–9, 32, 35 (hard stop/cancel task) | 27; E3.2–3.3 | Per-task API/WS, reconnect replay, late-result fence, sibling isolation, cooperative token + 10s escalation; 178 focused tests pass | QA code tự động trên Windows; process-tree escalation áp dụng cho Amazon worker cô lập |
 | [ ] | 29 | Cancel job không bị hồi sinh sau reconnect | 12–13, 35, 46 (cancel job) | 28; E3.3 | Queued/running/late results, downstream boundary | Hủy job mẫu, xem lý do/giới hạn tác động |
 | [ ] | 30 | Purge pending không đụng running/outbox | 9–10, 17, 33, 48 (purge pending) | 29; E3.4 | Mixed queues, repeat/offline command, audit | Xác nhận counts trước/sau purge |
 | [ ] | 31 | Purge all theo scope giữ kết quả chưa ACK | 9–10, 17, 33, 48 (purge all) | 30; E3.4 | Optional running cancel, offline replay, confirmation | Thử PURGE dữ liệu test và quarantine |

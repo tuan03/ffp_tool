@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import gzip
 import json
 import random
@@ -107,6 +108,7 @@ class DistributedCrawlerAgent:
         self.completion_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.active: dict[str, dict[str, Any]] = {}
         self.cancel_events: dict[str, set[threading.Event]] = {}
+        self.task_cancel_events: dict[str, threading.Event] = {}
         self._cancel_events_lock = threading.Lock()
         self.executing_task_ids: set[str] = set()
         self.stop_event = asyncio.Event()
@@ -264,14 +266,10 @@ class DistributedCrawlerAgent:
         for event in events:
             event.set()
 
-    def _register_cancel_event(self, job_id: str, event: threading.Event) -> None:
+    def _register_cancel_event(self, job_id: str, event: threading.Event, task_id: str | None = None) -> None:
         with self._cancel_events_lock:
             self.cancel_events.setdefault(job_id, set()).add(event)
-        if any(
-            self.store.is_task_cancelled(task_id)
-            for task_id, assignment in self.active.items()
-            if str(assignment.get("jobId") or "") == job_id
-        ):
+        if task_id is not None and self.store.is_task_cancelled(task_id):
             event.set()
 
     def _unregister_cancel_event(self, job_id: str, event: threading.Event) -> None:
@@ -292,19 +290,37 @@ class DistributedCrawlerAgent:
         for event in events:
             event.set()
         with self._running_crawlers_lock:
-            crawler = self._running_crawlers.get(job_id)
+            crawlers = [
+                self._running_crawlers.get(task_id)
+                for task_id, assignment in self.active.items()
+                if str(assignment.get("jobId") or "") == job_id
+            ]
+            if not crawlers and self._running_crawlers.get(job_id) is not None:
+                crawlers.append(self._running_crawlers[job_id])
         self._debug_event(
             "stop_signal_applied",
             jobId=job_id,
             cancelEventCount=len(events),
-            hasRunningCrawler=crawler is not None,
+            hasRunningCrawler=any(crawler is not None for crawler in crawlers),
         )
-        if crawler is not None:
-            threading.Thread(
-                target=crawler.browser_pool.close,
-                name=f"stop-browser-{job_id[:8]}",
-                daemon=True,
-            ).start()
+        for crawler in crawlers:
+            if crawler is not None:
+                threading.Thread(target=crawler.browser_pool.close, name=f"stop-task-{job_id[:8]}", daemon=True).start()
+
+    def _cancel_task(self, task_id: str, lease_id: str) -> bool:
+        assignment = self.active.get(task_id)
+        if assignment is None or str(assignment.get("leaseId") or "") != lease_id:
+            return False
+        with self._cancel_events_lock:
+            event = self.task_cancel_events.get(task_id)
+            if event is not None:
+                event.set()
+        self.store.cancel_task(task_id)
+        with self._running_crawlers_lock:
+            crawler = self._running_crawlers.get(task_id)
+        if crawler is not None and not isinstance(crawler, ProcessCrawler):
+            threading.Thread(target=crawler.browser_pool.close, name=f"cancel-task-{task_id[:8]}", daemon=True).start()
+        return True
 
     def set_paused(self, is_paused: bool) -> None:
         self._locally_paused = is_paused
@@ -400,25 +416,29 @@ class DistributedCrawlerAgent:
             for assignment in self.store.recover_assignments()
         }
         discard_ids = {str(value) for value in acknowledgement.get("discardTaskIds") or []}
+        cancel_task_ids = {str(value) for value in acknowledgement.get("cancelTaskIds") or []}
         cancelled_job_ids = {str(value) for value in acknowledgement.get("cancelledJobIds") or []}
         for job_id in cancelled_job_ids:
             self._cancel_job(job_id)
-        discarded_job_ids = {
-            str(self.active[task_id].get("jobId") or "")
-            for task_id in discard_ids
-            if task_id in self.active and task_id not in self.executing_task_ids
-        }
-        for job_id in discarded_job_ids:
-            with self._cancel_events_lock:
-                events = list(self.cancel_events.get(job_id, set()))
-            for event in events:
-                event.set()
+        for task_id in cancel_task_ids:
+            assignment = self.active.get(task_id) or self.store.assignment(task_id)
+            if assignment is None:
+                continue
+            lease_id = str(assignment["leaseId"])
+            self._cancel_task(task_id, lease_id)
+            await self.outbound_queue.put({"type": "cancel_received", "taskId": task_id, "leaseId": lease_id})
+            if task_id not in self.executing_task_ids:
+                self.store.discard_task(task_id)
+                self.active.pop(task_id, None)
+                await self.outbound_queue.put({"type": "cancel_ack", "taskId": task_id, "leaseId": lease_id})
         for task_id in discard_ids:
             assignment = self.active.get(task_id) or self.store.assignment(task_id)
             if assignment is not None:
                 self.store.quarantine_attempt(task_id, str(assignment["leaseId"]), "reconcile_discarded")
                 self._dashboard_update("finish", assignment, "cancelled")
                 self._dashboard_update("delivery", task_id, str(assignment["leaseId"]), "cancelled")
+                if task_id in self.executing_task_ids:
+                    self._cancel_task(task_id, str(assignment["leaseId"]))
             if task_id not in self.executing_task_ids:
                 self.active.pop(task_id, None)
                 self.store.discard_task(task_id)
@@ -699,6 +719,18 @@ class DistributedCrawlerAgent:
                 if job_id and (job_id not in self._pending_stop_cleanups or generation > current_generation):
                     self._pending_stop_cleanups[job_id] = generation
                     asyncio.create_task(self._complete_stop_cleanup(job_id, generation))
+            elif message_type == "cancel_task":
+                task_id = str(payload.get("taskId") or "")
+                lease_id = str(payload.get("leaseId") or "")
+                assignment = self.active.get(task_id)
+                if assignment is None or str(assignment.get("leaseId") or "") != lease_id:
+                    continue
+                self._cancel_task(task_id, lease_id)
+                await self.outbound_queue.put({
+                    "type": "cancel_received",
+                    "taskId": task_id,
+                    "leaseId": lease_id,
+                })
             elif message_type == "pause":
                 self.set_paused(bool(payload.get("paused", True)))
             elif message_type == "clear_cache":
@@ -980,9 +1012,13 @@ class DistributedCrawlerAgent:
             for assignment in batch:
                 self._dashboard_update("start", assignment)
             self._publish_status()
-            cancel_event = threading.Event()
             job_id = str(first["jobId"])
-            self._register_cancel_event(job_id, cancel_event)
+            task_events = {task_id: threading.Event() for task_id in task_ids}
+            with self._cancel_events_lock:
+                self.task_cancel_events.update(task_events)
+            for task_id, task_event in task_events.items():
+                self._register_cancel_event(job_id, task_event, task_id)
+            cancel_event = threading.Event()
             channel = str(first.get("channel", "amazon")).lower()
             try:
                 if channel == "pinterest":
@@ -1003,19 +1039,25 @@ class DistributedCrawlerAgent:
                         },
                     })
             finally:
-                self._unregister_cancel_event(job_id, cancel_event)
+                for task_event in task_events.values():
+                    self._unregister_cancel_event(job_id, task_event)
+                with self._cancel_events_lock:
+                    for task_id in task_ids:
+                        self.task_cancel_events.pop(task_id, None)
                 self.executing_task_ids.difference_update(task_ids)
 
     def _run_review_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         for assignment in batch:
-            if cancel_event.is_set():
+            task_id = str(assignment["taskId"])
+            task_cancel_event = self.task_cancel_events.get(task_id, cancel_event)
+            if task_cancel_event.is_set():
                 asyncio.run_coroutine_threadsafe(self.completion_queue.put({
                     "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
                 }), loop)
                 continue
 
             def progress(update: dict[str, Any]) -> None:
-                if cancel_event.is_set():
+                if task_cancel_event.is_set():
                     return
                 self._captcha_waiting = update.get("phase") == "captcha"
                 asyncio.run_coroutine_threadsafe(self.outbound_queue.put({
@@ -1029,9 +1071,9 @@ class DistributedCrawlerAgent:
                     str(assignment["source"]), root=self.project_root,
                     settings=self.config.limits.apply(dict(assignment.get("settings") or {})),
                     proxy_config_path=self.config.proxy_config_path,
-                    progress=progress, cancel_event=cancel_event,
+                    progress=progress, cancel_event=task_cancel_event,
                 )
-                if cancel_event.is_set():
+                if task_cancel_event.is_set():
                     asyncio.run_coroutine_threadsafe(self.completion_queue.put({
                         "type": "cancelled", "taskId": assignment["taskId"], "leaseId": assignment["leaseId"],
                     }), loop)
@@ -1054,6 +1096,36 @@ class DistributedCrawlerAgent:
                 self._captcha_waiting = False
 
     def _run_batch(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
+        if self.crawler_factory is not AmazonCrawler or len(batch) == 1:
+            assignment = batch[0]
+            task_event = self.task_cancel_events.get(str(assignment["taskId"]), cancel_event)
+            self._run_batch_group(batch, task_event, loop)
+            return
+
+        # A disposable process must own one task only; otherwise terminating one
+        # hung task would also terminate its siblings in the same process tree.
+        with ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="crawler-task") as executor:
+            futures = {
+                executor.submit(
+                    self._run_batch_group,
+                    [assignment],
+                    self.task_cancel_events.get(str(assignment["taskId"]), cancel_event),
+                    loop,
+                ): assignment
+                for assignment in batch
+            }
+            for future, assignment in futures.items():
+                try:
+                    future.result()
+                except Exception as error:
+                    asyncio.run_coroutine_threadsafe(self.completion_queue.put({
+                        "type": "failed",
+                        "taskId": assignment["taskId"],
+                        "leaseId": assignment["leaseId"],
+                        "error": {"message": f"Crawler task could not start or complete: {redact(error)}", "retryable": True},
+                    }), loop)
+
+    def _run_batch_group(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         first = batch[0]
         effective_settings = self.config.limits.apply(dict(first.get("settings") or {}))
         settings = CrawlSettings.from_api(effective_settings)
@@ -1191,7 +1263,7 @@ class DistributedCrawlerAgent:
             **worker_health_arguments,
         )
         with self._running_crawlers_lock:
-            self._running_crawlers[str(first["jobId"])] = crawler
+            self._running_crawlers[str(first["taskId"])] = crawler
         try:
             trace_arguments = {
                 "trace_contexts": {str(assignment["asin"]): {
@@ -1214,8 +1286,8 @@ class DistributedCrawlerAgent:
                     enqueue_cancelled(assignment)
             crawler.browser_pool.close()
             with self._running_crawlers_lock:
-                if self._running_crawlers.get(str(first["jobId"])) is crawler:
-                    self._running_crawlers.pop(str(first["jobId"]), None)
+                if self._running_crawlers.get(str(first["taskId"])) is crawler:
+                    self._running_crawlers.pop(str(first["taskId"]), None)
             if self.dashboard is None:
                 self._captcha_waiting = False
             loop.call_soon_threadsafe(self._publish_status)
@@ -1316,6 +1388,7 @@ class DistributedCrawlerAgent:
         job_id = str(first.get("jobId") or "")
         task_id = str(first.get("taskId") or "")
         lease_id = str(first.get("leaseId") or "")
+        cancel_event = self.task_cancel_events.get(task_id, cancel_event)
 
         def enqueue_cancelled() -> None:
             asyncio.run_coroutine_threadsafe(self.completion_queue.put({
@@ -1342,6 +1415,9 @@ class DistributedCrawlerAgent:
             loop.call_soon_threadsafe(self._dashboard_progress, batch, progress_payload)
 
         def enqueue_completed(payload: dict[str, Any]) -> None:
+            if cancel_event.is_set():
+                enqueue_cancelled()
+                return
             core_result = {
                 "status": "completed",
                 "products": [],

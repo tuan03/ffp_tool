@@ -2497,6 +2497,49 @@ class CoordinatorStore(CoordinatorObservability):
             self._refresh_job(session, job_id)
             return self._job_snapshot(session, job)
 
+    def cancel_task(self, task_id: str, connected_client_ids: set[str] | None = None) -> dict[str, Any] | None:
+        """Cancel one crawl task without changing its job or sibling tasks."""
+        now = utc_now()
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
+            if task is None:
+                return None
+            job = session.get(CrawlJob, task.job_id)
+            if job is None:
+                return None
+            if task.status in TERMINAL_TASK_STATUSES:
+                return {"taskId": task.id, "jobId": task.job_id, "status": task.status,
+                        "clientId": task.assigned_client_id, "leaseId": task.lease_id}
+            owner_is_connected = (
+                task.status in {"leased", "running", "cancelling"}
+                and bool(task.lease_id)
+                and task.assigned_client_id is not None
+                and (connected_client_ids is None or task.assigned_client_id in connected_client_ids)
+            )
+            if owner_is_connected:
+                task.status = "cancelling"
+                attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == task.lease_id))
+                if attempt is not None and attempt.status not in {"cancelled", "completed"}:
+                    attempt.status = "cancelling"
+                status = "cancelling"
+            else:
+                task.status = "cancelled"
+                task.completed_at = now
+                task.lease_expires_at = None
+                attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == task.lease_id)) if task.lease_id else None
+                if attempt is not None:
+                    attempt.status = "cancelled"
+                    attempt.finished_at = now
+                status = "cancelled"
+            self._event(session, task.job_id, "task_cancel_requested", {
+                "taskId": task.id,
+                "clientId": task.assigned_client_id,
+                "status": status,
+            })
+            self._refresh_job(session, task.job_id)
+            return {"taskId": task.id, "jobId": task.job_id, "status": status,
+                    "clientId": task.assigned_client_id, "leaseId": task.lease_id}
+
     def acknowledge_stop_cleanup(
         self,
         client_id: str,
@@ -2593,6 +2636,7 @@ class CoordinatorStore(CoordinatorObservability):
         resume: list[str] = []
         upload: list[str] = []
         discard: list[str] = []
+        cancel_tasks: list[str] = []
         cancelled_jobs: set[str] = set()
         refreshed_job_ids: set[str] = set()
         now = utc_now()
@@ -2625,9 +2669,10 @@ class CoordinatorStore(CoordinatorObservability):
                 if task is None or job is None:
                     discard.append(task_id)
                     continue
-                if job.status in {"cancelling", "cancelled"} or task.status in {"cancelling", "cancelled"}:
+                if job.status in {"cancelling", "cancelled"} or task.status == "cancelled":
                     discard.append(task_id)
-                    cancelled_jobs.add(job_id)
+                    if job.status in {"cancelling", "cancelled"}:
+                        cancelled_jobs.add(job_id)
                     if task.assigned_client_id == client_id and task.lease_id == lease_id:
                         task.status = "cancelled"
                         task.completed_at = task.completed_at or now
@@ -2637,6 +2682,12 @@ class CoordinatorStore(CoordinatorObservability):
                             attempt.status = "cancelled"
                             attempt.finished_at = attempt.finished_at or now
                         refreshed_job_ids.add(job_id)
+                    continue
+                if task.status == "cancelling":
+                    if task.assigned_client_id == client_id and task.lease_id == lease_id:
+                        cancel_tasks.append(task_id)
+                    else:
+                        discard.append(task_id)
                     continue
                 if task.result is not None and task.result.client_id == client_id and task.result.lease_id == lease_id:
                     upload.append(task_id)
@@ -2660,6 +2711,7 @@ class CoordinatorStore(CoordinatorObservability):
             "resumeTaskIds": resume,
             "uploadTaskIds": upload,
             "discardTaskIds": discard,
+            "cancelTaskIds": cancel_tasks,
             "cancelledJobIds": sorted(cancelled_jobs),
         }
 
@@ -3224,6 +3276,7 @@ class CoordinatorStore(CoordinatorObservability):
             item = next((dict(value) for value in raw_items if isinstance(value, dict)), {})
             public_status = task.status if task.status in TERMINAL_TASK_STATUSES | {"cancelling"} else ("running" if task.status in {"leased", "running"} else "queued")
             item.update({
+                "taskId": task.id,
                 "source": task.source,
                 "asin": task.asin,
                 "status": public_status,

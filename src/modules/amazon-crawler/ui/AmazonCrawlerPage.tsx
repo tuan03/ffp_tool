@@ -255,6 +255,7 @@ export function AmazonCrawlerPage({
   const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
   const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
   const [controlledJobId, setControlledJobId] = useState<string | null>(null);
+  const [controlledTaskId, setControlledTaskId] = useState<string | null>(null);
   const [cancellationJobId, setCancellationJobId] = useState<string | null>(null);
   const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
   const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
@@ -1097,6 +1098,29 @@ export function AmazonCrawlerPage({
       setJobControlMessage(caught instanceof Error ? caught.message : "Không dừng được job.");
     } finally {
       setControlledJobId(null);
+    }
+  }
+
+  async function handleCancelTask(jobId: string, taskId: string, asin: string): Promise<void> {
+    if (!amazonCrawlerJobs || controlledJobId || controlledTaskId) return;
+    setControlledTaskId(taskId);
+    setJobControlMessage(null);
+    try {
+      await amazonCrawlerJobs.cancelTask(taskId);
+      setJobs((current) => current.map((job) => job.jobId !== jobId ? job : {
+        ...job,
+        progress: {
+          ...job.progress,
+          items: job.progress.items?.map((item) => item.taskId === taskId ? { ...item, status: "cancelling" } : item),
+        },
+      }));
+      setJobControlTone("info");
+      setJobControlMessage(`Đã gửi yêu cầu hủy task ${asin}; các task khác trong job tiếp tục chạy.`);
+    } catch (caught: unknown) {
+      setJobControlTone("error");
+      setJobControlMessage(caught instanceof Error ? caught.message : `Không hủy được task ${asin}.`);
+    } finally {
+      setControlledTaskId(null);
     }
   }
 
@@ -2086,6 +2110,23 @@ export function AmazonCrawlerPage({
                       <p className="text-sm text-slate-300">
                         {job.status} · {job.progress.completed}/{job.progress.total} link
                       </p>
+                      {job.progress.items?.filter((task): task is typeof task & { taskId: string } =>
+                        Boolean(task.taskId) && ["queued", "running", "cancelling"].includes(task.status)
+                      ).map((task) => (
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-400" key={task.taskId}>
+                          <span>{task.asin} · {task.status}</span>
+                          {task.status !== "cancelling" ? (
+                            <button
+                              className="rounded border border-rose-800 px-2 py-0.5 text-rose-300 disabled:opacity-50"
+                              type="button"
+                              disabled={controlledTaskId !== null || controlledJobId !== null || job.status === "cancelling"}
+                              onClick={() => void handleCancelTask(job.jobId, task.taskId, task.asin)}
+                            >
+                              {controlledTaskId === task.taskId ? "Đang hủy..." : "Hủy task"}
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
                       {cancellationMessage ? (
                         <p className={job.status === "cancelled" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
                           {cancellationMessage}

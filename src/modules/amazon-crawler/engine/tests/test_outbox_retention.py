@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import asyncio
 import sqlite3
+import threading
 import urllib.error
 from contextlib import closing
 from pathlib import Path
@@ -173,6 +174,18 @@ class AgentRetentionTests(unittest.IsolatedAsyncioTestCase):
         self.spool()
         self.assertEqual(len(self.agent.store.quarantined_uploads()), 2)
         await self.assert_not_published()
+
+    async def test_reconcile_discard_cancels_only_the_stale_task_in_a_shared_job(self):
+        selected = threading.Event()
+        sibling = threading.Event()
+        self.agent.active["sibling"] = {"taskId": "sibling", "jobId": "job", "leaseId": "b"}
+        self.agent.executing_task_ids.update({"task", "sibling"})
+        self.agent.task_cancel_events.update({"task": selected, "sibling": sibling})
+
+        await self.agent._apply_reconciliation({"discardTaskIds": ["task"]})
+
+        self.assertTrue(selected.is_set())
+        self.assertFalse(sibling.is_set())
 
     async def test_http_conflict_quarantines_attempt_and_does_not_retry_publish(self):
         error = urllib.error.HTTPError("fixture", 409, "conflict", {}, None)

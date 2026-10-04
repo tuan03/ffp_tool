@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 from datetime import timedelta
@@ -62,6 +63,17 @@ class ConcurrentStreamCrawler(HungCheckpointCrawler):
 class ExitedWorkerCrawler(HungCheckpointCrawler):
     def run(self, **_kwargs):
         os._exit(17)
+
+
+class CooperativeCancelCrawler(HungCheckpointCrawler):
+    def __init__(self, *, cancel_event, **kwargs):
+        super().__init__(**kwargs)
+        self.cancel_event = cancel_event
+
+    def run(self, **_kwargs):
+        while not self.cancel_event.wait(0.05):
+            pass
+        raise InterruptedError("cancelled cooperatively")
 
 
 class HungBatchCrawler(HungCheckpointCrawler):
@@ -181,6 +193,41 @@ class TimeoutTests(unittest.TestCase):
             self.assertEqual(output["errors"][0]["stage"], "asin")
             self.assertTrue(output["errors"][0]["isRetryable"])
             self.assertIsNotNone(RawFamilyCache(Path(directory) / ".runtime" / "cache").load_checkpoint("B012345678:90001:us-v1"))
+
+    def test_worker_cancellation_reaches_child_before_force_termination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cancel_event = threading.Event()
+            crawler = ProcessCrawler(
+                root=Path(directory), settings=CrawlSettings(), cancel_event=cancel_event,
+                crawler_factory=CooperativeCancelCrawler,
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                running = executor.submit(crawler.run, job_id="cooperative-cancel", sources=["B012345678"], write_export=False)
+                deadline = time.monotonic() + 5
+                while crawler._process is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertIsNotNone(crawler._process)
+                cancel_event.set()
+                running.result(timeout=5)
+            self.assertFalse(crawler._process.is_alive())
+
+    def test_worker_force_stops_after_cancellation_grace_when_child_ignores_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch("engine.process_crawler.PROCESS_CANCEL_GRACE_SECONDS", 0.2):
+            cancel_event = threading.Event()
+            crawler = ProcessCrawler(
+                root=Path(directory), settings=CrawlSettings(), cancel_event=cancel_event,
+                crawler_factory=HungCheckpointCrawler,
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                running = executor.submit(crawler.run, job_id="forced-cancel", sources=["B012345678"], write_export=False)
+                deadline = time.monotonic() + 5
+                while crawler._process is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertIsNotNone(crawler._process)
+                cancel_event.set()
+                with self.assertRaises(InterruptedError):
+                    running.result(timeout=5)
+            self.assertFalse(crawler._process.is_alive())
 
     def test_unexpected_worker_exit_is_reported_and_a_new_worker_can_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -887,6 +887,77 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(first_event.is_set())
             self.assertTrue(second_event.is_set())
 
+    def test_task_cancellation_sets_only_the_selected_task_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="test-agent", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            selected = threading.Event()
+            sibling = threading.Event()
+            agent.active["task-1"] = {"taskId": "task-1", "jobId": "job-1", "leaseId": "lease-1"}
+            agent.active["task-2"] = {"taskId": "task-2", "jobId": "job-1", "leaseId": "lease-2"}
+            agent.task_cancel_events.update({"task-1": selected, "task-2": sibling})
+
+            self.assertTrue(agent._cancel_task("task-1", "lease-1"))
+
+            self.assertTrue(selected.is_set())
+            self.assertFalse(sibling.is_set())
+            self.assertFalse(agent._cancel_task("task-1", "stale-lease"))
+
+    def test_preexisting_task_cancel_does_not_cancel_sibling_event_during_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="test-agent", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            for task_id, lease_id in (("task-1", "lease-1"), ("task-2", "lease-2")):
+                assignment = {
+                    "taskId": task_id, "jobId": "job-1", "leaseId": lease_id,
+                    "settingsFingerprint": "settings-1",
+                }
+                agent.store.save_assignment(assignment)
+                agent.active[task_id] = assignment
+            agent.store.cancel_task("task-1")
+            selected = threading.Event()
+            sibling = threading.Event()
+
+            agent._register_cancel_event("job-1", selected, "task-1")
+            agent._register_cancel_event("job-1", sibling, "task-2")
+
+            self.assertTrue(selected.is_set())
+            self.assertFalse(sibling.is_set())
+
+    def test_default_amazon_batch_uses_one_disposable_worker_per_task(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="test-agent", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            events = {"task-1": threading.Event(), "task-2": threading.Event()}
+            agent.task_cancel_events.update(events)
+            observed: list[tuple[list[str], threading.Event]] = []
+
+            def capture(batch, event, _loop):
+                observed.append(([str(value["taskId"]) for value in batch], event))
+
+            assignments = [
+                {"taskId": task_id, "jobId": "job-1", "leaseId": f"lease-{index}", "settings": {}}
+                for index, task_id in enumerate(events, start=1)
+            ]
+            loop = asyncio.new_event_loop()
+            try:
+                with patch.object(agent, "_run_batch_group", side_effect=capture):
+                    agent._run_batch(assignments, threading.Event(), loop)
+            finally:
+                loop.close()
+
+            self.assertEqual({tuple(task_ids) for task_ids, _event in observed}, {("task-1",), ("task-2",)})
+            self.assertEqual({id(event) for _task_ids, event in observed}, {id(event) for event in events.values()})
+
     def test_job_cancellation_closes_running_browser_pool(self) -> None:
         browser_closed = threading.Event()
 
@@ -1594,6 +1665,30 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["status"], "cancelled")
         self.assertTrue(snapshot["cancellation"]["isExecutionConfirmed"])
 
+    def test_cancel_task_preserves_sibling_and_rejects_only_its_late_result(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+        self.store.register_client(client_hello(slots=2))
+        leases = self.store.lease_tasks("client-a", 2)
+        first, sibling = leases
+
+        cancellation = self.store.cancel_task(first["taskId"], {"client-a"})
+
+        self.assertEqual(cancellation["status"], "cancelling")
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "running")
+        with self.sessions() as session:
+            self.assertEqual(session.get(CrawlTask, sibling["taskId"]).status, "leased")
+        rejected = self.store.accept_result(
+            first["taskId"], "client-a", first["leaseId"], "late-cancelled", {"jobId": job["id"], "products": []},
+        )
+        accepted = self.store.accept_result(
+            sibling["taskId"], "client-a", sibling["leaseId"], "valid-sibling", {"jobId": job["id"], "products": []},
+        )
+        self.assertEqual(rejected["status"], "cancelled")
+        self.assertEqual(accepted["status"], "accepted")
+        self.assertEqual(self.store.acknowledge_task_cancel("client-a", {
+            "taskId": first["taskId"], "leaseId": first["leaseId"],
+        })["status"], "cancelled")
+
     def test_terminal_stop_waits_for_online_agent_cleanup_then_purges_job(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
@@ -1737,10 +1832,21 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.store.cancel_job(str(job["id"]))
         cancelled = self.store.reconcile_tasks("client-a", [local_task])
         self.assertEqual(cancelled["discardTaskIds"], [lease["taskId"]])
-        self.assertEqual(cancelled["cancelledJobIds"], [job["id"]])
-        snapshot = self.store.get_job(str(job["id"]))
-        self.assertEqual(snapshot["status"], "cancelled")
-        self.assertTrue(snapshot["cancellation"]["isExecutionConfirmed"])
+
+    def test_reconciliation_replays_single_task_cancel_without_cancelling_job(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+        self.store.register_client(client_hello(slots=2))
+        leases = self.store.lease_tasks("client-a", 2)
+        self.store.cancel_task(leases[0]["taskId"], {"client-a"})
+
+        reconciliation = self.store.reconcile_tasks("client-a", [
+            {"taskId": lease["taskId"], "jobId": job["id"], "leaseId": lease["leaseId"]}
+            for lease in leases
+        ])
+
+        self.assertEqual(reconciliation["cancelTaskIds"], [leases[0]["taskId"]])
+        self.assertEqual(reconciliation["cancelledJobIds"], [])
+        self.assertEqual(reconciliation["resumeTaskIds"], [leases[1]["taskId"]])
 
     def test_expired_cancel_does_not_wait_for_an_offline_agent(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -3041,6 +3147,51 @@ class CoordinatorApiTests(unittest.TestCase):
                 self.assertEqual(product_conflict.status_code, 409)
                 self.assertEqual(product_conflict.json()["detail"]["code"], "UPLOAD_CHECKSUM_CONFLICT")
                 self.assertEqual(upload(first, "client-a").status_code, 409)
+
+    def test_single_task_cancel_route_does_not_cancel_sibling_or_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                job = app.state.store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+                app.state.store.register_client(client_hello(slots=2))
+                leases = app.state.store.lease_tasks("client-a", 2)
+                target_id, sibling_id = leases[0]["taskId"], leases[1]["taskId"]
+
+                response = client.post(f"/api/v1/crawl-tasks/{target_id}/cancel")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["status"], "cancelled")
+                self.assertEqual(app.state.store.get_job(str(job["id"]))["status"], "running")
+                with app.state.store.sessions() as session:
+                    self.assertEqual(session.get(CrawlTask, target_id).status, "cancelled")
+                    self.assertEqual(session.get(CrawlTask, sibling_id).status, "leased")
+
+    def test_single_task_cancel_route_targets_only_the_owning_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "coordinator.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                job = app.state.store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello("client-a", slots=2))
+                    self.assertEqual(agent.receive_json()["type"], "hello_ack")
+                    assignments = [agent.receive_json(), agent.receive_json()]
+                    target = assignments[0]
+                    sibling = assignments[1]
+
+                    response = client.post(f"/api/v1/crawl-tasks/{target['taskId']}/cancel")
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()["status"], "cancelling")
+                    command = agent.receive_json()
+                    self.assertEqual(command, {
+                        "type": "cancel_task",
+                        "taskId": target["taskId"],
+                        "leaseId": target["leaseId"],
+                    })
+                    with app.state.store.sessions() as session:
+                        self.assertEqual(session.get(CrawlTask, sibling["taskId"]).status, "leased")
 
     def test_summary_and_paged_product_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

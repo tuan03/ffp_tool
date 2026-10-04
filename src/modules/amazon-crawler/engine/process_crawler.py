@@ -19,10 +19,12 @@ from .crawler_core import SCHEMA_VERSION, AmazonCrawler, CrawlSettings, normaliz
 from .timeouts import CrawlTimeout, observe_deadlines
 from .observability import emit_event, redact, trace_scope
 
+PROCESS_CANCEL_GRACE_SECONDS = 10
+
 
 def _crawl_process(connection, factory, root: str, settings: dict[str, Any], proxy_config_path: str | None,
                    job_id: str, sources: list[str], write_export: bool, stream_results: bool = False,
-                   trace_contexts: dict[str, dict[str, Any]] | None = None) -> None:
+                   trace_contexts: dict[str, dict[str, Any]] | None = None, cancel_signal=None) -> None:
     if os.name != "nt":
         os.setsid()
     crawler = None
@@ -33,7 +35,7 @@ def _crawl_process(connection, factory, root: str, settings: dict[str, Any], pro
     try:
         crawler = factory(root=Path(root), settings=CrawlSettings(**settings),
                           progress=lambda progress: send("progress", progress),
-                          cancel_event=threading.Event(),
+                          cancel_event=cancel_signal or threading.Event(),
                           proxy_config_path=Path(proxy_config_path) if proxy_config_path else None)
         with observe_deadlines(lambda deadline: send("deadline", deadline)):
             telemetry_arguments = {"trace_contexts": trace_contexts, "on_telemetry": lambda event: send("telemetry", event)} if isinstance(crawler, AmazonCrawler) else {}
@@ -139,8 +141,10 @@ class ProcessCrawler:
         traces: dict[str, dict[str, Any]] = {}
         completions: list[dict[str, Any]] = []
         product_results: list[dict[str, Any]] = []
+        process_cancel_signal = context.Event()
         process = context.Process(target=_crawl_process, args=(writer, self.factory, str(self.root), asdict(self.settings),
-            str(self.proxy_config_path) if self.proxy_config_path else None, job_id, sources, write_export, on_input_complete is not None, trace_contexts), daemon=False)
+            str(self.proxy_config_path) if self.proxy_config_path else None, job_id, sources, write_export,
+            on_input_complete is not None, trace_contexts, process_cancel_signal), daemon=False)
         self._process = process
         if self._closed.is_set() or self.cancel_event.is_set():
             reader.close()
@@ -173,10 +177,18 @@ class ProcessCrawler:
         worker_error = None
         output = None
         finished_at = None
+        cancellation_deadline = None
         try:
             while True:
-                if self.cancel_event.is_set() or self._closed.is_set():
+                if self._closed.is_set():
                     raise InterruptedError("Crawler worker cancelled.")
+                if self.cancel_event.is_set():
+                    if cancellation_deadline is None:
+                        process_cancel_signal.set()
+                        cancellation_deadline = time.monotonic() + PROCESS_CANCEL_GRACE_SECONDS
+                    if not process.is_alive() or time.monotonic() >= cancellation_deadline:
+                        self.close()
+                        raise InterruptedError("Crawler worker cancelled.")
                 now = time.monotonic()
                 stage = "job" if now >= job_expires else None
                 # Give cooperative cancellation one second to finish; native hangs are then terminated.
@@ -276,6 +288,8 @@ class ProcessCrawler:
                     worker_error = payload
                     break
             if output is not None:
+                if self.cancel_event.is_set():
+                    raise InterruptedError("Crawler worker cancelled.")
                 return output
             # Finish termination before callbacks remove assignments from the agent's active slots.
             self.close()

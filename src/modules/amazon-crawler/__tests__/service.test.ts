@@ -517,6 +517,9 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
 
   assert.equal((await jobs.list())[0]?.jobId, "job-1");
   assert.equal((await jobs.cancel("job-1")).status, "cancelling");
+  await jobs.cancelTask("task/1");
+  assert.equal(requests.at(-1)?.url, "http://coordinator.test/api/v1/crawl-tasks/task%2F1/cancel");
+  assert.equal(requests.at(-1)?.method, "POST");
   assert.equal((await jobs.replace("job-1", input)).jobId, "job-2");
   await jobs.delete("job-1");
   assert.equal(requests.at(-1)?.method, "DELETE");
