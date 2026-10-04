@@ -1,4 +1,24 @@
 export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
+export interface WorkerReviewHistory {
+  readonly total: number;
+  readonly nextOffset: number | null;
+  readonly entries: readonly {
+    readonly jobId: string;
+    readonly previousJobId: string | null;
+    readonly status: string;
+    readonly workerId: string | null;
+    readonly runId: string | null;
+    readonly attemptCount: number;
+    readonly sourceVersion: string | null;
+    readonly rulesVersion: number | null;
+    readonly checkpoints: readonly string[];
+    readonly imageReceipts: number;
+    readonly errorCode: string | null;
+    readonly publishState: string | null;
+    readonly seoVersion: number | null;
+    readonly createdAt: number;
+  }[];
+}
 export interface SeoPublishReceipt {
   readonly id: string;
   readonly jobId: string;

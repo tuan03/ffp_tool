@@ -2376,6 +2376,7 @@ export function SeoReviewPage({
 
       {/* Slide-over Detail Drawer (Full inspection modal) */}
       <ProductDetailDrawer
+        workerClient={gptClient}
         product={activeProduct}
         isOpen={isDrawerOpen}
         currentStoreId={effectiveStoreId}

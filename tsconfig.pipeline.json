@@ -11,6 +11,8 @@
   },
   "include": [
     "scripts/shopify-pipeline-worker.ts",
+    "scripts/seo-worker-cutover.ts",
+    "scripts/export-seo-worker-contracts.ts",
     "gateway",
     "src/modules/customization-normalizer",
     "src/modules/shopify-sync",

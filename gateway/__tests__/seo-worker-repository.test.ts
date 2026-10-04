@@ -150,6 +150,33 @@ test("review delivery delay never requeues accepted work or exceeds the run targ
   } finally { await f.pg.close(); }
 });
 
+test("target 25 stops at 25 and resume 21 of 50 completes exactly 29 more", async () => {
+  const f = await fixture();
+  try {
+    for (const target of [25, 50]) {
+      const storeId = `target-${target}`;
+      for (let index = 0; index <= target; index++) await f.enqueue(`${target}-${index}`, storeId, "PENDING", String(target * 1000 + index));
+      await f.repository.enableStore(storeId);
+      const worker = await f.worker(`worker-${target}`, target, storeId);
+      let sessionId = worker.sessionId;
+      for (let completed = 0; completed < target; completed++) {
+        if (target === 50 && completed === 21) {
+          assert.equal((await f.repository.finishRun(worker.token, sessionId, worker.run.id, "pause-at-21")).successful, 21);
+          sessionId = (await f.repository.register(worker.token, "replacement-session")).sessionId;
+          const resumed = await f.repository.resumeRun(worker.token, sessionId, worker.run.id);
+          assert.equal(resumed.target - resumed.successful, 29);
+        }
+        const claim = await f.repository.claim(worker.token, sessionId, worker.run.id, `next-${completed}`);
+        assert.ok(claim.lease);
+        await f.deliver(claim.lease.jobId);
+      }
+      assert.equal((await f.repository.runStatus(worker.token, worker.run.id)).successful, target);
+      assert.equal((await f.repository.claim(worker.token, sessionId, worker.run.id, "must-stop")).stopReason, "TARGET_REACHED");
+      assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM gpt_jobs WHERE store_id=$1 AND status='PENDING'", [storeId])).rows[0].count, 1);
+    }
+  } finally { await f.pg.close(); }
+});
+
 test("retry exhaustion is terminal and a partial run resumes only the remaining successes", async () => {
   const f = await fixture();
   try {
@@ -234,5 +261,22 @@ test("worker checkpoints are fenced, ordered and submission receipts survive del
     await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, { ...submission, payload: {} }), /IDEMPOTENCY_CONFLICT/);
     await f.repository.revoke("store-a", worker.tokenId);
     await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, submission), /TOKEN_REVOKED/);
+  } finally { await f.pg.close(); }
+});
+
+test("analysis requires actual image fetch receipts bound to the current lease", async () => {
+  const f = await fixture();
+  try {
+    await f.enqueue("901");
+    await f.pg.query("UPDATE gpt_jobs SET payload=jsonb_set(payload::jsonb,'{input,images}',$1::jsonb)::text WHERE id='901'", [JSON.stringify([{ id: "photo", url: "https://example.com/test.jpg" }])]);
+    await f.repository.enableStore("store-a");
+    const worker = await f.worker("images", 1);
+    const { lease } = await f.repository.claim(worker.token, worker.sessionId, worker.run.id, "claim"); assert.ok(lease);
+    const checkpoint = { requestId: "analysis", stage: "analysis" as const, payload: {}, expectedCheckpoints: {} };
+    await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, checkpoint), /IMAGE_VIEW_REQUIRED/);
+    await f.repository.recordImage(worker.token, lease, "photo", "a".repeat(64));
+    assert.equal((await f.repository.saveCheckpoint(worker.token, lease, checkpoint)).status, "IN_PROGRESS");
+    await f.repository.revoke("store-a", worker.tokenId);
+    await assert.rejects(f.repository.recordImage(worker.token, lease, "photo", "a".repeat(64)), /TOKEN_REVOKED/);
   } finally { await f.pg.close(); }
 });

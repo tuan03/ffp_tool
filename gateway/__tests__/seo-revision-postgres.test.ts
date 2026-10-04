@@ -57,6 +57,12 @@ test("PostgreSQL revision preserves history, reads live source, replays once and
     assert.equal((await queue.publisher.get("demo", publish.id)).state, "BLOCKED");
     assert.deepEqual(await queue.get("demo", parent.id), parent);
     assert.deepEqual(await queue.get("demo", next.id), nextReady);
+    const history = await queue.workerHistory.list("demo", next.id, 0);
+    assert.equal(history.total, 3);
+    assert.equal(history.entries.find(entry => entry.jobId === next.id)?.previousJobId, parent.id);
+    assert.equal(history.entries.find(entry => entry.jobId === next.id)?.sourceVersion, "v2");
+    assert.equal((await queue.workerHistory.list("demo", next.id, 50)).entries.length, 0);
+    await assert.rejects(queue.workerHistory.list("other", next.id, 0), /JOB_NOT_FOUND/);
   } finally {
     await queue.close();
     await pool.query(`DROP SCHEMA "${schema}" CASCADE`);

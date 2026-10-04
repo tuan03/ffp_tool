@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { WorkerReviewHistoryPanel } from "../../../modules/custom-gpt-seo";
+import type { CustomGptClient } from "../../../modules/custom-gpt-seo";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
@@ -9,6 +11,7 @@ import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductDetailDrawerProps {
+  readonly workerClient?: CustomGptClient;
   readonly product: SeoProductUiViewModel | null;
   readonly isOpen: boolean;
   readonly currentStoreId?: string;
@@ -38,6 +41,7 @@ function readVariantPrice(variant: Record<string, unknown>): number | null {
 }
 
 export function ProductDetailDrawer({
+  workerClient,
   product,
   isOpen,
   currentStoreId,
@@ -204,6 +208,7 @@ export function ProductDetailDrawer({
 
           {/* Drawer Body - Scrollable */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-300">
+            {workerClient && product.gptJobId && product.backendPublishRequired && <WorkerReviewHistoryPanel key={`${product.storeId}:${product.gptJobId}`} client={workerClient} storeId={product.storeId || currentStoreId || ""} jobId={product.gptJobId} />}
             {product.backendPublishRequired && (
               <section className="rounded-xl border border-cyan-800 bg-slate-900 p-4" aria-label="Backend publish">
                 <h3 className="font-semibold text-cyan-300">Duyệt và Sync là hai bước riêng</h3>

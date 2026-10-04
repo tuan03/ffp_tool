@@ -10,6 +10,8 @@ import { getWorkerProductKey, SeoWorkerError } from "../seo-worker/protocol";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { SeoPublishRepository } from "../seo-worker/publish-repository";
 import { SeoRevisionRepository } from "../seo-worker/revision-repository";
+import { SeoCutoverRepository } from "../seo-worker/cutover";
+import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -26,11 +28,15 @@ export class PostgresCustomGptQueue implements SeoQueue {
   readonly workers: SeoWorkerRepository;
   readonly publisher: SeoPublishRepository;
   readonly revisions: SeoRevisionRepository;
+  readonly cutover: SeoCutoverRepository;
+  readonly workerHistory: SeoReviewHistoryRepository;
   constructor(options: SeoQueuePostgresOptions, private readonly now: () => number = Date.now) {
     this.db = new PostgresQueueDatabase(options);
     this.workers = new SeoWorkerRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
     this.publisher = new SeoPublishRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
     this.revisions = new SeoRevisionRepository({ transaction: operation => this.db.withClientTransaction(operation) }, (input, previousJobId) => this.enqueueRevision(input, previousJobId), now);
+    this.cutover = new SeoCutoverRepository({ transaction: operation => this.db.withClientTransaction(operation) }, storeId => this.workers.enableStore(storeId), now, storeId => this.expire(storeId, "codex_mcp"));
+    this.workerHistory = new SeoReviewHistoryRepository({ transaction: operation => this.db.withClientTransaction(operation) });
   }
   private async transaction<T>(operation: () => Promise<T>): Promise<T> { return this.db.transaction(operation); }
   async settings(storeId: string): Promise<GptSeoSettings> {
@@ -162,8 +168,10 @@ export class PostgresCustomGptQueue implements SeoQueue {
   private async audit(storeId: string, jobId: string, event: string): Promise<void> {
     (await this.db.prepare("INSERT INTO gpt_audit(store_id,job_id,event,created_at) VALUES (?,?,?,?)").run(storeId, jobId, event, this.now()));
   }
-  private async expire(storeId: string): Promise<void> {
-    const expired = (await this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND active=1 AND expires_at<=?").all(storeId, this.now()));
+  private async expire(storeId: string, provider?: ExternalSeoProvider): Promise<void> {
+    const expired = provider
+      ? await this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND provider=? AND active=1 AND expires_at<=?").all(storeId, provider, this.now())
+      : await this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND active=1 AND expires_at<=?").all(storeId, this.now());
     for (const batch of expired) (await this.releaseJobs(String(batch.id)));
   }
   private async releaseJobs(batchId: string): Promise<void> {
@@ -192,6 +200,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
       if (provider === "codex_mcp" && await this.db.prepare("SELECT enabled FROM seo_worker_stores WHERE store_id=?").get(storeId)) {
         throw new SeoWorkerError("WORKER_CLIENT_UPGRADE_REQUIRED");
       }
+      if (provider === "codex_mcp" && await this.db.prepare("SELECT store_id FROM seo_worker_cutovers WHERE store_id=? AND draining=true").get(storeId)) throw new SeoWorkerError("WORKER_CUTOVER_DRAINING");
       (await this.expire(storeId));
       const duplicate = (await this.db.prepare("SELECT id,active,owner_id FROM gpt_batches WHERE store_id=? AND request_id=?").get(storeId, requestId));
       if (duplicate) {

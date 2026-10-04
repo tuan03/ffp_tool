@@ -3,6 +3,17 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("worker review history is store-scoped, paginated and has fresh mock results", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/review-history?jobId=job%2F1&offset=50&storeId=store%20one");
+    assert.equal(init?.cache, "no-store");
+    return new Response(JSON.stringify({ total: 51, nextOffset: null, entries: [] }));
+  });
+  assert.equal((await client.workerReviewHistory("store one", "job/1", 50)).total, 51);
+  const mock = createMockCustomGptClient();
+  assert.notEqual(await mock.workerReviewHistory("a", "1"), await mock.workerReviewHistory("a", "1"));
+});
+
 test("revision client creates a new job through the operator endpoint with mock parity", async () => {
   const client = createCustomGptClient(async (url, init) => {
     assert.equal(String(url), "/api/seo-agent/revisions?storeId=demo");

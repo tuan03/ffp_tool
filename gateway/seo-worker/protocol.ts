@@ -18,7 +18,8 @@ export function validateTargetCount(target: number): number {
 }
 
 export function getRetryDelay(attempt: number, jitter: number): number {
-  return Math.min(600_000, 30_000 * 2 ** Math.max(0, attempt - 1) * (1 + Math.max(0, Math.min(1, jitter))));
+  // PostgreSQL retry_at is BIGINT; fractional jitter must not produce fractional milliseconds.
+  return Math.floor(Math.min(600_000, 30_000 * 2 ** Math.max(0, attempt - 1) * (1 + Math.max(0, Math.min(1, jitter)))));
 }
 
 export function getWorkerProductKey(source: {

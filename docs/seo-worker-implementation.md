@@ -69,26 +69,27 @@ lock across legacy and new writers. Claims also lock selected job rows. This
 intentionally serializes short database mutations during migration; no external
 API request belongs inside a worker repository transaction.
 
-## Remaining implementation before activation
+## Activation and acceptance still required
 
-1. Complete Review lifecycle presentation, including full run/worker/validation
-   metadata and revision-chain browsing. New-revision regeneration and the Shopify
-   SEO-version transport are implemented for converted Codex stores (see below).
-   Read-only reconciliation is implemented; no force
-   overwrite or release of an unresolved write is exposed.
-   Backend Sync is opt-in and only applies to converted stores. Unconverted stores
-   retain the existing browser-driven flow. No production activation was performed.
-   This core accepts existing Shopify products only; new-product creation and
-   storefront/theme rendering are outside this increment.
-2. Guarded operator cutover command with verified backup/dry-run/report and
-   integration with the latest deployment topology on `main`. No activation API
-   is intentionally exposed yet.
-3. Expand real PostgreSQL multi-process tests to endpoint crash/recovery; run two
-   actual Codex sessions, cross-platform credential tests, and an operator-selected
-   pilot product/store.
-4. Complete pack distribution/schema resources, image-view enforcement evidence,
-   user-action validation feedback, Retry-After/backoff and run recovery UX. The
-   helper currently stops safely on transport errors rather than retrying blindly.
+The outstanding code items listed in earlier revisions are implemented below.
+This does not certify production operation or physical-device acceptance.
+
+1. Integrate `rua` with current `main`, review deployment conflicts and deploy the
+   combined result. Client Nginx adds only worker/admin/download routes, preserving
+   the existing branch configuration. Main `12c115b` has newer unrelated routes;
+   retain those when integrating the scoped worker additions.
+2. Run the guarded cutover on the selected store with a private, verified backup.
+   Resolve duplicate jobs and pending finalizers; never choose a winning draft
+   automatically. Production has not been converted by this code increment.
+3. Complete macOS Keychain and interactive Linux desktop login/logout acceptance,
+   then two actual Codex machines. An isolated Linux Secret Service probe was
+   previously successful; that is not an end-to-end desktop acceptance result.
+4. Human-review the selected pilot draft before Sync, then verify Shopify fields
+   and version. No automatic approval or real Shopify write was performed here.
+
+Backend Sync remains opt-in for converted stores. Existing Shopify products are
+supported; new-product creation and theme rendering are outside this increment.
+No force overwrite or release of a possibly written operation is provided.
 
 Existing Gemini, Custom GPT, SEO Performance, and stores not converted keep their
 current behavior. The new endpoint accepts worker credentials, but claims remain
@@ -246,3 +247,96 @@ The rebuilt preview ZIP has SHA-256
 Work is on the existing `rua` branch by explicit user instruction, overriding the
 handbook's new-branch default. No production cutover or Shopify write is part of
 this increment.
+
+## Code completion increment (2026-10-04)
+
+- Review details now load a store-scoped, server-paginated revision chain with
+  parent ID, worker/run, attempts, source/rules versions, checkpoints, image-fetch
+  receipts, validation projection and publish/version status. Older Reviews remain
+  intact. Agent Access has a token-free Resume prompt for partial runs.
+- Image downloads persist a SHA-256 receipt under the current lease version.
+  Analysis is refused until every supplied image has a receipt. The receipt proves
+  delivery of bytes to the worker, not that a model understood the image correctly.
+- Authenticated `ffp://seo-worker/contracts` exposes common rules and schemas.
+  The public ZIP carries schemas exported from the same source. Job context still
+  supplies store-specific rules and current source; static pack files do not override
+  them. Stable error codes now include safe, actionable repair guidance.
+- Optional GSC context is read from the existing cache for the job's exact store
+  and Shopify product ID. Ambiguous mappings return `not_mapped`; unavailable/slow
+  evidence does not block product SEO. It never gives workers a general GSC tool or
+  Google credential. The evidence includes its period, mapping freshness and limits.
+- Helper transport retries replayable requests at most three times, preserves the
+  same request ID/body, honors bounded Retry-After and stops on auth failure.
+  Mutations without an idempotency key are not retried automatically.
+- Actual HTTP subprocess recovery testing exposed fractional retry timestamps
+  rejected by PostgreSQL BIGINT. Retry jitter now produces integer milliseconds.
+- `npm run build` and `npm run build:mock` generate the allowlisted ZIP/checksum
+  automatically using Node 22.15+ (including the Node 22 deployment images).
+  Python is only required by the local helper and independent archive tests, not
+  client image packaging. No dependencies were added; lockfile remained unchanged.
+- New Nginx routes preserve Authorization and forward `/mcp/seo-worker` and
+  `/api/seo-agent/*` to the Gateway. Missing pack downloads return 404, not SPA HTML.
+
+### Guarded cutover CLI
+
+Run from a trusted operator host with Node/tsx dependencies and PostgreSQL 17
+`pg_dump`/`pg_restore` on PATH. Supply secrets through the protected environment,
+never CLI arguments. Set `AUTO_SEO_DATABASE_URL` (or `DATABASE_URL`),
+`SEO_WORKER_OPERATOR`, and optionally `SEO_WORKER_SCHEMA` (default `public`).
+Restrict backup-directory access/ACLs yourself, especially on Windows; database
+backups contain sensitive business data and legacy credentials. Do not commit them.
+
+```text
+node --import tsx scripts/seo-worker-cutover.ts inspect STORE
+node --import tsx scripts/seo-worker-cutover.ts drain STORE
+node --import tsx scripts/seo-worker-cutover.ts inspect STORE
+node --import tsx scripts/seo-worker-cutover.ts backup STORE /private/unique-backup.dump
+node --import tsx scripts/seo-worker-cutover.ts verify STORE /private/unique-backup.dump
+node --import tsx scripts/seo-worker-cutover.ts apply STORE /private/unique-backup.dump
+```
+
+- `inspect` is the dry-run/report: it never converts a store, but initializes
+  additive tables if absent. Review duplicate IDs, active batches and blocked jobs.
+- `drain` blocks new legacy Codex claims; existing valid leases can finish. Re-run
+  drain after their TTL to recover expired Codex batches without claiming new work.
+  It does not recover or switch another provider. VALIDATING jobs must finish via
+  their existing finalizer. New-mode stores can use drain to pause further claims.
+- Backup uses exclusive creation, SHA-256 and a source fingerprint; changing
+  queue/audit state invalidates the backup for apply. Restore verification requires
+  `SEO_WORKER_RESTORE_TEST_DATABASE_URL` pointing to a **separate empty database**.
+  It restores and compares the source fingerprint; it never cleans/drops a database.
+- Apply also requires `SEO_WORKER_CONFIRM_STORE=STORE` and the verified manifest.
+  It refuses stale backups, duplicate active product identities and undrained jobs.
+  No public activation endpoint bypasses these checks. Treat the manifest as a
+  private operator artifact, not a cryptographically signed attestation.
+- Rollback means drain/disable new claims and retain metadata, not deploying a
+  legacy binary that does not understand the converted store. To resume use a new
+  backup/verification/apply cycle. No draft, job or business record is deleted.
+
+### New verification evidence
+
+- PostgreSQL 17, synthetic isolated tmpfs database: two independent HTTP MCP
+  processes claim distinct jobs. One process is killed; recovery/reclaim increments
+  the lease version, rejects the old heartbeat and rejects a revoked token.
+- Real `pg_dump`/`pg_restore` CLI drill: expired legacy batch recovery, backup,
+  restore into an empty test database, fingerprint verification and import of one
+  synthetic job all passed. No production host/database was targeted.
+- Tests cover target 25 stopping at 25; resume at 21/50 requiring 29 further
+  successful drafts; revision pagination/store isolation; image receipts; optional
+  GSC mapping; replayable transport retries; ZIP allowlist/CRC/checksum/schema parity.
+- Nginx 1.27 container syntax validation passed for the updated client configuration.
+  This is not a production routing or browser end-to-end acceptance result.
+
+Root changes are limited to build lifecycle hooks and pipeline TypeScript inclusion
+of the two operator/export scripts. Existing module boundaries, draft-only worker
+permissions and separate human Approve/Sync actions remain unchanged.
+
+Final verification for this increment: `npm test` exit 0 (tooling 43 passed;
+web 846 passed/6 skipped; Gateway 439 passed/47 skipped; engine 305 total/1
+skipped). The dedicated PostgreSQL 17 URL was enabled, so worker/publish real-DB
+tests were not skipped. Remaining skips belong to other environment-dependent
+tests. `npm run typecheck`, `npm run build`, and `npm run build:mock` all exited 0;
+the existing large frontend chunk warning remains. Eight helper tests passed on
+Windows and in a network-disabled Linux Python 3.13 container. No macOS or actual
+two-machine Codex acceptance is implied. The local preview archive checksum is
+`e698e463d74e4f7b1cb84209c2dbb2888218a2133ee2c62170babfa0aa311115`.

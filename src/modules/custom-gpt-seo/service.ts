@@ -1,4 +1,4 @@
-import type { AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
+import type { WorkerReviewHistory, AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -96,6 +96,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    workerReviewHistory: (storeId: string, jobId: string, offset = 0) => agentRequest<WorkerReviewHistory>(`review-history?jobId=${encodeURIComponent(jobId)}&offset=${offset}`, storeId),
     createRevision: (storeId: string, jobId: string, requestId: string, instructions?: string) => agentRequest<{ jobId: string; previousJobId: string }>("revisions", storeId, { jobId, requestId, instructions }),
     reconcilePublish: (storeId: string, jobId: string) => agentRequest<SeoPublishReceipt>("publish-reconcile", storeId, { jobId }),
     publishStatus: (storeId: string, jobId: string) => agentRequest<{ managed: boolean; operation: SeoPublishReceipt | null }>(`publish?jobId=${encodeURIComponent(jobId)}`, storeId),

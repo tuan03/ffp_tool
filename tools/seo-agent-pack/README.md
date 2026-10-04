@@ -43,13 +43,19 @@ For resume, provide the previous run ID, not a fresh target. The helper cannot
 bypass Codex quota, approvals or application shutdown. After 30 minutes without
 checkpoint progress it stops heartbeats; network/auth failures also stop them.
 Retry a mutation with the exact same requestId and payload, not a new requestId.
+Transport retries are limited to three attempts for replayable requests. HTTP 401
+is not retried. Retry-After above 120 seconds stops safely for a later resume.
+Read `ffp://seo-worker/contracts` for current schemas/rules; `resources/` contains
+the matching build-time copies. Current job context supplies store-specific rules.
 
 Use `status` to check the token and `logout` to remove its local vault entry.
 Logout does not revoke other copies: use Agent Access → Revoke for that.
 
 ## Build and evidence
 
-From the repository root run `python scripts/build-seo-agent-pack.py`. Output is
+Web production/mock builds package this automatically. To package independently,
+run `node scripts/build-seo-agent-pack.mjs` (Node 22.15+); the previous Python
+entry point remains a wrapper. Output is
 an allowlisted ZIP and SHA-256 file under ignored `dist/seo-agent-pack/`.
 Do not redistribute a modified pack containing local config, backups or secrets.
 

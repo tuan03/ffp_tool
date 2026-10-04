@@ -119,6 +119,10 @@ export class SeoWorkerRepository {
         const worker = await this.assertLease(sql, principal, lease);
         const row = (await sql.query("SELECT payload FROM gpt_jobs WHERE id=$1 FOR UPDATE", [lease.jobId])).rows[0];
         const job = JSON.parse(String(row.payload)) as GptSeoJob;
+        if (input.stage === "analysis") {
+          const receipts = (await sql.query("SELECT image_id FROM seo_worker_image_receipts WHERE job_id=$1 AND lease_version=$2", [job.id, lease.leaseVersion])).rows;
+          if (job.input.images?.some((image, index) => !receipts.some(receipt => receipt.image_id === (image.id || `image-${index + 1}`)))) throw new SeoWorkerError("IMAGE_VIEW_REQUIRED");
+        }
         if (!["IN_PROGRESS", "NEEDS_CHANGES"].includes(job.status)) throw new SeoWorkerError("JOB_NOT_EDITABLE");
         if (digest(job.checkpoints) !== digest(input.expectedCheckpoints)) throw new SeoWorkerError("VERSION_CONFLICT");
         const stages = ["analysis", "research", "keywords", "submission"] as const;
@@ -144,6 +148,14 @@ export class SeoWorkerRepository {
       if (!row) return null;
       if (row.digest !== digest(payload)) throw new SeoWorkerError("IDEMPOTENCY_CONFLICT");
       return row.response;
+    });
+  }
+
+  async recordImage(token: string, lease: WorkerLease, imageId: string, sha256: string): Promise<void> {
+    await this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      await this.assertLease(sql, principal, lease);
+      await sql.query("INSERT INTO seo_worker_image_receipts(job_id,lease_version,image_id,sha256,viewed_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(job_id,lease_version,image_id) DO UPDATE SET sha256=excluded.sha256,viewed_at=excluded.viewed_at", [lease.jobId, lease.leaseVersion, imageId, sha256, this.now()]);
     });
   }
 

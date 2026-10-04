@@ -4,6 +4,27 @@ import test from "node:test";
 
 import { handleSeoAgentHttp } from "../seo-worker/admin-handler";
 
+test("review history requires operator access and validates pagination before reading", async () => {
+  let calls = 0;
+  const server = http.createServer((req, res) => { void handleSeoAgentHttp(req, res, {
+    operator: req.headers.authorization === "Basic test" ? "admin" : undefined,
+    hasStore: storeId => storeId === "demo", repository: async () => { throw new Error("unused"); },
+    history: async (storeId, jobId, offset) => { calls++; assert.equal(storeId, "demo"); assert.equal(jobId, "job"); assert.equal(offset, 50); return { total: 0, nextOffset: null, entries: [] }; },
+  }); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}/api/seo-agent/review-history?storeId=demo&jobId=job&offset=50`;
+    assert.equal((await fetch(url)).status, 401);
+    const headers = { authorization: "Basic test" };
+    assert.equal((await fetch(url.replace("offset=50", "offset=-1"), { headers })).status, 400);
+    assert.equal((await fetch(url.replace("storeId=demo", "storeId=other"), { headers })).status, 404);
+    const response = await fetch(url, { headers });
+    assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(calls, 1);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test("revision endpoint requires operator/CSRF and rejects client-supplied store or provider", async () => {
   let calls = 0;
   const server = http.createServer((req, res) => { void handleSeoAgentHttp(req, res, {

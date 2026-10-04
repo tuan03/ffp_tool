@@ -51,6 +51,17 @@ test("SEO Performance executes PostgreSQL schema, OAuth, reports, jobs and MCP s
   const service = new PerformanceService(repository, google, { settings: async () => settings, revise: async () => ({ jobId: "new-job" }), syncState: async () => null });
   try {
     await repository.initialize();
+    await t.test("worker evidence is cached, product-ID scoped and fails closed on ambiguous mapping", async () => {
+      await repository.map("worker-evidence", "sc-domain:worker.example", "https://worker.example");
+      await repository.putPage("worker-evidence", "https://worker.example/products/one", { id: "gid://shopify/Product/123" });
+      assert.match(JSON.stringify(await service.workerProductEvidence("worker-evidence", "123")), /available/);
+      assert.deepEqual(await service.workerProductEvidence("other-store", "123"), { status: "not_mapped" });
+      await repository.putPage("worker-evidence", "https://worker.example/products/alias", { id: "123" });
+      assert.deepEqual(await service.workerProductEvidence("worker-evidence", "123"), { status: "not_mapped" });
+      // Do not let the later scheduler tests discover this fixture store.
+      await adapter.query("DELETE FROM sp_pages WHERE store_id='worker-evidence'");
+      await adapter.query("DELETE FROM sp_mappings WHERE store_id='worker-evidence'");
+    });
     await t.test("OAuth state is session bound and one-use; refresh credentials stay encrypted", async () => {
       const connection = await google.connect("session-a");
       const state = new URL(connection.url).searchParams.get("state") ?? "";

@@ -11,6 +11,33 @@ import { PostgresCustomGptQueue } from "../custom-gpt-seo/postgres-queue";
 
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
 
+test("cutover drain lets a legacy lease finish and recovers only expired Codex batches", { skip: !databaseUrl }, async () => {
+  assert.ok(databaseUrl);
+  const schema = `seo_worker_test_${randomUUID().replaceAll("-", "")}`;
+  const queue = new PostgresCustomGptQueue({ databaseUrl, schema });
+  const pool = new Pool({ connectionString: databaseUrl });
+  try {
+    await queue.initialize();
+    await queue.configure("demo", { provider: "codex_mcp", batchSize: 1 });
+    const job = await queue.enqueue({ storeId: "demo", source: "auto_seo", sourceIdentity: "1", input: { productId: "1", title: "Test", description: "", handle: "test", niche: "blankets", images: [] }, original: {} });
+    const batch = await queue.claim("demo", "legacy", "codex_mcp", "legacy");
+    await queue.cutover.drain("demo", "operator");
+    await queue.assertLease("demo", batch.id, batch.leaseToken, job.id);
+    await assert.rejects(queue.claim("demo", "new-legacy", "codex_mcp", "other"), /WORKER_CUTOVER_DRAINING/);
+    await pool.query(`UPDATE "${schema}".gpt_batches SET expires_at=0 WHERE id=$1`, [batch.id]);
+    await queue.cutover.drain("demo", "operator");
+    assert.equal((await queue.get("demo", job.id)).status, "PENDING");
+    const report = await queue.cutover.inspect("demo");
+    assert.deepEqual(report.blocked, []);
+    assert.equal((await queue.cutover.apply("demo", report.fingerprint, "operator")).imported, 1);
+    await assert.rejects(queue.claim("demo", "after-cutover", "codex_mcp", "legacy"), /WORKER_CLIENT_UPGRADE_REQUIRED/);
+  } finally {
+    await queue.close();
+    await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await pool.end();
+  }
+});
+
 test("live PostgreSQL worker cutover blocks legacy claims and concurrent clients cannot share a job", { skip: !databaseUrl }, async () => {
   assert.ok(databaseUrl);
   const schema = `seo_worker_test_${randomUUID().replaceAll("-", "")}`;

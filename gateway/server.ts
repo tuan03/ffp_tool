@@ -188,7 +188,10 @@ export function startGatewayServer(
     if (url === "/mcp/seo-worker") {
       try {
         const runtime = getCustomGptRuntime(); await runtime.initialize();
-        await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, { checkSource: createWorkerSourceGuard(dispatcher) }));
+        await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, {
+          checkSource: createWorkerSourceGuard(dispatcher),
+          performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(job.storeId, job.input.productId ?? job.sourceIdentity) ?? { status: "disabled" },
+        }));
       } catch { if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: { code: "WORKER_UNAVAILABLE" } })); } }
       return;
     }
@@ -207,6 +210,7 @@ export function startGatewayServer(
         repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
         publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
         createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },
+        history: async (storeId, jobId, offset) => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workerHistory.list(storeId, jobId, offset); },
       });
       return;
     }

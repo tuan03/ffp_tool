@@ -6,6 +6,7 @@ export function getSeoWorkerSchemaSql(schema: string): string {
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_stores (
       store_id TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT false
     );
+    CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_cutovers (store_id TEXT PRIMARY KEY, draining BOOLEAN NOT NULL);
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_tokens (
       id TEXT PRIMARY KEY, store_id TEXT NOT NULL, worker_id TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
@@ -59,6 +60,11 @@ export function getSeoWorkerSchemaSql(schema: string): string {
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_requests (
       scope TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL,
       response JSONB NOT NULL, PRIMARY KEY(scope,request_id)
+    );
+    CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_image_receipts (
+      job_id TEXT NOT NULL REFERENCES ${prefix}gpt_jobs(id), lease_version INTEGER NOT NULL,
+      image_id TEXT NOT NULL, sha256 TEXT NOT NULL, viewed_at BIGINT NOT NULL,
+      PRIMARY KEY(job_id,lease_version,image_id)
     );
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_revisions (
       store_id TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL,

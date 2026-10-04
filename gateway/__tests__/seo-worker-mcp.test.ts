@@ -27,9 +27,26 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     assert.ok(tools.some(tool => tool.name === "job_submit_draft"));
     assert.ok(tools.every(tool => !/publish|approve|sync|sql|configure/.test(tool.name)));
     assert.ok(tools.every(tool => !Object.hasOwn(tool.inputSchema.properties ?? {}, "storeId")));
+    const contracts = await client.readResource({ uri: "ffp://seo-worker/contracts" });
+    assert.match(JSON.stringify(contracts), /productSeoTitle/);
     const status = await client.callTool({ name: "worker_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.match(JSON.stringify(status), /demo/);
+    const job = { id: "context-job", storeId: "demo", source: "auto_seo", sourceIdentity: "123", status: "PENDING", input: { productId: "123", images: [] }, original: {}, settings: { provider: "codex_mcp" }, checkpoints: {} };
+    await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('context-job','demo','context','PENDING',$1,1,'codex_mcp')", [JSON.stringify(job)]);
+    await repository.enableStore("demo");
+    const { sessionId } = await repository.register(issued.token, "register-context");
+    const run = await repository.startRun(issued.token, sessionId, 1, "context-run");
+    const claim = await repository.claim(issued.token, sessionId, run.id, "context-claim");
+    assert.ok(claim.lease);
+    assert.deepEqual((await workflow.context(issued.token, claim.lease)).gsc, { status: "disabled" });
+    const optional = createWorkerWorkflow(repository, { checkSource: async () => undefined, performanceEvidence: async source => {
+      assert.equal(source.storeId, "demo"); assert.equal(source.input.productId, "123");
+      throw new Error("synthetic private database error");
+    } });
+    const context = await optional.context(issued.token, claim.lease);
+    assert.match(JSON.stringify(context.gsc), /unavailable/);
+    assert.doesNotMatch(JSON.stringify(context), /private database/);
     await repository.revoke("demo", issued.tokenId);
     const revoked = await client.callTool({ name: "worker_status", arguments: {} });
     assert.equal(revoked.isError, true);

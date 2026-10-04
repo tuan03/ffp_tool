@@ -1,15 +1,50 @@
 import json
+import io
 import pathlib
 import tempfile
 import time
 import tomllib
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import ffp_worker as worker
 
 
 class HelperTests(unittest.TestCase):
+    def test_transport_retries_same_payload_and_respects_retry_after(self):
+        remote = worker.Remote("https://example.com/mcp/seo-worker", "synthetic-test-token")
+        error = worker.urllib.error.HTTPError(remote.url, 429, "limited", {"Retry-After": "2"}, None)
+        remote.opener = Mock()
+        remote.opener.open.side_effect = [error, io.BytesIO(b'{"result":{}}')]
+        message = {"method": "tools/call", "params": {"name": "job_submit_draft", "arguments": {"requestId": "same"}}}
+        with patch.object(worker.time, "sleep") as sleep:
+            self.assertEqual(remote.send(message), {"result": {}})
+            sleep.assert_called_once_with(2)
+        calls = remote.opener.open.call_args_list
+        self.assertEqual(calls[0].args[0].data, calls[1].args[0].data)
+
+    def test_transport_stops_on_auth_or_after_three_network_failures(self):
+        remote = worker.Remote("https://example.com/mcp/seo-worker", "synthetic-test-token")
+        remote.opener = Mock()
+        remote.opener.open.side_effect = worker.urllib.error.HTTPError(remote.url, 401, "denied", {}, None)
+        with self.assertRaisesRegex(RuntimeError, "rejected"):
+            remote.send({"method": "tools/list"})
+        self.assertEqual(remote.opener.open.call_count, 1)
+        remote.opener.reset_mock()
+        remote.opener.open.side_effect = worker.urllib.error.URLError("offline")
+        with patch.object(worker.time, "sleep"), self.assertRaisesRegex(RuntimeError, "resume safely"):
+            remote.send({"method": "tools/list"})
+        self.assertEqual(remote.opener.open.call_count, 3)
+
+    def test_retry_policy_requires_replayable_mutations(self):
+        read = {"method": "tools/call", "params": {"name": "run_status", "arguments": {"runId": "r"}}}
+        write = {"method": "tools/call", "params": {"name": "job_submit_draft", "arguments": {"requestId": "same"}}}
+        self.assertTrue(worker.can_retry(read))
+        self.assertTrue(worker.can_retry(write))
+        self.assertFalse(worker.can_retry({"method": "tools/call", "params": {"name": "job_submit_draft", "arguments": {}}}))
+        self.assertEqual(worker.retry_delay("120", 0, now=0), 120)
+        self.assertIsNone(worker.retry_delay("99999", 0, now=0))
+
     def test_https_and_redirect_guard(self):
         for url in ["http://example.com/mcp/seo-worker", "https://user:secret@example.com/mcp/seo-worker", "https://example.com/mcp/seo-worker?token=x"]:
             with self.assertRaises(ValueError):

@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import random
+from email.utils import parsedate_to_datetime
 
 VERSION = "1.0.0-preview"
 ALLOWED_KEYRINGS = {
@@ -44,6 +46,29 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError("Endpoint redirect refused; verify the configured HTTPS endpoint")
 
 
+def can_retry(message):
+    if message.get("method") in {"initialize", "tools/list", "resources/list", "resources/read", "ping"}:
+        return True
+    params = message.get("params", {})
+    return message.get("method") == "tools/call" and (
+        params.get("name") in {"worker_status", "queue_status", "run_status", "job_status", "job_get_context", "job_get_image"}
+        or bool(params.get("arguments", {}).get("requestId")))
+
+
+def retry_delay(header, attempt, now=None):
+    if header:
+        try:
+            delay = float(header)
+        except ValueError:
+            try:
+                delay = parsedate_to_datetime(header).timestamp() - (time.time() if now is None else now)
+            except (ValueError, TypeError, OverflowError):
+                return None
+        # Do not retry earlier than Retry-After or block the session indefinitely.
+        return max(0, delay) if delay <= 120 else None
+    return min(30, 2 ** attempt + random.random())
+
+
 class Remote:
     def __init__(self, url, token):
         self.url, self.token = endpoint(url), token
@@ -58,12 +83,25 @@ class Remote:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }, method="POST")
-        # No automatic mutation retry: caller must reuse the original requestId.
-        with self.opener.open(request, timeout=45) as response:
-            body = response.read(16_000_001)
-            if len(body) > 16_000_000:
-                raise RuntimeError("Response too large")
-            return json.loads(body) if body else None
+        for attempt in range(3):
+            try:
+                with self.opener.open(request, timeout=45) as response:
+                    body = response.read(16_000_001)
+                    if len(body) > 16_000_000:
+                        raise RuntimeError("Response too large")
+                    return json.loads(body) if body else None
+            except urllib.error.HTTPError as error:
+                error.close()
+                if error.code not in {429, 502, 503, 504} or not can_retry(message) or attempt == 2:
+                    raise RuntimeError("FFP transport rejected request") from None
+                delay = retry_delay(error.headers.get("Retry-After"), attempt)
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if not can_retry(message) or attempt == 2:
+                    raise RuntimeError("FFP transport unavailable; resume safely") from None
+                delay = retry_delay(None, attempt)
+            if delay is None:
+                raise RuntimeError("Retry-After exceeds local budget; resume later")
+            time.sleep(delay)
 
 
 def tool_payload(response):
