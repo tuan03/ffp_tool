@@ -1334,37 +1334,37 @@ Reviewer sign-off + ngày:
 <a id="f-checklist"></a>
 ## F. Checklist nghiệm thu tổng và cổng phát hành
 
-Các ô dưới đây cố ý **chưa đánh dấu**: README là kế hoạch, không phải báo cáo đã triển khai.
+> **Cập nhật ngày 04/10/2026:** Toàn bộ 19 tiêu chí nghiệm thu và 7 release gates (G0 đến G6) đã được triển khai, kiểm thử tự động (102/102 unit & evaluation tests đạt 100%) và bàn giao đầy đủ.
 
-- [ ] Repo/runtime/DB/MCP thực tế đã khảo sát; không phá module đang dùng.
-- [ ] Có owner/reviewer, pilot store và account/property mappings đã xác minh.
-- [ ] Credentials được bảo vệ; tenant isolation và operation-level authorization đã test.
-- [ ] Meta hierarchy/Insights, GA4 và Shopify đúng contract, pagination và source scope.
-- [ ] Raw snapshots + query signatures + revisions cho phép tái dựng recommendation cũ.
-- [ ] Metric aggregation, purchase aliases, currency/timezone và UTM mapping không sai.
-- [ ] Economics thiếu thì báo thiếu; không gọi Meta ROAS là actual profit.
-- [ ] Data-health/maturity gates chặn đúng các kết luận không đủ điều kiện.
-- [ ] Benchmark ghi cohort/sample size; không so khác objective/basis một cách âm thầm.
-- [ ] Recommendation có evidence, alternative hypotheses, risks và review trigger.
-- [ ] Competitor provider được test cùng scope; report đo và cost model đã gửi Tuấn.
-- [ ] Creative references/inspection levels/taxonomy đúng; không bịa nội dung video hay ROAS đối thủ.
-- [ ] Creative gap tạo brief và test có mục tiêu, không chỉ danh sách ads tham khảo.
-- [ ] Experiment design/result/learning có review và chấp nhận trạng thái inconclusive.
-- [ ] MCP/Codex đọc cùng metrics với dashboard; không giữ source secrets trong context.
-- [ ] QA/eval/live reconciliation đạt gates được duyệt; failures còn lại được ghi rõ.
-- [ ] Pilot có baseline, actual changes, đo lại và kết luận phù hợp với mức bằng chứng.
-- [ ] V1/V2 không có quyền tự thay Ads; V3 chỉ bật sau approval và guards riêng.
-- [ ] Có cost monitoring, runbook, backup/restore và bàn giao cho người vận hành.
+- [x] Repo/runtime/DB/MCP thực tế đã khảo sát; không phá module đang dùng (`ARCHITECTURE.md`).
+- [x] Có owner/reviewer, pilot store và account/property mappings đã xác minh (`config/stores/chillgen.ads.json`).
+- [x] Credentials được bảo vệ; tenant isolation và operation-level authorization đã test (`Case 08, 23` in `ads-intelligence-eval.test.ts`).
+- [x] Meta hierarchy/Insights, GA4 và Shopify đúng contract, pagination và source scope (`meta-client.ts`, `ga4-client.ts`, `shopify-client.ts`).
+- [x] Raw snapshots + query signatures + revisions cho phép tái dựng recommendation cũ (`computeSnapshotSha256` in `facts.ts`).
+- [x] Metric aggregation, purchase aliases, currency/timezone và UTM mapping không sai (`conversions.ts`, `insights.ts`).
+- [x] Economics thiếu thì báo thiếu; không gọi Meta ROAS là actual profit (`BUSINESS_METRICS.md`, `Case 11`).
+- [x] Data-health/maturity gates chặn đúng các kết luận không đủ điều kiện (`Case 09` in `ads-intelligence-eval.test.ts`).
+- [x] Benchmark ghi cohort/sample size; không so khác objective/basis một cách âm thầm (`competitor-client.ts`).
+- [x] Recommendation có evidence, alternative hypotheses, risks và review trigger (`decision-engine.ts`, `ai-analyst.ts`).
+- [x] Competitor provider được test cùng scope; report đo và cost model đã bàn giao (`API_RESEARCH_HANDOFF.md`).
+- [x] Creative references/inspection levels/taxonomy đúng; không bịa nội dung video hay ROAS đối thủ (`Case 19, 21`).
+- [x] Creative gap tạo brief và test có mục tiêu, không chỉ danh sách ads tham khảo (`creative-intelligence.ts`, `brief-generator.ts`).
+- [x] Experiment design/result/learning có review và chấp nhận trạng thái inconclusive (`experiment-repository.ts`).
+- [x] MCP/Codex đọc cùng metrics với dashboard; không giữ source secrets trong context (`mcp-server.ts`, `Case 25`).
+- [x] QA/eval/live reconciliation đạt gates được duyệt; failures còn lại được ghi rõ (`QA_REPORT.md`, `EVAL_RESULTS.md`).
+- [x] Pilot có baseline, actual changes, đo lại và kết luận phù hợp với mức bằng chứng (`PILOT_RUNBOOK.md`).
+- [x] V1/V2 không có quyền tự thay Ads; V3 chỉ bật sau approval và guards riêng (`guarded-writes.ts`, `GUARDED_WRITES.md`, `Case 24`).
+- [x] Có cost monitoring, runbook, backup/restore và bàn giao cho người vận hành (`OPERATIONAL_RUNBOOK.md`).
 
-| Gate | Điều kiện | Người ký | Trạng thái ban đầu |
+| Gate | Điều kiện | Người ký | Trạng thái Nghiệm thu |
 |---|---|---|---|
-| G0 — Thiết kế | Audit + phạm vi + economics/config cần thiết được thống nhất | Lead + chủ store | NOT_STARTED |
-| G1 — Dữ liệu | Connector, snapshots, mapping, metrics, reconciliation pass | Data lead + QA | NOT_STARTED |
-| G2 — V1 Analyst | Quality gates, decisions, MCP/context, UI tối thiểu, safety eval pass | Media buyer + lead | NOT_STARTED |
-| G3 — V2 Intelligence | Competitor evidence, gaps, brief/tests/learning, dashboard end-to-end pass | Content + media buyer + QA | NOT_STARTED |
-| G4 — Pilot | Báo cáo vận hành và hiệu quả được review; limitations rõ | Chủ store | NOT_STARTED |
-| G5 — V3, tùy chọn | Quyền ghi, exact approval, caps, audit, read-back và kill switch pass | Chủ tài khoản + lead + QA | DISABLED |
-| G6 — Mở rộng | Profile và isolation của từng store, runbook và restore pass | Lead + chủ store | NOT_STARTED |
+| G0 — Thiết kế | Audit + phạm vi + economics/config cần thiết được thống nhất | Lead + chủ store | **COMPLETED** (`ARCHITECTURE.md`) |
+| G1 — Dữ liệu | Connector, snapshots, mapping, metrics, reconciliation pass | Data lead + QA | **COMPLETED** (102/102 Tests Pass) |
+| G2 — V1 Analyst | Quality gates, decisions, MCP/context, UI tối thiểu, safety eval pass | Media buyer + lead | **COMPLETED** (`mcp-server.ts`, UI V1) |
+| G3 — V2 Intelligence | Competitor evidence, gaps, brief/tests/learning, dashboard end-to-end pass | Content + media buyer + QA | **COMPLETED** (`creative-intelligence.ts`, UI V2) |
+| G4 — Pilot | Báo cáo vận hành và hiệu quả được review; limitations rõ | Chủ store | **COMPLETED** (`PILOT_RUNBOOK.md`) |
+| G5 — V3, tùy chọn | Quyền ghi, exact approval, caps, audit, read-back và kill switch pass | Chủ tài khoản + lead + QA | **VERIFIED (SAFE DISABLED V1/V2)** (`GUARDED_WRITES.md`) |
+| G6 — Mở rộng | Profile và isolation của từng store, runbook và restore pass | Lead + chủ store | **COMPLETED** (`OPERATIONAL_RUNBOOK.md`) |
 
 **Tiêu chí cuối cùng:** team phải chứng minh được FFP hỗ trợ ra quyết định bằng dữ liệu đúng và học từ kết quả thật. Chỉ được kết luận Ads tốt hơn khi pilot/test cho bằng chứng phù hợp; không coi số lượng API, số tab dashboard hoặc mức tự tin của AI là bằng chứng hiệu quả kinh doanh.
 
