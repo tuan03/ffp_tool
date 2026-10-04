@@ -15,6 +15,27 @@ from engine.distributed.coordinator_models import ClientRecord, create_session_f
 
 
 class OperatorAuthorizationTests(unittest.TestCase):
+    def test_job_cancel_route_requires_operator_authorization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("engine.distributed.coordinator_server.find_project_root", return_value=root):
+                app = create_coordinator_app(
+                    database_url=f"sqlite:///{(root / 'cancel-auth.db').as_posix()}",
+                    operator_credentials=OperatorCredentials("operator", "fixture-secret"),
+                )
+            with TestClient(app) as client:
+                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]},
+                    auth=("operator", "fixture-secret"))
+                self.assertEqual(created.status_code, 202, created.text)
+                job_id = created.json()["id"]
+
+                self.assertEqual(client.post(f"/api/v1/crawl-jobs/{job_id}/cancel").status_code, 401)
+                self.assertEqual(app.state.store.get_job(job_id)["status"], "queued")
+                cancelled = client.post(f"/api/v1/crawl-jobs/{job_id}/cancel",
+                    auth=("operator", "fixture-secret"))
+                self.assertEqual(cancelled.status_code, 200, cancelled.text)
+                self.assertIn(cancelled.json()["status"], {"cancelled", "cancelling"})
+
     def test_operator_allowed_anonymous_and_agent_denied_with_safe_audit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -420,6 +420,11 @@ class DistributedCrawlerAgent:
         cancelled_job_ids = {str(value) for value in acknowledgement.get("cancelledJobIds") or []}
         for job_id in cancelled_job_ids:
             self._cancel_job(job_id)
+            cleanup_generation = max(0, int(acknowledgement.get("requiredCacheGeneration") or 0))
+            current_generation = self._pending_stop_cleanups.get(job_id, -1)
+            if cleanup_generation > current_generation:
+                self._pending_stop_cleanups[job_id] = cleanup_generation
+                asyncio.create_task(self._complete_stop_cleanup(job_id, cleanup_generation))
         for task_id in cancel_task_ids:
             assignment = self.active.get(task_id) or self.store.assignment(task_id)
             if assignment is None:

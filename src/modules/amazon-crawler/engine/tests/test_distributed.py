@@ -427,6 +427,43 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response["removedFiles"], 1)
             self.assertIsNone(cache.load("B012345678"))
 
+    async def test_reconnect_after_job_cancel_replays_cleanup_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:8766", display_name="test",
+                    max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent-data",
+                ),
+            )
+            assignment = {
+                "taskId": "task-1", "jobId": "job-1", "leaseId": "lease-1",
+                "settingsFingerprint": "fixture",
+            }
+            agent.store.save_assignment(assignment)
+            agent.active["task-1"] = assignment
+
+            await agent._apply_reconciliation({
+                "cancelledJobIds": ["job-1"],
+                "discardTaskIds": ["task-1"],
+                "requiredCacheGeneration": 0,
+            })
+
+            messages = []
+            while True:
+                message = await asyncio.wait_for(agent.outbound_queue.get(), timeout=2)
+                messages.append(message)
+                if message["type"] == "stop_cleanup_ack":
+                    break
+            await asyncio.sleep(0)
+
+            cleanup_ack = next(message for message in messages if message["type"] == "stop_cleanup_ack")
+            self.assertEqual(cleanup_ack["jobId"], "job-1")
+            self.assertEqual(cleanup_ack["cacheGeneration"], 0)
+            self.assertNotIn("job-1", agent._pending_stop_cleanups)
+            self.assertEqual(agent.store.recover_assignments(), [])
+
     async def test_explicit_clear_removes_cache_even_if_agent_generation_is_ahead(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
