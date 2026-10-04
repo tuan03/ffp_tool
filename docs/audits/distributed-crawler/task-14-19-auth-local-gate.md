@@ -112,6 +112,10 @@ not be reclaimed automatically by another agent.
 
 ## Safe local checks for the user
 
+Follow-up: [Step 02 real-agent sandbox](step-02-real-agent-sandbox.md) records the
+separate HTTPS/WSS source-agent process and its manual restart/key/outbox checks.
+This is additional evidence, not completion of the composed-runtime/public gate.
+
 Run from the repository root with Docker Desktop and the existing isolated local
 PostgreSQL test container available:
 
