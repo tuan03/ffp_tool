@@ -11,7 +11,7 @@ test("Agent Access starts with a clear task navigation, not technical metrics or
   const html = renderToStaticMarkup(createElement(AgentAccessPanel, { client, storeId: "demo" }));
   assert.match(html, /Kết nối máy/);
   assert.match(html, /Phiên chạy/);
-  assert.match(html, /Chỉ số/);
+  assert.match(html, /Hoạt động/);
   assert.match(html, /xử lý SEO \+ đánh giá GSC/);
   assert.match(html, /Không tự duyệt hoặc đồng bộ Shopify/);
   assert.doesNotMatch(html, /Sức khỏe SEO Worker|Tỷ lệ retry|Copy Start Prompt|Tạo token 24 giờ/);

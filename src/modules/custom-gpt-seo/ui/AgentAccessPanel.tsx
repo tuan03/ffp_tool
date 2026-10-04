@@ -8,7 +8,7 @@ import { createAgentPrompt } from "./agent-prompt";
 const BUTTON = "rounded-lg border border-slate-600 px-3 py-2 text-sm text-cyan-300 hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-40";
 const PRIMARY = "rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-300 disabled:opacity-40";
 const INPUT = "rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-white";
-const VIEWS = [{ id: "connect", label: "Kết nối máy" }, { id: "runs", label: "Phiên chạy" }, { id: "metrics", label: "Chỉ số" }] as const;
+const VIEWS = [{ id: "connect", label: "Kết nối máy" }, { id: "runs", label: "Phiên chạy" }, { id: "metrics", label: "Hoạt động" }] as const;
 const RUN_LABELS: Readonly<Record<string, string>> = { RUNNING: "Đang chạy", PARTIAL: "Tạm dừng", COMPLETED: "Hoàn thành" };
 
 export function AgentAccessPanel({ client, storeId }: { readonly client: CustomGptClient; readonly storeId: string }): React.JSX.Element {
