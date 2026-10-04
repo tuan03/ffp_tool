@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .protocol import utc_iso
+from .protocol import utc_iso, payload_checksum
+from .client_outbox_migrations import migrate_outbox
 from ..observability import safe_fields
 
 
@@ -29,28 +30,6 @@ CREATE TABLE IF NOT EXISTS leases (
     payload_json TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS pending_results (
-    task_id TEXT PRIMARY KEY,
-    lease_id TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS pending_products (
-    task_id TEXT NOT NULL,
-    product_key TEXT NOT NULL,
-    lease_id TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY(task_id, product_key)
 );
 CREATE TABLE IF NOT EXISTS cancel_intents (
     job_id TEXT PRIMARY KEY,
@@ -74,6 +53,8 @@ class ClientStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connection() as connection:
+            migrate_outbox(connection, path)
+            connection.commit()
             connection.executescript(SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
@@ -372,29 +353,36 @@ class ClientStore:
     def spool_result(self, *, task_id: str, lease_id: str, checksum: str, payload: dict[str, Any]) -> None:
         now = utc_iso()
         with self._connection() as connection:
+            self._spool(connection, "pending_results", task_id, lease_id, checksum, payload)
             connection.execute(
-                """INSERT INTO pending_results(task_id, lease_id, checksum, payload_json, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(task_id) DO UPDATE SET
-                     lease_id=excluded.lease_id, checksum=excluded.checksum,
-                     payload_json=excluded.payload_json, updated_at=excluded.updated_at""",
-                (task_id, lease_id, checksum, json.dumps(payload, ensure_ascii=False), now, now),
-            )
-            connection.execute(
-                "UPDATE leases SET status='completed_pending_upload', updated_at=? WHERE task_id=?",
-                (now, task_id),
+                "UPDATE leases SET status='completed_pending_upload', updated_at=? WHERE task_id=? AND lease_id=?",
+                (now, task_id, lease_id),
             )
             connection.commit()
+
+    @staticmethod
+    def _spool(connection, table: str, task_id: str, lease_id: str, checksum: str, payload: dict[str, Any], product_key: str | None = None) -> None:
+        connection.execute("INSERT OR IGNORE INTO " + table +
+            "(result_id,task_id,lease_id,checksum,payload_json,created_at,updated_at" +
+            (",product_key" if product_key is not None else "") + ") VALUES (?,?,?,?,?,?,?" +
+            (",?" if product_key is not None else "") + ")",
+            (uuid.uuid4().hex, task_id, lease_id, checksum, json.dumps(payload, ensure_ascii=False), utc_iso(), utc_iso()) +
+            ((product_key,) if product_key is not None else ()))
+        row = connection.execute("SELECT checksum,payload_json FROM " + table +
+            " WHERE task_id=? AND lease_id=?" + (" AND product_key=?" if product_key is not None else ""),
+            (task_id, lease_id) + ((product_key,) if product_key is not None else ())).fetchone()
+        if row is None or row["checksum"] != checksum or payload_checksum(json.loads(row["payload_json"])) != payload_checksum(payload):
+            raise ValueError("Outbox content conflict for an existing attempt")
 
     def pending_results(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(
-                "SELECT task_id, lease_id, checksum, payload_json, attempts FROM pending_results ORDER BY created_at LIMIT ?",
+                "SELECT result_id, task_id, lease_id, checksum, payload_json, attempts FROM pending_results ORDER BY created_at, rowid LIMIT ?",
                 (limit,),
             ).fetchall()
         return [
             {
-                "taskId": row["task_id"], "leaseId": row["lease_id"], "checksum": row["checksum"],
+                "resultId": row["result_id"], "taskId": row["task_id"], "leaseId": row["lease_id"], "checksum": row["checksum"],
                 "payload": json.loads(row["payload_json"]), "attempts": row["attempts"],
             }
             for row in rows
@@ -423,37 +411,20 @@ class ClientStore:
         checksum: str,
         payload: dict[str, Any],
     ) -> None:
-        now = utc_iso()
         with self._connection() as connection:
-            connection.execute(
-                """INSERT INTO pending_products(
-                       task_id, product_key, lease_id, checksum, payload_json, created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(task_id, product_key) DO UPDATE SET
-                     lease_id=excluded.lease_id, checksum=excluded.checksum,
-                     payload_json=excluded.payload_json, attempts=0, last_error=NULL,
-                     updated_at=excluded.updated_at""",
-                (
-                    task_id,
-                    product_key,
-                    lease_id,
-                    checksum,
-                    json.dumps(payload, ensure_ascii=False),
-                    now,
-                    now,
-                ),
-            )
+            self._spool(connection, "pending_products", task_id, lease_id, checksum, payload, product_key)
             connection.commit()
 
     def pending_products(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(
-                """SELECT task_id, product_key, lease_id, checksum, payload_json, attempts
-                   FROM pending_products ORDER BY created_at LIMIT ?""",
+                """SELECT result_id, task_id, product_key, lease_id, checksum, payload_json, attempts
+                   FROM pending_products ORDER BY created_at, rowid LIMIT ?""",
                 (limit,),
             ).fetchall()
         return [
             {
+                "resultId": row["result_id"],
                 "taskId": row["task_id"],
                 "productKey": row["product_key"],
                 "leaseId": row["lease_id"],
@@ -464,42 +435,42 @@ class ClientStore:
             for row in rows
         ]
 
-    def acknowledge_product(self, task_id: str, product_key: str) -> None:
+    def acknowledge_product(self, result_id: str) -> None:
         with self._connection() as connection:
             connection.execute(
-                "DELETE FROM pending_products WHERE task_id=? AND product_key=?",
-                (task_id, product_key),
+                "DELETE FROM pending_products WHERE result_id=?",
+                (result_id,),
             )
             connection.commit()
 
-    def has_pending_products(self, task_id: str) -> bool:
+    def has_pending_products(self, task_id: str, lease_id: str | None = None) -> bool:
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT 1 FROM pending_products WHERE task_id=? LIMIT 1",
-                (task_id,),
+                "SELECT 1 FROM pending_products WHERE task_id=?" + (" AND lease_id=?" if lease_id is not None else "") + " LIMIT 1",
+                (task_id, lease_id) if lease_id is not None else (task_id,),
             ).fetchone()
         return row is not None
 
-    def product_failed(self, task_id: str, product_key: str, error: str) -> None:
+    def product_failed(self, result_id: str, error: str) -> None:
         with self._connection() as connection:
             connection.execute(
                 """UPDATE pending_products
                    SET attempts=attempts+1, last_error=?, updated_at=?
-                   WHERE task_id=? AND product_key=?""",
-                (error[:2000], utc_iso(), task_id, product_key),
+                   WHERE result_id=?""",
+                (error[:2000], utc_iso(), result_id),
             )
             connection.commit()
 
-    def acknowledge_result(self, task_id: str) -> None:
+    def acknowledge_result(self, result_id: str) -> None:
         with self._connection() as connection:
-            connection.execute("DELETE FROM pending_results WHERE task_id=?", (task_id,))
-            connection.execute("DELETE FROM leases WHERE task_id=?", (task_id,))
+            connection.execute("DELETE FROM leases WHERE EXISTS (SELECT 1 FROM pending_results r WHERE r.result_id=? AND r.task_id=leases.task_id AND r.lease_id=leases.lease_id)", (result_id,))
+            connection.execute("DELETE FROM pending_results WHERE result_id=?", (result_id,))
             connection.commit()
 
-    def result_failed(self, task_id: str, error: str) -> None:
-        with self._connect() as connection:
+    def result_failed(self, result_id: str, error: str) -> None:
+        with self._connection() as connection:
             connection.execute(
-                "UPDATE pending_results SET attempts=attempts+1, last_error=?, updated_at=? WHERE task_id=?",
-                (error[:2000], utc_iso(), task_id),
+                "UPDATE pending_results SET attempts=attempts+1, last_error=?, updated_at=? WHERE result_id=?",
+                (error[:2000], utc_iso(), result_id),
             )
             connection.commit()

@@ -29,7 +29,7 @@ from . import AGENT_VERSION
 from .client_config import AgentConfig
 from .client_dashboard_state import DashboardState
 from .client_store import ClientStore
-from .protocol import HEARTBEAT_INTERVAL_SECONDS, hello_message, payload_checksum, settings_fingerprint, utc_iso
+from .protocol import HEARTBEAT_INTERVAL_SECONDS, hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
 StatusCallback = Callable[[dict[str, Any]], None]
@@ -1264,24 +1264,15 @@ class DistributedCrawlerAgent:
             upload_failed = False
             retry_delay = 1
             pending_products = self.store.pending_products()
-            discarded_task_ids: set[str] = set()
             for product in pending_products:
                 task_id = str(product["taskId"])
-                if task_id in discarded_task_ids:
-                    continue
                 try:
                     response = await asyncio.to_thread(self._upload_product, product)
-                    if response.get("status") == "cancelled":
-                        self._dashboard_update("delivery", task_id, str(product["leaseId"]), "cancelled")
-                        self.store.discard_task(task_id)
-                        self.active.pop(task_id, None)
-                        discarded_task_ids.add(task_id)
-                        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
-                    elif response.get("status") in {"accepted", "duplicate"}:
-                        self.store.acknowledge_product(task_id, product["productKey"])
+                    self._validate_upload_receipt(product, response)
+                    self.store.acknowledge_product(product["resultId"])
                 except Exception as error:
                     self._dashboard_update("delivery", task_id, str(product["leaseId"]), "retry")
-                    self.store.product_failed(task_id, product["productKey"], redact(error))
+                    self.store.product_failed(product["resultId"], redact(error))
                     upload_failed = True
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(product.get("attempts", 0)), 5)))
             pending = self.store.pending_results()
@@ -1290,24 +1281,36 @@ class DistributedCrawlerAgent:
                 await asyncio.sleep(retry_delay if upload_failed else 1)
                 continue
             for result in pending:
-                if self.store.has_pending_products(result["taskId"]):
+                if self.store.has_pending_products(result["taskId"], result["leaseId"]):
                     continue
                 try:
                     self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "uploading")
                     response = await asyncio.to_thread(self._upload_result, result)
-                    if response.get("status") in {"accepted", "duplicate", "cancelled"}:
-                        self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]),
-                                               "cancelled" if response.get("status") == "cancelled" else "sent")
-                        self.store.acknowledge_result(result["taskId"])
+                    self._validate_upload_receipt(result, response)
+                    self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "sent")
+                    self.store.acknowledge_result(result["resultId"])
+                    if self.active.get(result["taskId"], {}).get("leaseId") == result["leaseId"]:
                         self.active.pop(result["taskId"], None)
-                        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+                    await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
                 except Exception as error:
                     self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
-                    self.store.result_failed(result["taskId"], redact(error))
+                    self.store.result_failed(result["resultId"], redact(error))
                     upload_failed = True
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
             self._publish_status()
             await asyncio.sleep(retry_delay if upload_failed else 1)
+
+    def _validate_upload_receipt(self, upload: dict[str, Any], response: dict[str, Any]) -> None:
+        # Local resultId selects the exact immutable row. Task 05's server
+        # adapter identifies that upload by attempt and canonical product key.
+        is_product = "productKey" in upload
+        source_key = product_source_key(upload["payload"]["product"]) if is_product else ""
+        expected = payload_checksum(["product" if is_product else "final", upload["taskId"],
+                                     self.client_id, upload["leaseId"], source_key])
+        if (response.get("status") not in {"accepted", "duplicate"}
+                or response.get("receiptId") != expected
+                or response.get("checksum") != payload_checksum(upload["payload"])):
+            raise ValueError("Upload response lacks a matching durable receipt")
 
     def _upload_product(self, product: dict[str, Any]) -> dict[str, Any]:
         body = gzip.compress(json.dumps(product["payload"], ensure_ascii=False).encode("utf-8"))
@@ -1324,15 +1327,8 @@ class DistributedCrawlerAgent:
                 "X-Result-Checksum": product["checksum"],
             },
         )
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                return {"status": "cancelled"}
-            if error.code == 409:
-                return {"status": "duplicate"}
-            raise
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
 
     def _upload_result(self, result: dict[str, Any]) -> dict[str, Any]:
         raw = json.dumps(result["payload"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -1346,11 +1342,5 @@ class DistributedCrawlerAgent:
                 "X-Result-Checksum": result["checksum"],
             },
         )
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            if error.code in {404, 409}:
-                self.store.acknowledge_result(result["taskId"])
-                return {"status": "cancelled"}
-            raise
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read())

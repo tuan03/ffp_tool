@@ -41,6 +41,17 @@ def payload_checksum(value: Any) -> str:
     return hashlib.sha256(canonical_json(value)).hexdigest()
 
 
+def product_source_key(product: dict[str, Any]) -> str:
+    explicit = str(product.get("sourceKey") or "").strip()
+    if explicit:
+        return explicit
+    split = product.get("splitContext") if isinstance(product.get("splitContext"), dict) else {}
+    parent_asin = str(product.get("parentAsin") or "unknown").strip().upper()
+    attribute = str(split.get("attribute") or "none").strip().casefold()
+    value = str(split.get("value") or "none").strip().casefold()
+    return f"amazon:{parent_asin}:{attribute}:{value}"
+
+
 def settings_fingerprint(settings: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json(settings)).hexdigest()[:20]
 

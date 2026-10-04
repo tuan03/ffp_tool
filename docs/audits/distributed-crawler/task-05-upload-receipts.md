@@ -3,7 +3,7 @@
 - Baseline: `e1a4a93`, working branch `cua_pro` as explicitly requested (exception to the standard task-branch workflow).
 - Original specification: sections **19, 30–31**, limited to server upload receipts, duplicate delivery and conflicting content. This does not complete those entire sections.
 - Dependency: Task 04 accepted through the user's instruction to proceed.
-- Status: assistant implementation and verification complete; awaiting user test/acceptance. Task 06 has not started.
+- Status: accepted on 2026-10-04. User reported successful testing and explicitly authorized Task 06. Implementation commit: `e97b4df`. Verification below records the Task 05 handoff; subsequent agent integration is in the Task 06 report.
 
 ## Scope and behavior
 
@@ -87,8 +87,7 @@ Logs are local only: `%TEMP%\ffp-audit05-npm-test.log`, `%TEMP%\ffp-audit05-type
 
 ## Acceptance gate
 
-- [ ] User runs the command and confirms both nine-case runs and cleanup confirmations.
-- [ ] User accepts the server-only scope and the pending agent/retention work.
-- [ ] User authorizes Task 06 separately.
+- [x] User reported successful testing (no raw output attached in this turn).
+- [x] User accepted the handoff and authorized Task 06.
 
-No push, rebuild, restart, VPS deployment or release was performed. Stop here until the user accepts Task 05.
+No push, rebuild, restart, VPS deployment or release was performed during Task 05.

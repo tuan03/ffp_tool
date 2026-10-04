@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **TASK 05 CHỜ NGƯỜI DÙNG KIỂM TRA**. Người dùng cho chuyển tiếp sau Task 04; Task 01–04 đã nghiệm thu theo quy trình hội thoại. Xem [báo cáo Task 05](audits/distributed-crawler/task-05-upload-receipts.md).
+> Trạng thái: **TASK 06 CHỜ NGƯỜI DÙNG KIỂM TRA**. Người dùng báo Task 05 test thành công và cho triển khai Task 06. Xem [báo cáo Task 06](audits/distributed-crawler/task-06-agent-outbox.md).
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -89,7 +89,7 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 ## 4. Backlog theo thứ tự thực hiện
 
-**Task 01–04 đã nghiệm thu; Task 05 chờ người dùng test; Task 06–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
+**Task 01–05 đã nghiệm thu; Task 06 chờ người dùng test; Task 07–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
@@ -111,7 +111,7 @@ Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test inst
 | [x] | 02 | Final result mới chỉ nhận từ lease còn quyền | 13–15, 19 (final result) | 01; duyệt D2, rule expiry; E1.1 | A stale bị reject, B accepted | Người dùng xác nhận ổn, cho triển khai Task 03 |
 | [x] | 03 | Product streaming cũng chặn lease cũ | 15, 19, 31 (product streaming) | 02; E1.1 | A không tạo pipeline item, B hợp lệ | Người dùng gửi output PASS và cho triển khai Task 04 |
 | [x] | 04 | Mutation phụ không hồi sinh lease cũ | 13–15, 19, 27 (mutation/reconcile) | 03; E1.1 | Progress/fail/renew/cancel ACK/reconcile với token cũ | Người dùng đồng ý chuyển task tiếp theo; không có output test riêng được gửi |
-| [ ] | 05 | Result receipt idempotent, checksum conflict rõ | 19, 30–31 (receipt/duplicate) | 04; E1.1 | Mất ACK gửi lại không duplicate; khác checksum reject | Xem một kết quả, nhiều lần delivery |
+| [x] | 05 | Result receipt idempotent, checksum conflict rõ | 19, 30–31 (receipt/duplicate) | 04; E1.1 | Mất ACK gửi lại không duplicate; khác checksum reject | Người dùng báo test thành công và cho triển khai Task 06 |
 | [ ] | 06 | Outbox định danh riêng, migrate không mất dữ liệu | 16–17, 27, 30–31 (outbox) | 05; duyệt D3; E1.2 | SQLite agent cũ → mới; hai attempts không đè nhau | Xem counts/identity qua reopen |
 | [ ] | 07 | Stop/cleanup giữ kết quả và asset chưa ACK | 9–10, 17, 30, 33 (giữ kết quả) | 06; E1.2 | Discard/purge/reconcile không xóa outbox; quarantine không publish | Test dữ liệu mẫu trước/sau cleanup |
 | [ ] | 08 | Outbox có backpressure khi lỗi lưu trữ | 16, 30, 36 (lỗi lưu trữ) | 07; quota/retention được duyệt; E1.2 | Disk-full mô phỏng, không false SUCCESS/nhận thêm | Xem cảnh báo và backlog còn nguyên |
@@ -262,14 +262,15 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 05 chờ người dùng test/xác nhận |
+| Task đang chạy | Task 06 chờ người dùng test/xác nhận |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
 | Task 04 | Đã nghiệm thu qua yêu cầu chuyển tiếp; xem báo cáo Task 04 |
-| Task 05 | Đã sửa receipt/checksum phía server và test; xem báo cáo Task 05 |
-| Task 06–53 | Chưa làm |
+| Task 05 | Người dùng đã test thành công, nghiệm thu |
+| Task 06 | Đã sửa định danh/migration outbox và kiểm tra receipt trước ACK; xem báo cáo Task 06 |
+| Task 07–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** người dùng chạy `python scripts/audits/audit_lease_baseline.py --receipts` và xác nhận Task 05. Chưa rebuild/deploy: agent hiện tại chưa phân biệt checksum conflict với các HTTP 409 khác; Task 06–07 phải hoàn tất trước gate tích hợp Task 10. Không bắt đầu Task 06, push hoặc deploy trước khi được duyệt.
+**Điểm dừng hiện tại:** người dùng chạy lệnh trong báo cáo Task 06 và xác nhận. Chưa rebuild/deploy: Task 07 còn phải bảo vệ outbox/asset trước stop/purge/reconcile và thêm quarantine; gate tích hợp ở Task 10. Không bắt đầu Task 07, push hoặc deploy trước khi được duyệt.

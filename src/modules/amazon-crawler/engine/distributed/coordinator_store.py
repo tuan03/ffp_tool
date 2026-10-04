@@ -39,6 +39,7 @@ from .coordinator_models import (
     CrawlTelemetryEvent,
 )
 from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, payload_checksum, settings_fingerprint, utc_iso, utc_now
+from .protocol import product_source_key as _source_key
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
@@ -144,17 +145,6 @@ def _as_utc(value):
     if value is None or value.tzinfo is not None:
         return value
     return value.replace(tzinfo=utc_now().tzinfo)
-
-
-def _source_key(product: dict[str, Any]) -> str:
-    explicit = str(product.get("sourceKey") or "").strip()
-    if explicit:
-        return explicit
-    split = product.get("splitContext") if isinstance(product.get("splitContext"), dict) else {}
-    parent_asin = str(product.get("parentAsin") or "unknown").strip().upper()
-    attribute = str(split.get("attribute") or "none").strip().casefold()
-    value = str(split.get("value") or "none").strip().casefold()
-    return f"amazon:{parent_asin}:{attribute}:{value}"
 
 
 def _shopify_sync_request_id(source_key: str) -> str:

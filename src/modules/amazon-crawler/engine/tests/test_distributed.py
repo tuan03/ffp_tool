@@ -726,7 +726,7 @@ class ClientStoreTests(unittest.TestCase):
             self.assertEqual(store.recover_assignments(), [])
             self.assertTrue(store.is_task_cancelled("task-1"))
 
-    def test_pending_product_survives_restart_and_is_idempotently_replaced(self) -> None:
+    def test_pending_product_survives_restart_and_rejects_changed_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "agent.sqlite3"
             first = ClientStore(path)
@@ -737,28 +737,29 @@ class ClientStoreTests(unittest.TestCase):
                 checksum="first-checksum",
                 payload={"product": {"id": "ocean", "title": "First"}},
             )
-            first.spool_product(
-                task_id="task-1",
-                product_key="amazon:B012345678:design:ocean",
-                lease_id="lease-1",
-                checksum="second-checksum",
-                payload={"product": {"id": "ocean", "title": "Updated"}},
-            )
+            with self.assertRaisesRegex(ValueError, "content"):
+                first.spool_product(
+                    task_id="task-1",
+                    product_key="amazon:B012345678:design:ocean",
+                    lease_id="lease-1",
+                    checksum="second-checksum",
+                    payload={"product": {"id": "ocean", "title": "Updated"}},
+                )
 
             restarted = ClientStore(path)
             pending = restarted.pending_products()
 
             self.assertEqual(len(pending), 1)
-            self.assertEqual(pending[0]["checksum"], "second-checksum")
-            self.assertEqual(pending[0]["payload"]["product"]["title"], "Updated")
+            self.assertEqual(pending[0]["checksum"], "first-checksum")
+            self.assertEqual(pending[0]["payload"]["product"]["title"], "First")
             self.assertTrue(restarted.has_pending_products("task-1"))
 
-            restarted.acknowledge_product("task-1", "amazon:B012345678:design:ocean")
+            restarted.acknowledge_product(pending[0]["resultId"])
             self.assertFalse(restarted.has_pending_products("task-1"))
 
 
 class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
-    async def test_product_upload_not_found_is_acknowledged_as_cancelled(self) -> None:
+    async def test_product_upload_not_found_is_not_an_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = AgentConfig(
                 server_url="http://127.0.0.1:9999",
@@ -791,9 +792,9 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch("urllib.request.urlopen", side_effect=not_found):
-                response = agent._upload_product(product)
-
-            self.assertEqual(response, {"status": "cancelled"})
+                with self.assertRaises(urllib.error.HTTPError):
+                    agent._upload_product(product)
+            self.assertEqual(len(agent.store.pending_products()), 1)
 
     async def test_transient_product_upload_failure_does_not_stop_upload_loop(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -824,7 +825,7 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(pending), 1)
             self.assertEqual(pending[0]["attempts"], 1)
 
-    async def test_missing_server_task_discards_all_local_task_state(self) -> None:
+    async def test_cancelled_upload_response_preserves_unacknowledged_task_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = AgentConfig(
                 server_url="http://127.0.0.1:9999",
@@ -858,10 +859,10 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(asyncio.CancelledError):
                     await agent._upload_loop()
 
-            self.assertEqual(upload.call_count, 1)
-            self.assertEqual(agent.store.pending_products(), [])
-            self.assertEqual(agent.store.recover_assignments(), [])
-            self.assertNotIn("missing-task", agent.active)
+            self.assertEqual(upload.call_count, 2)
+            self.assertEqual(len(agent.store.pending_products()), 2)
+            self.assertEqual(len(agent.store.recover_assignments()), 1)
+            self.assertIn("missing-task", agent.active)
 
     def test_job_cancellation_sets_every_registered_batch_event(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

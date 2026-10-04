@@ -131,7 +131,7 @@ class DashboardStateTests(unittest.TestCase):
         self.store.spool_result(task_id="task-a", lease_id="lease-a", checksum="checksum", payload={})
         restored = DashboardState(self.store, now=lambda: self.now)
         self.assertEqual(restored.snapshot()["tasks"][0]["delivery"], "pending")
-        self.store.acknowledge_result("task-a")
+        self.store.acknowledge_result(self.store.pending_results()[0]["resultId"])
         restored = DashboardState(self.store, now=lambda: self.now)
         self.assertEqual(restored.snapshot()["tasks"], [])
 
