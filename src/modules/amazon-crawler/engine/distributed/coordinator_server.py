@@ -29,6 +29,7 @@ from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
 from .operator_authorization import OperatorCredentials, install_operator_authorization
+from .agent_keys import install_agent_key_routes
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -332,6 +333,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.is_ready = False
     if operator_credentials is not None:
         install_operator_authorization(app, sessions, operator_credentials)
+        install_agent_key_routes(app, sessions, operator_credentials.username)
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
         "" if os.environ.get("NODE_ENV") == "production" else "http://localhost:5173,http://127.0.0.1:5173",

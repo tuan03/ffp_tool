@@ -67,4 +67,4 @@ Final verification: `npm test`, `npm run typecheck`, `npm run build` passed. Cra
 - No schema migration has been applied to the running application database. A future Coordinator startup using this code will apply additive migration v3. Older binaries that reject newer migration versions cannot simply be restarted against v3: use a reviewed rollback/restore plan, never delete migration metadata to bypass the guard.
 - Task 13 adds key creation under this operator boundary. Agent keys do not exist yet.
 - Environment wiring, browser credential flow, Nginx/public HTTPS integration, rate limiting for authentication/audit abuse and actual production cutover must be verified before Task 19 acceptance. No production security-completion checklist is ticked here.
-- No rebuild/restart/push/deploy performed. User acceptance pending; Task 13 not started.
+- Delivered in `d1b636f`; user approved advancement to Task 13 through conversation without a new manual-test transcript. No rebuild/restart/push/deploy was performed for Task 12.

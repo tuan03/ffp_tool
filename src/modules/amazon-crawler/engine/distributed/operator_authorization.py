@@ -93,6 +93,7 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
             return JSONResponse({"error": {"code": denial_reason}}, status_code=denial_status,
                 headers={"WWW-Authenticate": 'Basic realm="FFP Operator"', "X-Request-Id": audit_id})
         try:
+            request.state.operator_audit_id = audit_id
             response = await call_next(request)
         except Exception:
             # Keep the durable authorization attempt as an unknown outcome.
@@ -102,7 +103,8 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
                 audit = session.get(OperatorAudit, audit_id)
                 audit.outcome = "completed" if response.status_code < 400 else "rejected"
                 audit.status_code = response.status_code
-                audit.reason = "HTTP_RESPONSE_RECORDED"
+                if audit.reason == "OPERATOR_AUTH_ACCEPTED":
+                    audit.reason = "HTTP_RESPONSE_RECORDED"
         except Exception:
             # Action may already have committed: never report it was rolled back.
             return JSONResponse({"error": {"code": "OPERATOR_OUTCOME_UNKNOWN", "requestId": audit_id}}, status_code=503)

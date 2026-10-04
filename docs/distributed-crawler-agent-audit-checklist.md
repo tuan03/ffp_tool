@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **TASK 12 CHỜ NGƯỜI DÙNG TEST**. Task 11 đã được duyệt qua yêu cầu chuyển tiếp. Xem [báo cáo Task 12](audits/distributed-crawler/task-12-operator-authorization.md). Chế độ operator chỉ bật trong app factory test, chưa bật auth trên runtime/VPS.
+> Trạng thái: **TASK 13 CHỜ NGƯỜI DÙNG TEST**. Task 12 đã được duyệt qua yêu cầu chuyển tiếp. Xem [báo cáo Task 13](audits/distributed-crawler/task-13-agent-key-creation.md). Tạo key chỉ có trong app factory bật operator; chưa bật auth trên runtime/VPS.
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -89,7 +89,7 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 ## 4. Backlog theo thứ tự thực hiện
 
-**Task 01–11 đã được người dùng cho chuyển tiếp qua hội thoại; Task 12 chờ test; Task 13–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
+**Task 01–12 đã được người dùng cho chuyển tiếp qua hội thoại; Task 13 chờ test; Task 14–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
@@ -125,7 +125,7 @@ Task 05 chốt contract receipt/result ID phía server; Task 06 migrate agent d�
 | Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
 | --- | --- | --- | --- | --- | --- | --- |
 | [x] | 11 | Chốt identity/auth/state compatibility | 2–6, 23–24, 51 (chốt contract) | 10; D1/D5/D6; E0.2/E2 | Ma trận agent cũ/mới, quyền local stop, naming states | Đã duyệt qua yêu cầu chuyển tiếp |
-| [ ] | 12 | Operator authorization và audit nền | 23–24, 48 (quyền operator/audit) | 11; E2.1 | Admin allowed, agent/anonymous denied; audit không secret | Demo quyền được/không được thao tác |
+| [x] | 12 | Operator authorization và audit nền | 23–24, 48 (quyền operator/audit) | 11; E2.1 | Admin allowed, agent/anonymous denied; audit không secret | Đã duyệt qua yêu cầu chuyển tiếp |
 | [ ] | 13 | Tạo key chỉ hiển thị raw một lần | 3, 23–24 (tạo key) | 12; E2.1 | Hash/verifier, expiry/capacity, không raw log | Tạo key test, kiểm danh sách metadata |
 | [ ] | 14 | Register idempotent, server cấp identity | 2, 4–5, 19 (register/identity) | 13; E2.1 | Mất register response không sinh ID trùng | Restart và đối chiếu ID |
 | [ ] | 15 | Setup URL/key và OS credential storage | 2, 4, 23, 51 (setup/secret) | 14; E2.2 | Identity/secret không lệch, không vào Git/log | Setup agent test và mở lại |
@@ -262,7 +262,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 12 chờ người dùng test |
+| Task đang chạy | Task 13 chờ người dùng test |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -274,9 +274,10 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 09 | Đã nghiệm thu qua yêu cầu chuyển tiếp; xem báo cáo Task 09 |
 | Task 10 | Đã nghiệm thu qua yêu cầu chuyển tiếp; xem giới hạn fixture trong báo cáo |
 | Task 11 | Contract được duyệt qua yêu cầu chuyển tiếp |
-| Task 12 | Operator boundary opt-in và audit PostgreSQL v3; chưa bật runtime |
-| Task 13–53 | Chưa làm |
+| Task 12 | Đã duyệt qua yêu cầu chuyển tiếp; chưa bật runtime |
+| Task 13 | Tạo key một lần, metadata/verifier PostgreSQL v4; chờ test |
+| Task 14–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** người dùng chạy `python scripts/audits/audit_lease_baseline.py --operator-auth` và xác nhận Task 12. Chưa rebuild hoặc bật auth trên VPS. Không tự push, deploy hoặc bắt đầu Task 13.
+**Điểm dừng hiện tại:** người dùng chạy `python scripts/audits/audit_lease_baseline.py --agent-keys` và xác nhận Task 13. Chưa rebuild hoặc bật auth trên VPS. Không tự push, deploy hoặc bắt đầu Task 14.

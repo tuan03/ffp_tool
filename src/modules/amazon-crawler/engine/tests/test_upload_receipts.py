@@ -126,7 +126,7 @@ class UploadReceiptTests(unittest.TestCase):
         with self.sessions() as session:
             self.assertEqual(session.get(CrawlTask, self.lease["taskId"]).lease_id, self.lease["leaseId"])
         with self.engine.connect() as connection:
-            self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), [1, 2, 3])
+            self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), [1, 2, 3, 4])
 
     def test_concurrent_final_uploads_share_one_receipt_on_postgres(self):
         if self.engine.dialect.name != "postgresql":
