@@ -277,7 +277,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 12 | Đã duyệt qua yêu cầu chuyển tiếp; chưa bật runtime |
 | Task 13 | Đã cho chuyển tiếp qua hội thoại |
 | Task 14–18 | Source và test local đã bổ sung; xem báo cáo batch, chưa tick nghiệm thu |
-| Task 19 | Nginx HTTP/WS + PostgreSQL local pass; public TLS/composed-runtime/cutover chưa hoàn tất |
+| Task 19 | Local Docker Compose/Nginx/PostgreSQL and public HTTPS readiness pass; public crawler-agent auth and production cutover remain pending |
 | Task 20–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
@@ -296,3 +296,8 @@ Next follow-up: user accepted the Pinterest sandbox. Review Studio's bridge/oper
 boundary is repaired and checked using isolated fixtures plus the actual composed
 PostgreSQL factory. See the Review Studio section in the batch report for commands
 and limits; real ChatGPT/public TLS and remaining Task 19 gates are not marked complete.
+
+2026-10-04 local Compose QA: rebuilt only the staging `server`; all three containers
+healthy. Review Studio loaded three configured stores and 131 templates, with the
+extension reconnected after restart. Public HTTPS readiness returned 200. Local/staging
+prerequisites are sufficient to begin Task 20; this does not accept production cutover.

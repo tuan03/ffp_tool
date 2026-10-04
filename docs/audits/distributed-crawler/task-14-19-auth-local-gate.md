@@ -336,3 +336,25 @@ feature. No real extension settings or tokens were changed.
 Next: user runs the above audit and confirms its result; coordinate a separate safe
 UI/real-extension acceptance if needed. Do not mark all Task 19 gates complete or move
 automatically to Task 20 based solely on these tests.
+
+### Local Compose runtime QA (2026-10-04)
+
+After user approval, rebuilt and recreated only `server` in the existing
+`ffp-crawler-staging` Compose project. The existing database and client containers,
+database/runtime volumes and store data were retained. The three containers report
+healthy; process inspection shows Gateway, Coordinator, Pinterest and Pipeline Worker
+running inside the single server container.
+
+Through the local Nginx entry point at `127.0.0.1:3011`, using the staging operator
+credentials and gateway key held locally (never printed): Review Studio SPA returned
+200; the Shopify store-list operation returned three stores; the Review Image API
+returned 200 and listed 15 Preaureum, 86 Jeminise and 30 Capozen templates. Its health
+response reported 133 total templates and `extensionConnected=true` after the server
+restart, confirming the already-installed extension reconnected. A read-only request
+to the public HTTPS readiness endpoint also returned 200 with normal certificate
+validation. No image-generation job or Shopify write was performed.
+
+This closes the local composed-runtime and public TLS reachability checks needed to
+begin Task 20 on the local/staging environment. Task 19 is not declared deployed or
+fully accepted: public crawler-authenticated-agent behavior and production auth
+cutover remain separate gates. Task 20 implementation and acceptance have not begun.
