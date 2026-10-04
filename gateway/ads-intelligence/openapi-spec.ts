@@ -480,6 +480,117 @@ export function generateAdsOpenApiSpec(serverBaseUrl = "http://localhost:3001"):
           },
         },
       },
+      "/api/ads-intelligence/writes/preview": {
+        post: {
+          operationId: "createWritePreview",
+          summary: "Generate tamper-proof cryptographic preview for ad mutation (V3 Guarded Writes)",
+          description: "Generates sha256 checksum, verifies 20% budget caps, and establishes 15m expiration window before human approval.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    storeId: { type: "string" },
+                    entityId: { type: "string" },
+                    entityName: { type: "string" },
+                    entityType: { type: "string", enum: ["CAMPAIGN", "ADSET", "AD"] },
+                    action: { type: "string", enum: ["PAUSE_ENTITY", "ENABLE_ENTITY", "UPDATE_BUDGET"] },
+                    currentStatus: { type: "string" },
+                    currentBudget: { type: "number" },
+                    proposedStatus: { type: "string" },
+                    proposedBudget: { type: "number" },
+                    currency: { type: "string" },
+                    reason: { type: "string" },
+                    requestedBy: { type: "string" },
+                  },
+                  required: ["storeId", "entityId", "action", "currentStatus", "currency", "reason", "requestedBy"],
+                },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "Tamper-proof preview with sha256 hash" },
+          },
+        },
+      },
+      "/api/ads-intelligence/writes/approve": {
+        post: {
+          operationId: "approveWritePreview",
+          summary: "Submit human media buyer approval for guarded write preview",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    previewId: { type: "string" },
+                    previewHash: { type: "string" },
+                    approvedBy: { type: "string" },
+                    comment: { type: "string" },
+                  },
+                  required: ["previewId", "previewHash", "approvedBy"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Approval recorded" },
+            "400": { description: "Approval rejected or hash mismatch" },
+          },
+        },
+      },
+      "/api/ads-intelligence/writes/execute": {
+        post: {
+          operationId: "executeGuardedWrite",
+          summary: "Execute guarded write under safety fences (Fails safe in V1/V2 read-only mode)",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    previewId: { type: "string" },
+                    liveEntityState: {
+                      type: "object",
+                      properties: {
+                        status: { type: "string" },
+                        budget: { type: "number" },
+                      },
+                      required: ["status"],
+                    },
+                  },
+                  required: ["previewId", "liveEntityState"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Action executed (when V3 enabled)" },
+            "403": { description: "Action denied safe in V1/V2 read-only mode" },
+          },
+        },
+      },
+      "/api/ads-intelligence/writes/audit": {
+        get: {
+          operationId: "getWriteAuditLog",
+          summary: "Get immutable audit trail of all mutation requests and outcomes",
+          parameters: [
+            {
+              name: "storeId",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": { description: "Guarded write audit entries" },
+          },
+        },
+      },
     },
   };
 }

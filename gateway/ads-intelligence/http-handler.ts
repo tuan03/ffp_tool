@@ -7,6 +7,7 @@ import { adsIntelligenceService } from "./service";
 import { adsIntelligenceCache } from "./cache";
 import { formatBriefMarkdown } from "./brief-generator";
 import { generateAdsOpenApiSpec } from "./openapi-spec";
+import { adsGuardedWritesService, type WritePreviewRequest, type WriteApproval } from "./guarded-writes";
 import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStatus, AdsExperiment, CreativeBrief } from "./types";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
@@ -301,6 +302,72 @@ export async function handleAdsIntelligenceHttpRequest(
       return true;
     }
 
+    // --- Guarded Writes Endpoints (Step 21 · FFP-ADS-021) ---
+    if (pathname === "/api/ads-intelligence/writes/preview" && req.method === "POST") {
+      const body = await readJsonBody<WritePreviewRequest>(req);
+      if (!body.storeId || !body.entityId || !body.action) {
+        sendJson(res, 400, {
+          error: { code: "BAD_REQUEST", message: "Missing required fields: storeId, entityId, action" },
+        });
+        return true;
+      }
+      const preview = adsGuardedWritesService.generatePreview(body);
+      sendJson(res, 201, preview);
+      return true;
+    }
+
+    if (pathname.startsWith("/api/ads-intelligence/writes/preview/") && req.method === "GET") {
+      const previewId = pathname.slice("/api/ads-intelligence/writes/preview/".length);
+      const preview = adsGuardedWritesService.getPreview(previewId);
+      if (!preview) {
+        sendJson(res, 404, { error: { code: "NOT_FOUND", message: `Preview '${previewId}' not found` } });
+        return true;
+      }
+      sendJson(res, 200, preview);
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/writes/approve" && req.method === "POST") {
+      const body = await readJsonBody<WriteApproval>(req);
+      if (!body.previewId || !body.previewHash || !body.approvedBy) {
+        sendJson(res, 400, {
+          error: { code: "BAD_REQUEST", message: "Missing required fields: previewId, previewHash, approvedBy" },
+        });
+        return true;
+      }
+      try {
+        const approved = adsGuardedWritesService.approvePreview(body);
+        sendJson(res, 200, approved);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Approval failed";
+        sendJson(res, 400, { error: { code: "APPROVAL_REJECTED", message: msg } });
+      }
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/writes/execute" && req.method === "POST") {
+      const body = await readJsonBody<{
+        previewId: string;
+        liveEntityState: { status: string; budget?: number };
+      }>(req);
+      if (!body.previewId || !body.liveEntityState) {
+        sendJson(res, 400, {
+          error: { code: "BAD_REQUEST", message: "Missing required fields: previewId, liveEntityState" },
+        });
+        return true;
+      }
+      const result = adsGuardedWritesService.executeGuardedWrite(body.previewId, body.liveEntityState);
+      const statusCode = result.success ? 200 : result.status === "DENIED_V1_V2" ? 403 : 400;
+      sendJson(res, statusCode, result);
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/writes/audit" && req.method === "GET") {
+      const filterStore = parsedUrl.searchParams.get("storeId") || undefined;
+      const logs = adsGuardedWritesService.getAuditLog(filterStore);
+      sendJson(res, 200, { storeId: filterStore || "all", auditLog: logs, total: logs.length });
+      return true;
+    }
 
     sendJson(res, 404, {
       error: { code: "NOT_FOUND", message: `Ads Intelligence endpoint not found: ${pathname}` },

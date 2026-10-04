@@ -22,3 +22,4 @@ export * from "./mcp-server";
 export * from "./mcp-handler";
 export * from "./openapi-spec";
 export * from "./http-handler";
+export * from "./guarded-writes";
