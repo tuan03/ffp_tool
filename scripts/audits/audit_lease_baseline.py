@@ -129,6 +129,7 @@ def main() -> None:
     modes.add_argument("--operator-auth", action="store_true", help="Task 12: operator boundary and audit on PostgreSQL")
     modes.add_argument("--agent-keys", action="store_true", help="Task 13: one-time key creation and metadata on PostgreSQL")
     modes.add_argument("--identity", action="store_true", help="Task 14: authenticated idempotent registration")
+    modes.add_argument("--proxy-auth", action="store_true", help="Tasks 14-19 local gate, including an isolated temporary Nginx container")
     arguments = parser.parse_args()
     expectation = arguments.expect
     url = local_test_url()
@@ -153,15 +154,18 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 Base.metadata.create_all(engine)
-                if arguments.operator_auth or arguments.agent_keys or arguments.identity:
+                if arguments.operator_auth or arguments.agent_keys or arguments.identity or arguments.proxy_auth:
                     from engine.tests.test_operator_authorization import OperatorAuthorizationTests
                     from engine.tests.test_agent_keys import AgentKeyTests
                     from engine.tests.test_agent_identity import AgentIdentityTests
-                    class PostgreSqlOperatorTests(AgentIdentityTests if arguments.identity else AgentKeyTests if arguments.agent_keys else OperatorAuthorizationTests):
+                    class PostgreSqlOperatorTests(AgentIdentityTests if arguments.identity or arguments.proxy_auth else AgentKeyTests if arguments.agent_keys else OperatorAuthorizationTests):
                         external_engine = engine
                     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSqlOperatorTests))
                     require(result.wasSuccessful() and not result.skipped, "Operator authorization audit failed")
                     print(f"RUN {run_number}: {'agent key' if arguments.agent_keys else 'operator authorization'} tests={result.testsRun}, failures=0, skipped=0")
+                    if arguments.proxy_auth:
+                        from auth_proxy_scenario import verify_auth_proxy
+                        verify_auth_proxy(engine)
                 elif arguments.reliability:
                     verify_mutations(engine, run_number)
                     verify_mutations(engine, run_number, receipts=True)
@@ -194,7 +198,9 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    if arguments.identity:
+    if arguments.proxy_auth:
+        print("PASS: local PostgreSQL and real Nginx auth gate twice; public HTTPS acceptance still pending.")
+    elif arguments.identity:
         print("PASS: authenticated enrollment verified twice; no production cutover.")
     elif arguments.agent_keys:
         print("PASS: Task 13 one-time Agent Keys verified twice; runtime authentication not enabled.")

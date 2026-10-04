@@ -1,5 +1,6 @@
 """Authenticated, idempotent enrollment; credentials never authorize rebind."""
 import tempfile
+import os
 import unittest
 import uuid
 from contextlib import ExitStack
@@ -19,6 +20,10 @@ class AgentIdentityTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        self.stack.enter_context(patch.dict(os.environ, {
+            "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+            "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+        }))
         self.stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
         if getattr(self, "external_engine", None) is not None:
             self.stack.enter_context(patch("engine.distributed.coordinator_server.create_database_engine", return_value=self.external_engine))
