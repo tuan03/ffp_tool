@@ -4,7 +4,7 @@
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, các mục 1–58.
 > Trạng thái: **đề xuất để duyệt, chưa phải tính năng đã triển khai hoặc kết quả nghiệm thu**.
 > Phạm vi lần làm này: đọc đặc tả, đối chiếu source/test, viết kế hoạch. Không đổi code, database, container, agent hoặc VPS.
-> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Tài liệu này giữ vai trò giải thích kiến trúc và hiện trạng baseline. Task 01–07 đã nghiệm thu qua hội thoại; Task 08 thêm backpressure theo ngưỡng người dùng duyệt, chờ người dùng test. Chưa cập nhật container/agent đang chạy. Các mô tả hành vi cũ bên dưới là baseline trước chuỗi sửa Task 02–08; xem báo cáo từng task để biết thay đổi mới.
+> Cập nhật cách thực hiện: dùng [checklist từng task](distributed-crawler-agent-audit-checklist.md) làm sổ tiến độ chính. Tài liệu này giữ vai trò giải thích kiến trúc và hiện trạng baseline. Task 01–08 đã được người dùng cho chuyển tiếp qua hội thoại; Task 09 thêm recovery gate và receipt-only reconcile, chờ người dùng test. Chưa cập nhật container/agent đang chạy. Các mô tả hành vi cũ bên dưới là baseline trước chuỗi sửa Task 02–09; xem báo cáo từng task để biết thay đổi mới.
 
 ## 1. Kết luận trước: nên làm gì và chưa nên làm gì?
 

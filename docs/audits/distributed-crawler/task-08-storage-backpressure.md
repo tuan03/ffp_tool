@@ -3,7 +3,7 @@
 - Baseline: `674a1e5`, working branch `cua_pro` per user instruction (exception to per-task branching).
 - Original specification: **16, 30, 36** — durable local result handling, upload backlog and storage-error behavior. This is not completion of all error taxonomy or crash recovery requirements.
 - User explicitly approved the thresholds below before implementation.
-- Status: awaiting user acceptance. Task 09 has not started.
+- Delivered in `8217bbe`. User authorized the next task through conversation; no additional manual-test log was supplied. See Task 09 for recovery admission.
 
 ## Approved policy
 

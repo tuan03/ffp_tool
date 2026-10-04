@@ -25,6 +25,8 @@ class OutboxPressureTests(unittest.IsolatedAsyncioTestCase):
             limits=AgentLimits(), data_directory=self.root / "agent"))
         self.disk = patch("engine.distributed.client_storage_pressure.shutil.disk_usage", return_value=SimpleNamespace(free=10 * 1024**3))
         self.disk_mock = self.disk.start()
+        self.agent._is_connected = True
+        self.agent._recovery_complete = True
 
     def tearDown(self):
         self.disk.stop()

@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **TASK 08 CHỜ NGƯỜI DÙNG KIỂM TRA**. Người dùng cho chuyển tiếp sau Task 07 và duyệt các ngưỡng lưu trữ. Xem [báo cáo Task 08](audits/distributed-crawler/task-08-storage-backpressure.md).
+> Trạng thái: **TASK 09 CHỜ NGƯỜI DÙNG KIỂM TRA**. Người dùng cho chuyển tiếp sau Task 08 (không có log test thủ công mới). Xem [báo cáo Task 09](audits/distributed-crawler/task-09-agent-recovery.md).
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -89,7 +89,7 @@ Commit baseline; files test/docs thay đổi nếu có; command/exit code; schem
 
 ## 4. Backlog theo thứ tự thực hiện
 
-**Task 01–07 đã nghiệm thu qua hội thoại; Task 08 chờ người dùng test; Task 09–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
+**Task 01–08 đã được người dùng cho chuyển tiếp qua hội thoại; Task 09 chờ người dùng test; Task 10–53 CHƯA LÀM.** Ô checkbox chỉ được tick khi người dùng nghiệm thu. Mặc định task sau chờ task trước; cột phụ thuộc nêu thêm điều kiện đặc biệt. Thay đổi thứ tự phải được duyệt, không tự nhảy task bị chặn.
 
 Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test instance cho tới gate Task 10; không đưa bản sửa nửa chừng vào production. Các task backend chưa có UI sẽ bàn giao bằng harness/CLI; task UI có sẵn được dùng ngay trong demo, không phải đợi cuối mới cho người dùng nhìn thấy kết quả.
 
@@ -114,7 +114,7 @@ Task 02–10 là một nhóm thay đổi liên quan, chỉ thử trên test inst
 | [x] | 05 | Result receipt idempotent, checksum conflict rõ | 19, 30–31 (receipt/duplicate) | 04; E1.1 | Mất ACK gửi lại không duplicate; khác checksum reject | Người dùng báo test thành công và cho triển khai Task 06 |
 | [x] | 06 | Outbox định danh riêng, migrate không mất dữ liệu | 16–17, 27, 30–31 (outbox) | 05; duyệt D3; E1.2 | SQLite agent cũ → mới; hai attempts không đè nhau | Người dùng cho chuyển task tiếp theo; không gửi output test riêng |
 | [x] | 07 | Stop/cleanup giữ kết quả và asset chưa ACK | 9–10, 17, 30, 33 (giữ kết quả) | 06; E1.2 | Discard/purge/reconcile không xóa outbox; quarantine không publish | Người dùng cho chuyển tiếp; không gửi output test riêng |
-| [ ] | 08 | Outbox có backpressure khi lỗi lưu trữ | 16, 30, 36 (lỗi lưu trữ) | 07; quota/retention được duyệt; E1.2 | Disk-full mô phỏng, không false SUCCESS/nhận thêm | Xem cảnh báo và backlog còn nguyên |
+| [x] | 08 | Outbox có backpressure khi lỗi lưu trữ | 16, 30, 36 (lỗi lưu trữ) | 07; quota/retention được duyệt; E1.2 | Disk-full mô phỏng, không false SUCCESS/nhận thêm | Cho chuyển tiếp qua hội thoại |
 | [ ] | 09 | Reconnect/restart đối chiếu trước nhận task | 18, 25–27, 30, 51–52 (recovery) | 08; D4, policy offline; E1.3 | Crash/mạng mất, không recrawl chỉ vì mất ACK | Xem recovery trên instance test |
 | [ ] | 10 | Nghiệm thu reliability chung | 13–18, 25–27, 30–31, 49 (nghiệm thu nhóm) | 02–09; G1 | PG race + hai agent + regression streaming/cache | Xác nhận toàn bộ flow, không chỉ từng test |
 
@@ -262,7 +262,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 08 chờ người dùng test/xác nhận |
+| Task đang chạy | Task 09 chờ người dùng test/xác nhận |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -271,8 +271,9 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 06 | Đã nghiệm thu qua yêu cầu chuyển tiếp; xem báo cáo Task 06 |
 | Task 07 | Đã nghiệm thu qua yêu cầu chuyển tiếp; xem báo cáo Task 07 |
 | Task 08 | Đã triển khai ngưỡng 1 GiB/10.000 records/2 GiB trống, cảnh báo 24 giờ, chặn admission khi lỗi lưu trữ |
-| Task 09–53 | Chưa làm |
+| Task 09 | Đã thêm recovery gate, receipt-only reconcile và chặn queue cũ; chờ người dùng test |
+| Task 10–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** người dùng chạy lệnh trong báo cáo Task 08 và xác nhận. Chưa rebuild/deploy: còn recovery admission (Task 09) và gate tích hợp Task 10. Không bắt đầu Task 09, push hoặc deploy trước khi được duyệt.
+**Điểm dừng hiện tại:** người dùng chạy lệnh trong báo cáo Task 09 và xác nhận. Chưa rebuild/deploy; Task 10 cần cập nhật runtime test để nghiệm thu tích hợp hai agent. Không bắt đầu Task 10, push hoặc deploy trước khi được duyệt.

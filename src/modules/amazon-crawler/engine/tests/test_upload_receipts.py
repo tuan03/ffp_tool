@@ -47,6 +47,15 @@ class UploadReceiptTests(unittest.TestCase):
         self.assertEqual(retry["receiptId"], first["receiptId"])
         self.assertEqual(retry["checksum"], payload_checksum(payload))
 
+    def test_reconcile_completed_attempt_allows_receipt_retry_not_recrawl(self):
+        self.final({"jobId": self.job["id"], "products": []})
+        local = [{"taskId": self.lease["taskId"], "leaseId": self.lease["leaseId"], "jobId": self.job["id"]}]
+        reply = self.store.reconcile_tasks("a", local)
+        self.assertEqual(reply["uploadTaskIds"], [self.lease["taskId"]])
+        self.assertEqual(reply["resumeTaskIds"], [])
+        self.assertEqual(reply["discardTaskIds"], [])
+        self.assertEqual(self.store.reconcile_tasks("other", local)["uploadTaskIds"], [])
+
     def test_final_changed_content_conflicts_without_overwrite(self):
         payload = {"jobId": self.job["id"], "products": [], "marker": "original"}
         self.final(payload)

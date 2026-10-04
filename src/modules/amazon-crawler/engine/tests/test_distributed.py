@@ -1270,6 +1270,9 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             }
             agent.store.save_assignment(assignment)
             agent.active["task-1"] = assignment
+            agent._is_connected = True
+            agent._recovery_complete = True
+            agent._approved_attempts.add(("task-1", "lease-1"))
             await agent.assignment_queue.put(assignment)
 
             def fail_batch(*_args: object) -> None:

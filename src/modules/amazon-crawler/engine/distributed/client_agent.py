@@ -90,6 +90,9 @@ class DistributedCrawlerAgent:
         self.store = ClientStore(config.data_directory / "agent.sqlite3")
         self.client_id = self.store.client_id()
         self._is_connected = False
+        self._recovery_complete = False
+        self._uploads_checked = asyncio.Event()
+        self._approved_attempts: set[tuple[str, str]] = set()
         self._started_at = utc_iso()
         self._dashboard_unavailable = False
         try:
@@ -305,6 +308,10 @@ class DistributedCrawlerAgent:
         return len(assignments)
 
     async def _apply_reconciliation(self, acknowledgement: dict[str, Any]) -> None:
+        self._recovery_complete = False
+        self._approved_attempts.clear()
+        while not self.assignment_queue.empty():
+            self.assignment_queue.get_nowait()
         resume_ids = {str(value) for value in acknowledgement.get("resumeTaskIds") or []}
         executable_ids = {
             str(assignment.get("taskId") or "")
@@ -333,10 +340,12 @@ class DistributedCrawlerAgent:
             if task_id not in self.executing_task_ids:
                 self.active.pop(task_id, None)
                 self.store.discard_task(task_id)
-        for task_id in resume_ids:
+        for task_id in {str(value) for value in acknowledgement.get("uploadTaskIds") or []} - discard_ids:
             assignment = self.active.get(task_id) or self.store.assignment(task_id)
-            if assignment is not None and task_id in executable_ids and task_id not in self.executing_task_ids:
-                await self.assignment_queue.put(assignment)
+            if assignment is not None and str(assignment.get("jobId")) not in cancelled_job_ids and task_id not in self.executing_task_ids:
+                # Replay the receipt without starting another crawl.
+                self.store.complete_lease(task_id)
+                self.active.pop(task_id, None)
         acknowledged = [str(value) for value in acknowledgement.get("acknowledgedCancelIntents") or []]
         self.store.acknowledge_cancel_intents(acknowledged)
         required_generation = max(0, int(acknowledgement.get("requiredCacheGeneration") or 0))
@@ -363,9 +372,27 @@ class DistributedCrawlerAgent:
         await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
         self._publish_status()
 
+        for task_id in resume_ids - discard_ids:
+            assignment = self.active.get(task_id) or self.store.assignment(task_id)
+            if assignment is not None and str(assignment.get("jobId")) not in cancelled_job_ids and task_id in executable_ids and task_id not in self.executing_task_ids:
+                self.active[task_id] = assignment
+                self._approved_attempts.add((task_id, str(assignment["leaseId"])))
+                await self.assignment_queue.put(assignment)
+
+    async def _recovery_gate_loop(self) -> None:
+        # One bounded upload pass, not an unbounded drain of the entire spool.
+        await self._uploads_checked.wait()
+        self._recovery_complete = True
+        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+        self._publish_status()
+        await self.stop_event.wait()
+
     async def _connection_supervisor(self) -> None:
         delay = 1.0
         while not self.stop_event.is_set():
+            self._is_connected = False
+            self._recovery_complete = False
+            self._uploads_checked.clear()
             try:
                 async with websockets.connect(
                     self.config.websocket_url,
@@ -404,9 +431,12 @@ class DistributedCrawlerAgent:
                         asyncio.create_task(self._upload_loop()),
                         asyncio.create_task(self._telemetry_loop()),
                     ]
+                    connection_tasks.append(asyncio.create_task(self._recovery_gate_loop()))
                     stop_waiter = asyncio.create_task(self.stop_event.wait())
                     tasks = [*connection_tasks, stop_waiter]
                     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    self._recovery_complete = False
+                    self._is_connected = False
                     for task in pending:
                         task.cancel()
                     await asyncio.gather(*pending, return_exceptions=True)
@@ -418,10 +448,12 @@ class DistributedCrawlerAgent:
                         error = task.exception()
                         if error:
                             raise error
+                    raise ConnectionError("Coordinator connection ended; reconciliation required.")
             except asyncio.CancelledError:
                 raise
             except Exception as error:
                 self._is_connected = False
+                self._recovery_complete = False
                 self.connection_status = "offline"
                 self._dashboard_update("activity", "offline")
                 self._publish_status()
@@ -435,6 +467,8 @@ class DistributedCrawlerAgent:
     async def _sender(self, websocket) -> None:
         while True:
             payload = await self.outbound_queue.get()
+            if "availableSlots" in payload:
+                payload = {**payload, "availableSlots": self._available_slots()}
             await websocket.send(json.dumps(payload, ensure_ascii=False))
 
     async def _receiver(self, websocket) -> None:
@@ -442,7 +476,7 @@ class DistributedCrawlerAgent:
             payload = json.loads(raw)
             message_type = payload.get("type")
             if message_type == "assignment":
-                if self._storage_pressure()["blocked"]:
+                if not self._is_connected or not self._recovery_complete or self._storage_pressure()["blocked"]:
                     # A lease sent before the last capacity update is not
                     # accepted locally. The coordinator can expire/reassign it.
                     await self.outbound_queue.put({"type": "ready", "availableSlots": 0})
@@ -452,6 +486,7 @@ class DistributedCrawlerAgent:
                 if task_id not in self.active:
                     self.store.save_assignment(payload)
                     self.active[task_id] = payload
+                    self._approved_attempts.add((task_id, str(payload["leaseId"])))
                     self._dashboard_update("receive", payload)
                     await self.assignment_queue.put(payload)
                     self._publish_status()
@@ -687,7 +722,7 @@ class DistributedCrawlerAgent:
         return storage_pressure(self.store, self.config.outbox, self.project_root)
 
     def _available_slots(self) -> int:
-        if self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]:
+        if not self._is_connected or not self._recovery_complete or self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]:
             return 0
         return max(0, self.config.max_concurrent_inputs - len(self.active))
 
@@ -695,7 +730,7 @@ class DistributedCrawlerAgent:
         backlog: deque[dict[str, Any]] = deque()
         loop = asyncio.get_running_loop()
         while not self.stop_event.is_set():
-            if self._storage_pressure()["blocked"]:
+            if not self._is_connected or not self._recovery_complete or self._storage_pressure()["blocked"]:
                 await asyncio.sleep(1)
                 continue
             try:
@@ -722,13 +757,21 @@ class DistributedCrawlerAgent:
                     batch.append(candidate)
                 else:
                     backlog.append(candidate)
-            if self._storage_pressure()["blocked"]:
+            if not self._is_connected or not self._recovery_complete or self._storage_pressure()["blocked"]:
                 backlog.extendleft(reversed(batch))
                 await asyncio.sleep(1)
                 continue
             runnable: list[dict[str, Any]] = []
+            executable_attempts = {
+                (str(local["taskId"]), str(local["leaseId"]))
+                for local in self.store.recover_assignments()
+            }
             for assignment in batch:
                 task_id = str(assignment["taskId"])
+                attempt = (task_id, str(assignment["leaseId"]))
+                if attempt not in self._approved_attempts or task_id in self.executing_task_ids:
+                    continue
+                self._approved_attempts.discard(attempt)
                 if self.store.is_task_cancelled(task_id):
                     self._dashboard_update("finish", assignment, "cancelled")
                     self.active.pop(task_id, None)
@@ -738,7 +781,7 @@ class DistributedCrawlerAgent:
                         "taskId": task_id,
                         "leaseId": assignment["leaseId"],
                     })
-                else:
+                elif attempt in executable_attempts:
                     runnable.append(assignment)
             batch = runnable
             if not batch:
@@ -1307,6 +1350,7 @@ class DistributedCrawlerAgent:
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(product.get("attempts", 0)), 5)))
             pending = self.store.pending_results()
             if not pending:
+                self._uploads_checked.set()
                 self._publish_status()
                 await asyncio.sleep(retry_delay if upload_failed else 1)
                 continue
@@ -1331,6 +1375,7 @@ class DistributedCrawlerAgent:
                     upload_failed = True
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
             self._publish_status()
+            self._uploads_checked.set()
             await asyncio.sleep(retry_delay if upload_failed else 1)
 
     def _quarantine_rejected_upload(self, upload: dict[str, Any], error: Exception) -> None:

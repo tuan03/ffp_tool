@@ -2505,6 +2505,7 @@ class CoordinatorStore(CoordinatorObservability):
 
     def reconcile_tasks(self, client_id: str, local_tasks: list[dict[str, Any]]) -> dict[str, list[str]]:
         resume: list[str] = []
+        upload: list[str] = []
         discard: list[str] = []
         cancelled_jobs: set[str] = set()
         refreshed_job_ids: set[str] = set()
@@ -2551,6 +2552,9 @@ class CoordinatorStore(CoordinatorObservability):
                             attempt.finished_at = attempt.finished_at or now
                         refreshed_job_ids.add(job_id)
                     continue
+                if task.result is not None and task.result.client_id == client_id and task.result.lease_id == lease_id:
+                    upload.append(task_id)
+                    continue
                 if (
                     task.job_id == job_id
                     and task.assigned_client_id == client_id and task.lease_id == lease_id
@@ -2568,6 +2572,7 @@ class CoordinatorStore(CoordinatorObservability):
                 self._refresh_job(session, refreshed_job_id)
         return {
             "resumeTaskIds": resume,
+            "uploadTaskIds": upload,
             "discardTaskIds": discard,
             "cancelledJobIds": sorted(cancelled_jobs),
         }
