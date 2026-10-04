@@ -51,6 +51,16 @@ the matching build-time copies. Current job context supplies store-specific rule
 Use `status` to check the token and `logout` to remove its local vault entry.
 Logout does not revoke other copies: use Agent Access → Revoke for that.
 
+### Login transport diagnostics
+
+The helper identifies itself as `FFP-SEO-Worker/1.0` on HTTPS requests. Some
+Cloudflare policies reject Python's default urllib signature before the request
+reaches FFP. HTTP 403 indicates an access-policy rejection (inspect WAF/server
+rules); HTTP 401 indicates rejected authentication. Neither requires reinstalling
+Python. Network/TLS failures are reported separately. Diagnostics never print
+tokens, HTTP response bodies, or third-party exception text. `doctor` checks local
+prerequisites only; successful login is still required to verify a real token.
+
 ## Build and evidence
 
 Web production/mock builds package this automatically. To package independently,

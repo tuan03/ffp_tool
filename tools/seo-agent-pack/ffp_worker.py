@@ -16,6 +16,13 @@ import random
 from email.utils import parsedate_to_datetime
 
 VERSION = "1.0.0-preview"
+USER_AGENT = "FFP-SEO-Worker/1.0"
+
+
+class SafeTransportError(RuntimeError):
+    """Only fixed local messages; never include server bodies or credentials."""
+
+
 ALLOWED_KEYRINGS = {
     "keyring.backends.Windows.WinVaultKeyring",
     "keyring.backends.macOS.Keyring",
@@ -82,6 +89,7 @@ class Remote:
             "Authorization": "Bearer " + self.token,
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "User-Agent": USER_AGENT,
         }, method="POST")
         for attempt in range(3):
             try:
@@ -93,11 +101,15 @@ class Remote:
             except urllib.error.HTTPError as error:
                 error.close()
                 if error.code not in {429, 502, 503, 504} or not can_retry(message) or attempt == 2:
-                    raise RuntimeError("FFP transport rejected request") from None
+                    if error.code == 403:
+                        raise SafeTransportError("HTTP 403: request rejected by access policy. Check Cloudflare/WAF and use the updated Agent Pack.") from None
+                    if error.code == 401:
+                        raise SafeTransportError("HTTP 401: token rejected. Check expiry/revocation and copy the complete FFP worker token.") from None
+                    raise SafeTransportError(f"HTTP {error.code}: FFP transport rejected request. Check server availability.") from None
                 delay = retry_delay(error.headers.get("Retry-After"), attempt)
             except (urllib.error.URLError, TimeoutError, ConnectionError):
                 if not can_retry(message) or attempt == 2:
-                    raise RuntimeError("FFP transport unavailable; resume safely") from None
+                    raise SafeTransportError("FFP transport unavailable; check network/TLS and resume safely.") from None
                 delay = retry_delay(None, attempt)
             if delay is None:
                 raise RuntimeError("Retry-After exceeds local budget; resume later")
@@ -266,6 +278,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except SafeTransportError as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)
     except Exception:
         # Never echo third-party exceptions, HTTP bodies or credentials.
         print("FFP operation failed. Check endpoint, Python 3.11+, OS credential vault and token validity. No plaintext fallback is used.", file=sys.stderr)

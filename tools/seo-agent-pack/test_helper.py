@@ -11,6 +11,20 @@ import ffp_worker as worker
 
 
 class HelperTests(unittest.TestCase):
+    def test_transport_identifies_application_and_redacts_http_errors(self):
+        remote = worker.Remote("https://example.com/mcp/seo-worker", "secret-test-token")
+        remote.opener = Mock()
+        remote.opener.open.return_value = io.BytesIO(b'{"result":{}}')
+        remote.send({"method": "tools/list"})
+        request = remote.opener.open.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"), "FFP-SEO-Worker/1.0")
+        for status in [401, 403, 500]:
+            remote.opener.open.side_effect = worker.urllib.error.HTTPError(remote.url, status, "secret-test-token", {}, io.BytesIO(b'secret-test-token'))
+            with self.assertRaises(worker.SafeTransportError) as caught:
+                remote.send({"method": "tools/list"})
+            self.assertIn(str(status), str(caught.exception))
+            self.assertNotIn("secret-test-token", str(caught.exception))
+
     def test_transport_retries_same_payload_and_respects_retry_after(self):
         remote = worker.Remote("https://example.com/mcp/seo-worker", "synthetic-test-token")
         error = worker.urllib.error.HTTPError(remote.url, 429, "limited", {"Retry-After": "2"}, None)
