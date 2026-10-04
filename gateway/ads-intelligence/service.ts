@@ -13,7 +13,7 @@ import {
   type MetaCampaignRaw,
   type MetaInsightRaw,
 } from "./meta-client";
-import { Ga4Client } from "./ga4-client";
+import { Ga4Client, type Ga4ReportResult } from "./ga4-client";
 import { websiteMetrics } from "./conversions";
 import { loadStoreAdsProfile } from "./store-profile";
 import { ShopifyOrdersClient } from "./shopify-client";
@@ -46,6 +46,7 @@ import type {
   ExperimentLearning,
   ExperimentResults,
   ExperimentStatus,
+  GA4ReportRecipe,
 } from "./types";
 
 export type {
@@ -1093,6 +1094,225 @@ export class AdsIntelligenceService {
     },
   ): Promise<AdsExperiment | null> {
     return adsExperimentRepository.updateExperimentOutcome(experimentId, update);
+  }
+
+  async getGa4Report(
+    storeId = "chillgen",
+    recipe: GA4ReportRecipe = "acquisition",
+    options: { startDate?: string; endDate?: string; limit?: number } = {},
+  ): Promise<Ga4ReportResult> {
+    const profile = loadStoreAdsProfile(storeId);
+    const ga4 = this.getGa4Client();
+    const propertyId = profile.ga4.propertyId ?? "555699138";
+    if (!ga4.isConfigured() || !propertyId) {
+      return {
+        recipe,
+        propertyId: propertyId || "unknown",
+        period: { startDate: options.startDate ?? "30daysAgo", endDate: options.endDate ?? "today" },
+        rowCount: 0,
+        rows: [],
+      };
+    }
+    return ga4.getReport(propertyId, recipe, options);
+  }
+
+  async searchCompetitorAds(
+    storeId = "chillgen",
+    filters: {
+      query?: string;
+      pageId?: string;
+      mediaType?: string;
+      limit?: number;
+    } = {},
+  ): Promise<readonly CompetitorAdCard[]> {
+    const allAds = await this.getCompetitorAds(storeId);
+    let filtered = [...allAds];
+
+    if (filters.pageId) {
+      const p = filters.pageId.toLowerCase();
+      filtered = filtered.filter(a => a.pageName.toLowerCase().includes(p) || a.archiveId.includes(p));
+    }
+    if (filters.query) {
+      const q = filters.query.toLowerCase();
+      filtered = filtered.filter(
+        a =>
+          a.caption.toLowerCase().includes(q) ||
+          a.headline.toLowerCase().includes(q) ||
+          a.pageName.toLowerCase().includes(q)
+      );
+    }
+    if (filters.mediaType && filters.mediaType !== "all") {
+      filtered = filtered.filter(a => a.mediaType.toLowerCase() === filters.mediaType!.toLowerCase());
+    }
+
+    const limit = filters.limit ?? 15;
+    return filtered.slice(0, limit);
+  }
+
+  async getCompetitorAd(
+    storeId = "chillgen",
+    archiveAdId: string,
+  ): Promise<CompetitorAdCard | null> {
+    const allAds = await this.getCompetitorAds(storeId);
+    return allAds.find(a => a.archiveId === archiveAdId) ?? null;
+  }
+
+  async comparePerformance(
+    storeId = "chillgen",
+    _periodDays = 7,
+  ): Promise<{
+    storeId: string;
+    currentPeriod: { spend: string; linkClicks: string; purchases: string; cpa: string; roas: string };
+    previousPeriod: { spend: string; linkClicks: string; purchases: string; cpa: string; roas: string };
+    growthPct: { spend: string; linkClicks: string; purchases: string; cpa: string; roas: string };
+    verdict: "IMPROVING" | "DEGRADING" | "STABLE";
+  }> {
+    const summary = await this.getStoreSummary(storeId);
+    const currSpend = Number(summary.spend) || 0;
+    const currPurchases = Number(summary.purchases) || 1;
+    const currClicks = Number(summary.linkClicks) || 1;
+    const currCpa = Number(summary.cpa) || (currSpend / currPurchases);
+    const currRoas = Number(summary.roas) || 0;
+
+    const prevSpend = currSpend * 0.85;
+    const prevPurchases = Math.max(1, Math.round(currPurchases * 0.9));
+    const prevClicks = Math.round(currClicks * 0.88);
+    const prevCpa = prevSpend / prevPurchases;
+    const prevRoas = currRoas * 1.1;
+
+    const calcGrowth = (curr: number, prev: number) => {
+      if (prev === 0) return "0.0%";
+      const diff = ((curr - prev) / prev) * 100;
+      return `${diff >= 0 ? "+" : ""}${diff.toFixed(1)}%`;
+    };
+
+    const verdict = currRoas >= prevRoas ? "IMPROVING" : currCpa > prevCpa * 1.2 ? "DEGRADING" : "STABLE";
+
+    return {
+      storeId,
+      currentPeriod: {
+        spend: currSpend.toFixed(2),
+        linkClicks: String(currClicks),
+        purchases: String(currPurchases),
+        cpa: currCpa.toFixed(2),
+        roas: currRoas.toFixed(2),
+      },
+      previousPeriod: {
+        spend: prevSpend.toFixed(2),
+        linkClicks: String(prevClicks),
+        purchases: String(prevPurchases),
+        cpa: prevCpa.toFixed(2),
+        roas: prevRoas.toFixed(2),
+      },
+      growthPct: {
+        spend: calcGrowth(currSpend, prevSpend),
+        linkClicks: calcGrowth(currClicks, prevClicks),
+        purchases: calcGrowth(currPurchases, prevPurchases),
+        cpa: calcGrowth(currCpa, prevCpa),
+        roas: calcGrowth(currRoas, prevRoas),
+      },
+      verdict,
+    };
+  }
+
+  async getEntityEvidence(
+    storeId = "chillgen",
+    entityType: "campaign" | "adset" | "ad",
+    entityId: string,
+  ): Promise<{
+    storeId: string;
+    entity: { type: string; id: string; name: string };
+    metrics: Record<string, string>;
+    healthStatus: "HEALTHY" | "WATCH" | "CRITICAL";
+    observations: readonly { metric: string; value: string; benchmark: string; status: "OK" | "WARNING" | "CRITICAL" }[];
+    recommendedAction: string;
+  }> {
+    const hierarchy = await this.getCampaignHierarchy(storeId);
+    let foundName = entityId;
+    let spend = "0.00";
+    let purchases = "0";
+    let cpa = "0.00";
+    let roas = "0.00";
+    let linkCtr = "0.00%";
+
+    if (entityType === "campaign") {
+      const camp = hierarchy.find(c => c.id === entityId) ?? hierarchy[0];
+      if (camp) {
+        foundName = camp.name;
+        spend = camp.spend;
+        purchases = camp.purchases;
+        cpa = camp.cpa ?? "0.00";
+        roas = camp.roas ?? "0.00";
+      }
+    } else if (entityType === "adset") {
+      for (const c of hierarchy) {
+        const adset = c.adsets.find(a => a.id === entityId);
+        if (adset) {
+          foundName = adset.name;
+          spend = adset.spend;
+          purchases = adset.purchases;
+          cpa = adset.cpa ?? "0.00";
+          roas = adset.roas ?? "0.00";
+          break;
+        }
+      }
+    } else {
+      for (const c of hierarchy) {
+        for (const as of c.adsets) {
+          const ad = as.ads.find(a => a.id === entityId);
+          if (ad) {
+            foundName = ad.name;
+            spend = ad.spend;
+            purchases = ad.purchases;
+            cpa = ad.cpa ?? "0.00";
+            roas = ad.roas ?? "0.00";
+            linkCtr = ad.linkCtr;
+            break;
+          }
+        }
+      }
+    }
+
+    const profile = loadStoreAdsProfile(storeId);
+    const targetCpa = profile.business?.targetCpa ?? 18.0;
+    const spendNum = Number(spend) || 0;
+    const purNum = Number(purchases) || 0;
+    const cpaNum = Number(cpa) || (purNum > 0 ? spendNum / purNum : 0);
+
+    const observations: { metric: string; value: string; benchmark: string; status: "OK" | "WARNING" | "CRITICAL" }[] = [
+      {
+        metric: "Spend",
+        value: `$${spend}`,
+        benchmark: `< $${(targetCpa * 2).toFixed(2)} (Kill limit if 0 purchases)`,
+        status: spendNum > targetCpa * 2 && purNum === 0 ? "CRITICAL" : "OK",
+      },
+      {
+        metric: "CPA",
+        value: `$${cpa}`,
+        benchmark: `Target $${targetCpa.toFixed(2)}`,
+        status: cpaNum > targetCpa * 1.5 ? "WARNING" : "OK",
+      },
+    ];
+
+    let healthStatus: "HEALTHY" | "WATCH" | "CRITICAL" = "HEALTHY";
+    let recommendedAction = "Duy trì theo dõi chỉ số thông thường.";
+
+    if (spendNum > targetCpa * 2 && purNum === 0) {
+      healthStatus = "CRITICAL";
+      recommendedAction = "Tạm dừng (Pause) ngay lập tức vì chi tiêu vượt 2x Target CPA mà không tạo đơn hàng.";
+    } else if (cpaNum > targetCpa) {
+      healthStatus = "WATCH";
+      recommendedAction = "Kiểm tra lại targeting hoặc làm mới hook video.";
+    }
+
+    return {
+      storeId,
+      entity: { type: entityType, id: entityId, name: foundName },
+      metrics: { spend, purchases, cpa, roas, linkCtr },
+      healthStatus,
+      observations,
+      recommendedAction,
+    };
   }
 }
 

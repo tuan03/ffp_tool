@@ -56,26 +56,25 @@ export function McpModal({ onClose }: McpModalProps): React.JSX.Element {
           {/* Tools List */}
           <div className="space-y-2">
             <h4 className="font-semibold text-purple-300 uppercase tracking-wider text-[11px]">
-              2. Danh mục 20 Công cụ MCP tích hợp sẵn (Tools Catalog)
+              2. Danh mục 30 Công cụ MCP tích hợp sẵn (Tools Catalog)
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
               {[
-                { name: "get_store_summary", desc: "Đọc KPI tổng hợp và trạng thái maturity" },
-                { name: "get_campaign_hierarchy", desc: "Cây chiến dịch, adset và ads chi tiết" },
-                { name: "get_reconciliation_report", desc: "Đối soát 3 bên Meta, GA4 và Shopify" },
-                { name: "get_decision_cards", desc: "Danh sách thẻ quyết định và khuyến nghị" },
-                { name: "get_ai_strategic_report", desc: "Báo cáo phân tích chuyên sâu từ AI" },
-                { name: "get_competitor_intelligence", desc: "Quảng cáo và góc creative đối thủ" },
-                { name: "get_creative_briefs", desc: "Danh sách kịch bản creative briefs" },
-                { name: "generate_creative_brief", desc: "Sinh kịch bản brief mới từ quyết định" },
-                { name: "update_brief_status", desc: "Duyệt hoặc chuyển trạng thái brief" },
-                { name: "get_experiments", desc: "Danh sách thử nghiệm A/B đang chạy" },
-                { name: "create_experiment", desc: "Khởi tạo thử nghiệm A/B mới" },
-                { name: "record_experiment_outcome", desc: "Ghi nhận kết quả Win/Loss thử nghiệm" },
-                { name: "propose_guarded_write", desc: "Đề xuất thay đổi ngân sách hoặc tắt ad" },
-                { name: "execute_guarded_write", desc: "Thực thi thay đổi có chữ ký kiểm toán" },
-                { name: "get_data_health", desc: "Kiểm tra kết nối Meta và GA4" },
-                { name: "sync_now", desc: "Xóa cache và kéo live API ngay" },
+                { name: "ads_get_store_overview", desc: "Đọc KPI tổng hợp, target CPA và trạng thái maturity" },
+                { name: "ads_get_data_health", desc: "Kiểm tra kết nối Meta/GA4/Shopify & Maturity Gate" },
+                { name: "ads_query_performance", desc: "Truy vấn 4 cấp Account -> Campaign -> AdSet -> Ad" },
+                { name: "ads_get_funnel_evidence", desc: "Đối soát 3 nguồn Meta vs GA4 vs Shopify" },
+                { name: "ads_get_decision_cards", desc: "Danh sách 13 thẻ quyết định tắt/scale" },
+                { name: "ads_get_competitor_creative_gaps", desc: "Lỗ hổng sáng tạo và góc quay đối thủ" },
+                { name: "ads_search_competitor_ads", desc: "Tìm kiếm ads đối thủ theo keyword, page, format" },
+                { name: "ads_get_competitor_ad", desc: "Chi tiết 1 mẫu ad đối thủ kèm media và headline" },
+                { name: "ads_compare_performance", desc: "So sánh hiệu suất kỳ này với kỳ trước (delta %)" },
+                { name: "ads_get_entity_evidence", desc: "Bằng chứng chuyên sâu 1 campaign/adset/ad" },
+                { name: "ads_query_ga4_report", desc: "Query GA4 theo UTM acquisition, landing page, events" },
+                { name: "ads_get_experiments", desc: "Danh sách thử nghiệm trong Memory Ledger" },
+                { name: "ads_generate_brief", desc: "Sinh kịch bản brief video 30s từ quyết định/gap" },
+                { name: "ads_create_experiment", desc: "Đăng ký thử nghiệm can thiệp mới vào hệ thống" },
+                { name: "ads_get_evidence", desc: "Xuất snapshot bằng chứng bất biến phục vụ audit" },
               ].map((t) => (
                 <div key={t.name} className="p-2 rounded-lg bg-slate-950/70 border border-slate-800">
                   <div className="font-mono font-bold text-cyan-300 text-[11px]">{t.name}</div>

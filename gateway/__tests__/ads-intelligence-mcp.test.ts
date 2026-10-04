@@ -39,7 +39,7 @@ test("Ads MCP Server initializes with instructions and registers all 20 tools (1
     const toolsResponse = await client.listTools();
     const toolNames = toolsResponse.tools.map(t => t.name);
 
-    // 10 canonical tools
+    // 15 canonical tools
     const canonicalTools = [
       "ads_get_store_overview",
       "ads_get_data_health",
@@ -51,13 +51,18 @@ test("Ads MCP Server initializes with instructions and registers all 20 tools (1
       "ads_generate_brief",
       "ads_create_experiment",
       "ads_get_evidence",
+      "ads_search_competitor_ads",
+      "ads_get_competitor_ad",
+      "ads_compare_performance",
+      "ads_get_entity_evidence",
+      "ads_query_ga4_report",
     ];
 
     for (const tool of canonicalTools) {
       assert.ok(toolNames.includes(tool), `Expected tool ${tool} to be registered`);
     }
 
-    // 10 README Step 16 aliases
+    // 15 README Step 16 aliases
     const aliasTools = [
       "ffp_get_store_context",
       "ffp_get_data_health",
@@ -69,13 +74,18 @@ test("Ads MCP Server initializes with instructions and registers all 20 tools (1
       "ffp_generate_brief",
       "ffp_create_experiment",
       "ffp_get_evidence",
+      "ffp_search_competitor_ads",
+      "ffp_get_competitor_ad",
+      "ffp_compare_performance",
+      "ffp_get_entity_evidence",
+      "ffp_query_ga4_report",
     ];
 
     for (const alias of aliasTools) {
       assert.ok(toolNames.includes(alias), `Expected alias ${alias} to be registered`);
     }
 
-    assert.equal(toolNames.length, 20);
+    assert.equal(toolNames.length, 30);
 
     // Annotations verification
     const readOnlyOverview = toolsResponse.tools.find(t => t.name === "ads_get_store_overview");
@@ -223,6 +233,58 @@ test("Ads MCP Server tools execute correctly and return structured data", async 
     const evidenceData = evidenceRes.structuredContent as Record<string, any>;
     assert.equal(evidenceData.evidenceType, "reconciliation");
     assert.ok(evidenceData.snapshot);
+
+    // 11. ads_search_competitor_ads
+    const searchRes = await client.callTool({
+      name: "ads_search_competitor_ads",
+      arguments: { storeId: "chillgen", limit: 5 },
+    });
+    const searchData = searchRes.structuredContent as Record<string, any>;
+    assert.equal(searchData.storeId, "chillgen");
+    assert.ok(Array.isArray(searchData.ads));
+    assert.ok(searchData.ads.length > 0);
+
+    // 12. ads_get_competitor_ad
+    const firstAdId = searchData.ads[0].archiveId;
+    const adDetailRes = await client.callTool({
+      name: "ads_get_competitor_ad",
+      arguments: { storeId: "chillgen", archiveAdId: firstAdId },
+    });
+    const adDetailData = adDetailRes.structuredContent as Record<string, any>;
+    assert.ok(adDetailData.ad);
+    assert.equal(adDetailData.ad.archiveId, firstAdId);
+
+    // 13. ads_compare_performance
+    const compRes = await client.callTool({
+      name: "ads_compare_performance",
+      arguments: { storeId: "chillgen", periodDays: 7 },
+    });
+    const compData = compRes.structuredContent as Record<string, any>;
+    assert.equal(compData.storeId, "chillgen");
+    assert.ok(compData.currentPeriod);
+    assert.ok(compData.previousPeriod);
+    assert.ok(compData.growthPct);
+    assert.ok(["IMPROVING", "DEGRADING", "STABLE"].includes(compData.verdict));
+
+    // 14. ads_get_entity_evidence
+    const entityRes = await client.callTool({
+      name: "ads_get_entity_evidence",
+      arguments: { storeId: "chillgen", entityType: "campaign", entityId: "camp_chillgen_1" },
+    });
+    const entityData = entityRes.structuredContent as Record<string, any>;
+    assert.equal(entityData.storeId, "chillgen");
+    assert.ok(entityData.metrics);
+    assert.ok(["HEALTHY", "WATCH", "CRITICAL"].includes(entityData.healthStatus));
+    assert.ok(Array.isArray(entityData.observations));
+
+    // 15. ads_query_ga4_report
+    const ga4ReportRes = await client.callTool({
+      name: "ads_query_ga4_report",
+      arguments: { storeId: "chillgen", recipe: "acquisition", limit: 10 },
+    });
+    const ga4ReportData = ga4ReportRes.structuredContent as Record<string, any>;
+    assert.equal(ga4ReportData.recipe, "acquisition");
+    assert.ok(Array.isArray(ga4ReportData.rows));
   } finally {
     await client.close();
     await server.close();
@@ -291,7 +353,7 @@ test("Ads MCP HTTP Handler serves GET probe info and handles requests", async ()
   const parsed = JSON.parse(responseBody);
   assert.equal(parsed.status, "ok");
   assert.equal(parsed.server, "ffp-ads-intelligence");
-  assert.equal(parsed.toolsCount, 20);
+  assert.equal(parsed.toolsCount, 30);
 });
 
 test("OpenAPI spec generator produces valid 3.1.0 schema with all endpoints", async () => {
@@ -362,5 +424,5 @@ test("Gateway HTTP handler serves /api/ads-intelligence/openapi.json and /mcp/in
   assert.equal(mcpInfoStatus, 200);
   const parsedMcp = JSON.parse(mcpInfoBody);
   assert.equal(parsedMcp.server, "ffp-ads-intelligence");
-  assert.equal(parsedMcp.toolsCount, 20);
+  assert.equal(parsedMcp.toolsCount, 30);
 });

@@ -142,6 +142,68 @@ async function main() {
     console.log(`  - Experiment ID: ${ANSI.bold}${expData.experimentId}${ANSI.reset}`);
     console.log(`  - Methodology: ${expData.testMethodology}`);
 
+    // 10. Test ads_search_competitor_ads
+    console.log(`\n${ANSI.blue}[Step 10] Calling Tool: ads_search_competitor_ads (Competitor Ad Search)...${ANSI.reset}`);
+    const searchRes = await client.callTool({
+      name: "ads_search_competitor_ads",
+      arguments: { storeId, limit: 3 },
+    });
+    const searchData = searchRes.structuredContent as Record<string, any>;
+    console.log(`${ANSI.green}✔ Competitor Ads Found:${ANSI.reset} ${searchData.totalFound} ads`);
+    searchData.ads?.forEach((ad: any, i: number) => {
+      console.log(`  ${i + 1}. [${ad.pageName}] ${ad.headline || ad.caption.substring(0, 45)}... (Format: ${ad.mediaType})`);
+    });
+
+    // 11. Test ads_get_competitor_ad
+    if (searchData.ads?.length > 0) {
+      const sampleAdId = searchData.ads[0].archiveId;
+      console.log(`\n${ANSI.blue}[Step 11] Calling Tool: ads_get_competitor_ad (ID: ${sampleAdId})...${ANSI.reset}`);
+      const adDetailRes = await client.callTool({
+        name: "ads_get_competitor_ad",
+        arguments: { storeId, archiveAdId: sampleAdId },
+      });
+      const adDetail = adDetailRes.structuredContent as Record<string, any>;
+      console.log(`${ANSI.green}✔ Competitor Ad Details:${ANSI.reset}`);
+      console.log(`  - Page: ${adDetail.ad?.pageName} | First Seen: ${adDetail.ad?.firstSeen}`);
+      console.log(`  - CTA: ${adDetail.ad?.cta || "Shop Now"} | Media: ${adDetail.ad?.mediaType}`);
+    }
+
+    // 12. Test ads_compare_performance
+    console.log(`\n${ANSI.blue}[Step 12] Calling Tool: ads_compare_performance (7d vs Previous 7d)...${ANSI.reset}`);
+    const compRes = await client.callTool({
+      name: "ads_compare_performance",
+      arguments: { storeId, periodDays: 7 },
+    });
+    const comp = compRes.structuredContent as Record<string, any>;
+    console.log(`${ANSI.green}✔ Performance Comparison (${comp.verdict}):${ANSI.reset}`);
+    console.log(`  - Spend: $${comp.currentPeriod?.spend} vs $${comp.previousPeriod?.spend} (${comp.growthPct?.spend})`);
+    console.log(`  - ROAS: ${comp.currentPeriod?.roas} vs ${comp.previousPeriod?.roas} (${comp.growthPct?.roas})`);
+    console.log(`  - CPA: $${comp.currentPeriod?.cpa} vs $${comp.previousPeriod?.cpa} (${comp.growthPct?.cpa})`);
+
+    // 13. Test ads_get_entity_evidence
+    console.log(`\n${ANSI.blue}[Step 13] Calling Tool: ads_get_entity_evidence (Drill-down Investigation)...${ANSI.reset}`);
+    const entityRes = await client.callTool({
+      name: "ads_get_entity_evidence",
+      arguments: { storeId, entityType: "campaign", entityId: "camp_chillgen_1" },
+    });
+    const entity = entityRes.structuredContent as Record<string, any>;
+    console.log(`${ANSI.green}✔ Entity Evidence (${entity.healthStatus}):${ANSI.reset}`);
+    console.log(`  - Name: ${ANSI.bold}${entity.entity?.name}${ANSI.reset}`);
+    console.log(`  - Spend: $${entity.metrics?.spend} | Purchases: ${entity.metrics?.purchases} | ROAS: ${entity.metrics?.roas}`);
+    console.log(`  - Action: ${entity.recommendedAction}`);
+
+    // 14. Test ads_query_ga4_report
+    console.log(`\n${ANSI.blue}[Step 14] Calling Tool: ads_query_ga4_report (Recipe: acquisition)...${ANSI.reset}`);
+    const ga4Res = await client.callTool({
+      name: "ads_query_ga4_report",
+      arguments: { storeId, recipe: "acquisition", limit: 3 },
+    });
+    const ga4Data = ga4Res.structuredContent as Record<string, any>;
+    console.log(`${ANSI.green}✔ GA4 Report (${ga4Data.recipe}):${ANSI.reset} ${ga4Data.rowCount} rows returned from Property ${ga4Data.propertyId}`);
+    ga4Data.rows?.slice(0, 3).forEach((r: any, idx: number) => {
+      console.log(`  ${idx + 1}. Source: ${ANSI.bold}${r.sessionSourceMedium}${ANSI.reset} -> ${r.sessions} sessions, ${r.totalUsers} users`);
+    });
+
     console.log(`\n${ANSI.bold}${ANSI.green}================================================================${ANSI.reset}`);
     console.log(`${ANSI.bold}${ANSI.green}   ALL MCP TOOLS TESTED & OPERATIONAL (100% SUCCESS)            ${ANSI.reset}`);
     console.log(`${ANSI.bold}${ANSI.green}================================================================${ANSI.reset}\n`);

@@ -86,7 +86,7 @@ export async function handleAdsIntelligenceHttpRequest(
           mcpStreamableHttp: "/mcp/ads",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 20,
+        toolsCount: 30,
       });
       return true;
     }
@@ -131,6 +131,58 @@ export async function handleAdsIntelligenceHttpRequest(
       sendJson(res, 200, intelligence, {
         "x-ads-cache": intelligence.fromCache ? "HIT" : "MISS",
       });
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/competitors/search" && req.method === "GET") {
+      const query = parsedUrl.searchParams.get("query") || undefined;
+      const pageId = parsedUrl.searchParams.get("pageId") || undefined;
+      const mediaType = parsedUrl.searchParams.get("mediaType") || undefined;
+      const limit = Number(parsedUrl.searchParams.get("limit")) || 15;
+      const results = await adsIntelligenceService.searchCompetitorAds(storeId, { query, pageId, mediaType, limit });
+      sendJson(res, 200, { storeId, totalFound: results.length, ads: results });
+      return true;
+    }
+
+    if (pathname.startsWith("/api/ads-intelligence/competitors/") && req.method === "GET") {
+      const archiveAdId = pathname.slice("/api/ads-intelligence/competitors/".length);
+      if (archiveAdId && !archiveAdId.includes("/")) {
+        const ad = await adsIntelligenceService.getCompetitorAd(storeId, archiveAdId);
+        if (!ad) {
+          sendJson(res, 404, { error: { code: "NOT_FOUND", message: `Competitor ad '${archiveAdId}' not found` } });
+          return true;
+        }
+        sendJson(res, 200, { storeId, ad });
+        return true;
+      }
+    }
+
+    if (pathname === "/api/ads-intelligence/performance/compare" && req.method === "GET") {
+      const periodDays = Number(parsedUrl.searchParams.get("days")) || 7;
+      const comparison = await adsIntelligenceService.comparePerformance(storeId, periodDays);
+      sendJson(res, 200, comparison);
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/performance/entity" && req.method === "GET") {
+      const entityType = (parsedUrl.searchParams.get("type") as "campaign" | "adset" | "ad") || "campaign";
+      const entityId = parsedUrl.searchParams.get("id") || "";
+      if (!entityId) {
+        sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Missing required 'id' query parameter" } });
+        return true;
+      }
+      const evidence = await adsIntelligenceService.getEntityEvidence(storeId, entityType, entityId);
+      sendJson(res, 200, evidence);
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/ga4/report" && req.method === "GET") {
+      const recipe = (parsedUrl.searchParams.get("recipe") as any) || "acquisition";
+      const startDate = parsedUrl.searchParams.get("startDate") || undefined;
+      const endDate = parsedUrl.searchParams.get("endDate") || undefined;
+      const limit = Number(parsedUrl.searchParams.get("limit")) || 20;
+      const report = await adsIntelligenceService.getGa4Report(storeId, recipe, { startDate, endDate, limit });
+      sendJson(res, 200, report);
       return true;
     }
 

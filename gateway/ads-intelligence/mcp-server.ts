@@ -509,5 +509,120 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     },
   );
 
+  // 11. Search Competitor Ads
+  registerAdsTool(
+    "ads_search_competitor_ads",
+    "ffp_search_competitor_ads",
+    "Search competitor ad library by keyword, Page/brand name, or media format (video/image).",
+    {
+      storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      query: z.string().optional().describe("Keyword search across ad captions and headlines"),
+      pageId: z.string().optional().describe("Filter by competitor Page ID or brand name"),
+      mediaType: z.enum(["all", "video", "image", "carousel"]).default("all").describe("Media format filter"),
+      limit: z.number().int().min(1).max(50).default(10).describe("Max items to return"),
+    },
+    READ_ONLY,
+    async ({ storeId, query, pageId, mediaType, limit }) => {
+      try {
+        const targetStore = storeId || defaultStore;
+        const results = await service.searchCompetitorAds(targetStore, { query, pageId, mediaType, limit });
+        return jsonResult({ storeId: targetStore, totalFound: results.length, ads: results });
+      } catch (err) {
+        return errorResult(`Failed to search competitor ads: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  // 12. Get Competitor Ad Detail
+  registerAdsTool(
+    "ads_get_competitor_ad",
+    "ffp_get_competitor_ad",
+    "Get full details of a specific competitor ad reference (copy, headline, media URLs, observation dates).",
+    {
+      storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      archiveAdId: z.string().min(1).describe("Archive Ad ID to look up"),
+    },
+    READ_ONLY,
+    async ({ storeId, archiveAdId }) => {
+      try {
+        const targetStore = storeId || defaultStore;
+        const ad = await service.getCompetitorAd(targetStore, archiveAdId);
+        if (!ad) {
+          return errorResult(`Competitor ad with ID ${archiveAdId} not found`);
+        }
+        return jsonResult({ storeId: targetStore, ad });
+      } catch (err) {
+        return errorResult(`Failed to get competitor ad: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  // 13. Compare Performance
+  registerAdsTool(
+    "ads_compare_performance",
+    "ffp_compare_performance",
+    "Compare performance metrics between current period and previous period (delta growth % and trend verdict).",
+    {
+      storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      periodDays: z.number().int().min(1).max(90).default(7).describe("Comparison window in days"),
+    },
+    READ_ONLY,
+    async ({ storeId, periodDays }) => {
+      try {
+        const targetStore = storeId || defaultStore;
+        const comp = await service.comparePerformance(targetStore, periodDays);
+        return jsonResult(comp);
+      } catch (err) {
+        return errorResult(`Failed to compare performance: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  // 14. Get Entity Evidence
+  registerAdsTool(
+    "ads_get_entity_evidence",
+    "ffp_get_entity_evidence",
+    "Deep-dive investigative evidence package for a specific campaign, ad set, or ad entity.",
+    {
+      storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      entityType: z.enum(["campaign", "adset", "ad"]).default("campaign").describe("Grain of entity"),
+      entityId: z.string().min(1).describe("Entity ID"),
+    },
+    READ_ONLY,
+    async ({ storeId, entityType, entityId }) => {
+      try {
+        const targetStore = storeId || defaultStore;
+        const evidence = await service.getEntityEvidence(targetStore, entityType, entityId);
+        return jsonResult(evidence);
+      } catch (err) {
+        return errorResult(`Failed to get entity evidence: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  // 15. Query GA4 Report
+  registerAdsTool(
+    "ads_query_ga4_report",
+    "ffp_query_ga4_report",
+    "Query detailed Google Analytics 4 (GA4) reports for UTM acquisition, landing pages, event funnel, and products.",
+    {
+      storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      recipe: z.enum(["acquisition", "landing_page", "event_volume", "product"]).default("acquisition").describe("GA4 Report Recipe"),
+      startDate: z.string().default("30daysAgo").describe("Start date (YYYY-MM-DD or relative like '30daysAgo')"),
+      endDate: z.string().default("today").describe("End date (YYYY-MM-DD or 'today')"),
+      limit: z.number().int().min(1).max(100).default(20).describe("Max report rows"),
+    },
+    READ_ONLY,
+    async ({ storeId, recipe, startDate, endDate, limit }) => {
+      try {
+        const targetStore = storeId || defaultStore;
+        const report = await service.getGa4Report(targetStore, recipe, { startDate, endDate, limit });
+        return jsonResult(report);
+      } catch (err) {
+        return errorResult(`Failed to query GA4 report: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
   return server;
 }
