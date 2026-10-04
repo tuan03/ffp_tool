@@ -30,13 +30,14 @@ export class SeoWorkerRepository {
   async listAccess(storeId: string, offset: number): Promise<AgentAccessPage> {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new SeoWorkerError("INVALID_OFFSET");
     return this.database.transaction(async sql => {
-      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE store_id=$1", [storeId])).rows[0].total);
-      const rows = (await sql.query(`SELECT t.id,t.worker_id,t.created_by,t.expires_at,t.revoked_at,t.last_used_at,
+      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE store_id=$1 OR store_ids @> jsonb_build_array($1::text)", [storeId])).rows[0].total);
+      const rows = (await sql.query(`SELECT t.id,t.store_id,t.store_ids,t.worker_id,t.created_by,t.expires_at,t.revoked_at,t.last_used_at,
         (SELECT w.job_id FROM seo_worker_jobs w WHERE w.token_id=t.id AND w.lease_id IS NOT NULL LIMIT 1) AS job_id
-        FROM seo_worker_tokens t WHERE t.store_id=$1 ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
+        FROM seo_worker_tokens t WHERE t.store_id=$1 OR t.store_ids @> jsonb_build_array($1::text) ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
       const mode = (await sql.query("SELECT enabled FROM seo_worker_stores WHERE store_id=$1", [storeId])).rows[0];
       return { total, nextOffset: offset + rows.length < total ? offset + rows.length : null, claimsEnabled: mode?.enabled === true,
         tokens: rows.map(row => ({ id: String(row.id), workerId: String(row.worker_id), createdBy: String(row.created_by),
+          storeIds: [...new Set([String(row.store_id), ...(Array.isArray(row.store_ids) ? row.store_ids.filter((value): value is string => typeof value === "string") : [])])],
           expiresAt: Number(row.expires_at), revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
           lastSeenAt: row.last_used_at === null ? null : Number(row.last_used_at), jobId: row.job_id === null ? null : String(row.job_id) })) };
     });
@@ -52,14 +53,15 @@ export class SeoWorkerRepository {
     });
   }
 
-  async issueToken(input: { storeId: string; workerId: string; createdBy: string }): Promise<{ token: string; tokenId: string; expiresAt: number }> {
-    for (const value of Object.values(input)) requireLabel(value);
+  async issueToken(input: { storeId: string; workerId: string; createdBy: string; storeIds?: readonly string[] }): Promise<{ token: string; tokenId: string; expiresAt: number }> {
+    const storeIds = [...new Set([input.storeId, ...(input.storeIds ?? [])])];
+    for (const value of [input.storeId, input.workerId, input.createdBy, ...storeIds]) requireLabel(value);
     const token = `ffp_worker_${randomBytes(32).toString("base64url")}`;
     const tokenId = randomUUID();
     const expiresAt = this.now() + WORKER_DEFAULTS.tokenMs;
     await this.database.transaction(async sql => {
-      await sql.query(`INSERT INTO seo_worker_tokens(id,store_id,worker_id,token_hash,created_by,created_at,expires_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)`, [tokenId, input.storeId, input.workerId, digest(token), input.createdBy, this.now(), expiresAt]);
+      await sql.query(`INSERT INTO seo_worker_tokens(id,store_id,worker_id,token_hash,created_by,created_at,expires_at,store_ids)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [tokenId, input.storeId, input.workerId, digest(token), input.createdBy, this.now(), expiresAt, JSON.stringify(storeIds)]);
     });
     return { token, tokenId, expiresAt };
   }
@@ -70,11 +72,34 @@ export class SeoWorkerRepository {
     if (row.revoked_at !== null) throw new SeoWorkerError("TOKEN_REVOKED");
     if (Number(row.expires_at) <= this.now()) throw new SeoWorkerError("TOKEN_EXPIRED");
     await sql.query("UPDATE seo_worker_tokens SET last_used_at=$2 WHERE id=$1", [row.id, this.now()]);
-    return { tokenId: String(row.id), storeId: String(row.store_id), workerId: String(row.worker_id), expiresAt: Number(row.expires_at) };
+    const storeIds = [...new Set([String(row.store_id), ...(Array.isArray(row.store_ids) ? row.store_ids.filter((value): value is string => typeof value === "string") : [])])];
+    const storeId = String(row.selected_store_id ?? row.store_id);
+    if (!storeIds.includes(storeId)) throw new SeoWorkerError("STORE_NOT_AUTHORIZED");
+    return { tokenId: String(row.id), storeId, storeIds, workerId: String(row.worker_id), expiresAt: Number(row.expires_at) };
   }
 
   async identify(token: string): Promise<WorkerPrincipal> {
     return this.database.transaction(sql => this.authenticate(sql, token));
+  }
+
+  async selectStore(token: string, storeId: string, expectedStoreId: string, requestId: string): Promise<WorkerPrincipal> {
+    requireLabel(storeId);
+    return this.database.transaction(async sql => {
+      const principal = await this.authenticate(sql, token);
+      if (!principal.storeIds.includes(storeId)) throw new SeoWorkerError("STORE_NOT_AUTHORIZED");
+      return this.idempotent(sql, `${principal.tokenId}:select-store`, requestId, { storeId, expectedStoreId }, async () => {
+        if (principal.storeId !== expectedStoreId) throw new SeoWorkerError("STORE_SELECTION_CHANGED");
+        if (storeId === principal.storeId) return principal;
+        // Locking the token serializes selection with claim, heartbeat and revoke.
+        const busy = (await sql.query(`SELECT 1 FROM seo_worker_jobs WHERE token_id=$1 AND lease_id IS NOT NULL
+          UNION ALL SELECT 1 FROM seo_worker_runs WHERE state='RUNNING'
+          AND session_id IN (SELECT id FROM seo_worker_sessions WHERE token_id=$1) LIMIT 1`, [principal.tokenId])).rows;
+        if (busy.length) throw new SeoWorkerError("WORKER_BUSY_FINISH_RUN_FIRST");
+        await sql.query("UPDATE seo_worker_sessions SET active=false WHERE token_id=$1", [principal.tokenId]);
+        await sql.query("UPDATE seo_worker_tokens SET selected_store_id=$2 WHERE id=$1", [principal.tokenId, storeId]);
+        return { ...principal, storeId };
+      });
+    });
   }
 
   async queueStatus(token: string): Promise<{ counts: Readonly<Record<string, number>> }> {
@@ -204,7 +229,7 @@ export class SeoWorkerRepository {
   async register(token: string, requestId: string): Promise<{ sessionId: string }> {
     return this.database.transaction(async sql => {
       const principal = await this.authenticate(sql, token);
-      return this.idempotent(sql, `${principal.tokenId}:register`, requestId, {}, async () => {
+      return this.idempotent(sql, `${principal.tokenId}:register`, requestId, principal.storeIds.length > 1 ? { storeId: principal.storeId } : {}, async () => {
         const existing = (await sql.query("SELECT id FROM seo_worker_sessions WHERE store_id=$1 AND worker_id=$2 AND active FOR UPDATE", [principal.storeId, principal.workerId])).rows[0];
         if (existing) {
           for (const lease of (await sql.query("SELECT * FROM seo_worker_jobs WHERE session_id=$1 AND lease_id IS NOT NULL FOR UPDATE", [existing.id])).rows) {
@@ -492,7 +517,7 @@ export class SeoWorkerRepository {
 
   async revoke(storeId: string, tokenId: string): Promise<void> {
     await this.database.transaction(async sql => {
-      const token = (await sql.query("UPDATE seo_worker_tokens SET revoked_at=$3 WHERE id=$1 AND store_id=$2 RETURNING id", [tokenId, storeId, this.now()])).rows[0];
+      const token = (await sql.query("UPDATE seo_worker_tokens SET revoked_at=$3 WHERE id=$1 AND (store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id", [tokenId, storeId, this.now()])).rows[0];
       if (!token) throw new SeoWorkerError("TOKEN_NOT_FOUND");
       for (const row of (await sql.query("SELECT * FROM seo_worker_jobs WHERE token_id=$1 AND lease_id IS NOT NULL FOR UPDATE", [tokenId])).rows) await this.endLease(sql, row, "TOKEN_REVOKED", true);
       await sql.query("UPDATE seo_worker_runs SET state='PARTIAL',stop_reason='TOKEN_REVOKED',updated_at=$2 WHERE state='RUNNING' AND session_id IN (SELECT id FROM seo_worker_sessions WHERE token_id=$1)", [tokenId, this.now()]);

@@ -8,7 +8,12 @@ full worker/publish acceptance tests and an operator-selected pilot pass.
 
 One login and one `ffp_seo_worker` connection provide Queue drafts and SEO
 Performance reports, evidence, URL inspection and saved recommendations for the
-token's store. No second MCP connection or worker-side Google credentials are
+selected authorized store. New Agent Access tokens include all currently registered
+stores; older tokens keep their previous grants. Ask Codex for a named store and it
+uses `worker_status` / `worker_select_store` without another login or installation.
+Stores are processed sequentially; switching is blocked during an active run/job.
+Do not share one token between concurrent Codex sessions. Adding a store after token
+issuance requires a new token/login, not another install. No second MCP connection or worker-side Google credentials are
 required. Google must still be connected and mapped by an operator in FFP.
 Existing unexpired worker tokens gain these tools after the server upgrade;
 restart Codex to refresh tool discovery. No approval, publishing or admin access

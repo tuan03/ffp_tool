@@ -36,6 +36,47 @@ async function fixture() {
   return { pg, repository, enqueue, worker, deliver, advance: (ms: number) => { now += ms; } };
 }
 
+test("multi-store credentials switch only while idle, fence old sessions and revoke all grants", async () => {
+  const f = await fixture();
+  const repo = f.repository;
+  try {
+    const issued = await repo.issueToken({ storeId: "store-a", storeIds: ["store-a", "store-b"], workerId: "multi", createdBy: "operator" });
+    assert.deepEqual((await repo.identify(issued.token)).storeIds, ["store-a", "store-b"]);
+    assert.equal((await repo.listAccess("store-b", 0)).total, 1);
+    await assert.rejects(repo.selectStore(issued.token, "store-c", "store-a", "denied"), /STORE_NOT_AUTHORIZED/);
+    const old = await repo.register(issued.token, "register-a");
+    const selected = await repo.selectStore(issued.token, "store-b", "store-a", "switch");
+    assert.equal(selected.storeId, "store-b");
+    assert.deepEqual(await repo.selectStore(issued.token, "store-b", "store-a", "switch"), selected);
+    await assert.rejects(repo.selectStore(issued.token, "store-a", "store-a", "stale"), /STORE_SELECTION_CHANGED/);
+    await assert.rejects(repo.startRun(issued.token, old.sessionId, 1, "old-run"), /STALE_SESSION/);
+    await assert.rejects(repo.register(issued.token, "register-a"), /IDEMPOTENCY_CONFLICT/);
+    const { sessionId } = await repo.register(issued.token, "register-b");
+    const run = await repo.startRun(issued.token, sessionId, 1, "run-b");
+    await assert.rejects(repo.selectStore(issued.token, "store-a", "store-b", "busy"), /WORKER_BUSY_FINISH_RUN_FIRST/);
+    await f.enqueue("b-job", "store-b", "PENDING", "222");
+    await repo.enableStore("store-b");
+    const claim = await repo.claim(issued.token, sessionId, run.id, "claim-b");
+    assert.equal(claim.lease?.jobId, "b-job");
+    await assert.rejects(repo.selectStore(issued.token, "store-a", "store-b", "leased"), /WORKER_BUSY_FINISH_RUN_FIRST/);
+    await repo.finishRun(issued.token, sessionId, run.id, "pause-b");
+    await repo.selectStore(issued.token, "store-a", "store-b", "back-a");
+    await assert.rejects(repo.runStatus(issued.token, run.id), /RUN_NOT_FOUND/);
+    await repo.selectStore(issued.token, "store-b", "store-a", "back-b");
+    const resumedSession = await repo.register(issued.token, "resume-b-session");
+    assert.equal((await repo.resumeRun(issued.token, resumedSession.sessionId, run.id, "resume-b")).id, run.id);
+    await repo.revoke("store-b", issued.tokenId);
+    await assert.rejects(repo.identify(issued.token), /TOKEN_REVOKED/);
+    await assert.rejects(repo.selectStore(issued.token, "store-a", "store-b", "revoked"), /TOKEN_REVOKED/);
+    const legacy = await repo.issueToken({ storeId: "store-a", workerId: "legacy", createdBy: "operator" });
+    await f.pg.query("UPDATE seo_worker_tokens SET store_ids='[]' WHERE id=$1", [legacy.tokenId]);
+    assert.deepEqual((await repo.identify(legacy.token)).storeIds, ["store-a"]);
+    await assert.rejects(repo.selectStore(legacy.token, "store-b", "store-a", "legacy-denied"), /STORE_NOT_AUTHORIZED/);
+    f.advance(WORKER_DEFAULTS.tokenMs);
+    await assert.rejects(repo.selectStore(legacy.token, "store-a", "store-a", "expired"), /TOKEN_EXPIRED/);
+  } finally { await f.pg.close(); }
+});
+
 test("worker core uses the existing PostgreSQL queue and preserves lease, token and run invariants", async t => {
   const f = await fixture();
   const { repository: repo, pg } = f;

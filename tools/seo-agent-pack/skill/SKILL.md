@@ -5,8 +5,15 @@ description: Process requested FFP SEO Queue jobs, resume a saved run, or evalua
 
 # FFP SEO worker
 
-Use only `ffp_seo_worker` tools for the requested store. Read `worker_status`
-before claiming; credentials determine store and machine. Stop on a store mismatch.
+Use only `ffp_seo_worker` tools for the requested store. Read `worker_status`:
+`storeIds` lists authorized stores and `storeId` is the current selection. If the
+user has not identified a store unambiguously, ask before acting. To switch, call
+`worker_select_store` with the requested storeId, current expectedStoreId and a new
+requestId, then verify `worker_status` again. Do not switch while a run/job is active;
+report the conflict instead of stopping unrelated work. Switching fences old
+sessions: register a new session before starting/resuming Queue work. Process stores
+sequentially with one connection; do not share one token between concurrent agents.
+Never use an unauthorized store or silently substitute the current selection.
 Never ask for a token in chat or put it in a tool argument. Login is interactive
 through the bundled helper and OS credential vault.
 

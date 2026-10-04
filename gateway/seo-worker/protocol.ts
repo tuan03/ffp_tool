@@ -59,4 +59,5 @@ export interface WorkerPrincipal {
   readonly storeId: string;
   readonly workerId: string;
   readonly expiresAt: number;
+  readonly storeIds: readonly string[];
 }

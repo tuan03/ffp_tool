@@ -5,12 +5,39 @@ import http from "node:http";
 import { PGlite } from "@electric-sql/pglite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { z } from "zod";
 
 import { getQueueSchemaSql } from "../custom-gpt-seo/postgres-database";
 import { createWorkerMcpServer } from "../seo-worker/mcp-server";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { createWorkerWorkflow } from "../seo-worker/workflow";
 import { handleWorkerMcp } from "../seo-worker/mcp-handler";
+import { handleSeoAgentHttp } from "../seo-worker/admin-handler";
+
+test("operator token issuance grants registry stores only and retains authentication/CSRF checks", async () => {
+  const pg = await PGlite.create();
+  await pg.exec(getQueueSchemaSql("public"));
+  const repository = new SeoWorkerRepository({ transaction: operation => pg.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) });
+  const server = http.createServer((req, res) => { void handleSeoAgentHttp(req, res, {
+    operator: req.headers.authorization === "Basic test" ? "admin" : undefined,
+    hasStore: storeId => ["demo", "second"].includes(storeId), listStoreIds: () => ["demo", "second"], repository: async () => repository,
+  }); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address(); assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}/api/seo-agent/tokens?storeId=demo`;
+    const headers = { authorization: "Basic test", "x-ffp-agent": "1", "content-type": "application/json" };
+    assert.equal((await fetch(url, { method: "POST", body: "{}" })).status, 401);
+    assert.equal((await fetch(url, { method: "POST", headers: { authorization: "Basic test" }, body: "{}" })).status, 403);
+    assert.equal((await fetch(url, { method: "POST", headers, body: JSON.stringify({ workerId: "machine", storeIds: ["injected"] }) })).status, 400);
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify({ workerId: "machine" }) });
+    assert.equal(response.status, 201);
+    const issued = z.object({ token: z.string(), tokenId: z.string() }).parse(await response.json());
+    assert.deepEqual((await repository.identify(issued.token)).storeIds, ["demo", "second"]);
+    assert.deepEqual((await repository.listAccess("second", 0)).tokens[0].storeIds, ["demo", "second"]);
+    assert.equal((await repository.listAccess("injected", 0)).total, 0);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await pg.close(); }
+});
 
 test("worker MCP exposes no publish/admin capabilities and rechecks token on every tool", async () => {
   const pg = await PGlite.create();
@@ -32,7 +59,10 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     assert.equal(disabled.isError, true);
     assert.match(JSON.stringify(disabled), /SEO_PERFORMANCE_DISABLED/);
     assert.ok(tools.every(tool => !/publish|approve|sync|sql|configure/.test(tool.name)));
-    assert.ok(tools.every(tool => !Object.hasOwn(tool.inputSchema.properties ?? {}, "storeId")));
+    assert.ok(tools.filter(tool => tool.name !== "worker_select_store").every(tool => !Object.hasOwn(tool.inputSchema.properties ?? {}, "storeId")));
+    const forbiddenStore = await client.callTool({ name: "worker_select_store", arguments: { storeId: "other", expectedStoreId: "demo", requestId: "denied-store" } });
+    assert.equal(forbiddenStore.isError, true);
+    assert.match(JSON.stringify(forbiddenStore), /STORE_NOT_AUTHORIZED/);
     const contracts = await client.readResource({ uri: "ffp://seo-worker/contracts" });
     assert.match(JSON.stringify(contracts), /productSeoTitle/);
     const status = await client.callTool({ name: "worker_status", arguments: {} });

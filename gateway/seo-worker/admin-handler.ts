@@ -25,6 +25,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerResponse, options: {
   readonly operator?: string;
   readonly hasStore: (storeId: string) => boolean;
+  readonly listStoreIds?: () => readonly string[];
   readonly repository: () => Promise<SeoWorkerRepository>;
   readonly publisher?: () => Promise<Pick<SeoPublishRepository, "status" | "enqueue" | "requestReconciliation">>;
   readonly createRevision?: (request: import("./revision-repository").RevisionRequest) => Promise<{ jobId: string; previousJobId: string }>;
@@ -83,7 +84,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
       const body = await readBody(req);
       if (url.pathname === "/api/seo-agent/tokens") {
         const input = z.object({ workerId: z.string().trim().min(1).max(100).regex(/^[\p{L}\p{N} ._-]+$/u) }).strict().parse(body);
-        send(res, 201, await repository.issueToken({ storeId, workerId: input.workerId, createdBy: options.operator })); return;
+        send(res, 201, await repository.issueToken({ storeId, storeIds: options.listStoreIds?.(), workerId: input.workerId, createdBy: options.operator })); return;
       }
       if (url.pathname === "/api/seo-agent/revoke") {
         const input = z.object({ tokenId: z.string().uuid() }).strict().parse(body);

@@ -261,7 +261,7 @@ def main():
         if not status:
             raise RuntimeError("Token rejected; nothing was stored")
         vault.set_password(service, options.profile, token)
-        print("Stored in OS credential vault for store " + status["storeId"] + ", worker " + status["workerId"])
+        print("Stored in OS credential vault for worker " + status["workerId"] + "; stores: " + ", ".join(status.get("storeIds", [status["storeId"]])) + "; selected: " + status["storeId"])
         return
     token = vault.get_password(service, options.profile)
     if not token:

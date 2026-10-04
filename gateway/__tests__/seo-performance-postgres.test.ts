@@ -164,7 +164,7 @@ test("SEO Performance executes PostgreSQL schema, OAuth, reports, jobs and MCP s
     await t.test("one worker credential audits without a Queue run and cannot cross stores or survive revocation", async () => {
       await database.exec(getQueueSchemaSql("public"));
       const workers = new SeoWorkerRepository({ transaction: operation => database.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) });
-      const issued = await workers.issueToken({ storeId: "store-a", workerId: "unified-worker", createdBy: "operator" });
+      const issued = await workers.issueToken({ storeId: "store-a", storeIds: ["store-a", "store-b"], workerId: "unified-worker", createdBy: "operator" });
       const server = createWorkerMcpServer(workers, createWorkerWorkflow(workers, { checkSource: async () => undefined }), issued.token, () => service);
       const client = new Client({ name: "unified-test", version: "1" });
       const [left, right] = InMemoryTransport.createLinkedPair();
@@ -188,6 +188,11 @@ test("SEO Performance executes PostgreSQL schema, OAuth, reports, jobs and MCP s
         assert.deepEqual(await client.callTool(calls[4]), first);
         assert.equal((await client.callTool({ name: "save_seo_recommendation", arguments: { ...proposal, proposed: "Changed" } })).isError, true);
         assert.equal((await client.callTool({ name: "get_page_seo_evidence", arguments: { url: "https://other.example/private" } })).isError, true);
+        assert.equal((await repository.recommendations("store-b")).total, 0);
+        const switched = await client.callTool({ name: "worker_select_store", arguments: { storeId: "store-b", expectedStoreId: "store-a", requestId: "select-b" } });
+        assert.notEqual(switched.isError, true);
+        assert.equal((await client.callTool({ name: "get_page_seo_evidence", arguments: { url } })).isError, true);
+        assert.equal((await client.callTool(calls[4])).isError, true);
         assert.equal((await repository.recommendations("store-b")).total, 0);
         await workers.revoke("store-a", issued.tokenId);
         for (const call of [...calls, { name: "request_page_inspection", arguments: { url } }]) {

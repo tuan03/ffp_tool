@@ -221,6 +221,7 @@ export function startGatewayServer(
       await handleSeoAgentHttp(req, res, {
         operator: isAuthenticatedOperator ? operatorUsername : undefined,
         hasStore: storeId => storeRegistry.hasStore(storeId),
+        listStoreIds: () => storeRegistry.listStores().map(store => store.storeId),
         repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
         publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
         createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },

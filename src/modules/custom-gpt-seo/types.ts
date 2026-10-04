@@ -40,6 +40,7 @@ export interface SeoPublishReceipt {
 }
 export interface AgentAccessToken {
   readonly id: string;
+  readonly storeIds?: readonly string[];
   readonly workerId: string;
   readonly createdBy: string;
   readonly expiresAt: number;

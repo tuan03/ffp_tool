@@ -30,7 +30,7 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     catch { setError("Không sao chép được. Kiểm tra quyền clipboard rồi thử lại."); }
   }
   async function handleCopyPrompt(runId?: string): Promise<void> {
-    const prompt = `Use $ffp-seo. Verify worker_status.storeId is ${JSON.stringify(storeId)}. ${runId ? `Resume run ${runId}; complete only its remaining target.` : `Start a run for ${target} successfully delivered Review drafts.`} Never approve or publish to Shopify. Report the run ID and confirmed progress if interrupted.`;
+    const prompt = `Use $ffp-seo. Target store: ${JSON.stringify(storeId)}. Read worker_status; if needed select this authorized store with worker_select_store and verify worker_status again. ${runId ? `Resume run ${runId}; complete only its remaining target.` : `Start a run for ${target} successfully delivered Review drafts.`} Never approve or publish to Shopify. Report the run ID and confirmed progress if interrupted.`;
     await handleCopy(prompt, "Đã sao chép yêu cầu. Dán vào Codex trên máy đã kết nối.");
   }
 
@@ -78,7 +78,7 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
 
     {view === "connect" && access && <>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h3 className="font-semibold">Máy và quyền truy cập</h3><p className="mt-1 text-sm text-slate-400">Mỗi token dùng cho một máy trong 24 giờ.</p></div>
+        <div><h3 className="font-semibold">Máy và quyền truy cập</h3><p className="mt-1 text-sm text-slate-400">Token mới: tất cả store hiện có · một máy · 24 giờ. Thu hồi sẽ ngắt quyền trên mọi store.</p></div>
         {access.total > 0 && <button type="button" className={isSetupOpen ? BUTTON : PRIMARY} aria-expanded={isSetupOpen} onClick={() => setIsSetupOpen(value => !value)}>{isSetupOpen ? "Đóng thiết lập" : "+ Kết nối máy"}</button>}
       </div>
       {(isSetupOpen || access.total === 0) && <div className="grid gap-5 rounded-xl border border-cyan-900 bg-slate-900/60 p-4 lg:grid-cols-3">
@@ -94,7 +94,7 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
         const isExpired = entry.expiresAt <= Date.now();
         const isRevoked = entry.revokedAt !== null;
         const status = isRevoked ? "Đã thu hồi" : isExpired ? "Token hết hạn" : entry.jobId ? "Đang giữ công việc" : entry.lastSeenAt ? "Đã kết nối" : "Chưa đăng nhập";
-        return <article key={entry.id} className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="break-all font-semibold text-white">{entry.workerId}</h4><span className={`text-xs ${isRevoked || isExpired ? "text-slate-400" : "text-cyan-300"}`}>{status}</span></div><p className="text-sm text-slate-400">Hết hạn: {new Date(entry.expiresAt).toLocaleString()}</p><details className="text-sm"><summary className="cursor-pointer text-slate-400">Chi tiết & quyền truy cập</summary><div className="mt-3 space-y-3"><p>Hoạt động cuối: {entry.lastSeenAt ? new Date(entry.lastSeenAt).toLocaleString() : "Chưa có"}</p><p className="break-all">Job: {entry.jobId ?? "Không có"}</p>{!isRevoked && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => void handleRevoke(entry.id)}>Thu hồi token</button>}</div></details></article>;
+        return <article key={entry.id} className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="break-all font-semibold text-white">{entry.workerId}</h4><span className={`text-xs ${isRevoked || isExpired ? "text-slate-400" : "text-cyan-300"}`}>{status}</span></div><p className="text-sm text-slate-400">{(entry.storeIds ?? [storeId]).length} store · Hết hạn: {new Date(entry.expiresAt).toLocaleString()}</p><details className="text-sm"><summary className="cursor-pointer text-slate-400">Chi tiết & quyền truy cập</summary><div className="mt-3 space-y-3"><p className="break-all">Store: {(entry.storeIds ?? [storeId]).join(", ")}</p><p>Hoạt động cuối: {entry.lastSeenAt ? new Date(entry.lastSeenAt).toLocaleString() : "Chưa có"}</p><p className="break-all">Job: {entry.jobId ?? "Không có"}</p>{!isRevoked && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => void handleRevoke(entry.id)}>Thu hồi token</button>}</div></details></article>;
       })}</div>}
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400"><span>{access.total} token · Trang {offset / 50 + 1}</span><div className="flex gap-2"><button type="button" className={BUTTON} disabled={offset === 0} onClick={() => setOffset(value => Math.max(0, value - 50))}>Trước</button><button type="button" className={BUTTON} disabled={access.nextOffset === null} onClick={() => setOffset(access.nextOffset ?? offset)}>Sau</button></div></div>
     </>}

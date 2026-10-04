@@ -16,7 +16,7 @@ export class SeoWorkerMetrics {
       await this.database.transaction(async sql => {
         const tokenHash = createHash("sha256").update(canonicalizeJson(token)).digest("hex");
         await sql.query(`INSERT INTO seo_worker_metric_events(id,store_id,kind,occurred_at)
-          SELECT $1,store_id,$2,$3 FROM seo_worker_tokens WHERE token_hash=$4`, [randomUUID(), code, this.now(), tokenHash]);
+          SELECT $1,COALESCE(selected_store_id,store_id),$2,$3 FROM seo_worker_tokens WHERE token_hash=$4`, [randomUUID(), code, this.now(), tokenHash]);
       });
     } catch { console.error("[SEO Worker metrics] Observation unavailable; worker result unchanged."); }
   }
