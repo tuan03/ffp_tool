@@ -140,9 +140,9 @@ Task 17 dùng thao tác revoke qua fixture/backend đã bảo vệ để test; T
 
 | Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
 | --- | --- | --- | --- | --- | --- | --- |
-| [ ] | 20 | Command ledger server và agent bền vững | 8, 20, 45, 48 (command ledger) | 19; E3.1 | Persist trước gửi/tác động, ACK khác completion | Xem timeline nhận/chạy/xong |
-| [ ] | 21 | Replay/priority/expiry và startup gate đúng | 20, 33–34, 51–52 (replay/ordering) | 20; E3.1 | Restart, duplicate, sequence gaps, offline-before-lease | Xem command không chạy lặp/bỏ sót |
-| [ ] | 22 | PAUSE/RESUME có desired/applied state | 6–9, 21, 42 (pause/resume) | 21; E3.1 | Pause không claim; resume không vượt auth/health gate | Bấm pause/resume, xem task đang chạy |
+| [x] | 20 | Command ledger server và agent bền vững | 8, 20, 45, 48 (command ledger) | 19; E3.1 | Persist trước gửi/tác động, ACK khác completion | QA tự động được người dùng chấp thuận thay kiểm tra thủ công |
+| [x] | 21 | Replay/priority/expiry và startup gate đúng | 20, 33–34, 51–52 (replay/ordering) | 20; E3.1 | Restart, duplicate, sequence gaps, offline-before-lease | QA tự động được người dùng chấp thuận thay kiểm tra thủ công |
+| [x] | 22 | PAUSE/RESUME có desired/applied state | 6–9, 21, 42 (pause/resume) | 21; E3.1 | Pause không claim; resume không vượt auth/health gate | QA tự động được người dùng chấp thuận thay kiểm tra thủ công |
 | [ ] | 23 | Global admission gate bền vững | 11, 22, 42 (global gate) | 22; duyệt D7/D8; E3.2 | Stop/lease race, server restart giữ gate | Xem không cấp mới sau mốc stop |
 | [ ] | 24 | Soft stop hoàn tất running, không nhận mới | 9, 32 (soft stop) | 23; E3.2 | Online/offline, không purge result; local stop không hủy job khác | Demo stop mềm và pending confirmations |
 | [ ] | 25 | Chốt thiết kế isolation và ownership worker | 28–29, 35, 52 (thiết kế worker) | 24; E4.2 | Audit thread/process/IPC, Windows/CAPTCHA constraints | Duyệt phạm vi refactor nếu cần |
@@ -154,7 +154,7 @@ Task 17 dùng thao tác revoke qua fixture/backend đã bảo vệ để test; T
 | [ ] | 31 | Purge all theo scope giữ kết quả chưa ACK | 9–10, 17, 33, 48 (purge all) | 30; E3.4 | Optional running cancel, offline replay, confirmation | Thử PURGE dữ liệu test và quarantine |
 | [ ] | 32 | RESTART_WORKERS/RESTART_AGENT xác nhận sau phục hồi | 8, 20, 27–28, 51 (restart commands) | 31; E3/E4.2 | Boot mới ACK completion, không mất identity/outbox | Restart agent test, xem timeline đúng |
 
-Mã Task 20–22 đã được triển khai trên `cua_pro` local: PostgreSQL command ledger và event history phía server, SQLite inbox bền vững phía agent, replay theo sequence/expiry, nút PAUSE/RESUME sau đăng nhập operator và admission gate lúc khởi động. Kiểm thử tự động hiện đạt (`npm test`, `npm run typecheck`, `npm run build`); checklist vẫn để chưa đạt cho đến khi người dùng kiểm tra timeline và pause/resume với agent local đang chạy. Phạm vi này không bao gồm push hay cutover production.
+Task 20–22 đã được triển khai trên `cua_pro` local: PostgreSQL command ledger và event history phía server, SQLite inbox bền vững phía agent, replay theo sequence/expiry, nút PAUSE/RESUME sau đăng nhập operator và admission gate lúc khởi động. Người dùng chấp thuận nghiệm thu bằng QA code thay cho thao tác UI thủ công. Ngày 2026-10-05, kiểm tra tự động đạt: `npm test` (engine 481 tests/13 skipped, Review Image 34, Pinterest 22; toàn lệnh exit 0), `npm run typecheck`, `npm run build`, và test tập trung command/recovery (16/16). Các skip là test opt-in theo môi trường; không được tính là đã chạy. Đây là nghiệm thu source/test local, không xác nhận Docker/VPS production, không push hay cutover.
 
 Đưa isolation trước hard stop/cancel task để không hứa khả năng kill riêng worker khi executor chưa hỗ trợ. Nếu crash/hang chỉ chứng minh trên simulator, ghi giới hạn; chưa tick nghiệm thu Windows thực tế.
 
