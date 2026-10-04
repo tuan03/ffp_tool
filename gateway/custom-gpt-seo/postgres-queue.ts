@@ -97,7 +97,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return json(row.payload) as GptSeoJob;
   }
   async findLatestSourceJobs(storeId: string, source: string, productIds: readonly string[]): Promise<ReadonlyMap<string, GptSeoJob>> {
-    const rows = await this.db.prepare("SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=ANY(?::text[]) AND status!='CANCELLED' ORDER BY json_extract(payload,'$.sourceIdentity'),created_at DESC,id DESC").all(storeId, source, productIds);
+    const rows = await this.db.prepare("SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=ANY(?::text[]) AND (status!='CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR') ORDER BY json_extract(payload,'$.sourceIdentity'),created_at DESC,id DESC").all(storeId, source, productIds);
     return new Map(rows.map(row => { const job = json(row.payload) as GptSeoJob; return [job.sourceIdentity, job]; }));
   }
   async findLatestSourceJob(storeId: string, source: string, sourceIdentity: string): Promise<GptSeoJob | null> {
@@ -109,7 +109,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
       WHERE store_id=?
         AND json_extract(payload,'$.source')=?
         AND json_extract(payload,'$.sourceIdentity')=?
-        AND status != 'CANCELLED'
+        AND (status != 'CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
       ORDER BY created_at DESC, id DESC
       LIMIT 1
     `).get(storeId, source, normalizedIdentity));
@@ -362,7 +362,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
           preservedActive += 1;
           continue;
         }
-        await this.write({ ...job, status: "CANCELLED", error: "Removed from Queue by operator" });
+        await this.write({ ...job, status: "CANCELLED", cancellationReason: "OPERATOR_QUEUE_CLEAR", error: "Removed from Queue by operator" });
         await this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL,dedup=dedup || ':cleared:' || id WHERE id=?").run(jobId);
         await this.audit(storeId, jobId, "QUEUE_CLEARED");
         cleared += 1;

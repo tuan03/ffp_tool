@@ -101,6 +101,7 @@ export interface GptSeoJob extends GptSeoEnqueue {
   readonly inputHash: string;
   readonly settings: GptSeoSettings;
   readonly status: GptJobStatus;
+  readonly cancellationReason?: "OPERATOR_QUEUE_CLEAR";
   readonly checkpoints: Partial<Record<GptStage, unknown>>;
   readonly result?: unknown;
   readonly error?: string;

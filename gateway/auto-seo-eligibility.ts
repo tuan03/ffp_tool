@@ -39,7 +39,8 @@ export interface AutoSeoEligibilityItem {
     | "BASELINE_TIMESTAMP_UNKNOWN"
     | "ACTIVE_DISPATCH"
     | "ACTIVE_QUEUE"
-    | "ACTIVE_REVIEW";
+    | "ACTIVE_REVIEW"
+    | "QUEUE_CLEARED";
   readonly lastSuccessfulShopifyUpdatedAt?: string;
 }
 
@@ -263,6 +264,13 @@ function buildAutoSeoEligibility(
       "auto_seo",
       normalizeProductId(product.productId),
     );
+    if (
+      queueJob?.status === "CANCELLED" &&
+      queueJob.cancellationReason === "OPERATOR_QUEUE_CLEAR" &&
+      isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))
+    ) {
+      return { productId: product.productId, state: "retry", reason: "QUEUE_CLEARED" };
+    }
     if (
       isQueueJobActive(queueJob) &&
       isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))

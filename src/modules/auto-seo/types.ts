@@ -181,7 +181,8 @@ export type AutoSeoEligibilityReason =
   | "BASELINE_TIMESTAMP_UNKNOWN"
   | "ACTIVE_DISPATCH"
   | "ACTIVE_QUEUE"
-  | "ACTIVE_REVIEW";
+  | "ACTIVE_REVIEW"
+  | "QUEUE_CLEARED";
 
 export interface AutoSeoEligibilityProductSummary {
   readonly productId: string;

@@ -375,6 +375,17 @@ test("eligibility marks matching queue and pending review revisions active", () 
   }, queue);
 
   assert.deepEqual(response.items.map((item) => item.state), ["active", "active"]);
+
+  queue.clearQueue("capozen");
+  const afterClear = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [{ productId: "queue-product", updatedAt: "2026-10-01T00:00:00Z" }],
+  }, queue);
+  assert.deepEqual(afterClear.items[0], {
+    productId: "queue-product",
+    state: "retry",
+    reason: "QUEUE_CLEARED",
+  });
   db.close();
 });
 

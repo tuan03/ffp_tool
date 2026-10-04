@@ -100,7 +100,7 @@ export class CustomGptQueue {
       WHERE store_id=?
         AND json_extract(payload,'$.source')=?
         AND json_extract(payload,'$.sourceIdentity')=?
-        AND status != 'CANCELLED'
+        AND (status != 'CANCELLED' OR json_extract(payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
       ORDER BY created_at DESC, id DESC
       LIMIT 1
     `).get(storeId, source, normalizedIdentity);
@@ -335,7 +335,7 @@ export class CustomGptQueue {
           preservedActive += 1;
           continue;
         }
-        this.write({ ...job, status: "CANCELLED", error: "Removed from Queue by operator" });
+        this.write({ ...job, status: "CANCELLED", cancellationReason: "OPERATOR_QUEUE_CLEAR", error: "Removed from Queue by operator" });
         this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL,dedup=dedup || ':cleared:' || id WHERE id=?").run(jobId);
         this.audit(storeId, jobId, "QUEUE_CLEARED");
         cleared += 1;
