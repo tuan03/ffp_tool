@@ -1848,6 +1848,35 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(reconciliation["cancelledJobIds"], [])
         self.assertEqual(reconciliation["resumeTaskIds"], [leases[1]["taskId"]])
 
+    def test_cancelled_job_stays_terminal_after_coordinator_restart_and_reconnect(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        local_assignment = {
+            "taskId": lease["taskId"],
+            "jobId": job["id"],
+            "leaseId": lease["leaseId"],
+            "status": "running",
+        }
+
+        self.store.cancel_job(str(job["id"]), {"client-a"})
+        restarted_store = CoordinatorStore(self.sessions)
+
+        reconciliation = restarted_store.reconcile_tasks("client-a", [local_assignment])
+        late_result = restarted_store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "late-after-restart",
+            {"jobId": job["id"], "products": []},
+        )
+
+        self.assertEqual(reconciliation["discardTaskIds"], [lease["taskId"]])
+        self.assertEqual(reconciliation["resumeTaskIds"], [])
+        self.assertEqual(restarted_store.get_job(str(job["id"]))["status"], "cancelling")
+        self.assertEqual(late_result["status"], "cancelled")
+        self.assertTrue(restarted_store.acknowledge_stop_cleanup(
+            "client-a", job_id=str(job["id"]), cache_generation=restarted_store.current_cache_generation(),
+        ))
+        self.assertEqual(restarted_store.get_job(str(job["id"]))["status"], "cancelled")
+
     def test_expired_cancel_does_not_wait_for_an_offline_agent(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
