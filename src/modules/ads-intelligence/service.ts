@@ -150,6 +150,86 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
         formatDistribution: [],
       };
     },
+
+    async getBriefs(storeId = "chillgen") {
+      try {
+        const res = await fetch(`/api/ads-intelligence/briefs?storeId=${encodeURIComponent(storeId)}`);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // Fall back gracefully
+      }
+      return [];
+    },
+
+    async generateBrief(storeId: string, payload: { source: "decision" | "gap" | "custom"; sourceId?: string; brief?: any }) {
+      const res = await fetch(`/api/ads-intelligence/briefs/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId, ...payload }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to generate brief: ${res.statusText}`);
+      }
+      return await res.json();
+    },
+
+    async getBriefMarkdown(briefId: string) {
+      const res = await fetch(`/api/ads-intelligence/briefs/${encodeURIComponent(briefId)}/markdown`);
+      if (!res.ok) {
+        throw new Error(`Failed to get brief markdown: ${res.statusText}`);
+      }
+      return await res.text();
+    },
+
+    async updateBriefStatus(briefId: string, status: any, notes?: string) {
+      const res = await fetch(`/api/ads-intelligence/briefs/${encodeURIComponent(briefId)}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, notes }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to update brief status: ${res.statusText}`);
+      }
+      return await res.json();
+    },
+
+    async getExperiments(storeId = "chillgen") {
+      try {
+        const res = await fetch(`/api/ads-intelligence/experiments?storeId=${encodeURIComponent(storeId)}`);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // Fall back gracefully
+      }
+      return [];
+    },
+
+    async createExperiment(storeId: string, payload: { briefId?: string; experiment?: any; customOptions?: any }) {
+      const res = await fetch(`/api/ads-intelligence/experiments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId, ...payload }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to create experiment: ${res.statusText}`);
+      }
+      return await res.json();
+    },
+
+    async updateExperimentOutcome(experimentId: string, payload: any) {
+      const res = await fetch(`/api/ads-intelligence/experiments/${encodeURIComponent(experimentId)}/outcome`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to update experiment outcome: ${res.statusText}`);
+      }
+      return await res.json();
+    },
   };
 }
 

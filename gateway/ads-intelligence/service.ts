@@ -21,30 +21,49 @@ import { decisionEngine } from "./decision-engine";
 import { aiStrategicAnalyst } from "./ai-analyst";
 import { DefaultCompetitorClient } from "./competitor-client";
 import { analyzeCreativeGaps } from "./creative-intelligence";
+import { adsExperimentRepository } from "./experiment-repository";
+import {
+  generateBriefFromDecision,
+  generateBriefFromCreativeGap,
+  formatBriefMarkdown,
+} from "./brief-generator";
 import type {
   AdsDataHealth,
+  AdsExperiment,
   AdsHierarchyAd,
   AdsHierarchyAdSet,
   AdsHierarchyCampaign,
   AdsReconciliationReport,
   AdsStoreSummary,
   AiStrategicReport,
+  BriefStatus,
   CompetitorAd,
   CompetitorAdCard,
   CompetitorIntelligenceReport,
+  CreativeBrief,
   CreativeGap,
   DecisionCard,
+  ExperimentLearning,
+  ExperimentResults,
+  ExperimentStatus,
 } from "./types";
 
 export type {
   AdsDataHealth,
+  AdsExperiment,
   AdsHierarchyAd,
   AdsHierarchyAdSet,
   AdsHierarchyCampaign,
   AdsReconciliationReport,
   AdsStoreSummary,
+  BriefStatus,
   CompetitorAdCard,
+  CreativeBrief,
+  ExperimentLearning,
+  ExperimentResults,
+  ExperimentStatus,
 };
+
 
 
 function ensureEnvLoaded(): void {
@@ -930,6 +949,152 @@ export class AdsIntelligenceService {
       message: `Đã đồng bộ live dữ liệu mới nhất từ Meta Graph API v26.0 & GA4 Data API lúc ${new Date().toLocaleTimeString("vi-VN")}`,
     };
   }
+
+  // --- Briefs & Experiment Memory (Ticket FFP-ADS-015) ---
+
+  async getBriefs(storeId: string): Promise<readonly CreativeBrief[]> {
+    return adsExperimentRepository.listBriefs(storeId);
+  }
+
+  async getBrief(briefId: string): Promise<CreativeBrief | null> {
+    return adsExperimentRepository.getBriefById(briefId);
+  }
+
+  async createBriefFromDecision(storeId: string, decisionId: string): Promise<CreativeBrief> {
+    const decisions = await this.getDecisionCards(storeId);
+    const decision = decisions.find(d => d.id === decisionId);
+    if (!decision) {
+      throw new Error(`Decision card '${decisionId}' not found for store '${storeId}'`);
+    }
+
+    const profile = loadStoreAdsProfile(storeId);
+    const campaigns = await this.getCampaignHierarchy(storeId);
+    const allAds = campaigns.flatMap(c => c.adsets.flatMap(a => a.ads));
+    const controlAd = allAds.find(a => a.id === decision.entity.id) || allAds.sort((a, b) => Number(b.spend) - Number(a.spend))[0];
+
+    const brief = generateBriefFromDecision(storeId, decision, profile, controlAd);
+    await adsExperimentRepository.saveBrief(brief);
+    return brief;
+  }
+
+  async createBriefFromGap(storeId: string, gapId: string): Promise<CreativeBrief> {
+    const comp = await this.getCompetitorIntelligence(storeId);
+    const gap = comp.creativeGaps.find(g => g.id === gapId);
+    if (!gap) {
+      throw new Error(`Creative gap '${gapId}' not found for store '${storeId}'`);
+    }
+
+    const profile = loadStoreAdsProfile(storeId);
+    const campaigns = await this.getCampaignHierarchy(storeId);
+    const allAds = campaigns.flatMap(c => c.adsets.flatMap(a => a.ads));
+    const controlAd = allAds.sort((a, b) => Number(b.spend) - Number(a.spend))[0];
+
+    const brief = generateBriefFromCreativeGap(storeId, gap, profile, controlAd);
+    await adsExperimentRepository.saveBrief(brief);
+    return brief;
+  }
+
+  async saveBrief(brief: CreativeBrief): Promise<void> {
+    await adsExperimentRepository.saveBrief(brief);
+  }
+
+  async updateBriefStatus(briefId: string, status: BriefStatus, notes?: string): Promise<CreativeBrief | null> {
+    return adsExperimentRepository.updateBriefStatus(briefId, status, notes);
+  }
+
+  async getExperiments(storeId: string): Promise<readonly AdsExperiment[]> {
+    return adsExperimentRepository.listExperiments(storeId);
+  }
+
+  async getExperiment(experimentId: string): Promise<AdsExperiment | null> {
+    return adsExperimentRepository.getExperimentById(experimentId);
+  }
+
+  async saveExperiment(exp: AdsExperiment): Promise<void> {
+    await adsExperimentRepository.saveExperiment(exp);
+  }
+
+  async createExperimentFromBrief(
+    storeId: string,
+    briefId: string,
+    customOptions?: { title?: string; budgetCapUsd?: number; reviewWindowDays?: number }
+  ): Promise<AdsExperiment> {
+    const brief = await this.getBrief(briefId);
+    if (!brief) {
+      throw new Error(`Brief '${briefId}' not found`);
+    }
+
+    const campaigns = await this.getCampaignHierarchy(storeId);
+    const allAds = campaigns.flatMap(c => c.adsets.flatMap(a => a.ads));
+    const controlAd = allAds.find(a => a.id === brief.testVariables.controlAdId) || allAds.sort((a, b) => Number(b.spend) - Number(a.spend))[0];
+
+    const expId = `exp_${storeId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    const experiment: AdsExperiment = {
+      id: expId,
+      storeId,
+      title: customOptions?.title || `Observational Test: ${brief.title}`,
+      hypothesis: brief.hypothesis,
+      linkedBriefId: brief.briefId,
+      design: {
+        type: "OBSERVATIONAL",
+        objective: "CONVERSIONS",
+        control: {
+          entityType: "ad",
+          entityId: controlAd?.id ?? brief.testVariables.controlAdId ?? "ad_control_default",
+          entityName: controlAd?.name ?? brief.testVariables.controlAdName ?? "Top Spending Ad Baseline",
+          baselineSpend: controlAd ? Number(controlAd.spend) : 100.0,
+          baselineMetricValue: controlAd?.cpa ? Number(controlAd.cpa) : 25.0,
+          baselinePurchases: controlAd ? Number(controlAd.purchases) : 4,
+        },
+        variants: [
+          {
+            entityType: "ad",
+            entityName: `Variant Ad (${brief.creativeConcept.hookType})`,
+            briefId: brief.briefId,
+            description: `${brief.creativeConcept.conceptSummary} [Isolated: ${brief.testVariables.isolatedVariable}]`,
+          },
+        ],
+        isolatedVariable: brief.testVariables.isolatedVariable,
+        allocationMechanism: "Meta Dynamic Budget Allocation (Observational distribution across ad set)",
+      },
+      measurement: {
+        primaryMetric: brief.guardrails.primaryMetric,
+        metricBasis: brief.guardrails.metricBasis,
+        minimumSampleSize: 8,
+        mde: 15,
+        maturityRequirement: "MATURE",
+      },
+      limits: {
+        budgetCapUsd: customOptions?.budgetCapUsd ?? brief.guardrails.budgetCapUsd,
+        maxLossGuardrailUsd: (customOptions?.budgetCapUsd ?? brief.guardrails.budgetCapUsd) * 0.8,
+        reviewWindowDays: customOptions?.reviewWindowDays ?? brief.guardrails.reviewWindowDays,
+      },
+      timeline: {
+        startDate: new Date().toISOString(),
+        endDate: new Date(Date.now() + (customOptions?.reviewWindowDays ?? brief.guardrails.reviewWindowDays) * 86400000).toISOString(),
+      },
+      status: "APPROVED",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await adsExperimentRepository.saveExperiment(experiment);
+    await adsExperimentRepository.updateBriefStatus(brief.briefId, "READY_FOR_TEST");
+    return experiment;
+  }
+
+  async updateExperimentOutcome(
+    experimentId: string,
+    update: {
+      results?: ExperimentResults;
+      learning?: ExperimentLearning;
+      status?: ExperimentStatus;
+      statusReason?: string;
+    },
+  ): Promise<AdsExperiment | null> {
+    return adsExperimentRepository.updateExperimentOutcome(experimentId, update);
+  }
 }
 
 export const adsIntelligenceService = new AdsIntelligenceService();
+

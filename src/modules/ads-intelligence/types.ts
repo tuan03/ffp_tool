@@ -321,6 +321,161 @@ export interface CompetitorIntelligenceReport {
   readonly cachedAt?: string;
 }
 
+export type BriefStatus = "DRAFT" | "APPROVED" | "IN_PRODUCTION" | "READY_FOR_TEST" | "ARCHIVED";
+
+export interface CreativeBriefStoryboardScene {
+  readonly timestamp: string;
+  readonly scene: string;
+  readonly visualAction: string;
+  readonly audioVoiceover: string;
+  readonly onScreenText: string;
+  readonly isNewIdea: boolean;
+}
+
+export interface CreativeBriefReference {
+  readonly referenceId: string;
+  readonly source: string;
+  readonly whatWeLearned: string;
+  readonly creativeDifference: string;
+}
+
+export interface CreativeBrief {
+  readonly briefId: string;
+  readonly storeId: string;
+  readonly title: string;
+  readonly assignee: string;
+  readonly status: BriefStatus;
+  readonly problemOrOpportunity: string;
+  readonly product: {
+    readonly name: string;
+    readonly targetMarket: string;
+    readonly offer: string;
+    readonly landingPageUrl: string;
+    readonly priceUsd?: number;
+  };
+  readonly targetAudience: string;
+  readonly hypothesis: string;
+  readonly creativeConcept: {
+    readonly hookAngle: string;
+    readonly hookType: string;
+    readonly visualStyle: string;
+    readonly format: string;
+    readonly aspectRatio: "9:16" | "1:1" | "4:5";
+    readonly conceptSummary: string;
+  };
+  readonly storyboard: readonly CreativeBriefStoryboardScene[];
+  readonly copyAndCta: {
+    readonly primaryText: string;
+    readonly headline: string;
+    readonly ctaButton: string;
+    readonly productTruths: readonly string[];
+    readonly brandConstraints: readonly string[];
+  };
+  readonly references: readonly CreativeBriefReference[];
+  readonly testVariables: {
+    readonly isolatedVariable: string;
+    readonly constantVariables: readonly string[];
+    readonly controlAdId?: string;
+    readonly controlAdName?: string;
+  };
+  readonly guardrails: {
+    readonly primaryMetric: "cpa" | "roas" | "linkCtr" | "purchases";
+    readonly metricBasis: "META_PURCHASE" | "GA4_SESSION" | "SHOPIFY_ORDER" | "BLENDED";
+    readonly budgetCapUsd: number;
+    readonly killCriteria: string;
+    readonly reviewWindowDays: number;
+  };
+  readonly linkedExperimentId?: string;
+  readonly reviewerNotes?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type ExperimentStatus =
+  | "DRAFT"
+  | "APPROVED"
+  | "RUNNING"
+  | "MATURING"
+  | "COMPLETED"
+  | "INCONCLUSIVE"
+  | "ABORTED";
+
+export interface ExperimentControlEntity {
+  readonly entityType: "ad" | "adset" | "campaign";
+  readonly entityId: string;
+  readonly entityName: string;
+  readonly baselineSpend: number;
+  readonly baselineMetricValue: number;
+  readonly baselinePurchases: number;
+}
+
+export interface ExperimentVariantEntity {
+  readonly entityType: "ad" | "adset";
+  readonly entityId?: string;
+  readonly entityName: string;
+  readonly briefId?: string;
+  readonly description: string;
+}
+
+export interface ExperimentResults {
+  readonly controlSpend: number;
+  readonly variantSpend: number;
+  readonly controlOutcomes: number;
+  readonly variantOutcomes: number;
+  readonly controlMetricValue: number;
+  readonly variantMetricValue: number;
+  readonly deltaPercent: number;
+  readonly confidence: "HIGH" | "MEDIUM" | "LOW" | "INCONCLUSIVE";
+  readonly confoundersNoted: readonly string[];
+  readonly reviewer: string;
+}
+
+export interface ExperimentLearning {
+  readonly conclusion: string;
+  readonly verdict: "WIN" | "LOSS" | "INCONCLUSIVE";
+  readonly scope: string;
+  readonly nextRecommendedTest: string;
+}
+
+export interface AdsExperiment {
+  readonly id: string;
+  readonly storeId: string;
+  readonly title: string;
+  readonly hypothesis: string;
+  readonly linkedBriefId?: string;
+  readonly design: {
+    readonly type: "OBSERVATIONAL" | "RANDOMIZED";
+    readonly objective: "CONVERSIONS" | "CLICK_THROUGH" | "AWARENESS";
+    readonly control: ExperimentControlEntity;
+    readonly variants: readonly ExperimentVariantEntity[];
+    readonly isolatedVariable: string;
+    readonly allocationMechanism: string;
+  };
+  readonly measurement: {
+    readonly primaryMetric: "cpa" | "roas" | "linkCtr" | "purchases";
+    readonly metricBasis: "META_PURCHASE" | "GA4_SESSION" | "SHOPIFY_ORDER" | "BLENDED";
+    readonly minimumSampleSize: number;
+    readonly mde: number;
+    readonly maturityRequirement: "PROVISIONAL" | "MATURE";
+  };
+  readonly limits: {
+    readonly budgetCapUsd: number;
+    readonly maxLossGuardrailUsd: number;
+    readonly reviewWindowDays: number;
+  };
+  readonly timeline: {
+    readonly startDate: string;
+    readonly endDate?: string;
+    readonly actualReviewDate?: string;
+  };
+  readonly status: ExperimentStatus;
+  readonly statusReason?: string;
+  readonly results?: ExperimentResults;
+  readonly learning?: ExperimentLearning;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface AdsIntelligenceClient {
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
@@ -331,6 +486,14 @@ export interface AdsIntelligenceClient {
   getDecisionCards?(storeId?: string): Promise<readonly DecisionCard[]>;
   getAiStrategicReport?(storeId?: string, forceRefresh?: boolean): Promise<AiStrategicReport>;
   getCompetitorIntelligence?(storeId?: string, forceRefresh?: boolean, filters?: { pageId?: string; format?: string; hookType?: string }): Promise<CompetitorIntelligenceReport>;
+  getBriefs?(storeId?: string): Promise<readonly CreativeBrief[]>;
+  generateBrief?(storeId: string, payload: { source: "decision" | "gap" | "custom"; sourceId?: string; brief?: CreativeBrief }): Promise<CreativeBrief>;
+  getBriefMarkdown?(briefId: string): Promise<string>;
+  updateBriefStatus?(briefId: string, status: BriefStatus, notes?: string): Promise<CreativeBrief>;
+  getExperiments?(storeId?: string): Promise<readonly AdsExperiment[]>;
+  createExperiment?(storeId: string, payload: { briefId?: string; experiment?: AdsExperiment; customOptions?: { title?: string; budgetCapUsd?: number; reviewWindowDays?: number } }): Promise<AdsExperiment>;
+  updateExperimentOutcome?(experimentId: string, payload: { results?: ExperimentResults; learning?: ExperimentLearning; status?: ExperimentStatus; statusReason?: string }): Promise<AdsExperiment>;
 }
+
 
 
