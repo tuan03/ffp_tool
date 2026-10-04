@@ -4,6 +4,10 @@ import {
   DefaultCompetitorClient,
   classifyHookType,
   classifyVisualStyle,
+  normalizeSnapshotAd,
+  PAGE_REGISTRY,
+  isAllowedMetaCdnUrl,
+  probeMetaCdnMedia,
 } from "../ads-intelligence/competitor-client";
 import {
   analyzeCreativeGaps,
@@ -206,3 +210,88 @@ test("Ads Intelligence Service: getCompetitorIntelligence returns cached full re
     assert.equal(ad.taxonomy.hookType, "UNBOXING");
   }
 });
+
+test("Competitor Normalizer: accurately normalizes nested Meta snapshot ads into CompetitorAd", () => {
+  const rawMetaAd = {
+    ad_archive_id: "715439934763903",
+    page_id: "102971998671051",
+    page_name: "Macorner",
+    is_active: true,
+    start_date: 1768204800, // Unix timestamp in seconds
+    snapshot: {
+      page_name: "Macorner",
+      caption: "macorner.co",
+      cta_text: "Shop now",
+      cta_type: "SHOP_NOW",
+      display_format: "VIDEO",
+      body: {
+        text: "Check the list make everyday fun #couplevibes",
+      },
+      title: {
+        text: "Custom Anniversary Gift for Couple",
+      },
+      link_url: "https://macorner.co/products/custom-gift",
+      videos: [
+        {
+          video_hd_url: "https://video-iad3-2.xx.fbcdn.net/video.mp4",
+          video_preview_image_url: "https://scontent-iad6-1.xx.fbcdn.net/preview.jpg",
+        },
+      ],
+      cards: [
+        {
+          title: { text: "Card 1: Choose Style" },
+          body: { text: "Card 1 Body" },
+          original_image_url: "https://scontent-iad6-1.xx.fbcdn.net/card1.jpg",
+          link_url: "https://macorner.co/card1",
+        },
+      ],
+    },
+  };
+
+  const normalized = normalizeSnapshotAd(rawMetaAd, "102971998671051", "scrapecreators");
+
+  assert.equal(normalized.archiveAdId, "715439934763903");
+  assert.equal(normalized.pageId, "102971998671051");
+  assert.equal(normalized.pageName, "Macorner");
+  assert.equal(normalized.status, "ACTIVE");
+  assert.equal(normalized.mediaType, "VIDEO");
+  assert.equal(normalized.cta, "Shop now");
+  assert.equal(normalized.landingUrl, "https://macorner.co/products/custom-gift");
+  assert.ok(normalized.copy.includes("Check the list"));
+  assert.equal(normalized.headline, "Custom Anniversary Gift for Couple");
+  assert.ok(normalized.mediaUrls.includes("https://video-iad3-2.xx.fbcdn.net/video.mp4"));
+  assert.equal(normalized.thumbnailUrl, "https://scontent-iad6-1.xx.fbcdn.net/preview.jpg");
+  assert.equal(normalized.cards?.length, 1);
+  assert.equal(normalized.cards?.[0].headline, "Card 1: Choose Style");
+  assert.equal(normalized.provider, "scrapecreators");
+  assert.equal(normalized.inspectionLevel, "VIDEO_AND_AUDIO_REVIEWED");
+  assert.ok(PAGE_REGISTRY["102971998671051"] !== undefined);
+  assert.ok(PAGE_REGISTRY["188723992071586"] !== undefined);
+  assert.ok(PAGE_REGISTRY["100254708876376"] !== undefined);
+});
+
+test("Media Range Probe: validates allowed Meta CDN hostnames and rejects unauthorized domains", async () => {
+  // Allowed domains
+  assert.equal(isAllowedMetaCdnUrl("https://video-iad3-2.xx.fbcdn.net/o1/v/t2/video.mp4"), true);
+  assert.equal(isAllowedMetaCdnUrl("https://scontent-iad3-1.xx.fbsbx.com/image.jpg"), true);
+  assert.equal(isAllowedMetaCdnUrl("https://fbcdn.net/asset"), true);
+
+  // Rejected non-HTTPS, invalid hosts, credentials
+  assert.equal(isAllowedMetaCdnUrl("http://video-iad3-2.xx.fbcdn.net/video.mp4"), false);
+  assert.equal(isAllowedMetaCdnUrl("https://evil.com/fbcdn.net"), false);
+  assert.equal(isAllowedMetaCdnUrl("https://user:pass@video-iad3-2.xx.fbcdn.net/video.mp4"), false);
+  assert.equal(isAllowedMetaCdnUrl("not-a-url"), false);
+
+  // Probe non-allowed domain returns safe error object
+  const nonAllowedResult = await probeMetaCdnMedia("https://google.com/test.jpg");
+  assert.equal(nonAllowedResult.accessible, false);
+  assert.equal(nonAllowedResult.error, "non_meta_https_cdn_url_not_probed");
+  assert.equal(nonAllowedResult.bytesRead, 0);
+
+  // Probe error handling on unreachable host without throw
+  const unreachableResult = await probeMetaCdnMedia("https://invalid-subdomain-404-test.fbcdn.net/test.jpg", 1000);
+  assert.equal(unreachableResult.accessible, false);
+  assert.equal(unreachableResult.bytesRead, 0);
+  assert.ok(typeof unreachableResult.error === "string");
+});
+

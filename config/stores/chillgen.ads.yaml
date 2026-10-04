@@ -26,9 +26,9 @@ competitors:
   backupProvider: searchapi
   monthlyCostCapUsd: 65.0
   watchlist:
+    - "102971998671051"
+    - "188723992071586"
     - "100064829182341"
-    - "100083124589211"
-    - "100091284751029"
 business:
   costProfileRef: chillgen-rugs-standard-v1
   targetCpa: 18.0
