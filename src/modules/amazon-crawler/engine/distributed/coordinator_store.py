@@ -670,12 +670,19 @@ class CoordinatorStore(CoordinatorObservability):
                 }
                 client.capabilities = {**client.capabilities, **live_capabilities}
             for active in running:
+                if not isinstance(active, dict):
+                    continue
                 task_id = str(active.get("taskId") or "")
                 lease_id = str(active.get("leaseId") or "")
-                task = session.get(CrawlTask, task_id)
-                if task and task.lease_id == lease_id and task.assigned_client_id == client_id and task.status in {"leased", "running"}:
+                task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
+                lease_now = utc_now()
+                if (
+                    task and task.lease_id == lease_id and task.assigned_client_id == client_id
+                    and task.status in {"leased", "running"} and task.result is None
+                    and task.lease_expires_at is not None and _as_utc(task.lease_expires_at) > lease_now
+                ):
                     task.status = "running"
-                    task.lease_expires_at = self._renew_lease(session, task, now)
+                    task.lease_expires_at = self._renew_lease(session, task, lease_now)
                 elif (
                     task
                     and task.status in {"cancelling", "cancelled"}
@@ -860,7 +867,7 @@ class CoordinatorStore(CoordinatorObservability):
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")
         with self.sessions.begin() as session:
-            task = session.get(CrawlTask, task_id)
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
                 return
             # Progress messages travel over WebSocket while results use a separate
@@ -868,17 +875,16 @@ class CoordinatorStore(CoordinatorObservability):
             # after the result transaction commits. A persisted result is the
             # source of truth and must never be reopened by late progress.
             if task.result is not None:
-                task.status = "completed"
-                task.completed_at = task.completed_at or task.result.received_at
-                task.lease_expires_at = None
-                self._refresh_job(session, task.job_id)
                 return
-            if task.status in TERMINAL_TASK_STATUSES or task.status == "cancelling":
-                return
-            if task.assigned_client_id != client_id or task.lease_id != lease_id:
+            now = utc_now()
+            if (
+                task.status not in {"leased", "running"}
+                or task.assigned_client_id != client_id or task.lease_id != lease_id
+                or task.lease_expires_at is None or _as_utc(task.lease_expires_at) <= now
+            ):
                 return
             task.status = "running"
-            task.lease_expires_at = self._renew_lease(session, task, utc_now())
+            task.lease_expires_at = self._renew_lease(session, task, now)
             self._event(session, task.job_id, "task_progress", {
                 "taskId": task.id, "clientId": client_id, "progress": _bounded_progress(payload.get("progress")),
             })
@@ -894,14 +900,18 @@ class CoordinatorStore(CoordinatorObservability):
             error["resumeClientId"] = client_id
         retryable = bool(error.get("retryable", True))
         with self.sessions.begin() as session:
-            task = session.get(CrawlTask, task_id)
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
                 return {"status": "missing"}
             if task.status in TERMINAL_TASK_STATUSES or task.status == "cancelling":
                 if task.status == "cancelling":
                     return {"status": "cancelled"}
                 return {"status": "duplicate"}
-            if task.assigned_client_id != client_id or task.lease_id != lease_id:
+            if (
+                task.status not in {"leased", "running"} or task.result is not None
+                or task.assigned_client_id != client_id or task.lease_id != lease_id
+                or task.lease_expires_at is None or _as_utc(task.lease_expires_at) <= utc_now()
+            ):
                 return {"status": "stale"}
             task.failure_count += 1
             if retryable:
@@ -2397,10 +2407,12 @@ class CoordinatorStore(CoordinatorObservability):
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")
         with self.sessions.begin() as session:
-            task = session.get(CrawlTask, task_id)
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
                 return {"status": "discarded"}
-            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
+            attempt = session.scalar(select(TaskAttempt).where(
+                TaskAttempt.task_id == task_id, TaskAttempt.client_id == client_id, TaskAttempt.lease_id == lease_id,
+            ))
             if task.status == "cancelled":
                 if (
                     task.assigned_client_id == client_id
@@ -2442,7 +2454,7 @@ class CoordinatorStore(CoordinatorObservability):
         task_id = str(payload.get("taskId") or "")
         lease_id = str(payload.get("leaseId") or "")
         with self.sessions.begin() as session:
-            task = session.get(CrawlTask, task_id)
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
                 return {"status": "discarded"}
             if (
@@ -2451,7 +2463,9 @@ class CoordinatorStore(CoordinatorObservability):
                 or task.lease_id != lease_id
             ):
                 return {"status": "stale", "jobId": task.job_id}
-            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
+            attempt = session.scalar(select(TaskAttempt).where(
+                TaskAttempt.task_id == task_id, TaskAttempt.client_id == client_id, TaskAttempt.lease_id == lease_id,
+            ))
             if attempt is not None and attempt.status == "cancelling":
                 attempt.status = "cancelling_received"
                 self._event(session, task.job_id, "task_cancel_received", {
@@ -2471,7 +2485,12 @@ class CoordinatorStore(CoordinatorObservability):
                 task_id = str(local.get("taskId") or "")
                 lease_id = str(local.get("leaseId") or "")
                 job_id = str(local.get("jobId") or "")
-                task = session.get(CrawlTask, task_id)
+                task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
+                # A client-supplied job ID must not select another job's cancel
+                # state/tombstone and apply it to this task.
+                if task is not None and task.job_id != job_id:
+                    discard.append(task_id)
+                    continue
                 job = session.get(CrawlJob, job_id) if job_id else None
                 tombstone = session.get(DeletedCrawlJob, job_id) if job_id else None
                 if tombstone is not None:
@@ -2505,15 +2524,14 @@ class CoordinatorStore(CoordinatorObservability):
                     continue
                 if (
                     task.job_id == job_id
-                    and (
-                        (task.assigned_client_id == client_id and task.lease_id == lease_id and task.status in {"leased", "running"})
-                        or (task.status == "queued" and (task.assigned_client_id is None or task.assigned_client_id == client_id))
-                    )
+                    and task.assigned_client_id == client_id and task.lease_id == lease_id
+                    and task.status in {"leased", "running"} and task.result is None
+                    and task.lease_expires_at is not None and _as_utc(task.lease_expires_at) > utc_now()
                 ):
-                    task.assigned_client_id = client_id
-                    task.lease_id = lease_id
+                    # Reconnect may resume live authority, never claim a queued
+                    # task or resurrect an expired lease. Only lease_tasks grants it.
                     task.status = "running"
-                    task.lease_expires_at = self._renew_lease(session, task, now)
+                    task.lease_expires_at = self._renew_lease(session, task, utc_now())
                     resume.append(task_id)
                     continue
                 discard.append(task_id)

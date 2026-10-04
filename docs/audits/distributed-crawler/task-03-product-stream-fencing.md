@@ -3,7 +3,7 @@
 - Baseline: `86c0c88`, branch `cua_pro`.
 - User accepted Task 02 and authorized Task 03.
 - Original specification: sections 15, 19, 31; product-streaming path only.
-- Status: awaiting user verification. Task 04 has not started.
+- Status: user supplied passing PostgreSQL output and authorized Task 04. See [Task 04](task-04-lease-mutation-fencing.md) for subsequent changes; this report retains Task 03's scope.
 
 ## Change and compatibility
 
