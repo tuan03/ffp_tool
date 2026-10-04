@@ -1,5 +1,5 @@
 import type { AdsIntelligenceClient } from "./types";
-import { mockCampaignHierarchy, mockChillgenSummary, mockCompetitorAds, mockDataHealth } from "./mocks/data";
+import { mockCampaignHierarchy, mockChillgenSummary, mockCompetitorAds, mockDataHealth, mockReconciliationReport } from "./mocks/data";
 
 export function createAdsIntelligenceClient(): AdsIntelligenceClient {
   return {
@@ -49,6 +49,18 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
         // Fall back to initialized competitor watchlist
       }
       return mockCompetitorAds;
+    },
+
+    async getReconciliationReport(storeId = "chillgen") {
+      try {
+        const res = await fetch(`/api/ads-intelligence/reconciliation?storeId=${encodeURIComponent(storeId)}`);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // Fall back to initialized reconciliation data
+      }
+      return { ...mockReconciliationReport, storeId };
     },
 
     async syncNow(storeId = "chillgen") {

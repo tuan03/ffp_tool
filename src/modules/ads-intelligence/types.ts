@@ -109,10 +109,53 @@ export interface AdsDataHealth {
   };
 }
 
+export interface AdsReconciliationReport {
+  readonly storeId: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly meta: {
+    readonly spend: string;
+    readonly impressions: string;
+    readonly linkClicks: string;
+    readonly purchases: string;
+    readonly purchaseValue: string;
+    readonly cpa: string | null;
+    readonly roas: string | null;
+  };
+  readonly ga4: {
+    readonly status: "CONNECTED" | "ERROR" | "PENDING";
+    readonly sessions: number;
+    readonly ecommercePurchases: number;
+    readonly purchaseRevenue: number;
+    readonly clickToSessionDropPct: string;
+  };
+  readonly shopify: {
+    readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
+    readonly totalOrders: number;
+    readonly grossSales: string;
+    readonly totalRefunds: string;
+    readonly netSales: string;
+    readonly averageOrderValue: string;
+    readonly mer: string | null;
+    readonly blendedCpa: string | null;
+    readonly source: string;
+  };
+  readonly gaps: {
+    readonly purchaseDiscrepancy: number;
+    readonly revenueDiscrepancy: string;
+    readonly clickDropPct: string;
+    readonly notes: readonly string[];
+  };
+  readonly fromCache?: boolean;
+  readonly cachedAt?: string;
+}
+
 export interface AdsIntelligenceClient {
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
   getDataHealth(storeId?: string): Promise<AdsDataHealth>;
   getCompetitorAds(storeId?: string): Promise<readonly CompetitorAdCard[]>;
+  getReconciliationReport?(storeId?: string): Promise<AdsReconciliationReport>;
   syncNow?(storeId?: string): Promise<{ success: boolean; refreshedAt: string; message: string }>;
 }
+

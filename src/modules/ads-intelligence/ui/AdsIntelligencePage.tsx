@@ -5,6 +5,7 @@ import type {
   AdsDataHealth,
   AdsHierarchyCampaign,
   AdsIntelligenceClient,
+  AdsReconciliationReport,
   AdsStoreSummary,
   CompetitorAdCard,
 } from "../types";
@@ -18,6 +19,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [campaigns, setCampaigns] = useState<readonly AdsHierarchyCampaign[]>([]);
   const [health, setHealth] = useState<AdsDataHealth | null>(null);
   const [competitors, setCompetitors] = useState<readonly CompetitorAdCard[]>([]);
+  const [reconciliation, setReconciliation] = useState<AdsReconciliationReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -29,14 +31,16 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
     setSyncMessage("Đang gọi live Meta Graph API & GA4 Data API...");
     try {
       const res = await client.syncNow(currentStoreId);
-      const [summaryData, campaignsData, healthData] = await Promise.all([
+      const [summaryData, campaignsData, healthData, reconData] = await Promise.all([
         client.getStoreSummary(currentStoreId),
         client.getCampaignHierarchy(currentStoreId),
         client.getDataHealth(currentStoreId),
+        client.getReconciliationReport ? client.getReconciliationReport(currentStoreId) : Promise.resolve(null),
       ]);
       setSummary(summaryData);
       setCampaigns(campaignsData);
       setHealth(healthData);
+      if (reconData) setReconciliation(reconData);
       setSyncMessage(res.message);
       setTimeout(() => setSyncMessage(null), 6000);
     } catch {
@@ -57,13 +61,15 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       client.getCampaignHierarchy(currentStoreId),
       client.getDataHealth(currentStoreId),
       client.getCompetitorAds(currentStoreId),
+      client.getReconciliationReport ? client.getReconciliationReport(currentStoreId) : Promise.resolve(null),
     ])
-      .then(([summaryData, campaignsData, healthData, competitorsData]) => {
+      .then(([summaryData, campaignsData, healthData, competitorsData, reconData]) => {
         if (!isLive) return;
         setSummary(summaryData);
         setCampaigns(campaignsData);
         setHealth(healthData);
         setCompetitors(competitorsData);
+        if (reconData) setReconciliation(reconData);
         // Expand first campaign by default
         if (campaignsData[0]) {
           setExpandedCampaigns({ [campaignsData[0].id]: true });
@@ -369,75 +375,378 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
       {/* Tab 2: Funnel & Reconciliation */}
       {activeTab === "funnel" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-              <span>📉</span> Phễu sự kiện Website (Meta Event Volumes)
-            </h3>
-            <p className="text-xs text-slate-400">
-              Lưu ý: Đây là tổng số lượng sự kiện (Event Volume), không phải phễu tuần tự 1 người dùng.
-            </p>
-            <div className="space-y-3 pt-2">
-              <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
-                <span className="text-slate-400">Impressions (Hiển thị)</span>
-                <span className="font-mono font-bold text-slate-200">{summary?.impressions}</span>
+        <div className="space-y-6">
+          {/* Commerce Financial Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>🛍️</span> Doanh thu thuần
+              </span>
+              <div className="text-xl font-bold text-slate-100">
+                ${reconciliation?.shopify.netSales || "0.00"}
               </div>
-              <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
-                <span className="text-slate-400">Link Clicks (Nhấp liên kết)</span>
-                <span className="font-mono font-bold text-slate-200">{summary?.linkClicks} (CTR: {summary?.linkCtr})</span>
+              <div className="text-[10px] text-slate-400">
+                Gross: ${reconciliation?.shopify.grossSales || "0.00"} (Refund: -${reconciliation?.shopify.totalRefunds || "0.00"})
               </div>
-              <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
-                <span className="text-slate-400">Landing Page Views (Xem trang đích)</span>
-                <span className="font-mono font-bold text-slate-200">{summary?.lpv}</span>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>📦</span> Đơn thực tế
+              </span>
+              <div className="text-xl font-bold text-purple-400">
+                {reconciliation?.shopify.totalOrders ?? 0} đơn
               </div>
-              <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
-                <span className="text-slate-400">Add to Cart (Thêm giỏ hàng)</span>
-                <span className="font-mono font-bold text-amber-300">{summary?.atc}</span>
+              <div className="text-[10px] text-slate-400">
+                AOV: ${reconciliation?.shopify.averageOrderValue || "0.00"} / đơn
               </div>
-              <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
-                <span className="text-slate-400">Initiate Checkout (Bắt đầu thanh toán)</span>
-                <span className="font-mono font-bold text-indigo-300">{summary?.checkout}</span>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>🎯</span> MER (Hiệu quả)
+              </span>
+              <div className="text-xl font-bold text-cyan-400">
+                {reconciliation?.shopify.mer ? `${reconciliation.shopify.mer}×` : "—"}
               </div>
-              <div className="flex items-center justify-between text-xs pb-1">
-                <span className="text-emerald-400 font-semibold">Purchases (Đơn hàng thành công)</span>
-                <span className="font-mono font-bold text-emerald-400">{summary?.purchases}</span>
+              <div className="text-[10px]">
+                {reconciliation?.shopify.mer && Number(reconciliation.shopify.mer) >= 2.5 ? (
+                  <span className="text-emerald-400 font-semibold">🟢 Lãi ròng (&ge; 2.50×)</span>
+                ) : (
+                  <span className="text-amber-400 font-semibold">⚠️ Dưới hòa vốn (&lt; 2.50×)</span>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>💰</span> Blended CPA
+              </span>
+              <div className="text-xl font-bold text-indigo-300">
+                {reconciliation?.shopify.blendedCpa ? `$${reconciliation.shopify.blendedCpa}` : "—"}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Chi tiêu / Đơn Shopify thực tế
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>📉</span> Rơi rụng Clicks
+              </span>
+              <div className="text-xl font-bold text-amber-400">
+                {reconciliation?.gaps.clickDropPct || "0.0%"}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {reconciliation?.meta.linkClicks || summary?.linkClicks || 0} clicks &rarr; {reconciliation?.ga4.sessions ?? 0} sessions
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>⚖️</span> Lệch đơn Pixel
+              </span>
+              <div className="text-xl font-bold text-slate-100">
+                {reconciliation?.gaps.purchaseDiscrepancy !== undefined
+                  ? reconciliation.gaps.purchaseDiscrepancy > 0
+                    ? `+${reconciliation.gaps.purchaseDiscrepancy}`
+                    : `${reconciliation.gaps.purchaseDiscrepancy}`
+                  : "0"}{" "}
+                đơn
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Pixel: {reconciliation?.meta.purchases || summary?.purchases || 0} vs Shop: {reconciliation?.shopify.totalOrders ?? 0}
               </div>
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-              <span>⚖️</span> Đối chiếu ba nguồn (Reconciliation View)
-            </h3>
-            <div className="space-y-3 pt-2">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-cyan-400 font-medium">Meta Attributed (7-day click, 1-day view)</span>
-                  <span className="font-mono font-bold text-slate-200">{summary?.purchases} đơn (${summary?.purchaseValue})</span>
-                </div>
-                <p className="text-[10px] text-slate-400">
-                  Mô hình gán công thuật toán pixel, bao gồm cả view-through.
+          {/* Main 2-Column: Funnel Analytics & Reconciliation Matrix */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column: Website Event Funnel */}
+            <div className="lg:col-span-4 rounded-xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                  <span>📉</span> Phễu sự kiện Website (Meta Event Volumes)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Đo lường volume sự kiện pixel &amp; tỷ lệ chuyển đổi từng tầng phễu.
                 </p>
               </div>
 
-              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-emerald-400 font-medium">GA4 Observed (Session UTM Paid Social)</span>
-                  <span className="font-mono font-bold text-slate-200">24 giao dịch ($1,560)</span>
+              <div className="space-y-3.5 pt-1">
+                {/* Step 1: Impressions */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">1. Impressions (Hiển thị)</span>
+                    <span className="font-mono font-bold text-slate-200">{summary?.impressions || "0"}</span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-1.5">
+                    <div className="bg-slate-400 h-1.5 rounded-full w-full" />
+                  </div>
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  Dữ liệu ghi nhận trực tiếp theo phiên truy cập web có gắn UTM.
-                </p>
+
+                {/* Step 2: Link Clicks */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">2. Link Clicks (Nhấp liên kết)</span>
+                    <span className="font-mono font-bold text-slate-200">
+                      {summary?.linkClicks || "0"}{" "}
+                      <span className="text-[10px] text-cyan-400 font-sans font-medium">({summary?.linkCtr || "0.00%"})</span>
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-1.5">
+                    <div className="bg-cyan-500 h-1.5 rounded-full w-[85%]" />
+                  </div>
+                </div>
+
+                {/* Step 3: Landing Page Views */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">3. Landing Page Views (Vào web)</span>
+                    <span className="font-mono font-bold text-slate-200">
+                      {summary?.lpv || "0"}{" "}
+                      {Number(summary?.linkClicks) > 0 && (
+                        <span className="text-[10px] text-slate-500 font-sans">
+                          ({((Number(summary?.lpv || 0) / Number(summary?.linkClicks || 1)) * 100).toFixed(0)}% click)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-1.5">
+                    <div className="bg-blue-500 h-1.5 rounded-full w-[70%]" />
+                  </div>
+                </div>
+
+                {/* Step 4: Add to Cart */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">4. Add to Cart (Thêm giỏ hàng)</span>
+                    <span className="font-mono font-bold text-amber-300">
+                      {summary?.atc || "0"}{" "}
+                      {Number(summary?.lpv) > 0 && (
+                        <span className="text-[10px] text-amber-400/80 font-sans font-medium">
+                          ({((Number(summary?.atc || 0) / Number(summary?.lpv || 1)) * 100).toFixed(1)}% LPV)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-1.5">
+                    <div className="bg-amber-500 h-1.5 rounded-full w-[45%]" />
+                  </div>
+                </div>
+
+                {/* Step 5: Initiate Checkout */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">5. Checkout (Thanh toán)</span>
+                    <span className="font-mono font-bold text-indigo-300">
+                      {summary?.checkout || "0"}{" "}
+                      {Number(summary?.atc) > 0 && (
+                        <span className="text-[10px] text-indigo-400/80 font-sans font-medium">
+                          ({((Number(summary?.checkout || 0) / Number(summary?.atc || 1)) * 100).toFixed(1)}% ATC)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-1.5">
+                    <div className="bg-indigo-500 h-1.5 rounded-full w-[30%]" />
+                  </div>
+                </div>
+
+                {/* Step 6: Purchases */}
+                <div className="space-y-1 pt-1 border-t border-slate-800">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-emerald-400 font-semibold">6. Purchases (Đơn hoàn tất)</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      {summary?.purchases || "0"}{" "}
+                      {Number(summary?.checkout) > 0 && (
+                        <span className="text-[10px] text-emerald-300 font-sans font-medium">
+                          ({((Number(summary?.purchases || 0) / Number(summary?.checkout || 1)) * 100).toFixed(1)}% Check)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-1.5">
+                    <div className="bg-emerald-500 h-1.5 rounded-full w-[20%]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Three-Way Reconciliation Matrix Table */}
+            <div className="lg:col-span-8 rounded-xl border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                    <span>⚖️</span> Ma trận Đối chiếu Ba nguồn (Three-Way Reconciliation Matrix)
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    So sánh thực tế: <strong>Meta Pixel (Gán công)</strong> vs <strong>GA4 Data API (Quan sát)</strong> vs <strong>Shopify (Dòng tiền thực thu)</strong>.
+                  </p>
+                </div>
+                <div className="text-[11px] px-2.5 py-1 rounded bg-slate-800/80 text-slate-300 font-mono self-start sm:self-auto">
+                  Nguồn: {reconciliation?.shopify.source || "Shopify Store"}
+                </div>
               </div>
 
-              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-purple-400 font-medium">Shopify Net Orders (Thực tế trừ refund)</span>
-                  <span className="font-mono font-bold text-slate-200">27 đơn hợp lệ ($1,720)</span>
+              <div className="overflow-x-auto rounded-lg border border-slate-800">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800 uppercase text-[10px] tracking-wider font-semibold">
+                    <tr>
+                      <th className="py-2.5 px-3">Chỉ số đo lường</th>
+                      <th className="py-2.5 px-3 text-cyan-400">🟦 Meta Pixel</th>
+                      <th className="py-2.5 px-3 text-emerald-400">🟩 GA4 Data API</th>
+                      <th className="py-2.5 px-3 text-purple-400">🟪 Shopify Settled</th>
+                      <th className="py-2.5 px-3 text-amber-300">⚖️ Phân tích &amp; Chênh lệch</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70 font-mono text-[11px]">
+                    {/* Row 1: Traffic */}
+                    <tr className="hover:bg-slate-850">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-200">
+                        Lưu lượng (Traffic)
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-200">
+                        {reconciliation?.meta.linkClicks || summary?.linkClicks || "0"} clicks
+                      </td>
+                      <td className="py-2.5 px-3 text-emerald-300 font-bold">
+                        {reconciliation?.ga4.sessions ?? 0} sessions
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500">—</td>
+                      <td className="py-2.5 px-3 font-sans text-[11px]">
+                        <span className="text-amber-400 font-bold">Rơi rụng {reconciliation?.gaps.clickDropPct || "0.0%"}</span>
+                        <div className="text-[10px] text-slate-400 font-normal">Do độ trễ tải trang hoặc cookie consent</div>
+                      </td>
+                    </tr>
+
+                    {/* Row 2: Orders */}
+                    <tr className="hover:bg-slate-850">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-200">
+                        Đơn hàng (Orders)
+                      </td>
+                      <td className="py-2.5 px-3 text-cyan-300 font-bold">
+                        {reconciliation?.meta.purchases || summary?.purchases || "0"} đơn
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">7-day click, 1-day view</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-400">
+                        {reconciliation?.ga4.ecommercePurchases ?? 0} đơn
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">UTM paid-social</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-purple-300 font-bold">
+                        {reconciliation?.shopify.totalOrders ?? 0} đơn
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">Thực tế đã thanh toán</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans text-[11px]">
+                        {reconciliation?.gaps.purchaseDiscrepancy !== undefined ? (
+                          reconciliation.gaps.purchaseDiscrepancy === 0 ? (
+                            <span className="text-emerald-400 font-semibold">Khớp 100% (0 lệch)</span>
+                          ) : reconciliation.gaps.purchaseDiscrepancy > 0 ? (
+                            <span className="text-cyan-400 font-semibold">
+                              Meta gán dư +{reconciliation.gaps.purchaseDiscrepancy} đơn (View-through)
+                            </span>
+                          ) : (
+                            <span className="text-purple-400 font-semibold">
+                              Shopify nhiều hơn {Math.abs(reconciliation.gaps.purchaseDiscrepancy)} đơn (Direct/SEO)
+                            </span>
+                          )
+                        ) : (
+                          "0"
+                        )}
+                      </td>
+                    </tr>
+
+                    {/* Row 3: Revenue */}
+                    <tr className="hover:bg-slate-850">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-200">
+                        Doanh thu (Revenue)
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-200">
+                        ${reconciliation?.meta.purchaseValue || summary?.purchaseValue || "0.00"}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-400">
+                        ${reconciliation?.ga4.purchaseRevenue ? reconciliation.ga4.purchaseRevenue.toFixed(2) : "0.00"}
+                      </td>
+                      <td className="py-2.5 px-3 text-emerald-400 font-bold">
+                        ${reconciliation?.shopify.netSales || "0.00"}
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">Đã trừ tiền hoàn trả</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans text-[11px]">
+                        <span className="text-slate-300 font-mono">
+                          Lệch:{" "}
+                          {reconciliation?.gaps.revenueDiscrepancy
+                            ? Number(reconciliation.gaps.revenueDiscrepancy) >= 0
+                              ? `+$${reconciliation.gaps.revenueDiscrepancy}`
+                              : `-$${Math.abs(Number(reconciliation.gaps.revenueDiscrepancy))}`
+                            : "$0.00"}
+                        </span>
+                      </td>
+                    </tr>
+
+                    {/* Row 4: CPA */}
+                    <tr className="hover:bg-slate-850">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-200">
+                        Chi phí / Đơn (CPA)
+                      </td>
+                      <td className="py-2.5 px-3 text-cyan-300 font-bold">
+                        {reconciliation?.meta.cpa ? `$${reconciliation.meta.cpa}` : "—"}
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">Meta Pixel CPA</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500">—</td>
+                      <td className="py-2.5 px-3 text-indigo-400 font-bold">
+                        {reconciliation?.shopify.blendedCpa ? `$${reconciliation.shopify.blendedCpa}` : "—"}
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">Blended CPA thực</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans text-[11px] text-slate-400">
+                        Chi phí ad thực tế để có 1 đơn hàng Shopify về túi
+                      </td>
+                    </tr>
+
+                    {/* Row 5: Efficiency (ROAS & MER) */}
+                    <tr className="hover:bg-slate-850 bg-slate-900/30">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-200">
+                        Hiệu quả tổng thể
+                      </td>
+                      <td className="py-2.5 px-3 text-indigo-400 font-bold">
+                        {reconciliation?.meta.roas ? `${reconciliation.meta.roas}×` : "—"}
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">Pixel ROAS</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500">—</td>
+                      <td className="py-2.5 px-3 text-cyan-400 font-bold">
+                        {reconciliation?.shopify.mer ? `${reconciliation.shopify.mer}×` : "—"}
+                        <div className="text-[9px] text-slate-500 font-sans font-normal">MER (Net Sales / Spend)</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-sans text-[11px]">
+                        {reconciliation?.shopify.mer && Number(reconciliation.shopify.mer) >= 2.5 ? (
+                          <span className="text-emerald-400 font-semibold">Vượt ngưỡng hòa vốn (2.50×)</span>
+                        ) : (
+                          <span className="text-amber-400 font-semibold">Chưa đạt ngưỡng hòa vốn (2.50×)</span>
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Dynamic Audit Recommendations */}
+              <div className="space-y-2 pt-2">
+                <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <span>💡</span> Nhận định &amp; Khuyến nghị Kiểm toán Đối chiếu:
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  Dòng tiền và đơn hàng thực tế ghi nhận trên trang quản trị Shopify.
-                </p>
+                <div className="space-y-2">
+                  {reconciliation?.gaps.notes && reconciliation.gaps.notes.length > 0 ? (
+                    reconciliation.gaps.notes.map((note, idx) => (
+                      <div
+                        key={idx}
+                        className="rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-xs text-slate-300 flex items-start gap-2.5"
+                      >
+                        <span className="text-cyan-400 text-sm leading-none mt-0.5">📌</span>
+                        <div className="flex-1">{note}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-slate-500 italic">Đang phân tích chênh lệch đối chiếu...</div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

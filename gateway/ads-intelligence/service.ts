@@ -9,6 +9,7 @@ import { MetaClient, type MetaInsightRaw } from "./meta-client";
 import { Ga4Client } from "./ga4-client";
 import { websiteMetrics } from "./conversions";
 import { loadStoreAdsProfile } from "./store-profile";
+import { ShopifyOrdersClient } from "./shopify-client";
 
 export interface AdsStoreSummary {
   readonly storeId: string;
@@ -128,6 +129,47 @@ export interface AdsDataHealth {
   };
 }
 
+export interface AdsReconciliationReport {
+  readonly storeId: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly meta: {
+    readonly spend: string;
+    readonly impressions: string;
+    readonly linkClicks: string;
+    readonly purchases: string;
+    readonly purchaseValue: string;
+    readonly cpa: string | null;
+    readonly roas: string | null;
+  };
+  readonly ga4: {
+    readonly status: "CONNECTED" | "ERROR" | "PENDING";
+    readonly sessions: number;
+    readonly ecommercePurchases: number;
+    readonly purchaseRevenue: number;
+    readonly clickToSessionDropPct: string;
+  };
+  readonly shopify: {
+    readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
+    readonly totalOrders: number;
+    readonly grossSales: string;
+    readonly totalRefunds: string;
+    readonly netSales: string;
+    readonly averageOrderValue: string;
+    readonly mer: string | null;
+    readonly blendedCpa: string | null;
+    readonly source: string;
+  };
+  readonly gaps: {
+    readonly purchaseDiscrepancy: number;
+    readonly revenueDiscrepancy: string;
+    readonly clickDropPct: string;
+    readonly notes: readonly string[];
+  };
+  readonly fromCache?: boolean;
+  readonly cachedAt?: string;
+}
+
 function ensureEnvLoaded(): void {
   if (process.env.META_ACCESS_TOKEN) return;
   const envPaths = [
@@ -176,6 +218,10 @@ export class AdsIntelligenceService {
   private getGa4Client(): Ga4Client {
     ensureEnvLoaded();
     return new Ga4Client();
+  }
+
+  private getShopifyClient(): ShopifyOrdersClient {
+    return new ShopifyOrdersClient();
   }
 
   async getStoreSummary(storeId = "chillgen", forceRefresh = false): Promise<AdsStoreSummary> {
@@ -509,8 +555,114 @@ export class AdsIntelligenceService {
       },
     ];
 
-    adsIntelligenceCache.set(cacheKey, competitorList, 24 * 3600 * 1000);
+    adsIntelligenceCache.set(cacheKey, competitorList, 24 * 60 * 60 * 1000);
     return competitorList;
+  }
+
+  async getReconciliationReport(storeId = "chillgen", forceRefresh = false): Promise<AdsReconciliationReport> {
+    const cacheKey = `${storeId}:reconciliation`;
+    if (!forceRefresh) {
+      const cached = adsIntelligenceCache.get<AdsReconciliationReport>(cacheKey);
+      if (cached) {
+        return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+      }
+    }
+
+    const [summary, health, shopifyData] = await Promise.all([
+      this.getStoreSummary(storeId, forceRefresh),
+      this.getDataHealth(storeId, forceRefresh),
+      this.getShopifyClient().getOrderSummary(storeId),
+    ]);
+
+    const ga4Sessions = health.ga4Connection.liveSessionsLast30d ?? 0;
+    const metaLinkClicks = Number(summary.linkClicks) || 0;
+    const dropPct =
+      metaLinkClicks > 0
+        ? Math.max(0, ((metaLinkClicks - ga4Sessions) / metaLinkClicks) * 100).toFixed(1) + "%"
+        : "0.0%";
+
+    const metaPurchases = Number(summary.purchases) || 0;
+    const metaPurchaseVal = Number(summary.purchaseValue) || 0;
+    const shopifyNetSales = Number(shopifyData.netSales) || 0;
+    const metaSpend = Number(summary.spend) || 0;
+
+    const mer = metaSpend > 0 ? (shopifyNetSales / metaSpend).toFixed(2) : null;
+    const blendedCpa = shopifyData.totalOrders > 0 ? (metaSpend / shopifyData.totalOrders).toFixed(2) : null;
+    const purchaseDiscrepancy = metaPurchases - shopifyData.totalOrders;
+    const revenueDiscrepancy = (metaPurchaseVal - shopifyNetSales).toFixed(2);
+
+    const notes: string[] = [];
+    if (metaLinkClicks > 0 && ga4Sessions > 0) {
+      notes.push(
+        `Độ rơi rụng từ Click quảng cáo sang Phiên GA4 là ${dropPct} (Mức thông thường ngành E-commerce: 15% - 25%).`
+      );
+    }
+    if (purchaseDiscrepancy !== 0) {
+      if (purchaseDiscrepancy < 0) {
+        notes.push(
+          `Shopify thực tế ghi nhận ${shopifyData.totalOrders} đơn, nhiều hơn Meta pixel (${metaPurchases} đơn). Khoảng ${Math.abs(purchaseDiscrepancy)} đơn đến từ Direct, Organic SEO hoặc người dùng bật chặn tracking trên iOS.`
+        );
+      } else {
+        notes.push(
+          `Meta pixel gán công ${metaPurchases} đơn, cao hơn ${shopifyData.totalOrders} đơn thực tế trên Shopify. Meta có thể đang over-attribute (gán công view-through 1 ngày).`
+        );
+      }
+    } else {
+      notes.push(`Số lượng đơn hàng Meta gán công khớp chính xác với đơn hàng trên Shopify (${shopifyData.totalOrders} đơn).`);
+    }
+
+    if (mer !== null) {
+      const merNum = Number(mer);
+      if (merNum >= 2.5) {
+        notes.push(`Chỉ số hiệu quả tiếp thị tổng thể (MER: ${mer}×) vượt ngưỡng hòa vốn (2.50×). Cửa hàng đang sinh lời ròng.`);
+      } else {
+        notes.push(`Chỉ số hiệu quả tiếp thị tổng thể (MER: ${mer}×) đang dưới ngưỡng hòa vốn (2.50×). Cần tối ưu lại chi phí quảng cáo hoặc giá trị trung bình đơn (AOV).`);
+      }
+    }
+
+    const report: AdsReconciliationReport = {
+      storeId,
+      periodStart: summary.periodStart,
+      periodEnd: summary.periodEnd,
+      meta: {
+        spend: summary.spend,
+        impressions: summary.impressions,
+        linkClicks: summary.linkClicks,
+        purchases: summary.purchases,
+        purchaseValue: summary.purchaseValue,
+        cpa: summary.cpa,
+        roas: summary.roas,
+      },
+      ga4: {
+        status: health.ga4Connection.status,
+        sessions: ga4Sessions,
+        ecommercePurchases: 0,
+        purchaseRevenue: 0,
+        clickToSessionDropPct: dropPct,
+      },
+      shopify: {
+        status: shopifyData.status,
+        totalOrders: shopifyData.totalOrders,
+        grossSales: shopifyData.grossSales,
+        totalRefunds: shopifyData.totalRefunds,
+        netSales: shopifyData.netSales,
+        averageOrderValue: shopifyData.averageOrderValue,
+        mer,
+        blendedCpa,
+        source: shopifyData.source,
+      },
+      gaps: {
+        purchaseDiscrepancy,
+        revenueDiscrepancy,
+        clickDropPct: dropPct,
+        notes,
+      },
+      fromCache: false,
+      cachedAt: new Date().toISOString(),
+    };
+
+    adsIntelligenceCache.set(cacheKey, report);
+    return report;
   }
 
   async syncNow(storeId = "chillgen"): Promise<{ success: boolean; refreshedAt: string; message: string }> {

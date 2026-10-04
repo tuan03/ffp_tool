@@ -49,6 +49,14 @@ export async function handleAdsIntelligenceHttpRequest(
       return true;
     }
 
+    if (pathname === "/api/ads-intelligence/reconciliation" && req.method === "GET") {
+      const reconciliation = await adsIntelligenceService.getReconciliationReport(storeId, forceRefresh);
+      sendJson(res, 200, reconciliation, {
+        "x-ads-cache": reconciliation.fromCache ? "HIT" : "MISS",
+      });
+      return true;
+    }
+
     if (pathname === "/api/ads-intelligence/competitors" && req.method === "GET") {
       const competitors = await adsIntelligenceService.getCompetitorAds(storeId, forceRefresh);
       sendJson(res, 200, competitors);

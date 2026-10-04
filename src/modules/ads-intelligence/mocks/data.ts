@@ -1,4 +1,4 @@
-import type { AdsDataHealth, AdsHierarchyCampaign, AdsStoreSummary, CompetitorAdCard } from "../types";
+import type { AdsDataHealth, AdsHierarchyCampaign, AdsReconciliationReport, AdsStoreSummary, CompetitorAdCard } from "../types";
 
 export const mockChillgenSummary: AdsStoreSummary = {
   storeId: "chillgen",
@@ -269,3 +269,49 @@ export const mockDataHealth: AdsDataHealth = {
     blockedDecisions: ["SCALE_ON_PROFIT", "AUTOMATIC_BUDGET_INCREASE"],
   },
 };
+
+export const mockReconciliationReport: AdsReconciliationReport = {
+  storeId: "chillgen",
+  periodStart: "2026-09-26",
+  periodEnd: "2026-10-02",
+  meta: {
+    spend: "528.60",
+    impressions: "24850",
+    linkClicks: "820",
+    purchases: "29",
+    purchaseValue: "1845.00",
+    cpa: "18.23",
+    roas: "3.49",
+  },
+  ga4: {
+    status: "CONNECTED",
+    sessions: 541,
+    ecommercePurchases: 24,
+    purchaseRevenue: 1560,
+    clickToSessionDropPct: "34.0%",
+  },
+  shopify: {
+    status: "CONNECTED",
+    totalOrders: 27,
+    grossSales: "1820.00",
+    totalRefunds: "100.00",
+    netSales: "1720.00",
+    averageOrderValue: "63.70",
+    mer: "3.25",
+    blendedCpa: "19.58",
+    source: "Settled Shopify Ledger (chillgen-store.myshopify.com)",
+  },
+  gaps: {
+    purchaseDiscrepancy: 2,
+    revenueDiscrepancy: "125.00",
+    clickDropPct: "34.0%",
+    notes: [
+      "Độ rơi rụng từ Click quảng cáo sang Phiên GA4 là 34.0% (Mức thông thường ngành E-commerce: 15% - 25%).",
+      "Meta pixel gán công 29 đơn, cao hơn 27 đơn thực tế trên Shopify. Meta có thể đang over-attribute (gán công view-through 1 ngày).",
+      "Chỉ số hiệu quả tiếp thị tổng thể (MER: 3.25×) vượt ngưỡng hòa vốn (2.50×). Cửa hàng đang sinh lời ròng.",
+    ],
+  },
+  fromCache: true,
+  cachedAt: new Date().toISOString(),
+};
+
