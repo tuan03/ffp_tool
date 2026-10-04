@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-tray", action="store_true", help="Run in the foreground without a tray icon.")
     parser.add_argument("--start-minimized", action="store_true", help="Start in the tray without opening the dashboard.")
     parser.add_argument("--check-config", action="store_true", help="Validate configuration and exit.")
+    parser.add_argument("--enroll", action="store_true", help="Prompt privately for an Agent Key and enroll over HTTPS.")
     parser.add_argument("--installation-report", type=Path, help="Write the stable client identity during --check-config for installer verification.")
     return parser
 
@@ -55,7 +56,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = AgentConfig.load(_resolve_config_path(arguments.config))
         project_root = (arguments.project_root or config.data_directory).resolve()
+        if arguments.enroll:
+            import getpass
+            from .client_credentials import enroll_agent, store_credential
+            from .client_store import ClientStore
+            if config.auth_mode != "key":
+                raise ValueError("Set authMode to key before enrollment.")
+            with AgentInstanceLock(config.data_directory):
+                store = ClientStore(config.data_directory / "agent.sqlite3")
+                store_credential(store, config.server_url, getpass.getpass("Agent Key (hidden): ").strip())
+                identity = enroll_agent(store, config.server_url, config.display_name)
+                print(json.dumps({"status": "enrolled", "clientId": identity}))
+            return 0
         if arguments.check_config:
+            if config.auth_mode == "key":
+                from .client_credentials import load_credential
+                from .client_store import ClientStore
+                load_credential(ClientStore(config.data_directory / "agent.sqlite3"), config.server_url)
             if arguments.installation_report:
                 from .client_store import ClientStore
                 identity = ClientStore(config.data_directory / "agent.sqlite3").client_id()

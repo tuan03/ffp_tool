@@ -211,6 +211,9 @@ class DistributedCrawlerAgent:
         self._publish_status()
 
     async def run(self) -> None:
+        if self.config.auth_mode == "key":
+            # Until authenticated transports are installed, never fall back to legacy.
+            raise ValueError("AGENT_AUTH_TRANSPORT_PENDING")
         for assignment in self.store.recover_assignments():
             task_id = str(assignment["taskId"])
             self.active[task_id] = assignment

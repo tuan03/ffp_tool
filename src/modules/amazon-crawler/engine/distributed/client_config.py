@@ -27,6 +27,7 @@ class AgentConfig:
     data_directory: Path
     proxy_config_path: Path | None = None
     outbox: OutboxLimits = OutboxLimits()
+    auth_mode: str = "legacy"
 
     @classmethod
     def load(cls, path: Path | None = None) -> "AgentConfig":
@@ -39,6 +40,12 @@ class AgentConfig:
         server_url = str(os.environ.get("AMAZON_COORDINATOR_URL") or payload.get("serverUrl") or "").strip().rstrip("/")
         if not server_url:
             raise ValueError("serverUrl is required in amazon-crawler-agent.json or AMAZON_COORDINATOR_URL.")
+        auth_mode = payload.get("authMode", "legacy")
+        if auth_mode not in ("legacy", "key"):
+            raise ValueError("authMode must be legacy or key.")
+        if auth_mode == "key":
+            from .client_credentials import validate_secure_origin
+            server_url = validate_secure_origin(server_url)
         display_name = str(payload.get("displayName") or socket.gethostname()).strip()
         try:
             concurrency = max(1, min(16, int(payload.get("maxConcurrentInputs", 4))))
@@ -61,6 +68,7 @@ class AgentConfig:
             data_directory=data_directory,
             proxy_config_path=proxy_config_path if proxy_config_path.is_file() else None,
             outbox=OutboxLimits.from_payload(payload.get("outbox", {})),
+            auth_mode=auth_mode,
         )
 
     @property

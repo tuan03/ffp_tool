@@ -88,6 +88,34 @@ class ClientStore:
             connection.commit()
             return client_id
 
+    def begin_enrollment(self, protected_credential: str) -> str:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT value FROM agent_state WHERE key='enrollment_request'").fetchone()
+            request_id = str(row[0]) if row else uuid.uuid4().hex
+            connection.execute("INSERT OR REPLACE INTO agent_state VALUES ('enrollment_request', ?)", (request_id,))
+            connection.execute("INSERT OR REPLACE INTO agent_state VALUES ('protected_credential', ?)", (protected_credential,))
+            return request_id
+
+    def enrollment_state(self) -> tuple[str, str]:
+        with self._connection() as connection:
+            rows = dict(connection.execute("SELECT key,value FROM agent_state WHERE key IN ('protected_credential','enrollment_request')").fetchall())
+            if len(rows) != 2:
+                raise ValueError("AGENT_NEED_ENROLLMENT")
+            return rows["protected_credential"], rows["enrollment_request"]
+
+    def accept_enrollment(self, agent_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute("SELECT client_id FROM agent_identity WHERE singleton=1").fetchone()
+            if current and current[0] != agent_id:
+                # Never rewrite envelopes or silently orphan pending work from the old identity.
+                tables = ("leases", "cancel_intents", "telemetry_spool", "pending_results", "pending_products")
+                for table in tables:
+                    if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+                        raise ValueError("AGENT_REBIND_REQUIRED")
+            connection.execute("INSERT OR REPLACE INTO agent_identity VALUES (1, ?)", (agent_id,))
+
     def spool_telemetry(self, event: dict[str, Any], *, maximum: int = 10000) -> None:
         payload = json.dumps(safe_fields(event), ensure_ascii=False, separators=(",", ":"))
         if len(payload.encode("utf-8")) > 4096:
