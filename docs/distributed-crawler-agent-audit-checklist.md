@@ -154,6 +154,8 @@ Task 17 dùng thao tác revoke qua fixture/backend đã bảo vệ để test; T
 | [ ] | 31 | Purge all theo scope giữ kết quả chưa ACK | 9–10, 17, 33, 48 (purge all) | 30; E3.4 | Optional running cancel, offline replay, confirmation | Thử PURGE dữ liệu test và quarantine |
 | [ ] | 32 | RESTART_WORKERS/RESTART_AGENT xác nhận sau phục hồi | 8, 20, 27–28, 51 (restart commands) | 31; E3/E4.2 | Boot mới ACK completion, không mất identity/outbox | Restart agent test, xem timeline đúng |
 
+Mã Task 20–22 đã được triển khai trên `cua_pro` local: PostgreSQL command ledger và event history phía server, SQLite inbox bền vững phía agent, replay theo sequence/expiry, nút PAUSE/RESUME sau đăng nhập operator và admission gate lúc khởi động. Kiểm thử tự động hiện đạt (`npm test`, `npm run typecheck`, `npm run build`); checklist vẫn để chưa đạt cho đến khi người dùng kiểm tra timeline và pause/resume với agent local đang chạy. Phạm vi này không bao gồm push hay cutover production.
+
 Đưa isolation trước hard stop/cancel task để không hứa khả năng kill riêng worker khi executor chưa hỗ trợ. Nếu crash/hang chỉ chứng minh trên simulator, ghi giới hạn; chưa tick nghiệm thu Windows thực tế.
 
 ### D. Retry, quan sát và gate MVP

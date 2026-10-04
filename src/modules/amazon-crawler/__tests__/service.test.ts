@@ -6,6 +6,7 @@ import {
   createAmazonCrawlerAgentReleaseLoader,
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
+  createAmazonCrawlerCommandController,
   createAmazonCrawlerJobController,
   createAmazonCrawlerJobLoader,
   createAmazonCrawlerReviewClient,
@@ -280,10 +281,29 @@ test("client loader returns coordinator client capacity and status", async () =>
     ]),
   });
   const clients = await loadClients();
-  assert.equal(clients.length, 1);
+  assert.equal(clients.length, 2);
   assert.equal(clients[0]?.agentVersion, "5.0.0");
   assert.equal(clients[0]?.displayName, "Máy Lợi");
   assert.equal(clients[0]?.activeTasks, 2);
+});
+
+test("operator command controller submits idempotency ID and reads ordered timeline", async () => {
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      if (init?.method === "POST") return jsonResponse({ commandId: "cmd-1" }, 202);
+      return jsonResponse({ commands: [{ commandId: "cmd-1", sequence: 1, type: "PAUSE", status: "SUCCESS",
+        events: [{ status: "ACKED", at: "2026-10-05T00:00:00Z", detail: {} }] }] });
+    },
+  });
+  await controller.submit("agent/one", "PAUSE");
+  const history = await controller.history("agent/one");
+  assert.equal(requests[0]?.url, "https://coordinator.test/api/v1/clients/agent%2Fone/commands");
+  assert.equal(requests[0]?.method, "POST");
+  assert.match(requests[0]?.body ?? "", /"requestId":"[0-9a-f-]{36}"/);
+  assert.equal(history[0]?.events[0]?.status, "ACKED");
 });
 
 test("runner reports an offline coordinator with a stable error code", async () => {

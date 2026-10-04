@@ -32,6 +32,7 @@ from .operator_authorization import OperatorCredentials, install_operator_author
 from .agent_keys import install_agent_key_routes
 from .agent_identity import AgentSecurity, install_enrollment_routes
 from .agent_key_lifecycle import install_key_lifecycle_routes
+from .agent_command_ledger import AgentCommandLedger, AgentCommandRequest
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -189,6 +190,17 @@ class ConnectionManager:
             connections = list(self.connections.values())
         await asyncio.gather(*(connection.send_json(payload) for connection in connections), return_exceptions=True)
 
+    async def send_to_client(self, client_id: str, payload: dict[str, Any]) -> bool:
+        async with self.lock:
+            connection = self.connections.get(client_id)
+        if connection is None:
+            return False
+        try:
+            await connection.send_json(payload)
+            return True
+        except Exception:
+            return False
+
     async def connected_client_ids(self) -> set[str]:
         async with self.lock:
             return set(self.connections)
@@ -270,6 +282,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
+    command_ledger = AgentCommandLedger(sessions)
     manager = ConnectionManager()
     cache_maintenance_lock = asyncio.Lock()
     project_root = find_project_root()
@@ -304,6 +317,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             while not stop.is_set():
                 await asyncio.to_thread(store.reap_expired)
                 await asyncio.to_thread(store.purge_stopped_jobs)
+                await asyncio.to_thread(command_ledger.expire_pending)
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_cleanup_at:
                     await asyncio.to_thread(store.cleanup_telemetry)
@@ -708,6 +722,42 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             }
             for client in clients
         ]
+
+    @app.post("/api/v1/clients/{client_id}/commands", status_code=202)
+    async def submit_agent_command(client_id: str, payload: AgentCommandRequest) -> dict[str, Any]:
+        if security is None:
+            raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
+        command = await asyncio.to_thread(
+            command_ledger.submit, client_id, payload.requestId.hex,
+            payload.type, payload.expiresInSeconds,
+        )
+        await dispatch_next_agent_command(client_id)
+        return command
+
+    @app.get("/api/v1/clients/{client_id}/commands")
+    async def list_agent_commands(client_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+        if security is None:
+            raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
+        history = await asyncio.to_thread(command_ledger.history, client_id, limit=limit)
+        return {"commands": history}
+
+    async def dispatch_next_agent_command(client_id: str, after_sequence: int = 0) -> None:
+        if security is None:
+            return
+        rows = await asyncio.to_thread(command_ledger.commands_after, client_id, after_sequence)
+        commands = rows[0]
+        # Replay includes terminal rows too: a restarted agent can reconstruct the
+        # final desired state and advance its local sequence without receiving leases.
+        ordered = []
+        for command in commands:
+            if command["status"] in {"PENDING", "DELIVERED", "ACKED", "RUNNING"}:
+                command = await asyncio.to_thread(command_ledger.mark_delivered, client_id, command["commandId"])
+                if command is None:
+                    break
+            ordered.append(command)
+        await manager.send_to_client(client_id, {"type": "command_batch", "commands": ordered,
+            "latestCommandSequence": rows[1], "desiredExecutionState": rows[2],
+            "appliedExecutionState": rows[3], "serverLastProcessedCommandSequence": rows[4]})
 
     @app.get("/api/v1/agent-release")
     async def agent_release() -> dict[str, str]:
@@ -1426,6 +1476,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 max(0, int(hello.get("temporaryCleanupGeneration") or 0)) < required_temporary_cleanup_generation
             ) else set()
             is_cache_ready = client_cache_generation >= required_cache_generation
+            reported_command_sequence = max(0, int(hello.get("lastProcessedCommandSequence") or 0))
+            reported_available_slots = max(0, int(hello.get("availableSlots") or 0))
+            reported_applied_state = str(hello.get("appliedExecutionState") or "RUNNING")
+            command_state = await asyncio.to_thread(command_ledger.commands_after, client_id, reported_command_sequence)
+            replay_commands = []
+            for command in command_state[0]:
+                if command["status"] in {"PENDING", "DELIVERED", "ACKED", "RUNNING"}:
+                    command = await asyncio.to_thread(command_ledger.mark_delivered, client_id, command["commandId"])
+                    if command is None:
+                        continue
+                replay_commands.append(command)
             available_slots = max(0, int(hello.get("availableSlots") or 0)) if is_cache_ready else 0
             await manager.update_runtime(
                 client_id,
@@ -1442,6 +1503,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "productInvalidations": product_invalidations,
                 "requiredTemporaryCleanupGeneration": required_temporary_cleanup_generation,
                 "validJobIds": sorted(valid_job_ids),
+                "commands": replay_commands, "latestCommandSequence": command_state[1],
+                "desiredExecutionState": command_state[2], "appliedExecutionState": command_state[3],
+                "serverLastProcessedCommandSequence": command_state[4],
             })
             for cancelled_job_id in acknowledged_intents:
                 await manager.broadcast({
@@ -1456,6 +1520,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     return
                 if security:
                     security.authenticate(websocket.headers.get("authorization", ""))
+                    if not await asyncio.to_thread(command_ledger.admission_open, client_id,
+                            reported_command_sequence, reported_applied_state):
+                        return
                 leases = await asyncio.to_thread(store.lease_tasks, client_id, slots)
                 await manager.reserve_tasks(client_id, len(leases))
                 for lease in leases:
@@ -1476,6 +1543,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     message = require_message(await websocket.receive_json())
                 message_type = message["type"]
                 if message_type == "heartbeat":
+                    reported_command_sequence = max(reported_command_sequence,
+                        max(0, int(message.get("lastProcessedCommandSequence") or 0)))
+                    reported_available_slots = max(0, int(message.get("availableSlots") or 0))
+                    reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
                     running = list(message.get("running") or [])
                     await manager.update_runtime(
                         client_id,
@@ -1502,9 +1573,26 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     if is_cache_ready:
                         await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "ready":
-                    await manager.update_available_slots(client_id, int(message.get("availableSlots") or 0))
+                    reported_command_sequence = max(reported_command_sequence,
+                        max(0, int(message.get("lastProcessedCommandSequence") or 0)))
+                    reported_available_slots = max(0, int(message.get("availableSlots") or 0))
+                    reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
+                    await manager.update_available_slots(client_id, reported_available_slots)
                     if is_cache_ready:
-                        await assign(int(message.get("availableSlots") or 0))
+                        await assign(reported_available_slots)
+                elif message_type == "command_sync":
+                    after_sequence = max(0, int(message.get("afterSequence") or 0))
+                    await dispatch_next_agent_command(client_id, after_sequence)
+                elif message_type == "command_update":
+                    update = await asyncio.to_thread(command_ledger.update, client_id, message)
+                    if update["status"] in {"SUCCESS", "FAILED", "EXPIRED"}:
+                        reported_command_sequence = max(reported_command_sequence,
+                            max(0, int(message.get("sequence") or 0)))
+                        if update["status"] == "SUCCESS":
+                            reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
+                        await dispatch_next_agent_command(client_id, reported_command_sequence)
+                        if is_cache_ready:
+                            await assign(reported_available_slots)
                 elif message_type == "progress":
                     await asyncio.to_thread(store.update_progress, client_id, message)
                 elif message_type == "telemetry":

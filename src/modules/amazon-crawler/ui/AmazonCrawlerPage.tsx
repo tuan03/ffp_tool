@@ -11,6 +11,8 @@ import {
   type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerClientsLoader,
+  type AmazonCrawlerCommandController,
+  type AmazonCrawlerAgentCommandSummary,
   type AmazonCrawlerHandoverHandler,
   type AmazonCrawlerJobController,
   type AmazonCrawlerJobSnapshot,
@@ -70,6 +72,7 @@ export interface AmazonCrawlerPageProps {
   onHandoverToSeo?: AmazonCrawlerHandoverHandler;
   retryAmazonCrawlerSyncs?: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles?: ImageProcessingProfileManager;
+  amazonCrawlerCommands?: AmazonCrawlerCommandController;
 }
 
 const COMMON_PRODUCT_TYPES = [
@@ -191,6 +194,7 @@ export function AmazonCrawlerPage({
   imageProcessingProfiles,
   loadAmazonCrawlerAgentRelease,
   loadAmazonCrawlerClients,
+  amazonCrawlerCommands,
   loadAmazonCrawlerJob,
   onHandoverToSeo,
   retryAmazonCrawlerSyncs,
@@ -231,6 +235,9 @@ export function AmazonCrawlerPage({
   const [recentJobs, setRecentJobs] = useState<AmazonCrawlerJobSummary[]>([]);
   const [hydrateMessage, setHydrateMessage] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
+  const [commandHistories, setCommandHistories] = useState<Record<string, readonly AmazonCrawlerAgentCommandSummary[]>>({});
+  const [commandBusyClientId, setCommandBusyClientId] = useState<string | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
   const [agentRelease, setAgentRelease] = useState<AmazonCrawlerAgentRelease | null>(null);
@@ -370,6 +377,13 @@ export function AmazonCrawlerPage({
         const nextClients = await loadAmazonCrawlerClients();
         if (!isMounted) return;
         setClients(nextClients);
+        if (amazonCrawlerCommands) {
+          const histories = await Promise.all(nextClients.map(async (client) => {
+            try { return [client.id, await amazonCrawlerCommands.history(client.id)] as const; }
+            catch { return [client.id, []] as const; }
+          }));
+          if (isMounted) setCommandHistories(Object.fromEntries(histories));
+        }
         setClientError(null);
       } catch (caught: unknown) {
         if (!isMounted) return;
@@ -385,7 +399,23 @@ export function AmazonCrawlerPage({
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [loadAmazonCrawlerClients]);
+  }, [loadAmazonCrawlerClients, amazonCrawlerCommands]);
+
+  async function handleAgentExecutionCommand(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    const type = client.desiredExecutionState === "PAUSED" ? "RESUME" : "PAUSE";
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.submit(client.id, type);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được lệnh đến agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -1195,7 +1225,7 @@ export function AmazonCrawlerPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="font-semibold text-slate-100">Crawler clients</h2>
-            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online.</p>
+            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online. Tạm dừng chỉ chặn job mới, không hủy task đang chạy.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
@@ -1241,10 +1271,11 @@ export function AmazonCrawlerPage({
         ) : null}
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
         {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
-        {!isLoadingClients && !clientError && connectedClients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có client online. Hãy mở FFP Amazon Crawler Agent.</p> : null}
-        {connectedClients.length > 0 ? (
+        {commandError ? <p className="mt-3 text-sm text-rose-300" role="alert">{commandError}</p> : null}
+        {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có crawler agent đã đăng ký. Hãy mở FFP Amazon Crawler Agent.</p> : null}
+        {clients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {connectedClients.map((client) => (
+            {clients.map((client) => (
               <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
@@ -1270,6 +1301,22 @@ export function AmazonCrawlerPage({
                 </div>
                 <p className="mt-1 text-xs text-slate-400">{client.activeTasks} đang chạy · {client.availableSlots}/{client.maxConcurrentInputs} slot trống</p>
                 {client.leasedTasks === client.activeTasks ? null : <p className="mt-1 text-xs text-amber-300">{client.leasedTasks} lease trên server đang chờ đồng bộ</p>}
+                {amazonCrawlerCommands ? <div className="mt-3 border-t border-slate-700 pt-3">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng" : "đang chạy"}
+                      {client.appliedExecutionState !== client.desiredExecutionState ? " · đang đồng bộ" : ""}</span>
+                    <button type="button" disabled={commandBusyClientId !== null}
+                      onClick={() => void handleAgentExecutionCommand(client)}
+                      className="rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50">
+                      {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" ? "Tiếp tục" : "Tạm dừng"}
+                    </button>
+                  </div>
+                  {(commandHistories[client.id] ?? []).slice(-3).reverse().map((command) => <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
+                    #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : "Tiếp tục"} — {command.status}
+                    {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
+                    {command.error ? <p className="text-rose-300">{command.error}</p> : null}
+                  </div>)}
+                </div> : null}
               </article>
             ))}
           </div>

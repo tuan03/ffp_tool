@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createAmazonCrawlerRunner,
   createAmazonCrawlerClientsLoader,
+  createAmazonCrawlerCommandController,
   createAmazonCrawlerJobController,
   createAmazonCrawlerJobLoader,
   createAmazonCrawlerCacheClearer,
@@ -54,6 +55,7 @@ export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawl
     return {
       runAmazonCrawler: createAmazonCrawlerRunner(options),
       loadAmazonCrawlerClients: createAmazonCrawlerClientsLoader(options),
+      amazonCrawlerCommands: createAmazonCrawlerCommandController(options),
       amazonCrawlerJobs: createAmazonCrawlerJobController(options),
       loadAmazonCrawlerJob: createAmazonCrawlerJobLoader(options),
       clearAmazonCrawlerCache: createAmazonCrawlerCacheClearer(options),

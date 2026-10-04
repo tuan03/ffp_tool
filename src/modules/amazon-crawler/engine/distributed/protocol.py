@@ -126,6 +126,9 @@ def hello_message(
     product_invalidation_generation: int = 0,
     temporary_cleanup_generation: int = 0,
     pinterest_browser_logged_in: bool = False,
+    last_processed_command_sequence: int = 0,
+    desired_execution_state: str = "RUNNING",
+    applied_execution_state: str = "RUNNING",
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -157,4 +160,7 @@ def hello_message(
         "cacheGeneration": max(0, int(cache_generation)),
         "productInvalidationGeneration": max(0, int(product_invalidation_generation)),
         "temporaryCleanupGeneration": max(0, int(temporary_cleanup_generation)),
+        "lastProcessedCommandSequence": max(0, int(last_processed_command_sequence)),
+        "desiredExecutionState": desired_execution_state if desired_execution_state in {"RUNNING", "PAUSED"} else "RUNNING",
+        "appliedExecutionState": applied_execution_state if applied_execution_state in {"RUNNING", "PAUSED"} else "RUNNING",
     }

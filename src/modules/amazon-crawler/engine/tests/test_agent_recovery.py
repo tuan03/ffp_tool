@@ -19,16 +19,28 @@ class AgentRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
             server_url="http://127.0.0.1:9999", display_name="recovery", max_concurrent_inputs=1,
             limits=AgentLimits(), data_directory=root / "agent"))
+        self.agent._command_recovery_complete = True
+        self.agent._command_recovery_event.set()
 
     def tearDown(self):
         self.directory.cleanup()
 
     def test_offline_and_unreconciled_capacity_is_zero(self):
+        self.agent._command_recovery_complete = True
         with patch.object(self.agent, "_storage_pressure", return_value={"blocked": False}):
             self.assertEqual(self.agent._available_slots(), 0)
             self.agent._is_connected = True
             self.assertEqual(self.agent._available_slots(), 0)
             self.agent._recovery_complete = True
+            self.assertEqual(self.agent._available_slots(), 1)
+
+    def test_command_recovery_blocks_admission_until_synced(self):
+        self.agent._is_connected = True
+        self.agent._recovery_complete = True
+        self.agent._command_recovery_complete = False
+        with patch.object(self.agent, "_storage_pressure", return_value={"blocked": False}):
+            self.assertEqual(self.agent._available_slots(), 0)
+            self.agent._command_recovery_complete = True
             self.assertEqual(self.agent._available_slots(), 1)
 
     async def test_offline_queue_does_not_start(self):

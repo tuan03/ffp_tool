@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -39,6 +40,19 @@ CREATE TABLE IF NOT EXISTS cancel_intents (
 CREATE TABLE IF NOT EXISTS agent_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_commands (
+    command_id TEXT PRIMARY KEY,
+    sequence INTEGER NOT NULL UNIQUE,
+    command_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    acknowledged_at TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    error TEXT
 );
 CREATE TABLE IF NOT EXISTS telemetry_spool (
     event_id TEXT PRIMARY KEY,
@@ -389,6 +403,136 @@ class ClientStore:
                 (now, task_id, lease_id),
             )
             connection.commit()
+
+    def remote_execution_state(self) -> str:
+        with self._connection() as connection:
+            rows = dict(connection.execute(
+                "SELECT key,value FROM agent_state WHERE key IN ('remote_execution_state','last_processed_command_sequence')"
+            ).fetchall())
+        state = str(rows.get("remote_execution_state", "RUNNING"))
+        return state if state in {"RUNNING", "PAUSED"} else "RUNNING"
+
+    def reconcile_remote_execution_state(self, execution_state: str) -> None:
+        if execution_state not in {"RUNNING", "PAUSED"}:
+            raise ValueError("Remote execution state is invalid.")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('remote_execution_state',?)",
+                               (execution_state,))
+            connection.commit()
+
+    def last_processed_command_sequence(self) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT value FROM agent_state WHERE key='last_processed_command_sequence'"
+            ).fetchone()
+        try:
+            return max(0, int(row["value"])) if row else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def begin_server_command(self, command: dict[str, Any]) -> dict[str, Any]:
+        command_id = str(command.get("commandId") or "")
+        command_type = str(command.get("type") or "")
+        try:
+            sequence = int(command.get("sequence"))
+        except (TypeError, ValueError):
+            raise ValueError("Invalid command sequence.") from None
+        if not command_id or command_type not in {"PAUSE", "RESUME"}:
+            raise ValueError("Unsupported or malformed server command.")
+        expires_at = str(command.get("expiresAt") or "")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            last_sequence = self._read_agent_state(connection, "last_processed_command_sequence", 0)
+            existing = connection.execute(
+                "SELECT * FROM agent_commands WHERE command_id=? OR sequence=?",
+                (command_id, sequence),
+            ).fetchone()
+            if sequence <= last_sequence:
+                if existing is None or str(existing["command_id"]) != command_id:
+                    return {"decision": "gap", "expectedSequence": last_sequence + 1}
+                return {"decision": "duplicate", "status": str(existing["status"]), "sequence": sequence}
+            if sequence != last_sequence + 1:
+                return {"decision": "gap", "expectedSequence": last_sequence + 1}
+            if existing is not None:
+                if str(existing["command_id"]) != command_id or str(existing["command_type"]) != command_type:
+                    raise ValueError("Command sequence conflicts with its durable receipt.")
+                if str(existing["status"]) in {"SUCCESS", "FAILED", "EXPIRED"}:
+                    return {"decision": "duplicate", "status": str(existing["status"]), "sequence": sequence}
+                return {"decision": "resume", "status": str(existing["status"]), "sequence": sequence}
+            try:
+                expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("Command expiry is invalid.") from None
+            now = datetime.now(timezone.utc)
+            if expiry.tzinfo is None:
+                raise ValueError("Command expiry must include a timezone.")
+            if expiry <= now:
+                connection.execute(
+                    "INSERT INTO agent_commands(command_id,sequence,command_type,payload_json,expires_at,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (command_id, sequence, command_type, json.dumps(command.get("payload") or {}, separators=(",", ":")),
+                     expires_at, "EXPIRED", str(command.get("createdAt") or utc_iso()), utc_iso()),
+                )
+                connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('last_processed_command_sequence',?)", (str(sequence),))
+                connection.commit()
+                return {"decision": "expired", "status": "EXPIRED", "sequence": sequence}
+            connection.execute(
+                "INSERT INTO agent_commands(command_id,sequence,command_type,payload_json,expires_at,status,created_at,acknowledged_at) VALUES(?,?,?,?,?,?,?,?)",
+                (command_id, sequence, command_type, json.dumps(command.get("payload") or {}, separators=(",", ":")),
+                 expires_at, "ACKED", str(command.get("createdAt") or utc_iso()), utc_iso()),
+            )
+            connection.commit()
+        return {"decision": "process", "status": "ACKED", "sequence": sequence}
+
+    def set_server_command_running(self, command_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE agent_commands SET status='RUNNING', started_at=COALESCE(started_at,?) WHERE command_id=? AND status IN ('ACKED','RUNNING')",
+                (utc_iso(), command_id),
+            )
+            connection.commit()
+
+    def complete_server_command(self, command_id: str, sequence: int, status: str, execution_state: str | None,
+                                error: str | None = None) -> None:
+        if status not in {"SUCCESS", "FAILED", "EXPIRED"}:
+            raise ValueError("Command completion status is invalid.")
+        if execution_state is not None and execution_state not in {"RUNNING", "PAUSED"}:
+            raise ValueError("Remote execution state is invalid.")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            last_sequence = self._read_agent_state(connection, "last_processed_command_sequence", 0)
+            if sequence != last_sequence + 1:
+                raise ValueError("Command completion sequence is not contiguous.")
+            if execution_state is not None and status == "SUCCESS":
+                connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('remote_execution_state',?)", (execution_state,))
+            connection.execute(
+                "UPDATE agent_commands SET status=?, completed_at=?, error=? WHERE command_id=?",
+                (status, utc_iso(), error, command_id),
+            )
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('last_processed_command_sequence',?)", (str(sequence),))
+            connection.commit()
+
+    def server_command_status(self, command_id: str) -> str | None:
+        with self._connection() as connection:
+            row = connection.execute("SELECT status FROM agent_commands WHERE command_id=?", (command_id,)).fetchone()
+        return str(row["status"]) if row else None
+
+    def server_command_history(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT command_id,sequence,command_type,status,created_at,acknowledged_at,started_at,completed_at,error FROM agent_commands ORDER BY sequence DESC LIMIT ?",
+                (max(1, min(200, int(limit))),),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+    @staticmethod
+    def _read_agent_state(connection: sqlite3.Connection, key: str, default: int) -> int:
+        row = connection.execute("SELECT value FROM agent_state WHERE key=?", (key,)).fetchone()
+        try:
+            return max(0, int(row["value"])) if row else default
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _spool(connection, table: str, task_id: str, lease_id: str, checksum: str, payload: dict[str, Any], product_key: str | None = None) -> None:

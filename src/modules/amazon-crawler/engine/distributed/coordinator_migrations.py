@@ -1,15 +1,16 @@
 """Additive, versioned Coordinator schema initialization."""
 
-from sqlalchemy import Column, Integer, MetaData, Table, select, text
+from sqlalchemy import Column, Integer, MetaData, Table, inspect, select, text
 
 from .coordinator_models import Base, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
 from .agent_assets import AgentAssetNamespace
+from .agent_command_ledger import AgentCommand, AgentCommandEvent
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 6
+MIGRATION_VERSION = 7
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -39,3 +40,17 @@ def migrate_coordinator(engine) -> None:
         if 6 not in versions:
             AgentAssetNamespace.__table__.create(connection, checkfirst=True)
             connection.execute(MIGRATIONS.insert().values(version=6))
+        if 7 not in versions:
+            columns = {column["name"] for column in inspect(connection).get_columns("crawler_clients")}
+            additions = {
+                "desired_execution_state": "VARCHAR(16) NOT NULL DEFAULT 'RUNNING'",
+                "applied_execution_state": "VARCHAR(16) NOT NULL DEFAULT 'RUNNING'",
+                "command_sequence": "INTEGER NOT NULL DEFAULT 0",
+                "last_processed_command_sequence": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE crawler_clients ADD COLUMN {name} {definition}"))
+            AgentCommand.__table__.create(connection, checkfirst=True)
+            AgentCommandEvent.__table__.create(connection, checkfirst=True)
+            connection.execute(MIGRATIONS.insert().values(version=7))

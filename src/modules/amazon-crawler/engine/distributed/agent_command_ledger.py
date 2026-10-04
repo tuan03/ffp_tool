@@ -1,0 +1,305 @@
+"""Durable, ordered PAUSE/RESUME commands for authenticated crawler agents."""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
+
+from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import DateTime, Index, Integer, JSON, String, Text, UniqueConstraint, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .coordinator_models import Base, ClientRecord
+from .protocol import utc_now
+
+
+JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4}
+TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
+ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
+
+
+class AgentCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: uuid.UUID
+    type: Literal["PAUSE", "RESUME"]
+    expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
+
+
+class AgentCommand(Base):
+    __tablename__ = "crawler_agent_commands"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "sequence", name="uq_agent_command_sequence"),
+        UniqueConstraint("agent_id", "request_id", name="uq_agent_command_request"),
+        Index("ix_agent_commands_replay", "agent_id", "sequence", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(64), index=True)
+    request_id: Mapped[str] = mapped_column(String(32))
+    sequence: Mapped[int] = mapped_column(Integer)
+    command_type: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, default=4)
+    status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AgentCommandEvent(Base):
+    __tablename__ = "crawler_agent_command_events"
+    __table_args__ = (Index("ix_agent_command_events_timeline", "command_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    command_id: Mapped[str] = mapped_column(String(32), index=True)
+    agent_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16))
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def command_payload(command: AgentCommand) -> dict[str, Any]:
+    return {
+        "commandId": command.id,
+        "agentId": command.agent_id,
+        "sequence": command.sequence,
+        "type": command.command_type,
+        "payload": dict(command.payload or {}),
+        "priority": command.priority,
+        "status": command.status,
+        "createdAt": _iso(command.created_at),
+        "expiresAt": _iso(command.expires_at),
+    }
+
+
+class AgentCommandLedger:
+    def __init__(self, sessions):
+        self.sessions = sessions
+
+    def submit(self, agent_id: str, request_id: str, command_type: str, expires_in_seconds: int) -> dict[str, Any]:
+        if command_type not in COMMAND_PRIORITY:
+            raise HTTPException(422, detail="Unsupported agent command.")
+        target_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
+        with self.sessions.begin() as session:
+            existing = session.scalar(select(AgentCommand).where(
+                AgentCommand.agent_id == agent_id, AgentCommand.request_id == request_id,
+            ))
+            if existing is not None:
+                if existing.command_type != command_type:
+                    raise HTTPException(409, detail="Command requestId was reused with a different command.")
+                return self._snapshot(session, existing)
+            agent = session.get(ClientRecord,
+                                agent_id, with_for_update=True)
+            if agent is None:
+                raise HTTPException(404, detail="Crawler agent was not found.")
+            now = utc_now()
+            sequence = agent.command_sequence + 1
+            command = AgentCommand(
+                id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
+                sequence=sequence, command_type=command_type,
+                payload={"desiredExecutionState": target_state},
+                priority=COMMAND_PRIORITY[command_type], status="PENDING",
+                created_at=now, expires_at=now + timedelta(seconds=expires_in_seconds),
+            )
+            session.add(command)
+            agent.command_sequence = sequence
+            agent.desired_execution_state = target_state
+            self._event(session, command, "PENDING", {"source": "operator"}, now)
+            session.flush()
+            return self._snapshot(session, command)
+
+    def commands_after(self, agent_id: str, sequence: int, *, limit: int = 500) -> tuple[list[dict[str, Any]], int, str, str, int]:
+        now = utc_now()
+        with self.sessions.begin() as session:
+            agent = session.get(ClientRecord, agent_id)
+            if agent is None:
+                raise HTTPException(404, detail="Crawler agent was not found.")
+            latest = agent.command_sequence
+            if sequence < 0 or sequence > latest:
+                raise HTTPException(409, detail="Agent command sequence is outside the server ledger.")
+            rows = list(session.scalars(select(AgentCommand).where(
+                AgentCommand.agent_id == agent_id, AgentCommand.sequence > sequence,
+            ).order_by(AgentCommand.sequence).limit(limit)))
+            for command in rows:
+                if command.status not in TERMINAL_STATUSES and _expired(command.expires_at, now):
+                    self._finish(session, agent, command, "EXPIRED", "Command expired before execution.", now)
+            payloads = [command_payload(command) for command in rows]
+            return (payloads, latest, agent.desired_execution_state,
+                    agent.applied_execution_state, agent.last_processed_command_sequence)
+
+    def mark_delivered(self, agent_id: str, command_id: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.sessions.begin() as session:
+            command = session.scalar(select(AgentCommand).where(
+                AgentCommand.id == command_id, AgentCommand.agent_id == agent_id,
+            ).with_for_update())
+            if command is None or command.status in TERMINAL_STATUSES:
+                return None
+            agent = session.get(ClientRecord, agent_id)
+            if agent is None:
+                return None
+            if _expired(command.expires_at, now):
+                self._finish(session, agent, command, "EXPIRED", "Command expired before delivery.", now)
+                return command_payload(command)
+            if command.status == "PENDING":
+                command.status = "DELIVERED"
+                command.delivered_at = now
+                self._event(session, command, "DELIVERED", {"transport": "websocket"}, now)
+            return command_payload(command)
+
+    def update(self, agent_id: str, update: dict[str, Any]) -> dict[str, Any]:
+        command_id = str(update.get("commandId") or "")
+        status = str(update.get("status") or "")
+        try:
+            sequence = int(update.get("sequence"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, detail="Command sequence must be an integer.") from None
+        if status not in ALLOWED_UPDATES:
+            raise HTTPException(400, detail="Unsupported command update status.")
+        now = utc_now()
+        with self.sessions.begin() as session:
+            command = session.scalar(select(AgentCommand).where(
+                AgentCommand.id == command_id, AgentCommand.agent_id == agent_id,
+                AgentCommand.sequence == sequence,
+            ).with_for_update())
+            if command is None:
+                raise HTTPException(404, detail="Agent command was not found.")
+            agent = session.get(ClientRecord,
+                                agent_id, with_for_update=True)
+            if agent is None:
+                raise HTTPException(404, detail="Crawler agent was not found.")
+            if command.status in TERMINAL_STATUSES:
+                if command.sequence == agent.last_processed_command_sequence + 1:
+                    agent.last_processed_command_sequence = command.sequence
+                return self._snapshot(session, command)
+            if status == "EXPIRED" and not _expired(command.expires_at, now):
+                raise HTTPException(409, detail="Agent cannot expire a command before its deadline.")
+            if status in {"ACKED", "RUNNING", "SUCCESS", "FAILED"} and _expired(command.expires_at, now):
+                self._finish(session, agent, command, "EXPIRED", "Command expired before execution.", now)
+                return self._snapshot(session, command)
+            allowed = {
+                "PENDING": {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"},
+                "DELIVERED": {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"},
+                "ACKED": {"RUNNING", "SUCCESS", "FAILED", "EXPIRED"},
+                "RUNNING": {"SUCCESS", "FAILED", "EXPIRED"},
+            }
+            if status == command.status:
+                return self._snapshot(session, command)
+            if status not in allowed.get(command.status, set()):
+                raise HTTPException(409, detail="Invalid agent command status transition.")
+            if status in {"SUCCESS", "FAILED", "EXPIRED"} and sequence != agent.last_processed_command_sequence + 1:
+                raise HTTPException(409, detail="Agent command acknowledgement has a sequence gap.")
+            detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
+            if status == "ACKED":
+                command.acknowledged_at = now
+            elif status == "RUNNING":
+                command.started_at = command.started_at or now
+            elif status in TERMINAL_STATUSES:
+                self._finish(session, agent, command, status, detail, now)
+            else:
+                command.status = status
+            if status not in TERMINAL_STATUSES:
+                self._event(session, command, status, {}, now)
+            session.flush()
+            return self._snapshot(session, command)
+
+    def expire_pending(self) -> int:
+        now = utc_now()
+        expired = 0
+        with self.sessions.begin() as session:
+            rows = list(session.scalars(select(AgentCommand).where(
+                AgentCommand.status.in_(["PENDING", "DELIVERED", "ACKED", "RUNNING"]),
+                AgentCommand.expires_at <= now,
+            ).with_for_update()))
+            for command in rows:
+                agent = session.get(ClientRecord,
+                                    command.agent_id, with_for_update=True)
+                if agent is not None:
+                    self._finish(session, agent, command, "EXPIRED", "Command expired before completion.", now)
+                    expired += 1
+        return expired
+
+    def admission_open(self, agent_id: str, reported_sequence: int, reported_state: str) -> bool:
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, agent_id)
+            return bool(agent is not None
+                        and reported_state == agent.applied_execution_state
+                        and agent.desired_execution_state == "RUNNING"
+                        and agent.applied_execution_state == "RUNNING"
+                        and agent.last_processed_command_sequence == agent.command_sequence
+                        and reported_sequence >= agent.command_sequence)
+
+    def history(self, agent_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.sessions() as session:
+            rows = list(session.scalars(select(AgentCommand).where(
+                AgentCommand.agent_id == agent_id,
+            ).order_by(AgentCommand.sequence.desc()).limit(limit)))
+            result = []
+            for command in reversed(rows):
+                entry = self._snapshot(session, command)
+                events = session.scalars(select(AgentCommandEvent).where(
+                    AgentCommandEvent.command_id == command.id,
+                ).order_by(AgentCommandEvent.created_at, AgentCommandEvent.id)).all()
+                entry["events"] = [{"status": event.status, "at": _iso(event.created_at),
+                                    "detail": dict(event.detail or {})} for event in events]
+                result.append(entry)
+            return result
+
+    @staticmethod
+    def _event(session, command: AgentCommand, status: str, detail: dict[str, Any], now: datetime) -> None:
+        session.add(AgentCommandEvent(id=uuid.uuid4().hex, command_id=command.id,
+            agent_id=command.agent_id, status=status, detail=detail, created_at=now))
+
+    @classmethod
+    def _finish(cls, session, agent, command: AgentCommand, status: str, error: str, now: datetime) -> None:
+        command.status = status
+        command.completed_at = now
+        command.error = error or None
+        if command.sequence == agent.last_processed_command_sequence + 1:
+            agent.last_processed_command_sequence = command.sequence
+        if status == "SUCCESS":
+            agent.applied_execution_state = command.payload["desiredExecutionState"]
+        elif status in {"FAILED", "EXPIRED"} and agent.desired_execution_state == command.payload["desiredExecutionState"]:
+            previous = session.scalar(select(AgentCommand).where(
+                AgentCommand.agent_id == command.agent_id,
+                AgentCommand.sequence < command.sequence,
+                AgentCommand.status.in_(["PENDING", "DELIVERED", "ACKED", "RUNNING", "SUCCESS"]),
+            ).order_by(AgentCommand.sequence.desc()).limit(1))
+            agent.desired_execution_state = (
+                str(previous.payload.get("desiredExecutionState")) if previous is not None
+                else agent.applied_execution_state
+            )
+        cls._event(session, command, status, {"error": error} if error else {}, now)
+
+    @classmethod
+    def _snapshot(cls, session, command: AgentCommand) -> dict[str, Any]:
+        result = command_payload(command)
+        result.update({
+            "requestId": command.request_id,
+            "deliveredAt": _iso(command.delivered_at),
+            "acknowledgedAt": _iso(command.acknowledged_at),
+            "startedAt": _iso(command.started_at),
+            "completedAt": _iso(command.completed_at),
+            "error": command.error,
+        })
+        return result
+
+
+def _expired(expires_at: datetime, now: datetime) -> bool:
+    aware = expires_at.replace(tzinfo=timezone.utc) if expires_at.tzinfo is None else expires_at
+    return aware <= now

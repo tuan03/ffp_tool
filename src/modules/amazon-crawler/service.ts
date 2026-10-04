@@ -8,6 +8,7 @@ import type {
   AmazonCrawlerCacheClearResult,
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
+  AmazonCrawlerCommandController,
   AmazonCrawlerHydratedJob,
   AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,
@@ -402,8 +403,48 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
       leasedTasks: typeof client.leasedTasks === "number" ? client.leasedTasks : 0,
       availableSlots: typeof client.availableSlots === "number" ? client.availableSlots : 0,
       lastSeenAt: typeof client.lastSeenAt === "string" ? client.lastSeenAt : null,
+      desiredExecutionState: client.desiredExecutionState === "PAUSED" ? "PAUSED" : "RUNNING",
+      appliedExecutionState: client.appliedExecutionState === "PAUSED" ? "PAUSED" : "RUNNING",
+      commandSequence: typeof client.commandSequence === "number" ? client.commandSequence : 0,
+      lastProcessedCommandSequence: typeof client.lastProcessedCommandSequence === "number" ? client.lastProcessedCommandSequence : 0,
     };
   });
+}
+
+export function createAmazonCrawlerCommandController({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerCommandController {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return {
+    async submit(agentId, type) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type }),
+      });
+      await readJson(response);
+    },
+    async history(agentId) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || !Array.isArray(payload.commands)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid command history.", "INVALID_ENGINE_RESPONSE");
+      }
+      return payload.commands.filter((entry): entry is Record<string, unknown> => isRecord(entry)).map((entry) => ({
+        commandId: typeof entry.commandId === "string" ? entry.commandId : "",
+        sequence: typeof entry.sequence === "number" ? entry.sequence : 0,
+        type: entry.type === "PAUSE" ? "PAUSE" as const : "RESUME" as const,
+        status: typeof entry.status === "string" ? entry.status : "UNKNOWN",
+        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
+        error: typeof entry.error === "string" ? entry.error : null,
+        events: Array.isArray(entry.events) ? entry.events.filter((event): event is Record<string, unknown> => isRecord(event)).map((event) => ({
+          status: typeof event.status === "string" ? event.status : "UNKNOWN",
+          at: typeof event.at === "string" ? event.at : null,
+          detail: isRecord(event.detail) ? event.detail : {},
+        })) : [],
+      })).filter((entry) => entry.commandId.length > 0);
+    },
+  };
 }
 
 function readAgentRelease(value: unknown): AmazonCrawlerAgentRelease {
@@ -743,9 +784,7 @@ export function createAmazonCrawlerClientsLoader({
   return async () => {
     try {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients`);
-      return readClients(await readJson(response)).filter(
-        (client) => client.isConnected && client.status !== "offline",
-      );
+      return readClients(await readJson(response));
     } catch (error: unknown) {
       if (error instanceof AmazonCrawlerServiceError) throw error;
       throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");

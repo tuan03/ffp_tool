@@ -110,7 +110,11 @@ class DistributedCrawlerAgent:
         self.executing_task_ids: set[str] = set()
         self.stop_event = asyncio.Event()
         self.connection_status = "offline"
-        self._paused = self.store.is_paused()
+        self._locally_paused = self.store.is_paused()
+        self._remote_execution_state = self.store.remote_execution_state()
+        self._paused = self._locally_paused or self._remote_execution_state == "PAUSED"
+        self._command_recovery_complete = False
+        self._command_recovery_event = asyncio.Event()
         self._captcha_waiting = False
         self._pending_stop_cleanups: dict[str, int] = {}
         self._cache_cleanup_lock = asyncio.Lock()
@@ -160,6 +164,10 @@ class DistributedCrawlerAgent:
         except (OSError, sqlite3.Error):
             dashboard = {"tasks": [], "history": [], "events": []}
             self._dashboard_unavailable = True
+        try:
+            last_processed_command_sequence = self.store.last_processed_command_sequence()
+        except (OSError, sqlite3.Error):
+            last_processed_command_sequence = 0
         return {
             "clientId": self.client_id,
             "displayName": self.config.display_name,
@@ -184,6 +192,9 @@ class DistributedCrawlerAgent:
             "captchaDetected": bool(dashboard.get("hasUnattributedCaptcha")),
             "dashboardUnavailable": self._dashboard_unavailable,
             "isPaused": self._paused,
+            "desiredExecutionState": self._remote_execution_state,
+            "appliedExecutionState": self._remote_execution_state,
+            "lastProcessedCommandSequence": last_processed_command_sequence,
             "capabilities": self._agent_capabilities(),
             "currentTasks": self._current_tasks_snapshot(),
             "cache": self.cache.metrics_snapshot(),
@@ -280,14 +291,20 @@ class DistributedCrawlerAgent:
             ).start()
 
     def set_paused(self, is_paused: bool) -> None:
-        self._paused = is_paused
+        self._locally_paused = is_paused
         self.store.set_paused(is_paused)
-        if is_paused:
+        self._refresh_pause_state()
+
+    def _refresh_pause_state(self) -> None:
+        was_paused = self._paused
+        self._paused = self._locally_paused or self._remote_execution_state == "PAUSED"
+        if self._paused:
             self.connection_status = "paused"
         elif self.connection_status == "paused":
             self.connection_status = "online"
-        self._dashboard_update("activity", "paused" if is_paused else "resumed")
-        self._publish_status()
+        if was_paused != self._paused:
+            self._dashboard_update("activity", "paused" if self._paused else "resumed")
+            self._publish_status()
 
     def stop_and_discard_local_work(self) -> int:
         if self.config.auth_mode == "key":
@@ -322,6 +339,20 @@ class DistributedCrawlerAgent:
 
     async def _apply_reconciliation(self, acknowledgement: dict[str, Any]) -> None:
         self._recovery_complete = False
+        self._command_recovery_complete = False
+        self._command_recovery_event.clear()
+        command_batch = acknowledgement.get("commands")
+        if isinstance(command_batch, list):
+            await self._process_command_batch({
+                "commands": command_batch,
+                "latestCommandSequence": acknowledgement.get("latestCommandSequence", 0),
+                "desiredExecutionState": acknowledgement.get("desiredExecutionState", "RUNNING"),
+            })
+        else:
+            # A legacy Coordinator has no command contract; retain its existing
+            # recovery behavior without pretending a new command was acknowledged.
+            self._command_recovery_complete = True
+            self._command_recovery_event.set()
         self._approved_attempts.clear()
         while not self.assignment_queue.empty():
             self.assignment_queue.get_nowait()
@@ -392,11 +423,79 @@ class DistributedCrawlerAgent:
                 self._approved_attempts.add((task_id, str(assignment["leaseId"])))
                 await self.assignment_queue.put(assignment)
 
+    async def _process_command_batch(self, message: dict[str, Any]) -> None:
+        commands = message.get("commands")
+        if not isinstance(commands, list):
+            raise ValueError("Coordinator command batch is malformed.")
+        for command in commands:
+            if not isinstance(command, dict):
+                raise ValueError("Coordinator command is malformed.")
+            receipt = await asyncio.to_thread(self.store.begin_server_command, command)
+            command_id = str(command.get("commandId") or "")
+            sequence = int(command.get("sequence") or 0)
+            if receipt["decision"] == "gap":
+                await self.outbound_queue.put({"type": "command_sync", "afterSequence": int(receipt["expectedSequence"]) - 1})
+                return
+            status = str(receipt.get("status") or "ACKED")
+            if receipt["decision"] == "duplicate":
+                update = {"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": status}
+                if status == "SUCCESS":
+                    update["appliedExecutionState"] = self._remote_execution_state
+                await self.outbound_queue.put(update)
+                continue
+            if receipt["decision"] == "expired":
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "EXPIRED"})
+                continue
+            if receipt["decision"] == "process":
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "ACKED"})
+            payload = command.get("payload")
+            desired_state = "PAUSED" if command.get("type") == "PAUSE" else "RUNNING"
+            if not isinstance(payload, dict) or payload.get("desiredExecutionState") != desired_state:
+                error = "Command payload does not match its type."
+                await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "FAILED", "error": error})
+                continue
+            await asyncio.to_thread(self.store.set_server_command_running, command_id)
+            await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                "sequence": sequence, "status": "RUNNING"})
+            await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", desired_state)
+            self._remote_execution_state = desired_state
+            self._refresh_pause_state()
+            await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                "sequence": sequence, "status": "SUCCESS", "appliedExecutionState": desired_state})
+        last_sequence = self.store.last_processed_command_sequence()
+        latest_sequence = int(message.get("latestCommandSequence") or last_sequence)
+        desired_state = str(message.get("desiredExecutionState") or self._remote_execution_state)
+        applied_state = str(message.get("appliedExecutionState") or self._remote_execution_state)
+        server_sequence = int(message.get("serverLastProcessedCommandSequence") or 0)
+        if last_sequence < latest_sequence:
+            await self.outbound_queue.put({"type": "command_sync", "afterSequence": last_sequence})
+            return
+        if desired_state in {"RUNNING", "PAUSED"} and self._remote_execution_state != desired_state:
+            await self.outbound_queue.put({"type": "command_sync", "afterSequence": max(0, last_sequence - 1)})
+            return
+        if (applied_state in {"RUNNING", "PAUSED"} and desired_state == applied_state
+                and server_sequence >= latest_sequence and self._remote_execution_state != applied_state):
+            await asyncio.to_thread(self.store.reconcile_remote_execution_state, applied_state)
+            self._remote_execution_state = applied_state
+            self._refresh_pause_state()
+        self._command_recovery_complete = True
+        self._command_recovery_event.set()
+        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots(),
+            "lastProcessedCommandSequence": last_sequence, "appliedExecutionState": self._remote_execution_state})
+
     async def _recovery_gate_loop(self) -> None:
         # One bounded upload pass, not an unbounded drain of the entire spool.
         await self._uploads_checked.wait()
+        await self._command_recovery_event.wait()
         self._recovery_complete = True
-        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots(),
+            "lastProcessedCommandSequence": self.store.last_processed_command_sequence(),
+            "appliedExecutionState": self._remote_execution_state})
         self._publish_status()
         await self.stop_event.wait()
 
@@ -405,6 +504,8 @@ class DistributedCrawlerAgent:
         while not self.stop_event.is_set():
             self._is_connected = False
             self._recovery_complete = False
+            self._command_recovery_complete = False
+            self._command_recovery_event.clear()
             self._uploads_checked.clear()
             try:
                 async with websockets.connect(
@@ -429,6 +530,8 @@ class DistributedCrawlerAgent:
                         product_invalidation_generation=self.store.product_invalidation_generation(),
                         temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
                         pinterest_browser_logged_in=self.pinterest_browser_logged_in(),
+                        last_processed_command_sequence=self.store.last_processed_command_sequence(),
+                        desired_execution_state=self.store.remote_execution_state(),
                     ), **({"authProtocol": 1} if self._agent_key else {})}))
                     acknowledgement = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
                     if acknowledgement.get("type") != "hello_ack":
@@ -496,7 +599,8 @@ class DistributedCrawlerAgent:
             payload = json.loads(raw)
             message_type = payload.get("type")
             if message_type == "assignment":
-                if not self._is_connected or not self._recovery_complete or self._storage_pressure()["blocked"]:
+                if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
+                        or self._paused or self._storage_pressure()["blocked"]):
                     # A lease sent before the last capacity update is not
                     # accepted locally. The coordinator can expire/reassign it.
                     await self.outbound_queue.put({"type": "ready", "availableSlots": 0})
@@ -514,6 +618,13 @@ class DistributedCrawlerAgent:
                 event_ids = payload.get("eventIds")
                 if isinstance(event_ids, list):
                     await asyncio.to_thread(self.store.acknowledge_telemetry, [event_id for event_id in event_ids[:64] if isinstance(event_id, str)])
+            elif message_type == "command_batch":
+                await self._process_command_batch(payload)
+            elif message_type == "command_sync":
+                await self.outbound_queue.put({
+                    "type": "command_sync",
+                    "afterSequence": self.store.last_processed_command_sequence(),
+                })
             elif message_type == "cancel":
                 job_id = str(payload.get("jobId") or "")
                 generation = max(0, int(payload.get("cacheGeneration") or 0))
@@ -725,6 +836,8 @@ class DistributedCrawlerAgent:
                     "waiting_captcha" if self._captcha_waiting else ("busy" if running else "online")
                 ),
                 "availableSlots": self._available_slots(),
+                "lastProcessedCommandSequence": self.store.last_processed_command_sequence(),
+                "appliedExecutionState": self._remote_execution_state,
                 "running": running,
                 "capabilities": self._agent_capabilities(),
                 "observability": self._telemetry_snapshot(),
@@ -742,7 +855,8 @@ class DistributedCrawlerAgent:
         return storage_pressure(self.store, self.config.outbox, self.project_root)
 
     def _available_slots(self) -> int:
-        if not self._is_connected or not self._recovery_complete or self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]:
+        if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
+                or self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]):
             return 0
         return max(0, self.config.max_concurrent_inputs - len(self.active))
 
@@ -750,7 +864,7 @@ class DistributedCrawlerAgent:
         backlog: deque[dict[str, Any]] = deque()
         loop = asyncio.get_running_loop()
         while not self.stop_event.is_set():
-            if not self._is_connected or not self._recovery_complete or self._storage_pressure()["blocked"]:
+            if not self._is_connected or not self._recovery_complete or self._paused or self._storage_pressure()["blocked"]:
                 await asyncio.sleep(1)
                 continue
             try:
@@ -777,7 +891,7 @@ class DistributedCrawlerAgent:
                     batch.append(candidate)
                 else:
                     backlog.append(candidate)
-            if not self._is_connected or not self._recovery_complete or self._storage_pressure()["blocked"]:
+            if not self._is_connected or not self._recovery_complete or self._paused or self._storage_pressure()["blocked"]:
                 backlog.extendleft(reversed(batch))
                 await asyncio.sleep(1)
                 continue

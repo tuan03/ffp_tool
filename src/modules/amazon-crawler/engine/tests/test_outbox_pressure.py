@@ -27,6 +27,7 @@ class OutboxPressureTests(unittest.IsolatedAsyncioTestCase):
         self.disk_mock = self.disk.start()
         self.agent._is_connected = True
         self.agent._recovery_complete = True
+        self.agent._command_recovery_complete = True
 
     def tearDown(self):
         self.disk.stop()

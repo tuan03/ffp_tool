@@ -12,10 +12,11 @@ test("operator transport binds credentials to crawler routes and rejects redirec
       return new Response("[]");
     } });
   await transport("https://fixture.test/api/v1/clients");
+  await transport("https://fixture.test/api/v1/clients/agent-1/commands?limit=20");
   await assert.rejects(transport("https://other.test/api/v1/clients"));
   await assert.rejects(transport("https://fixture.test/api/shopify"));
   await assert.rejects(transport("https://fixture.test/api/v1/worker/register"));
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
 });
 
 test("operator transport dispatches the validated absolute destination", async () => {

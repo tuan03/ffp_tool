@@ -636,6 +636,31 @@ export interface AmazonCrawlerClientSummary {
   leasedTasks: number;
   availableSlots: number;
   lastSeenAt: string | null;
+  desiredExecutionState?: "RUNNING" | "PAUSED";
+  appliedExecutionState?: "RUNNING" | "PAUSED";
+  commandSequence?: number;
+  lastProcessedCommandSequence?: number;
+}
+
+export interface AmazonCrawlerAgentCommandEvent {
+  status: string;
+  at: string | null;
+  detail: Readonly<Record<string, unknown>>;
+}
+
+export interface AmazonCrawlerAgentCommandSummary {
+  commandId: string;
+  sequence: number;
+  type: "PAUSE" | "RESUME";
+  status: string;
+  createdAt: string | null;
+  error: string | null;
+  events: readonly AmazonCrawlerAgentCommandEvent[];
+}
+
+export interface AmazonCrawlerCommandController {
+  submit(agentId: string, type: "PAUSE" | "RESUME"): Promise<void>;
+  history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 
 export interface AmazonCrawlerClientsLoader {
