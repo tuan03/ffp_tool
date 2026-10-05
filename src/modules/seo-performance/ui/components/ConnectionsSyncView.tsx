@@ -70,13 +70,21 @@ export function ConnectionsSyncView({
               <span className="text-base font-bold text-slate-100">Google Search Console</span>
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  data.gsc.status === "CONNECTED" && !data.gsc.stale
+                  data.gsc.status === "CONNECTED"
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
                     : "bg-amber-950 text-amber-300 border border-amber-800"
                 }`}
               >
                 {data.gsc.status}
               </span>
+              {data.gsc.status === "CONNECTED" && data.gsc.stale && (
+                <span
+                  className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-950/80 text-amber-300 border border-amber-800"
+                  title={data.gsc.staleReason === "NEVER_SYNCED" ? "Chưa thực hiện đồng bộ dữ liệu lần nào" : "Dữ liệu đã quá 4 ngày chưa cập nhật"}
+                >
+                  {data.gsc.staleReason === "NEVER_SYNCED" ? "Chưa đồng bộ" : "Dữ liệu cũ"}
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -164,13 +172,21 @@ export function ConnectionsSyncView({
               <span className="text-base font-bold text-slate-100">Google Analytics 4</span>
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  data.ga4.status === "CONNECTED" && !data.ga4.stale
+                  data.ga4.status === "CONNECTED"
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
                     : "bg-amber-950 text-amber-300 border border-amber-800"
                 }`}
               >
                 {data.ga4.status}
               </span>
+              {data.ga4.status === "CONNECTED" && data.ga4.stale && (
+                <span
+                  className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-950/80 text-amber-300 border border-amber-800"
+                  title={data.ga4.staleReason === "NEVER_SYNCED" ? "Chưa thực hiện đồng bộ dữ liệu lần nào" : "Dữ liệu đã quá 4 ngày chưa cập nhật"}
+                >
+                  {data.ga4.staleReason === "NEVER_SYNCED" ? "Chưa đồng bộ" : "Dữ liệu cũ"}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <span className="text-xs text-slate-400">Stream: {data.ga4.streamId ?? "Web"}</span>
