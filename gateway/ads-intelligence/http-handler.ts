@@ -17,6 +17,7 @@ import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStat
 import { localAiRunner } from "./local-ai-runner";
 import { loadStoreAdsProfile, saveStoreAdsProfile, validateStoreAdsProfile } from "./store-profile";
 import { mcpUserManager } from "./mcp-users";
+import { handleMediaProxy } from "./media-proxy";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = statusCode;
@@ -74,6 +75,10 @@ export async function handleAdsIntelligenceHttpRequest(
   const forceRefresh = parsedUrl.searchParams.get("refresh") === "true";
 
   try {
+    if (pathname === "/api/ads-intelligence/media-proxy") {
+      return await handleMediaProxy(req, res);
+    }
+
     if (pathname.startsWith("/api/ads-intelligence/spy/")) {
       try {
         if (pathname === "/api/ads-intelligence/spy/capabilities" && req.method === "GET") {

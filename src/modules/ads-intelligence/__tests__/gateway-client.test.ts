@@ -69,6 +69,12 @@ test("ad media preserves playable video, images and carousel rather than replaci
   assert.match(image, /preview.jpg/);
   const carousel = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...base, mediaType: "CAROUSEL", cards: [{ mediaUrl: "https://example.com/one.jpg" }, { mediaUrl: "https://example.com/two.jpg" }] } }));
   assert.match(carousel, /one.jpg/); assert.match(carousel, /two.jpg/);
+  // Meta CDN URLs are routed via streaming proxy and have referrerpolicy="no-referrer"
+  const metaCdnBase = { pageName: "Meta brand", headline: "Meta ad", archiveAdId: "999888", thumbnailUrl: "https://scontent.xx.fbcdn.net/v/preview.jpg", mediaUrls: ["https://video.xx.fbcdn.net/v/ad.mp4"] };
+  const proxiedVideo = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...metaCdnBase, mediaType: "VIDEO" } }));
+  assert.match(proxiedVideo, /media-proxy\?url=/);
+  assert.match(proxiedVideo, /referrerpolicy="no-referrer"/i);
+
   const missing = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...base, mediaType: "VIDEO", thumbnailUrl: "", mediaUrls: [] } }));
   assert.match(missing, /Nguồn chưa cung cấp/);
   assert.match(missing, /facebook.com\/ads\/library/);
