@@ -49,7 +49,7 @@ export function CompetitorResearchPanel({ storeId, client }: {
       </div>
       {isLoading && <p role="status" className="text-sm text-slate-400">Đang tải nghiên cứu…</p>}
       {error && <p role="alert" className="text-sm text-amber-300">{error}{research ? " Đang hiển thị bản đã tải trước đó." : ""}</p>}
-      {!isLoading && !error && !research && <p className="text-sm text-slate-400">Store này chưa có nghiên cứu được lưu. Chạy skill spy-competitors cho cửa hàng đang chọn để tạo danh sách.</p>}
+      {!isLoading && !error && !research && <p className="text-sm text-slate-400">Store này chưa có nghiên cứu được lưu. Bấm &quot;Spy đối thủ&quot; ở phía trên để AI tự động tìm kiếm đối thủ và xuất bản kết quả.</p>}
       {research && <>
         <p className="text-sm text-slate-300">{research.storeDomain} · {research.scope.market} · {new Date(research.observedAt).toLocaleString("vi-VN")}</p>
         <p className="text-xs text-slate-400">Phạm vi: {research.scope.products.join(", ")}. Điểm tương đồng sản phẩm, không phải hiệu quả quảng cáo.</p>

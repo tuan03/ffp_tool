@@ -56,7 +56,6 @@ export function StoreProfileModal({
   const [targetCpa, setTargetCpa] = useState("22");
   const [breakEvenRoas, setBreakEvenRoas] = useState("2.2");
   const [ga4PropertyId, setGa4PropertyId] = useState("");
-  const [watchlistText, setWatchlistText] = useState("");
 
   // JSON Raw Field
   const [rawJson, setRawJson] = useState("");
@@ -120,8 +119,6 @@ export function StoreProfileModal({
         if (p.business?.breakEvenRoas !== undefined && p.business?.breakEvenRoas !== null)
           setBreakEvenRoas(String(p.business.breakEvenRoas));
         if (p.ga4?.propertyId) setGa4PropertyId(String(p.ga4.propertyId));
-        if (p.competitors?.watchlist && Array.isArray(p.competitors.watchlist))
-          setWatchlistText(p.competitors.watchlist.join("\n"));
         setRawJson(JSON.stringify(p, null, 2));
       })
       .catch(() => {})
@@ -230,10 +227,6 @@ export function StoreProfileModal({
         if (!metaAccountId.trim()) {
           throw new Error("Meta Ad Account ID là bắt buộc (ví dụ: act_1569725310249145).");
         }
-        const watchlist = watchlistText
-          .split(/[\n,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
 
         payload = {
           storeId,
@@ -243,7 +236,7 @@ export function StoreProfileModal({
           targetCpa: Number(targetCpa) || 22,
           breakEvenRoas: Number(breakEvenRoas) || 2.2,
           ga4PropertyId: ga4PropertyId.trim() || undefined,
-          watchlist,
+          watchlist: [],
         };
       }
 
@@ -523,20 +516,6 @@ export function StoreProfileModal({
                   />
                   <p className="text-[10px] text-slate-400">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ (Mặc định: 2.2x)</p>
                 </div>
-              </div>
-
-              <div className="space-y-1 pt-1">
-                <label className="font-medium text-slate-300 text-[11px] flex items-center justify-between">
-                  <span>Watchlist Đối thủ (Page ID / Tùy chọn)</span>
-                  <span className="text-[10px] text-slate-500">Mỗi Page ID một dòng</span>
-                </label>
-                <textarea
-                  rows={2}
-                  value={watchlistText}
-                  onChange={(e) => setWatchlistText(e.target.value)}
-                  placeholder="100064829182341&#10;100083124589211"
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-slate-200 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                />
               </div>
             </div>
 
