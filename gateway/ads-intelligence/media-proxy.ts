@@ -252,6 +252,7 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
 
   // 1. Check if media is already in disk cache
   let cached = await findCachedFile(hash);
+  const wasCached = Boolean(cached);
 
   // 2. If not cached, trigger on-demand download & cache
   if (!cached) {
@@ -289,6 +290,7 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
   res.setHeader("Access-Control-Allow-Headers", "Range, Authorization");
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("X-Cache", wasCached ? "HIT" : "MISS");
 
   if (req.method === "HEAD") {
     res.statusCode = 200;

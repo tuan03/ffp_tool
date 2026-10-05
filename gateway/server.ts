@@ -309,7 +309,8 @@ export function startGatewayServer(
     }
 
     if (url.startsWith("/api/ads-intelligence/")) {
-      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+      const isMediaProxy = url.startsWith("/api/ads-intelligence/media-proxy");
+      if (!isMediaProxy && authToken && !isGatewayAuthorized(req.headers, authToken)) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: { code: "ADS_GATEWAY_UNAUTHORIZED", message: "Gateway authentication required" } }));
         return;
