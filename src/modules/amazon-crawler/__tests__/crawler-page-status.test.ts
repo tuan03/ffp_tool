@@ -7,7 +7,18 @@ import { MemoryRouter } from "react-router-dom";
 import { amazonCrawlerMockAgentRelease, amazonCrawlerMockOutput } from "../mocks/data";
 import { AmazonCrawlerPage } from "../ui/AmazonCrawlerPage";
 import { clearCrawlerSession, hydrateCrawlerSessionFromJob } from "../ui/crawler-session";
-import { getCrawlerClientPresence } from "../ui/client-presence";
+import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "../ui/client-presence";
+
+test("crawler agent list excludes disconnected agents", () => {
+  const clients = [
+    { id: "online", isConnected: true, status: "online" },
+    { id: "busy", isConnected: true, status: "busy" },
+    { id: "offline", isConnected: false, status: "offline" },
+    { id: "inconsistent", isConnected: true, status: "offline" },
+  ] as const;
+
+  assert.deepEqual(filterConnectedCrawlerClients(clients).map((client) => client.id), ["online", "busy"]);
+});
 
 test("stale coordinator snapshots show unknown presence instead of a false online or stopped state", () => {
   assert.deepEqual(getCrawlerClientPresence(true, "online", true), { label: "chưa xác minh", tone: "unknown" });

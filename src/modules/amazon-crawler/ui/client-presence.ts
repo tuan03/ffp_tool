@@ -1,7 +1,15 @@
+import type { AmazonCrawlerClientSummary } from "../types";
+
 export type CrawlerClientPresence = {
   readonly label: string;
   readonly tone: "online" | "warning" | "offline" | "unknown";
 };
+
+export function filterConnectedCrawlerClients<T extends Pick<AmazonCrawlerClientSummary, "isConnected" | "status">>(
+  clients: readonly T[],
+): T[] {
+  return clients.filter((client) => client.isConnected && client.status !== "offline");
+}
 
 export function getCrawlerClientPresence(
   isConnected: boolean,

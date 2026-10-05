@@ -36,7 +36,7 @@ import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
-import { getCrawlerClientPresence } from "./client-presence";
+import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
 
 import {
   abortCrawlerJob,
@@ -373,16 +373,16 @@ export function AmazonCrawlerPage({
   const firstMediaUrl = firstProductMediaUrl(selectedProduct);
   const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
-  const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
+  const connectedClients = filterConnectedCrawlerClients(clients);
   const outdatedClients = agentRelease === null || isClientSnapshotStale
     ? []
     : connectedClients.filter(
       (client) => getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated",
     );
-  const clientGroups = [...new Set(clients.map((client) => client.agentGroup ?? "default"))].sort();
+  const clientGroups = [...new Set(connectedClients.map((client) => client.agentGroup ?? "default"))].sort();
   const filteredClients = clientGroupFilter === "all"
-    ? clients
-    : clients.filter((client) => (client.agentGroup ?? "default") === clientGroupFilter);
+    ? connectedClients
+    : connectedClients.filter((client) => (client.agentGroup ?? "default") === clientGroupFilter);
   const clientPageCount = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
   const visibleClientPage = Math.min(clientPage, clientPageCount - 1);
   const visibleClients = filteredClients.slice(visibleClientPage * CLIENTS_PER_PAGE, (visibleClientPage + 1) * CLIENTS_PER_PAGE);
@@ -1639,7 +1639,7 @@ export function AmazonCrawlerPage({
                 <p className="mt-1 text-xs text-slate-400">Soft stop chặn lease mới và không cho bắt đầu task đang chờ; task đang thực thi được hoàn tất. Không hủy job, purge kết quả hoặc dừng SEO/Shopify.</p>
                 {admissionGate ? <p className="mt-1 text-xs text-slate-300">Agent xác nhận gate: {admissionGate.confirmedAgents} đã xác nhận · {admissionGate.pendingAgents} đang chờ.</p> : null}
                 {admissionGate?.pendingAgents ? <ul className="mt-1 text-xs text-amber-300" aria-label="Agent chờ xác nhận global gate">
-                  {admissionGate.confirmations.filter((agent) => agent.status === "pending_confirmation").map((agent) => (
+                {admissionGate.confirmations.filter((agent) => agent.status === "pending_confirmation" && agent.isConnected).map((agent) => (
                     <li key={agent.agentId}>{agent.displayName} — {agent.isConnected ? "đang xác nhận" : "offline, sẽ nhận gate khi kết nối lại"}</li>
                   ))}
                 </ul> : null}
@@ -1660,14 +1660,14 @@ export function AmazonCrawlerPage({
           </div>
         ) : null}
         {commandError ? <p className="mt-3 text-sm text-rose-300" role="alert">{commandError}</p> : null}
-        {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có crawler agent đã đăng ký. Hãy mở FFP Amazon Crawler Agent.</p> : null}
-        {clients.length > 0 ? <label className="mt-3 flex max-w-sm items-center gap-2 text-xs text-slate-300">
+        {!isLoadingClients && !clientError && connectedClients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Hiện không có crawler agent nào đang kết nối. Agent offline được ẩn khỏi danh sách.</p> : null}
+        {connectedClients.length > 0 ? <label className="mt-3 flex max-w-sm items-center gap-2 text-xs text-slate-300">
           Lọc Agent group
           <select aria-label="Lọc theo Agent group" value={clientGroupFilter}
             onChange={(event) => { setClientGroupFilter(event.target.value); setClientPage(0); }}
             className="min-w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100">
-            <option value="all">Tất cả group ({clients.length})</option>
-            {clientGroups.map((group) => <option key={group} value={group}>{group} ({clients.filter((client) => (client.agentGroup ?? "default") === group).length})</option>)}
+            <option value="all">Tất cả group ({connectedClients.length})</option>
+            {clientGroups.map((group) => <option key={group} value={group}>{group} ({connectedClients.filter((client) => (client.agentGroup ?? "default") === group).length})</option>)}
           </select>
         </label> : null}
         {clientGroupFilter !== "all" && amazonCrawlerCommands ? <div className="mt-3 rounded border border-slate-700 bg-slate-950/70 p-3">
@@ -1687,8 +1687,8 @@ export function AmazonCrawlerPage({
           </div>
           {bulkCommandMessage ? <p role="status" className="mt-2 text-xs text-slate-300">{bulkCommandMessage}</p> : null}
         </div> : null}
-        {filteredClients.length === 0 && clients.length > 0 ? <p className="mt-3 text-sm text-slate-400">Không có Agent trong group đã chọn.</p> : null}
-        {clients.length > 0 ? (
+        {filteredClients.length === 0 && connectedClients.length > 0 ? <p className="mt-3 text-sm text-slate-400">Không có Agent đang kết nối trong group đã chọn.</p> : null}
+        {connectedClients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {visibleClients.map((client) => {
               const clientCommandHistory = commandHistories[client.id] ?? [];
