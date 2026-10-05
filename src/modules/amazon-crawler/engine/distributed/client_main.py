@@ -79,7 +79,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         config = AgentConfig.load(_resolve_config_path(arguments.config))
-        project_root = (arguments.project_root or config.data_directory).resolve()
+        default_project_root = (Path(sys.executable).parent if bool(getattr(sys, "frozen", False))
+                                else config.data_directory)
+        project_root = (arguments.project_root or default_project_root).resolve()
         if arguments.enroll:
             import getpass
             from .client_credentials import enroll_agent, store_credential

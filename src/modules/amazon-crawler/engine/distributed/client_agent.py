@@ -6,7 +6,9 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import gzip
 import json
+import os
 import random
+import re
 import sqlite3
 import sys
 import threading
@@ -36,6 +38,7 @@ from .client_storage_pressure import storage_pressure
 from .client_self_test import build_self_test_report
 from .worker_health import WorkerHealth
 from .client_restart import launch_replacement_agent
+from .client_update import launch_agent_update
 from .protocol import hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
@@ -89,6 +92,7 @@ class DistributedCrawlerAgent:
         crawler_factory: Callable[..., Any] = AmazonCrawler,
         restart_command_id: str | None = None,
         restart_launcher: Callable[[str, Path], bool] = launch_replacement_agent,
+        update_launcher: Callable[[str, str, Path, Path | None, int], bool] = launch_agent_update,
         on_restart_requested: Callable[[], None] | None = None,
     ) -> None:
         self.project_root = project_root
@@ -98,6 +102,7 @@ class DistributedCrawlerAgent:
         self.crawler_factory = crawler_factory
         self.restart_command_id = restart_command_id
         self.restart_launcher = restart_launcher
+        self.update_launcher = update_launcher
         self.on_restart_requested = on_restart_requested or (lambda: None)
         self._restart_attempted: set[str] = set()
         self._boot_id = uuid.uuid4().hex
@@ -542,6 +547,13 @@ class DistributedCrawlerAgent:
                         update["result"] = {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}
                     elif str(command.get("type") or "") == "RUN_SELF_TEST":
                         update["result"] = await asyncio.to_thread(self._run_self_test)
+                    elif str(command.get("type") or "") == "UPDATE_AGENT":
+                        journal = self.store.agent_update_journal() or {}
+                        update["result"] = {"previousVersion": journal.get("previousVersion", ""),
+                            "version": journal.get("targetVersion", ""),
+                            "identityRetained": journal.get("clientId") == self.store.client_id(),
+                            "pendingOutboxCount": self.store.drain_outbox_count(),
+                            "selfTest": {"status": journal.get("selfTestStatus", "FAIL"), "checks": {}}}
                 await self.outbound_queue.put(update)
                 continue
             if receipt["decision"] == "expired":
@@ -572,6 +584,58 @@ class DistributedCrawlerAgent:
                 await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
                     "sequence": sequence, "status": "SUCCESS", "result": report})
+                continue
+            if command_type == "UPDATE_AGENT":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                journal = self.store.agent_update_journal()
+                target_version = str(payload.get("targetVersion") or "") if isinstance(payload, dict) else ""
+                expected_previous_version = str(payload.get("previousVersion") or "") if isinstance(payload, dict) else ""
+                if receipt["decision"] == "resume" and journal and journal.get("commandId") == command_id:
+                    if journal.get("targetVersion") != AGENT_VERSION:
+                        error = "Verified Agent version did not boot; update remains DRAINED for operator recovery."
+                    elif self.store.client_id() != journal.get("clientId") or self.store.drain_outbox_count() != 0:
+                        error = "Post-update identity or acknowledged-outbox invariant failed."
+                    else:
+                        report = await asyncio.to_thread(self._run_self_test)
+                        error = "Post-update self-test did not PASS." if report.get("status") != "PASS" else ""
+                        if not error:
+                            await asyncio.to_thread(self.store.save_agent_update_journal,
+                                {**journal, "stage": "ACKED", "selfTestStatus": "PASS"})
+                            await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                            await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                                "sequence": sequence, "status": "SUCCESS", "result": {
+                                    "previousVersion": journal.get("previousVersion"), "version": AGENT_VERSION,
+                                    "identityRetained": True, "pendingOutboxCount": 0, "selfTest": report,
+                                }})
+                            continue
+                else:
+                    error = ""
+                    drain = self.store.drain_command()
+                    if (self._remote_execution_state != "DRAINED" or drain is None or drain.get("state") != "DRAINED"
+                            or self.executing_task_ids or self.active
+                            or not self.assignment_queue.empty() or self.store.drain_outbox_count() != 0
+                            or not self.config.trusted_signer_thumbprints):
+                        error = "UPDATE_AGENT requires DRAINED, no active work, zero unacknowledged outbox, and a local signer pin."
+                    elif (expected_previous_version != AGENT_VERSION
+                          or not re.fullmatch(r"\d+\.\d+\.\d+", target_version)
+                          or tuple(map(int, target_version.split("."))) <= tuple(map(int, AGENT_VERSION.split(".")))):
+                        error = "UPDATE_AGENT target version is invalid or already installed."
+                    else:
+                        journal = {"commandId": command_id, "targetVersion": target_version,
+                            "previousVersion": AGENT_VERSION, "stage": "INSTALLING", "clientId": self.client_id,
+                            "selfTestStatus": "PENDING"}
+                        await asyncio.to_thread(self.store.save_agent_update_journal, journal)
+                        if not self.update_launcher(command_id, target_version, self.project_root,
+                                                    self.config.config_file_path, os.getpid()):
+                            error = "The verified Agent updater could not be launched."
+                        else:
+                            self.stop_event.set()
+                            return
+                await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "FAILED", "error": error})
                 continue
             if command_type == "RELOAD_CONFIG":
                 await asyncio.to_thread(self.store.set_server_command_running, command_id)

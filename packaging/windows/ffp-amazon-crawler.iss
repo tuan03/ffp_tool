@@ -23,6 +23,8 @@ WizardStyle=modern
 
 [Files]
 Source: "..\..\artifacts\windows\FFPAmazonCrawlerAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\scripts\update-agent.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\..\scripts\agent-release-policy.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--config ""{commonappdata}\FFP Amazon Crawler\agent.json"""
@@ -103,18 +105,28 @@ var
   ConfigDirectory: String;
   ConfigPath: String;
   Payload: String;
+  TrustedPins: String;
+  PinJson: String;
 begin
   if CurStep = ssPostInstall then
   begin
     ConfigDirectory := ExpandConstant('{commonappdata}\FFP Amazon Crawler');
     ForceDirectories(ConfigDirectory);
     ConfigPath := ConfigDirectory + '\agent.json';
+    TrustedPins := ExpandConstant('{param:TRUSTEDSIGNERS|}');
+    PinJson := '';
+    if TrustedPins <> '' then
+    begin
+      StringChangeEx(TrustedPins, ',', '","', True);
+      PinJson := '  "trustedSignerThumbprints": ["' + TrustedPins + '"],' + #13#10;
+    end;
     if not FileExists(ConfigPath) then
     begin
       Payload := '{' + #13#10 +
         '  "serverUrl": "' + JsonEscape(Trim(ServerPage.Values[0])) + '",' + #13#10 +
         '  "displayName": "' + JsonEscape(Trim(ServerPage.Values[1])) + '",' + #13#10 +
         '  "maxConcurrentInputs": 4,' + #13#10 +
+        PinJson +
         '  "limits": {' + #13#10 +
         '    "productThreads": 4, "variantThreads": 8, "urllibThreads": 12,' + #13#10 +
         '    "browserProfiles": 4, "browserTabs": 2, "headless": false' + #13#10 +

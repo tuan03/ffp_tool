@@ -96,10 +96,10 @@ try {
     $configPath = Join-Path $configDirectory 'agent.json'
     $null = New-Item -ItemType Directory -Force -Path $configDirectory
     if (-not (Test-Path -LiteralPath $configPath)) {
-        @{ serverUrl = $ServerUrl; displayName = $DisplayName; maxConcurrentInputs = 4 } |
+        @{ serverUrl = $ServerUrl; displayName = $DisplayName; maxConcurrentInputs = 4; trustedSignerThumbprints = $pins } |
             ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
     }
-    $setup = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/SERVERURL=`"$ServerUrl`"", "/DISPLAYNAME=`"$DisplayName`"") -WindowStyle Hidden -Wait -PassThru
+    $setup = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/SERVERURL=`"$ServerUrl`"", "/DISPLAYNAME=`"$DisplayName`"", "/TRUSTEDSIGNERS=$($pins -join ',')") -WindowStyle Hidden -Wait -PassThru
     if ($setup.ExitCode -ne 0) { throw "Installer failed with exit code $($setup.ExitCode). Existing data was preserved." }
     $check = Start-Process -FilePath $executable -ArgumentList @('--check-config', "--config `"$configPath`"", "--installation-report `"$reportPath`"") -WindowStyle Hidden -Wait -PassThru
     if ($check.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $reportPath)) { throw 'Packaged agent configuration check failed.' }

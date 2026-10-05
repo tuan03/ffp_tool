@@ -17,7 +17,7 @@ from .protocol import utc_now
 
 
 JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
-COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "DRAIN": 5, "RUN_SELF_TEST": 4, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "DRAIN": 5, "RUN_SELF_TEST": 4, "UPDATE_AGENT": 6, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
                     "RESTART_WORKERS": 5, "RESTART_AGENT": 6}
 TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
 ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
@@ -27,13 +27,14 @@ class AgentCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requestId: uuid.UUID
-    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
+    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "UPDATE_AGENT", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
     expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
     taskIds: list[str] = Field(default_factory=list, max_length=500)
     includeRunning: bool = Field(default=False, strict=True)
     expectedPendingCount: int | None = Field(default=None, strict=True, ge=1, le=500)
     confirmation: str | None = Field(default=None, min_length=1, max_length=80)
     reason: str | None = Field(default=None, min_length=10, max_length=500)
+    targetVersion: str | None = Field(default=None, max_length=32)
     config: dict[str, Any] | None = None
     dryRun: bool = False
 
@@ -151,7 +152,7 @@ class AgentCommandLedger:
             if existing is not None:
                 if existing.command_type != command_type:
                     raise HTTPException(409, detail="Command requestId was reused with a different command.")
-                if command_type in {"DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"} and existing.payload != (command_payload_value or {}):
+                if command_type in {"DRAIN", "RUN_SELF_TEST", "UPDATE_AGENT", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"} and existing.payload != (command_payload_value or {}):
                     raise HTTPException(409, detail="Command requestId was reused with a different command scope.")
                 return self._snapshot(session, existing)
             agent = session.get(ClientRecord,
@@ -166,7 +167,7 @@ class AgentCommandLedger:
                 id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
                 sequence=sequence, command_type=command_type,
                 payload=(dict(command_payload_value or {}) if command_type in {
-                    "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
+                    "DRAIN", "RUN_SELF_TEST", "UPDATE_AGENT", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
                 }
                          else {"desiredExecutionState": target_state}),
                 priority=COMMAND_PRIORITY[command_type], status="PENDING",
@@ -231,6 +232,23 @@ class AgentCommandLedger:
             agent = session.get(ClientRecord, agent_id)
             return bool(agent is not None and agent.applied_execution_state == "PAUSED"
                         and agent.capabilities.get("durableRestartV1") is True)
+
+    def update_allowed(self, agent_id: str) -> bool:
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, agent_id)
+            drain = session.scalar(select(AgentCommand).where(
+                AgentCommand.agent_id == agent_id, AgentCommand.command_type == "DRAIN",
+                AgentCommand.status == "SUCCESS",
+            ).order_by(AgentCommand.sequence.desc()).limit(1))
+            return bool(agent is not None and drain is not None
+                        and agent.desired_execution_state == "DRAINED"
+                        and agent.applied_execution_state == "DRAINED"
+                        and agent.last_processed_command_sequence == agent.command_sequence)
+
+    def current_agent_version(self, agent_id: str) -> str | None:
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, agent_id)
+            return str(agent.agent_version) if agent is not None and agent.agent_version else None
 
     def commands_after(self, agent_id: str, sequence: int, *, limit: int = 500) -> tuple[list[dict[str, Any]], int, str, str, int]:
         now = utc_now()
@@ -316,6 +334,16 @@ class AgentCommandLedger:
                 if any(type(result.get(field)) is not int or result.get(field) != 0
                        for field in ("activeTaskCount", "pendingOutboxCount")):
                     raise HTTPException(409, detail="DRAIN cannot complete while tasks or outbox entries remain.")
+            if status == "SUCCESS" and command.command_type == "UPDATE_AGENT":
+                result = update.get("result")
+                self_test = result.get("selfTest") if isinstance(result, dict) else None
+                if (not isinstance(result, dict)
+                        or result.get("version") != command.payload.get("targetVersion")
+                        or result.get("previousVersion") != command.payload.get("previousVersion")
+                        or result.get("identityRetained") is not True
+                        or result.get("pendingOutboxCount") != 0
+                        or not isinstance(self_test, dict) or self_test.get("status") != "PASS"):
+                    raise HTTPException(409, detail="UPDATE_AGENT success requires the requested version, retained identity, empty outbox and passing post-boot self-test.")
             if command.command_type != "DRAIN" and status in {"ACKED", "RUNNING", "SUCCESS", "FAILED"} and _expired(command.expires_at, now):
                 self._finish(session, agent, command, "EXPIRED", "Command expired before execution.", now)
                 return self._snapshot(session, command)
@@ -334,7 +362,7 @@ class AgentCommandLedger:
             detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
             result = update.get("result") if command.command_type in {
                 "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
-                "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST",
+                "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "UPDATE_AGENT",
             } else None
             event_detail = {"error": detail} if detail else {}
             if isinstance(result, dict):
@@ -342,6 +370,15 @@ class AgentCommandLedger:
                     event_detail["result"] = {
                         "status": result.get("status") if result.get("status") in {"PASS", "DEGRADED", "FAIL"} else "FAIL",
                         "checks": _bounded_self_test_checks(result.get("checks")),
+                    }
+                elif command.command_type == "UPDATE_AGENT":
+                    self_test = result.get("selfTest") if isinstance(result.get("selfTest"), dict) else {}
+                    event_detail["result"] = {
+                        "previousVersion": str(result.get("previousVersion") or "")[:32],
+                        "version": str(result.get("version") or "")[:32],
+                        "identityRetained": result.get("identityRetained") is True,
+                        "pendingOutboxCount": _bounded_count(result.get("pendingOutboxCount")),
+                        "selfTestStatus": self_test.get("status") if self_test.get("status") in {"PASS", "DEGRADED", "FAIL"} else "FAIL",
                     }
                 else:
                     event_detail["result"] = {

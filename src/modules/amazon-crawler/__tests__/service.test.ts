@@ -379,6 +379,23 @@ test("self-test command sends only read-only request and audited reason", async 
   assert.equal(body.includeRunning, undefined);
 });
 
+test("agent update command includes the explicit target version and audited reason", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "update-command" }, 202);
+    },
+  });
+  await controller.updateAgent("agent-1", "5.3.0", "approved safe agent update");
+  const body = requestBody as { type?: unknown; targetVersion?: unknown; reason?: unknown; expiresInSeconds?: unknown };
+  assert.equal(body.type, "UPDATE_AGENT");
+  assert.equal(body.targetVersion, "5.3.0");
+  assert.equal(body.reason, "approved safe agent update");
+  assert.equal(body.expiresInSeconds, 86400);
+});
+
 test("pending purge controller previews and sends exact scoped confirmation", async () => {
   const requests: Array<{ body: string; method: string }> = [];
   const controller = createAmazonCrawlerCommandController({

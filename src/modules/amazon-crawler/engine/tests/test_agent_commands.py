@@ -10,13 +10,14 @@ import os
 from contextlib import ExitStack
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from engine.distributed.agent_command_ledger import AgentCommand, AgentCommandEvent, AgentCommandLedger
+from engine.distributed import AGENT_VERSION
 from engine.distributed.client_store import ClientStore
 from engine.distributed.client_agent import DistributedCrawlerAgent
 from engine.distributed.client_config import AgentConfig
@@ -124,6 +125,34 @@ class AgentCommandLedgerTests(unittest.TestCase):
             agent = session.get(ClientRecord, "agent-1")
             self.assertEqual(agent.desired_execution_state, "DRAINED")
             self.assertEqual(agent.applied_execution_state, "DRAINED")
+
+    def test_update_command_is_eligible_only_after_server_acknowledged_drain(self) -> None:
+        self.assertFalse(self.ledger.update_allowed("agent-1"))
+        drain = self.ledger.submit("agent-1", uuid.uuid4().hex, "DRAIN", 300,
+            {"reason": "safe updater rollout", "scope": "agent", "waitForOutboxAck": True})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": drain["commandId"], "sequence": 1, "status": status})
+        self.assertFalse(self.ledger.update_allowed("agent-1"))
+        self.ledger.update("agent-1", {"commandId": drain["commandId"], "sequence": 1, "status": "SUCCESS",
+            "result": {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}})
+        self.assertTrue(self.ledger.update_allowed("agent-1"))
+
+    def test_update_success_requires_target_identity_empty_outbox_and_passed_self_test(self) -> None:
+        command = self.ledger.submit("agent-1", uuid.uuid4().hex, "UPDATE_AGENT", 86400,
+            {"reason": "approved safe updater", "targetVersion": "5.3.0", "previousVersion": "5.2.2"})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1, "status": status})
+        unsafe = {"previousVersion": "5.2.2", "version": "5.3.0", "identityRetained": True,
+            "pendingOutboxCount": 1, "selfTest": {"status": "PASS"}}
+        with self.assertRaisesRegex(Exception, "requires the requested version"):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
+                "status": "SUCCESS", "result": unsafe})
+        safe = {**unsafe, "pendingOutboxCount": 0}
+        self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
+            "status": "SUCCESS", "result": safe})
+        event = self.ledger.history("agent-1")[0]["events"][-1]["detail"]["result"]
+        self.assertEqual(event["selfTestStatus"], "PASS")
+        self.assertNotIn("checks", event)
 
     def test_self_test_result_is_bounded_and_does_not_change_execution_state(self) -> None:
         payload = {"reason": "operator readiness verification", "scope": "read-only"}
@@ -239,6 +268,84 @@ class AgentCommandInboxTests(unittest.TestCase):
 
 
 class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_update_agent_requires_drained_empty_outbox_and_acks_only_after_boot_self_test(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target_version = "99.0.0"
+            config = AgentConfig(server_url="https://crawler.example", display_name="fixture",
+                max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent",
+                trusted_signer_thumbprints=("A" * 40,))
+            launcher = Mock(return_value=True)
+            old_agent = DistributedCrawlerAgent(project_root=root, config=config, update_launcher=launcher)
+            old_agent._remote_execution_state = "DRAINED"
+            drain = {"commandId": "update-drain-1", "sequence": 1, "type": "DRAIN",
+                "payload": {"reason": "safe updater rehearsal"}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            old_agent.store.begin_server_command(drain)
+            old_agent.store.set_server_command_running(drain["commandId"])
+            old_agent.store.set_drain_command(drain["commandId"], 1, "DRAINING")
+            old_agent.store.complete_drain_command(drain["commandId"], 1)
+            identity = old_agent.client_id
+            command = {"commandId": "update-agent-1", "sequence": 2, "type": "UPDATE_AGENT",
+                "payload": {"reason": "approved local updater test", "targetVersion": target_version,
+                    "previousVersion": AGENT_VERSION},
+                "createdAt": utc_now().isoformat(), "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            await old_agent._process_command_batch({"commands": [command], "latestCommandSequence": 2,
+                "desiredExecutionState": "DRAINED", "appliedExecutionState": "DRAINED",
+                "serverLastProcessedCommandSequence": 1})
+            launcher.assert_called_once()
+            self.assertTrue(old_agent.stop_event.is_set())
+            self.assertEqual(old_agent.store.server_command_status("update-agent-1"), "RUNNING")
+            self.assertEqual(old_agent.store.agent_update_journal(), {
+                "commandId": "update-agent-1", "targetVersion": target_version,
+                "previousVersion": AGENT_VERSION,
+                "stage": "INSTALLING", "clientId": identity, "selfTestStatus": "PENDING",
+            })
+
+            with patch("engine.distributed.client_agent.AGENT_VERSION", target_version):
+                replacement = DistributedCrawlerAgent(project_root=root, config=config)
+                replacement._remote_execution_state = "DRAINED"
+                replacement.store.reconcile_remote_execution_state("DRAINED")
+                with patch.object(replacement, "_run_self_test", return_value={"status": "PASS", "checks": {}}):
+                    await replacement._process_command_batch({"commands": [command], "latestCommandSequence": 2,
+                        "desiredExecutionState": "DRAINED", "appliedExecutionState": "DRAINED",
+                        "serverLastProcessedCommandSequence": 1})
+                self.assertEqual(replacement.store.server_command_status("update-agent-1"), "SUCCESS")
+                self.assertEqual(replacement.store.client_id(), identity)
+                self.assertEqual(replacement.store.drain_outbox_count(), 0)
+                self.assertEqual(replacement.store.agent_update_journal()["stage"], "ACKED")
+                self.assertEqual(replacement.outbound_queue.get_nowait()["status"], "RUNNING")
+                update = replacement.outbound_queue.get_nowait()
+                self.assertEqual(update["status"], "SUCCESS")
+                self.assertTrue(update["result"]["identityRetained"])
+
+    async def test_update_agent_refuses_unacknowledged_outbox_without_launching(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launcher = Mock(return_value=True)
+            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+                server_url="https://crawler.example", display_name="fixture", max_concurrent_inputs=1,
+                limits=AgentLimits(), data_directory=root / "agent", trusted_signer_thumbprints=("A" * 40,)),
+                update_launcher=launcher)
+            agent._remote_execution_state = "DRAINED"
+            drain = {"commandId": "pending-drain-1", "sequence": 1, "type": "DRAIN",
+                "payload": {"reason": "safe updater rehearsal"}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            agent.store.begin_server_command(drain)
+            agent.store.set_server_command_running(drain["commandId"])
+            agent.store.set_drain_command(drain["commandId"], 1, "DRAINING")
+            agent.store.complete_drain_command(drain["commandId"], 1)
+            agent.store.spool_result(task_id="task-pending", lease_id="lease-pending",
+                checksum="checksum", payload={"value": 1})
+            command = {"commandId": "update-agent-pending", "sequence": 2, "type": "UPDATE_AGENT",
+                "payload": {"reason": "approved local updater test", "targetVersion": "99.0.0",
+                    "previousVersion": AGENT_VERSION},
+                "createdAt": utc_now().isoformat(), "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 2})
+            launcher.assert_not_called()
+            self.assertEqual(agent.store.server_command_status(command["commandId"]), "FAILED")
+            self.assertEqual(agent.store.drain_outbox_count(), 1)
+
     async def test_run_self_test_is_read_only_and_reports_all_required_checks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -551,6 +658,34 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentCommandWebSocketTests(unittest.TestCase):
+    def test_update_command_is_rejected_until_a_successful_drain(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'update.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"), agent_environment="test")
+            client = stack.enter_context(TestClient(app))
+            auth = ("operator", "fixture")
+            key = client.post("/api/v1/agent-keys", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "name": "update fixture", "maxWorkers": 1,
+                "crawlers": ["amazon"], "environment": "test",
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+            }).json()["key"]
+            agent_id = client.post("/api/v1/worker/register", headers={"Authorization": "Bearer " + key},
+                json={"requestId": uuid.uuid4().hex, "displayName": "update fixture"}).json()["agentId"]
+            with app.state.store.sessions.begin() as session:
+                session.get(ClientRecord, agent_id).agent_version = "5.2.2"
+            rejected = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "UPDATE_AGENT", "targetVersion": "99.0.0",
+                "reason": "approved test update",
+            })
+            self.assertEqual(rejected.status_code, 409)
+            self.assertIn("DRAINED", rejected.json()["detail"])
+
     def test_self_test_requires_audited_reason_and_is_queued_as_read_only(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

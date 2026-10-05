@@ -246,7 +246,7 @@ class ClientTrayTests(unittest.TestCase):
 
         tray._run_update_agent()
 
-        tray._notify.assert_called_once_with("Có bản Agent mới nhưng tự cập nhật đang tạm khóa cho tới khi DRAIN, cài đặt ký số và rollback được nghiệm thu. Agent hiện tại chưa bị thay đổi.")
+        tray._notify.assert_called_once_with("Để cập nhật an toàn, hãy mở Crawler dashboard, DRAIN agent và chạy UPDATE_AGENT sau khi trạng thái đã DRAINED.")
         tray._confirm.assert_not_called()
         tray._launch_lifecycle_script.assert_not_called()
 
@@ -309,6 +309,21 @@ class PackagedClientTests(unittest.TestCase):
             self.assertEqual(config.proxy_config_path, proxy_path.resolve())
             self.assertEqual([assignment.name for assignment in assignments], ["direct", "fallback-1"])
             self.assertEqual(warnings, [])
+
+    def test_agent_config_keeps_only_valid_out_of_band_signer_pins(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "agent.json"
+            pin = "A" * 40
+            config_path.write_text(json.dumps({"serverUrl": "https://crawler.example",
+                "trustedSignerThumbprints": [pin.lower()]}), encoding="utf-8")
+            config = AgentConfig.load(config_path)
+            self.assertEqual(config.config_file_path, config_path.resolve())
+            self.assertEqual(config.trusted_signer_thumbprints, (pin,))
+
+            config_path.write_text(json.dumps({"serverUrl": "https://crawler.example",
+                "trustedSignerThumbprints": ["not-a-certificate"]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid certificate thumbprint"):
+                AgentConfig.load(config_path)
 
     def test_relative_agent_config_discovers_proxy_config_in_same_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

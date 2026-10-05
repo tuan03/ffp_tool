@@ -30,14 +30,14 @@ test("publication rejects invalid signer configuration", { skip: process.platfor
   assert.match(processResult.stderr + processResult.stdout, /trusted code-signing/);
 });
 
-test("legacy source updater fails closed before touching an installed Agent", { skip: process.platform !== "win32" }, () => {
+test("Agent updater fails closed when the persistent installation config is missing", { skip: process.platform !== "win32" }, () => {
   const processResult = spawnSync("powershell.exe", [
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/update-agent.ps1",
-    "-ServerUrl", "https://crawler.invalid", "-InstallDirectory", "C:/FFP/Agent",
+    "-InstallDirectory", "C:/FFP/Agent", "-ConfigPath", "C:/missing/agent.json",
+    "-CommandId", "fixture-update", "-TargetVersion", "5.3.0", "-AgentProcessId", "12345",
   ], { encoding: "utf8" });
   assert.notEqual(processResult.status, 0);
-  assert.match(processResult.stderr + processResult.stdout, /Automatic Agent updates are disabled/);
-  assert.match(processResult.stderr + processResult.stdout, /No installed files were changed/);
+  assert.match(processResult.stderr + processResult.stdout, /Persistent Agent configuration is missing/);
 });
 
 test("Windows package never copies developer agent or proxy configuration", async () => {
@@ -74,7 +74,13 @@ test("agent release pipeline uses one version and stable asset names", async () 
   assert.match(bootstrap, /Receive-AgentReleaseArtifact/);
   assert.match(policy, /Get-AuthenticodeSignature/);
   assert.match(policy, /githubusercontent\.com/);
-  assert.match(legacyUpdater, /Automatic Agent updates are disabled/);
+  assert.match(legacyUpdater, /trustedSignerThumbprints/);
+  assert.match(legacyUpdater, /Receive-AgentReleaseArtifact/);
+  assert.match(legacyUpdater, /Wait-Process -Id \$AgentProcessId/);
+  assert.match(legacyUpdater, /Start-Process -FilePath \$exePath/);
+  assert.match(installer, /update-agent\.ps1/);
+  assert.match(installer, /agent-release-policy\.ps1/);
+  assert.match(installer, /trustedSignerThumbprints/);
   const [clientDockerfile, clientNginx, sourcePackager] = await Promise.all([
     readFile(new URL("../deploy/client/Dockerfile", import.meta.url), "utf8"),
     readFile(new URL("../deploy/client/nginx.conf", import.meta.url), "utf8"),

@@ -893,6 +893,24 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if not payload.reason or len(payload.reason.strip()) < 10:
                 raise HTTPException(status_code=422, detail="Self-test requires an audited reason of at least 10 characters.")
             command_payload_value = {"reason": payload.reason.strip(), "scope": "read-only"}
+        if payload.type == "UPDATE_AGENT":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Agent update requires an audited reason of at least 10 characters.")
+            if not re.fullmatch(r"\d+\.\d+\.\d+", payload.targetVersion or ""):
+                raise HTTPException(status_code=422, detail="Agent update requires an explicit stable target version.")
+            current_version = command_ledger.current_agent_version(client_id)
+            if (current_version is None or not re.fullmatch(r"\d+\.\d+\.\d+", current_version)
+                    or tuple(map(int, payload.targetVersion.split("."))) <= tuple(map(int, current_version.split(".")))):
+                raise HTTPException(status_code=409, detail="Agent update target must be newer than its reported version.")
+            if not command_ledger.update_allowed(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be DRAINED with every outbox entry ACKed before update.")
+            if not await manager.is_connected(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be online to begin its verified update.")
+            runtime = await manager.runtime_snapshot()
+            if (runtime.get(client_id) or {}).get("executingTaskIds"):
+                raise HTTPException(status_code=409, detail="Agent still has active tasks; wait for DRAIN to complete.")
+            command_payload_value = {"reason": payload.reason.strip(), "targetVersion": payload.targetVersion,
+                "previousVersion": current_version}
         if payload.type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
             is_purge_all = payload.type == "PURGE_ALL_LOCAL_TASKS"
             if is_purge_all and payload.includeRunning:

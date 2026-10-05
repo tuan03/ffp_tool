@@ -485,7 +485,7 @@ class ClientStore:
             raise ValueError("Invalid command sequence.") from None
         if not command_id or command_type not in {
             "PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
-            "RESTART_WORKERS", "RESTART_AGENT",
+            "RESTART_WORKERS", "RESTART_AGENT", "UPDATE_AGENT",
         }:
             raise ValueError("Unsupported or malformed server command.")
         expires_at = str(command.get("expiresAt") or "")
@@ -625,6 +625,30 @@ class ClientStore:
         counts["total"] = (counts["results"] + counts["products"] + counts["telemetry"]
                            + counts["cancelIntents"] + counts["quarantined"])
         return counts
+
+    def agent_update_journal(self) -> dict[str, str] | None:
+        with self._connection() as connection:
+            rows = dict(connection.execute(
+                "SELECT key,value FROM agent_state WHERE key GLOB 'update_journal_*'"
+            ).fetchall())
+        prefix = "update_journal_"
+        journal = {key[len(prefix):]: value for key, value in rows.items()}
+        return journal or None
+
+    def save_agent_update_journal(self, journal: dict[str, str]) -> None:
+        allowed = {"commandId", "targetVersion", "previousVersion", "stage", "clientId", "selfTestStatus"}
+        if (set(journal) != allowed or any(not isinstance(value, str) or not value for value in journal.values())
+                or journal.get("stage") not in {"INSTALLING", "ACKED"}
+                or journal.get("selfTestStatus") not in {"PENDING", "PASS"}):
+            raise ValueError("Agent update journal is malformed.")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("DELETE FROM agent_state WHERE key GLOB 'update_journal_*'")
+            connection.executemany(
+                "INSERT INTO agent_state(key,value) VALUES(?,?)",
+                [(f"update_journal_{key}", value) for key, value in journal.items()],
+            )
+            connection.commit()
 
     def server_command_status(self, command_id: str) -> str | None:
         with self._connection() as connection:

@@ -223,7 +223,7 @@ class TrayApplication:
         if self._version_parts(latest) <= self._version_parts(AGENT_VERSION):
             self._notify(f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất. Không cần cập nhật.")
             return
-        self._notify("Có bản Agent mới nhưng tự cập nhật đang tạm khóa cho tới khi DRAIN, cài đặt ký số và rollback được nghiệm thu. Agent hiện tại chưa bị thay đổi.")
+        self._notify("Để cập nhật an toàn, hãy mở Crawler dashboard, DRAIN agent và chạy UPDATE_AGENT sau khi trạng thái đã DRAINED.")
 
     def _update_agent(self, _icon: Any, _item: Any) -> None:
         self._defer_menu_action(self._run_update_agent, name="ffp-agent-update-confirm")

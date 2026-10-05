@@ -523,6 +523,28 @@ export function AmazonCrawlerPage({
     }
   }
 
+  async function handleAgentUpdate(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || !client.isConnected
+        || client.desiredExecutionState !== "DRAINED" || client.appliedExecutionState !== "DRAINED"
+        || client.activeTasks !== 0) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    const targetVersion = window.prompt("Nhập chính xác version Agent đã phát hành (x.y.z):")?.trim() ?? "";
+    if (!/^\d+\.\d+\.\d+$/.test(targetVersion) || reason.length < 10) return;
+    if (!window.confirm(`Cài Agent ${targetVersion} sau khi xác minh chữ ký, giữ nguyên identity/outbox và chỉ ACK sau boot + self-test PASS?`)) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.updateAgent(client.id, targetVersion, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được yêu cầu cập nhật Agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
   async function handleAgentConfigReload(client: AmazonCrawlerClientSummary): Promise<void> {
     if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
@@ -1690,6 +1712,14 @@ export function AmazonCrawlerPage({
                         className="rounded border border-violet-700 px-2 py-1 text-[11px] text-violet-200 disabled:opacity-50">
                         DRAIN agent
                       </button>
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                        || !client.isConnected || client.desiredExecutionState !== "DRAINED"
+                        || client.appliedExecutionState !== "DRAINED" || client.activeTasks !== 0
+                        || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentUpdate(client)}
+                        className="rounded border border-emerald-700 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-50">
+                        Cập nhật đã DRAINED
+                      </button>
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
@@ -1735,6 +1765,7 @@ export function AmazonCrawlerPage({
                       #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục"
                         : command.type === "DRAIN" ? "Drain agent"
                         : command.type === "RUN_SELF_TEST" ? "Self-test agent"
+                        : command.type === "UPDATE_AGENT" ? "Cập nhật Agent"
                         : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local"
                         : command.type === "PURGE_PENDING_TASKS" ? "Purge pending"
                         : command.type === "RESTART_AGENT" ? "Restart agent" : "Restart workers"} — {command.status}
@@ -1742,6 +1773,12 @@ export function AmazonCrawlerPage({
                       {command.type === "DRAIN" ? <p>{command.status === "SUCCESS"
                         ? "Agent DRAINED sau khi hết task và server ACK toàn bộ outbox."
                         : "Đang chờ task kết thúc và server ACK outbox; timeout/mất mạng không xóa dữ liệu."}</p> : null}
+                      {command.type === "UPDATE_AGENT" && result ? <p>
+                        {typeof result.previousVersion === "string" ? result.previousVersion : "?"} → {typeof result.version === "string" ? result.version : "?"}
+                        {` · identity ${result.identityRetained === true ? "được giữ" : "chưa xác nhận"}`}
+                        {` · outbox còn ${typeof result.pendingOutboxCount === "number" ? result.pendingOutboxCount : "?"}`}
+                        {` · self-test ${typeof result.selfTestStatus === "string" ? result.selfTestStatus : "?"}`}
+                      </p> : null}
                       {command.type === "RUN_SELF_TEST" && result ? <p>Self-test: {typeof result.status === "string" ? result.status : "không rõ"}
                         {typeof result.checks === "object" && result.checks !== null ? ` · ${Object.entries(result.checks as Record<string, unknown>)
                           .map(([name, check]) => `${name}: ${typeof check === "object" && check !== null && "status" in check ? String(check.status) : "không rõ"}`)
