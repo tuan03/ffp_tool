@@ -36,7 +36,8 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Copy Nginx configuration
 COPY deploy/client/nginx.conf /etc/nginx/conf.d/default.conf
 COPY deploy/client/configure-operator-auth.sh /docker-entrypoint.d/10-configure-operator-auth.sh
-RUN chmod 755 /docker-entrypoint.d/10-configure-operator-auth.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.d/10-configure-operator-auth.sh && \
+    chmod 755 /docker-entrypoint.d/10-configure-operator-auth.sh
 
 # Copy 1-command installer scripts so they can be downloaded directly from the web client
 RUN mkdir -p /usr/share/nginx/html/scripts
