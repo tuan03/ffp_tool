@@ -113,11 +113,12 @@ const server = http.createServer(async (req, res) => {
         if (runner === "codex") {
           args = ["exec", "-m", model, "--skip-git-repo-check", prompt];
         } else {
-          args = ["-p", prompt, "--model", model, "--output-format", "json"];
+          args = ["--dangerously-skip-permissions", "--model", model, "--print", prompt];
         }
 
         console.log(`[Bridge] Executing ${runner} with model ${model}...`);
         const proc = spawn(exePath, args, {
+          cwd: "D:\\CODE\\Code_Clone\\ffp_tool",
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -135,14 +136,26 @@ const server = http.createServer(async (req, res) => {
 
         proc.on("close", (code) => {
           console.log(`[Bridge] ${runner} finished with code ${code}`);
+          let finalOutput = stdout.trim();
+          if (runner === "agy" && finalOutput.startsWith("{")) {
+            try {
+              const agyJson = JSON.parse(finalOutput);
+              if (agyJson.response && typeof agyJson.response === "string") {
+                finalOutput = agyJson.response.trim();
+              }
+            } catch {
+              // ignore
+            }
+          }
+
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(
             JSON.stringify({
-              success: code === 0 || stdout.includes("{"),
+              success: code === 0 || finalOutput.includes("{"),
               runner,
               model,
               exitCode: code,
-              output: stdout.trim(),
+              output: finalOutput,
               error: stderr.trim() || undefined,
             })
           );

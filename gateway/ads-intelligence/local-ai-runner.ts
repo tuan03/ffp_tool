@@ -159,7 +159,7 @@ export class LocalAiRunnerService {
       if (runnerId === "codex") {
         args = ["exec", "-m", model, "--skip-git-repo-check", options.prompt];
       } else {
-        args = ["-p", options.prompt, "--model", model, "--output-format", "json"];
+        args = ["--dangerously-skip-permissions", "--model", model, "--print", options.prompt];
       }
 
       const proc = spawn(exePath, args, {
@@ -190,13 +190,25 @@ export class LocalAiRunnerService {
 
       proc.on("close", (code) => {
         clearTimeout(timer);
-        if (code === 0 && stdout.trim()) {
-          resolve(stdout.trim());
+        let finalOutput = stdout.trim();
+        if (runnerId === "agy" && finalOutput.startsWith("{")) {
+          try {
+            const agyJson = JSON.parse(finalOutput);
+            if (agyJson.response && typeof agyJson.response === "string") {
+              finalOutput = agyJson.response.trim();
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (code === 0 && finalOutput) {
+          resolve(finalOutput);
         } else {
           console.warn(`[LocalAiRunnerService] ${runnerId} exited with code ${code}. Stderr: ${stderr}`);
           // If stdout has valid json despite non-zero exit, still try
-          if (stdout.includes("{") && stdout.includes("}")) {
-            resolve(stdout.trim());
+          if (finalOutput.includes("{") && finalOutput.includes("}")) {
+            resolve(finalOutput);
           } else {
             resolve(null);
           }

@@ -154,16 +154,42 @@ JSON OUTPUT SCHEMA:
 
     try {
       let cleanJson = rawText.trim();
+      // Unwrap markdown code fences if model returned ```json ... ```
+      if (cleanJson.includes("```json")) {
+        const fenceStart = cleanJson.indexOf("```json") + 7;
+        const fenceEnd = cleanJson.indexOf("```", fenceStart);
+        if (fenceEnd !== -1) {
+          cleanJson = cleanJson.substring(fenceStart, fenceEnd).trim();
+        }
+      } else if (cleanJson.includes("```")) {
+        const fenceStart = cleanJson.indexOf("```") + 3;
+        const fenceEnd = cleanJson.indexOf("```", fenceStart);
+        if (fenceEnd !== -1) {
+          cleanJson = cleanJson.substring(fenceStart, fenceEnd).trim();
+        }
+      }
+
       const firstBrace = cleanJson.indexOf("{");
       const lastBrace = cleanJson.lastIndexOf("}");
       if (firstBrace !== -1 && lastBrace !== -1) {
         cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
       }
 
-      const parsed = JSON.parse(cleanJson) as AiStrategicReport;
-      if (parsed.executiveSummary && Array.isArray(parsed.rootCauseHypotheses)) {
+      let parsed = JSON.parse(cleanJson) as Record<string, unknown>;
+      // If output is an AGY wrapper envelope containing `response` string
+      if (parsed.response && typeof parsed.response === "string") {
+        const innerText = parsed.response.trim();
+        const innerStart = innerText.indexOf("{");
+        const innerEnd = innerText.lastIndexOf("}");
+        if (innerStart !== -1 && innerEnd !== -1) {
+          parsed = JSON.parse(innerText.substring(innerStart, innerEnd + 1)) as Record<string, unknown>;
+        }
+      }
+
+      const report = parsed as unknown as AiStrategicReport;
+      if (report.executiveSummary && Array.isArray(report.rootCauseHypotheses)) {
         return {
-          ...parsed,
+          ...report,
           storeId: profile.storeId,
           generatedAt: new Date().toISOString(),
           modelUsed: `${targetRunner}:${targetModel}`,
