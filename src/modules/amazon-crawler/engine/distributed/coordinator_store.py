@@ -28,6 +28,8 @@ from .coordinator_models import (
     CrawlJob,
     CrawlProductItem,
     CrawlTask,
+    ArchivedTaskAttempt,
+    CrawlerDlqAction,
     InvalidJobInput,
     JobStopClientCleanup,
     JobEvent,
@@ -38,14 +40,15 @@ from .coordinator_models import (
     UploadReceipt,
     CrawlTelemetryEvent,
 )
-from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, MAX_CRAWL_FAILURES, payload_checksum, settings_fingerprint, utc_iso, utc_now
+from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from .protocol import product_source_key as _source_key
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
+from .retry_taxonomy import classify_task_error, parse_retry_after
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
 
-TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+TERMINAL_TASK_STATUSES = {"completed", "failed", "dead_letter", "dead_letter_deleted", "cancelled"}
 TERMINAL_PRODUCT_STATUSES = {"completed", "failed", "reconciliation_required", "cancelled", "rejected", "deleted"}
 ACTIVE_PRODUCT_STATUSES = {
     "received", "normalizing", "seo", "image_processing", "syncing",
@@ -216,7 +219,7 @@ class CoordinatorStore(CoordinatorObservability):
         if total == 0:
             job.status = "partial" if job.rejected_inputs else "completed"
             job.completed_at = utc_now()
-        elif statuses.get("completed", 0) + statuses.get("failed", 0) + statuses.get("cancelled", 0) == total:
+        elif statuses.get("completed", 0) + statuses.get("failed", 0) + statuses.get("dead_letter", 0) + statuses.get("dead_letter_deleted", 0) + statuses.get("cancelled", 0) == total:
             product_statuses = Counter(session.scalars(
                 select(CrawlProductItem.status).where(CrawlProductItem.job_id == job_id)
             ).all())
@@ -242,7 +245,7 @@ class CoordinatorStore(CoordinatorObservability):
                 job.completed_at = None
             else:
                 if (job.settings or {}).get("channel") == "pinterest":
-                    if statuses.get("failed", 0) == total:
+                    if statuses.get("failed", 0) + statuses.get("dead_letter", 0) + statuses.get("dead_letter_deleted", 0) == total:
                         job.status = "failed"
                     elif (job.settings or {}).get("stage") in {"crawl", "crawl_and_review"}:
                         job.status = "ready_for_review"
@@ -254,7 +257,7 @@ class CoordinatorStore(CoordinatorObservability):
                         product_statuses.get(status, 0)
                         for status in {"failed", "reconciliation_required", "cancelled", "rejected"}
                     )
-                    job.status = "partial" if statuses.get("failed", 0) or job.rejected_inputs or product_failed else "completed"
+                    job.status = "partial" if statuses.get("failed", 0) or statuses.get("dead_letter", 0) or statuses.get("dead_letter_deleted", 0) or job.rejected_inputs or product_failed else "completed"
                     job.completed_at = utc_now()
         elif statuses.get("leased", 0) or statuses.get("running", 0) or statuses.get("completed", 0):
             job.status = "running"
@@ -314,8 +317,8 @@ class CoordinatorStore(CoordinatorObservability):
                     session.add(CrawlTask(
                         id=_id(), job_id=job.id, ordinal=ordinal, source=source,
                         asin=normalized.asin, canonical_url=normalized.canonical_url,
-                        status="failed" if is_terminal else "queued",
-                        last_error=negative,
+                        status="dead_letter" if is_terminal else "queued",
+                        last_error=classify_task_error(negative) if negative is not None else None,
                         completed_at=utc_now() if is_terminal else None,
                     ))
                     accepted += 1
@@ -597,7 +600,9 @@ class CoordinatorStore(CoordinatorObservability):
                 session.add(client)
             client.display_name = str(hello.get("displayName") or client.display_name)
             client.status = "online"
-            client.agent_version = str(hello.get("agentVersion") or "unknown")
+            client.agent_version = str(hello.get("agentVersion") or "unknown")[:32]
+            client.crawler_version = str(hello.get("crawlerVersion") or client.agent_version or "unknown")[:64]
+            client.parser_version = str(hello.get("parserVersion") or "unknown")[:64]
             client.protocol_version = str(hello.get("protocolVersion") or "unknown")
             client.max_concurrent_inputs = max(
                 1,
@@ -865,6 +870,8 @@ class CoordinatorStore(CoordinatorObservability):
                 .with_for_update(of=CrawlTask, skip_locked=True)
             ).all()
             for task in tasks:
+                if task.next_retry_at is not None and _as_utc(task.next_retry_at) > now:
+                    continue
                 job = session.get(CrawlJob, task.job_id)
                 job_settings = dict(job.settings if job else {})
                 channel = str(job_settings.get("channel", "amazon")).lower()
@@ -877,10 +884,13 @@ class CoordinatorStore(CoordinatorObservability):
                 amazon_zip = str(job_settings.get("amazonZip") or "90001")
                 negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now) if channel == "amazon" else None
                 if negative is not None:
-                    task.last_error = negative
+                    task.last_error = classify_task_error(negative)
                     if negative.get("retryable") is False:
-                        task.status = "failed"
+                        task.status = "dead_letter"
                         task.completed_at = now
+                        self._event(session, task.job_id, "task_dead_lettered", {
+                            "taskId": task.id, "errorCode": task.last_error["errorCode"], "reason": "permanent_error",
+                        })
                         self._refresh_job(session, task.job_id)
                         continue
                 retry_after = (task.last_error or {}).get("retryAfter")
@@ -903,6 +913,7 @@ class CoordinatorStore(CoordinatorObservability):
                 task.status = "leased"
                 task.assigned_client_id = client_id
                 task.lease_id = lease_id
+                task.next_retry_at = None
                 job_deadline = _as_utc(job.created_at) + timedelta(seconds=float(job.settings.get("jobTimeoutSeconds", 21600)))
                 asin_deadline = now + timedelta(seconds=float(job.settings.get("asinTimeoutSeconds", 1800)))
                 lease_seconds = self._task_lease_duration(session, task)
@@ -911,7 +922,10 @@ class CoordinatorStore(CoordinatorObservability):
                 ordinal = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0) + 1
                 attempt = TaskAttempt(
                     id=_id(), task_id=task.id, client_id=client_id,
-                    lease_id=lease_id, status="leased", leased_at=now,
+                    lease_id=lease_id, status="leased", leased_at=now, started_at=now,
+                    agent_version=client.agent_version or "unknown",
+                    crawler_version=client.crawler_version or client.agent_version or "unknown",
+                    parser_version=client.parser_version or "unknown",
                 )
                 session.add(attempt)
                 self.record_task_trace(session, task, attempt, "task_retry" if ordinal > 1 else "task_leased", ordinal=ordinal)
@@ -977,7 +991,8 @@ class CoordinatorStore(CoordinatorObservability):
                           "retryAfter": utc_iso(utc_now() + timedelta(seconds=retry_delay(1, base=30)))})
         if error.get("status") == "partial":
             error["resumeClientId"] = client_id
-        retryable = bool(error.get("retryable", True))
+        error = classify_task_error(error)
+        retryable = bool(error["retryable"])
         with self.sessions.begin() as session:
             task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
             if task is None:
@@ -995,12 +1010,13 @@ class CoordinatorStore(CoordinatorObservability):
             task.failure_count += 1
             if retryable:
                 now = utc_now()
-                try:
-                    minimum_delay = max(0, (datetime.fromisoformat(str(error.get("retryAfter")).replace("Z", "+00:00")) - now).total_seconds())
-                except (ValueError, TypeError):
-                    minimum_delay = 0
+                retry_after = parse_retry_after(error.get("retryAfter"), now=now)
+                minimum_delay = max(0, (retry_after - now).total_seconds()) if retry_after else 0
                 seconds = retry_delay(task.failure_count, base=120 if error.get("reason") == "captcha" else 30, retry_after=minimum_delay)
-                error["retryAfter"] = utc_iso(now + timedelta(seconds=seconds))
+                task.next_retry_at = now + timedelta(seconds=seconds)
+                error["retryAfter"] = utc_iso(task.next_retry_at)
+            else:
+                task.next_retry_at = None
             task.last_error = error
             job = session.get(CrawlJob, task.job_id)
             job_settings = job.settings if job else {}
@@ -1011,18 +1027,25 @@ class CoordinatorStore(CoordinatorObservability):
                     self._store_negative(session, CAPTCHA_COOLDOWN_KEY, error)
                 if error.get("reason") in {"http_429", "http_503"}:
                     self._store_negative(session, f"{CLIENT_RATE_COOLDOWN_PREFIX}{client_id}", error)
-            task.status = "queued" if retryable and task.failure_count < MAX_CRAWL_FAILURES else "failed"
-            if task.status == "failed":
+            task.status = "queued" if retryable and task.failure_count < task.max_retry else "dead_letter"
+            if task.status == "dead_letter":
                 task.completed_at = utc_now()
             attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == lease_id))
             if attempt:
                 attempt.status = "failed"
                 attempt.error = error
+                attempt.error_code = str(error["errorCode"])
+                attempt.error_message = str(error.get("message") or "Crawler task failed.")[:1000]
                 attempt.finished_at = utc_now()
+                attempt.duration_ms = max(0, int((attempt.finished_at - _as_utc(attempt.started_at)).total_seconds() * 1000))
             task.assigned_client_id = None
             task.lease_id = None
             task.lease_expires_at = None
-            self._event(session, task.job_id, "task_failed", {"taskId": task.id, "retry": task.status == "queued", "error": error})
+            event_payload = {"taskId": task.id, "retry": task.status == "queued", "error": error}
+            # Keep the established failure event for existing observability consumers.
+            self._event(session, task.job_id, "task_failed", event_payload)
+            if task.status == "dead_letter":
+                self._event(session, task.job_id, "task_dead_lettered", event_payload)
             self._refresh_job(session, task.job_id)
             return {"status": task.status, "failureCount": task.failure_count}
 
@@ -1113,6 +1136,7 @@ class CoordinatorStore(CoordinatorObservability):
                 checksum=checksum, payload=stored_payload,
             ))
             task.status = "completed"
+            task.next_retry_at = None
             job = session.get(CrawlJob, task.job_id)
             amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
             negative = session.get(CoordinatorState, self._negative_key(task.asin, amazon_zip))
@@ -1124,6 +1148,8 @@ class CoordinatorStore(CoordinatorObservability):
             task.lease_expires_at = None
             attempt.status = "completed"
             attempt.finished_at = utc_now()
+            attempt.result_checksum = checksum
+            attempt.duration_ms = max(0, int((attempt.finished_at - _as_utc(attempt.started_at)).total_seconds() * 1000))
             completion_event: dict[str, Any] = {"taskId": task.id, "clientId": client_id}
             if str((job.settings if job else {}).get("channel") or "").lower() == "pinterest":
                 candidate_count = len(payload.get("candidates")) if isinstance(payload.get("candidates"), list) else 0
@@ -2303,13 +2329,26 @@ class CoordinatorStore(CoordinatorObservability):
                     error = CrawlTimeout("asin", started=time.monotonic() - elapsed).as_error(task.source)
                     error.update({"elapsedMs": round(elapsed * 1000), "retryAfter": utc_iso(now + timedelta(seconds=retry_delay(task.failure_count + 1, base=30))),
                                   "attempt": task.failure_count + 1, "resumeClientId": task.assigned_client_id})
-                    task.failure_count += 1
-                    task.last_error = error
+                else:
+                    error = {"status": "network_error", "reason": "lease_expired", "retryable": True,
+                             "message": "Agent lease expired before a durable result was accepted."}
+                error = classify_task_error(error)
+                task.failure_count += 1
+                task.last_error = error
+                retry_after = parse_retry_after(error.get("retryAfter"), now=now)
+                minimum_delay = max(0, (retry_after - now).total_seconds()) if retry_after else 0
+                task.next_retry_at = now + timedelta(seconds=retry_delay(
+                    task.failure_count, base=30, retry_after=minimum_delay,
+                ))
+                error["retryAfter"] = utc_iso(task.next_retry_at)
+                if task.status != "cancelling":
                     job = session.get(CrawlJob, task.job_id)
-                    self._store_negative(session, self._negative_key(task.asin, str(job.settings.get("amazonZip", "90001"))), error)
-                    self._event(session, task.job_id, "task_timed_out", {"taskId": task.id, "error": error})
-                task.status = "failed" if task.failure_count >= MAX_CRAWL_FAILURES else "queued"
-                if task.status == "failed":
+                    if deadline is not None and job is not None:
+                        self._store_negative(session, self._negative_key(task.asin, str(job.settings.get("amazonZip", "90001"))), error)
+                    self._event(session, task.job_id, "task_timed_out" if deadline is not None else "task_lease_expired",
+                                {"taskId": task.id, "error": error})
+                task.status = "queued" if task.failure_count < task.max_retry else "dead_letter"
+                if task.status == "dead_letter":
                     task.completed_at = now
                 task.assigned_client_id = None
                 task.lease_id = None
@@ -2319,9 +2358,12 @@ class CoordinatorStore(CoordinatorObservability):
                 if old_lease:
                     attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == old_lease))
                     if attempt:
-                        attempt.status = "failed" if deadline is not None and now >= deadline else "abandoned"
-                        attempt.error = task.last_error if attempt.status == "failed" else attempt.error
+                        attempt.status = "failed"
+                        attempt.error = task.last_error
+                        attempt.error_code = str(task.last_error.get("errorCode") or "UNKNOWN")
+                        attempt.error_message = str(task.last_error.get("message") or "Lease expired.")[:1000]
                         attempt.finished_at = now
+                        attempt.duration_ms = max(0, int((now - _as_utc(attempt.started_at)).total_seconds() * 1000))
                 self._event(session, task.job_id, "task_requeued", {"taskId": task.id, "reason": "lease_expired"})
             stopped_items = session.scalars(select(CrawlProductItem).where(
                 CrawlProductItem.status == "cancelling",
@@ -2840,6 +2882,25 @@ class CoordinatorStore(CoordinatorObservability):
     @staticmethod
     def _purge_job_rows(session, job_id: str) -> None:
         task_ids = session.scalars(select(CrawlTask.id).where(CrawlTask.job_id == job_id)).all()
+        if task_ids:
+            for attempt in session.scalars(select(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids))).all():
+                if session.get(ArchivedTaskAttempt, attempt.id) is not None:
+                    continue
+                session.add(ArchivedTaskAttempt(
+                    id=attempt.id,
+                    task_id=attempt.task_id,
+                    job_id=job_id,
+                    snapshot={
+                        "clientId": attempt.client_id, "leaseId": attempt.lease_id,
+                        "status": attempt.status, "error": attempt.error,
+                        "errorCode": attempt.error_code, "errorMessage": attempt.error_message,
+                        "agentVersion": attempt.agent_version, "crawlerVersion": attempt.crawler_version,
+                        "parserVersion": attempt.parser_version, "leasedAt": utc_iso(attempt.leased_at),
+                        "startedAt": utc_iso(attempt.started_at),
+                        "finishedAt": utc_iso(attempt.finished_at) if attempt.finished_at else None,
+                        "durationMs": attempt.duration_ms, "resultChecksum": attempt.result_checksum,
+                    },
+                ))
         session.execute(delete(JobEvent).where(JobEvent.job_id == job_id))
         session.execute(delete(CrawlTelemetryEvent).where(CrawlTelemetryEvent.job_id == job_id))
         session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id == job_id))
@@ -2894,25 +2955,151 @@ class CoordinatorStore(CoordinatorObservability):
             self._purge_job_rows(session, job_id)
             return True
 
-    def retry_failed(self, job_id: str) -> dict[str, Any] | None:
-        with self.sessions.begin() as session:
-            job = session.get(CrawlJob, job_id)
-            if job is None:
+    def list_dead_letter_tasks(
+        self, *, job_id: str | None = None, error_code: str | None = None, limit: int = 100, offset: int = 0,
+    ) -> dict[str, Any]:
+        query = select(CrawlTask).where(CrawlTask.status == "dead_letter")
+        count_query = select(func.count(CrawlTask.id)).where(CrawlTask.status == "dead_letter")
+        if job_id:
+            query = query.where(CrawlTask.job_id == job_id)
+            count_query = count_query.where(CrawlTask.job_id == job_id)
+        if error_code:
+            query = query.where(CrawlTask.last_error["errorCode"].as_string() == error_code.upper())
+            count_query = count_query.where(CrawlTask.last_error["errorCode"].as_string() == error_code.upper())
+        bounded_limit = max(1, min(100, int(limit)))
+        bounded_offset = max(0, int(offset))
+        with self.sessions() as session:
+            total = int(session.scalar(count_query) or 0)
+            tasks = session.scalars(query.order_by(CrawlTask.completed_at.desc(), CrawlTask.id).limit(bounded_limit).offset(bounded_offset)).all()
+            items = []
+            for task in tasks:
+                attempt_count = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0)
+                items.append({
+                    "taskId": task.id, "jobId": task.job_id, "asin": task.asin, "status": task.status,
+                    "failureCount": task.failure_count, "maxRetry": task.max_retry,
+                    "requeueCount": task.requeue_count, "attemptCount": attempt_count,
+                    "errorCode": str((task.last_error or {}).get("errorCode") or "UNKNOWN"),
+                    "errorMessage": str((task.last_error or {}).get("message") or "Crawler task failed.")[:1000],
+                    "nextRetryAt": utc_iso(task.next_retry_at) if task.next_retry_at else None,
+                    "createdAt": utc_iso(task.created_at),
+                    "failedAt": utc_iso(task.completed_at) if task.completed_at else None,
+                })
+            return {"items": items, "total": total, "limit": bounded_limit, "offset": bounded_offset}
+
+    def list_task_attempts(self, task_id: str) -> list[dict[str, Any]] | None:
+        with self.sessions() as session:
+            task = session.get(CrawlTask, task_id)
+            archived = list(session.scalars(select(ArchivedTaskAttempt).where(
+                ArchivedTaskAttempt.task_id == task_id,
+            ).order_by(ArchivedTaskAttempt.archived_at, ArchivedTaskAttempt.id)))
+            attempts = list(session.scalars(select(TaskAttempt).where(
+                TaskAttempt.task_id == task_id,
+            ).order_by(TaskAttempt.leased_at, TaskAttempt.id)))
+            if task is None and not archived:
                 return None
-            retried = 0
-            for task in session.scalars(select(CrawlTask).where(CrawlTask.job_id == job_id, CrawlTask.status == "failed")):
-                task.status = "queued"
-                task.failure_count = 0
-                task.last_error = None
-                task.completed_at = None
-                retried += 1
-            if retried:
-                job.status = "queued"
-                job.completed_at = None
-            self._event(session, job_id, "failed_tasks_retried", {"count": retried})
-            snapshot = self._job_snapshot(session, job)
-            snapshot["retried"] = retried
-            return snapshot
+            result = [{"attemptId": entry.id, "taskId": entry.task_id, "jobId": entry.job_id,
+                       **entry.snapshot, "archived": True} for entry in archived]
+            result.extend({
+                "attemptId": attempt.id, "taskId": attempt.task_id, "jobId": task.job_id if task else None,
+                "clientId": attempt.client_id, "leaseId": attempt.lease_id, "status": attempt.status,
+                "error": attempt.error, "errorCode": attempt.error_code, "errorMessage": attempt.error_message,
+                "agentVersion": attempt.agent_version, "crawlerVersion": attempt.crawler_version,
+                "parserVersion": attempt.parser_version, "leasedAt": utc_iso(attempt.leased_at),
+                "startedAt": utc_iso(attempt.started_at),
+                "finishedAt": utc_iso(attempt.finished_at) if attempt.finished_at else None,
+                "durationMs": attempt.duration_ms, "resultChecksum": attempt.result_checksum, "archived": False,
+            } for attempt in attempts)
+            return result
+
+    def _apply_dlq_action(
+        self, *, action: str, task_ids: list[str] | None, job_id: str | None, error_code: str | None,
+        expected_count: int, request_id: str, actor: str, reason: str,
+    ) -> dict[str, Any]:
+        normalized_id = request_id.strip().lower()
+        normalized_reason = redact(reason, limit=500)
+        if not normalized_id or len(normalized_id) > 64 or len(normalized_reason.strip()) < 10:
+            raise ValueError("A request ID and audit reason of at least 10 characters are required.")
+        requested_ids = list(dict.fromkeys(task_ids or []))
+        if len(requested_ids) > 100 or any(not task_id or len(task_id) > 40 for task_id in requested_ids):
+            raise ValueError("DLQ actions are limited to 100 valid task IDs.")
+        if not requested_ids and not error_code:
+            raise ValueError("Specify task IDs or an error-code filter.")
+        scope_value = {"jobId": job_id, "errorCode": error_code.upper() if error_code else None,
+                       "taskIds": requested_ids, "expectedCount": expected_count}
+        with self.sessions.begin() as session:
+            previous = session.get(CrawlerDlqAction, normalized_id)
+            if previous is not None:
+                if (previous.action != action or previous.actor != actor or previous.reason != normalized_reason
+                        or previous.scope != scope_value):
+                    raise ValueError("Request ID was already used for a different DLQ action.")
+                return dict(previous.outcome)
+            statement = select(CrawlTask).where(CrawlTask.status == "dead_letter").with_for_update()
+            if requested_ids:
+                statement = statement.where(CrawlTask.id.in_(requested_ids))
+            else:
+                statement = statement.where(CrawlTask.last_error["errorCode"].as_string() == str(error_code).upper())
+            if job_id:
+                statement = statement.where(CrawlTask.job_id == job_id)
+            selected = list(session.scalars(statement.order_by(CrawlTask.id).limit(101)))
+            if not requested_ids and len(selected) > 100:
+                raise ValueError("Filter matches more than 100 tasks; narrow the DLQ action scope.")
+            if len(selected) != expected_count or not selected:
+                raise ValueError("DLQ scope changed; refresh the preview and confirm the exact task count.")
+            if requested_ids and len(selected) != len(requested_ids):
+                raise ValueError("One or more selected tasks are not currently in the dead-letter queue.")
+            changed_ids: list[str] = []
+            for task in selected:
+                if action == "requeue":
+                    task.status = "queued"
+                    task.failure_count = 0
+                    task.next_retry_at = None
+                    task.requeue_count += 1
+                    task.completed_at = None
+                    previous_error = task.last_error or {}
+                    task.last_error = {**previous_error, "retryAfter": None,
+                                       "manualRequeueAt": utc_iso(), "manualRequeueBy": actor}
+                    job = session.get(CrawlJob, task.job_id)
+                    if job is not None:
+                        job.status = "queued"
+                        job.completed_at = None
+                elif action == "delete":
+                    task.status = "dead_letter_deleted"
+                else:
+                    raise ValueError("Unknown DLQ action.")
+                changed_ids.append(task.id)
+                self._refresh_job(session, task.job_id)
+            outcome = {"action": action, "changed": len(changed_ids), "taskIds": changed_ids,
+                       "jobId": job_id, "errorCode": error_code.upper() if error_code else None}
+            session.add(CrawlerDlqAction(
+                request_id=normalized_id, actor=actor, action=action, reason=normalized_reason,
+                scope=scope_value,
+                outcome=outcome,
+            ))
+            for task in selected:
+                self._event(session, task.job_id, f"dlq_{action}", {
+                    "taskId": task.id, "actor": actor, "reason": normalized_reason, "requestId": normalized_id,
+                })
+            return outcome
+
+    def requeue_dead_letter_tasks(
+        self, task_ids: list[str] | None = None, *, job_id: str | None = None, error_code: str | None = None,
+        expected_count: int, request_id: str, actor: str, reason: str,
+    ) -> dict[str, Any]:
+        return self._apply_dlq_action(action="requeue", task_ids=task_ids, job_id=job_id,
+            error_code=error_code, expected_count=expected_count, request_id=request_id, actor=actor, reason=reason)
+
+    def delete_dead_letter_task(
+        self, task_id: str, *, actor: str, reason: str, request_id: str | None = None,
+    ) -> bool:
+        outcome = self.delete_dead_letter_tasks([task_id], expected_count=1,
+            request_id=request_id or _id(), actor=actor, reason=reason)
+        return int(outcome.get("changed") or 0) == 1
+
+    def delete_dead_letter_tasks(
+        self, task_ids: list[str], *, expected_count: int, request_id: str, actor: str, reason: str,
+    ) -> dict[str, Any]:
+        return self._apply_dlq_action(action="delete", task_ids=task_ids, expected_count=expected_count,
+            request_id=request_id or _id(), actor=actor, reason=reason, job_id=None, error_code=None)
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         with self.sessions() as session:
@@ -2983,7 +3170,9 @@ class CoordinatorStore(CoordinatorObservability):
             phase = "image_processing"
         elif product_counts.get("normalizing") or product_counts.get("received"):
             phase = "normalization"
-        errors = int(job.rejected_inputs) + int(task_counts.get("failed", 0)) + int(product_counts.get("failed", 0))
+        errors = (int(job.rejected_inputs) + int(task_counts.get("failed", 0))
+                  + int(task_counts.get("dead_letter", 0)) + int(task_counts.get("dead_letter_deleted", 0))
+                  + int(product_counts.get("failed", 0)))
         if job.status in {"cancelling", "cancelled"}:
             errors += int(session.scalar(select(func.count(CrawlTask.id)).where(
                 CrawlTask.job_id == job.id, CrawlTask.status != "failed", CrawlTask.last_error["stage"].as_string() == "job",
@@ -3244,14 +3433,16 @@ class CoordinatorStore(CoordinatorObservability):
                                 products[str(product["id"])] = product
                     errors.extend(error for error in result.get("errors", []) if isinstance(error, dict))
                     warnings.extend(str(warning) for warning in result.get("warnings", []) if isinstance(warning, str))
-                if (task.status == "failed" and not task.result) or (task.last_error or {}).get("stage") == "job":
+                if (task.status in {"failed", "dead_letter", "dead_letter_deleted"} and not task.result) or (task.last_error or {}).get("stage") == "job":
                     last_error = task.last_error or {}
                     collect_asins(last_error)
                     errors.append({
                         "source": task.source,
-                        "code": str(last_error.get("code") or "CRAWL_FAILED"),
+                        "code": str(last_error.get("errorCode") or last_error.get("code") or "CRAWL_FAILED"),
                         "message": str(last_error.get("message") or "Crawler failed."),
                         "retryable": bool(last_error.get("retryable", True)),
+                        "attempts": task.failure_count,
+                        "maxRetry": task.max_retry,
                         **{key: last_error[key] for key in (
                             "status", "reason", "retryAfter", "completedAsins", "failedAsins",
                             "retryableAsins", "nonRetryableAsins",
@@ -3319,7 +3510,7 @@ class CoordinatorStore(CoordinatorObservability):
             select(CrawlTask.status, func.count(CrawlTask.id)).where(CrawlTask.job_id == job.id).group_by(CrawlTask.status)
         ).all())
         completed = int(counts.get("completed", 0))
-        failed = int(counts.get("failed", 0))
+        failed = int(counts.get("failed", 0)) + int(counts.get("dead_letter", 0)) + int(counts.get("dead_letter_deleted", 0))
         cancelled = int(counts.get("cancelled", 0))
         tasks = session.scalars(
             select(CrawlTask)
@@ -3356,6 +3547,10 @@ class CoordinatorStore(CoordinatorObservability):
                 "message": str(item.get("message") or task_progress.get("message") or ("Đang chờ client xử lý." if public_status == "queued" else "Đang xử lý trên client.")),
                 "variantCompleted": int(item.get("variantCompleted") or 0),
                 "variantTotal": int(item.get("variantTotal") or 0),
+                "errorCode": str((task.last_error or {}).get("errorCode") or "") or None,
+                "retryCount": task.failure_count,
+                "maxRetry": task.max_retry,
+                "nextRetryAt": utc_iso(task.next_retry_at) if task.next_retry_at else None,
             })
             if public_status == "completed":
                 result_payload = task.result.payload if task.result and isinstance(task.result.payload, dict) else {}
@@ -3533,7 +3728,7 @@ class CoordinatorStore(CoordinatorObservability):
             task_error = next((
                 str(task.last_error.get("message") or "").strip()
                 for task in tasks
-                if task.status == "failed" and isinstance(task.last_error, dict)
+                if task.status in {"failed", "dead_letter", "dead_letter_deleted"} and isinstance(task.last_error, dict)
                 and str(task.last_error.get("message") or "").strip()
             ), "")
             for task in tasks:

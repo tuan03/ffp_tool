@@ -1,8 +1,8 @@
 """Additive, versioned Coordinator schema initialization."""
 
-from sqlalchemy import Column, Integer, MetaData, Table, inspect, select, text
+from sqlalchemy import Column, Index, Integer, MetaData, Table, inspect, select, text
 
-from .coordinator_models import Base, UploadReceipt
+from .coordinator_models import ArchivedTaskAttempt, Base, CrawlTask, CrawlerDlqAction, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
@@ -11,7 +11,7 @@ from .agent_command_ledger import AgentCommand, AgentCommandEvent
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 9
+MIGRATION_VERSION = 10
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -78,3 +78,44 @@ def migrate_coordinator(engine) -> None:
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE crawler_clients ADD COLUMN {name} {definition}"))
             connection.execute(MIGRATIONS.insert().values(version=9))
+            versions.add(9)
+        if 10 not in versions:
+            client_columns = {column["name"] for column in inspect(connection).get_columns("crawler_clients")}
+            client_additions = {
+                "crawler_version": "VARCHAR(64) NOT NULL DEFAULT 'unknown'",
+                "parser_version": "VARCHAR(64) NOT NULL DEFAULT 'unknown'",
+            }
+            for name, definition in client_additions.items():
+                if name not in client_columns:
+                    connection.execute(text(f"ALTER TABLE crawler_clients ADD COLUMN {name} {definition}"))
+            task_columns = {column["name"] for column in inspect(connection).get_columns("crawl_tasks")}
+            task_additions = {
+                "max_retry": "INTEGER NOT NULL DEFAULT 3",
+                "next_retry_at": "TIMESTAMP WITH TIME ZONE",
+                "requeue_count": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in task_additions.items():
+                if name not in task_columns:
+                    connection.execute(text(f"ALTER TABLE crawl_tasks ADD COLUMN {name} {definition}"))
+            existing_indexes = {index["name"] for index in inspect(connection).get_indexes("crawl_tasks")}
+            if "ix_crawl_tasks_next_retry_at" not in existing_indexes:
+                Index("ix_crawl_tasks_next_retry_at", CrawlTask.next_retry_at).create(connection)
+            attempt_columns = {column["name"] for column in inspect(connection).get_columns("task_attempts")}
+            attempt_additions = {
+                "error_code": "VARCHAR(40)",
+                "error_message": "TEXT",
+                "agent_version": "VARCHAR(64) NOT NULL DEFAULT 'unknown'",
+                "crawler_version": "VARCHAR(64) NOT NULL DEFAULT 'unknown'",
+                "parser_version": "VARCHAR(64) NOT NULL DEFAULT 'unknown'",
+                "duration_ms": "INTEGER",
+                "result_checksum": "VARCHAR(64)",
+                "started_at": "TIMESTAMP WITH TIME ZONE",
+            }
+            for name, definition in attempt_additions.items():
+                if name not in attempt_columns:
+                    connection.execute(text(f"ALTER TABLE task_attempts ADD COLUMN {name} {definition}"))
+            connection.execute(text("UPDATE task_attempts SET started_at = leased_at WHERE started_at IS NULL"))
+            connection.execute(text("UPDATE crawl_tasks SET status = 'dead_letter' WHERE status = 'failed'"))
+            ArchivedTaskAttempt.__table__.create(connection, checkfirst=True)
+            CrawlerDlqAction.__table__.create(connection, checkfirst=True)
+            connection.execute(MIGRATIONS.insert().values(version=10))

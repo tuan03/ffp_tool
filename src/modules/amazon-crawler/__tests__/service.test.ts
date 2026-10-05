@@ -583,6 +583,52 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
   assert.equal(requests.at(-1)?.method, "DELETE");
 });
 
+test("job controller reads dead-letter history and submits exact audited actions", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as unknown : null;
+      requests.push({ url, method, body });
+      if (url.includes("/dead-letter/actions")) return jsonResponse({
+        action: "requeue", changed: 1, taskIds: ["task-1"], jobId: null, errorCode: "NETWORK_TIMEOUT",
+      });
+      if (url.includes("/dead-letter?")) return jsonResponse({ items: [{
+        taskId: "task-1", jobId: "job-1", asin: "B0FR4MSS2H", status: "dead_letter",
+        failureCount: 3, maxRetry: 3, requeueCount: 0, attemptCount: 3,
+        errorCode: "NETWORK_TIMEOUT", errorMessage: "timeout", nextRetryAt: null,
+        createdAt: "2026-10-05T00:00:00Z", failedAt: "2026-10-05T00:01:00Z",
+      }], total: 1, limit: 100, offset: 0 });
+      return jsonResponse([{
+        attemptId: "attempt-1", taskId: "task-1", jobId: "job-1", clientId: "agent-1",
+        status: "failed", errorCode: "NETWORK_TIMEOUT", errorMessage: "timeout",
+        agentVersion: "1.2.3", crawlerVersion: "1.2.3", parserVersion: "p4",
+        leasedAt: "2026-10-05T00:00:00Z", startedAt: "2026-10-05T00:00:00Z",
+        finishedAt: "2026-10-05T00:00:05Z", durationMs: 5000, archived: false,
+      }]);
+    },
+  });
+  const listDeadLetters = jobs.listDeadLetterTasks;
+  const listAttempts = jobs.listTaskAttempts;
+  const applyAction = jobs.applyDeadLetterAction;
+  assert.ok(listDeadLetters && listAttempts && applyAction);
+  const page = await listDeadLetters({ errorCode: "NETWORK_TIMEOUT" });
+  assert.equal(page.items[0]?.errorCode, "NETWORK_TIMEOUT");
+  assert.equal((await listAttempts("task-1"))[0]?.parserVersion, "p4");
+  assert.deepEqual(await applyAction({
+    action: "requeue", requestId: "request-1", taskIds: ["task-1"], expectedCount: 1,
+    reason: "Verified timeout is transient and approved retry.",
+  }), { action: "requeue", changed: 1, taskIds: ["task-1"], jobId: null, errorCode: "NETWORK_TIMEOUT" });
+  assert.equal(requests[0]?.url, "http://coordinator.test/api/v1/dead-letter?error_code=NETWORK_TIMEOUT&limit=100&offset=0");
+  assert.equal(requests[2]?.method, "POST");
+  assert.deepEqual(requests[2]?.body, {
+    action: "requeue", requestId: "request-1", taskIds: ["task-1"], expectedCount: 1,
+    reason: "Verified timeout is transient and approved retry.",
+  });
+});
+
 test("cache maintenance targets one ASIN or temporary data through separate endpoints", async () => {
   const requests: string[] = [];
   const jobs = createAmazonCrawlerJobController({

@@ -721,11 +721,57 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
     async def retry_failed(job_id: str) -> dict[str, Any]:
-        async with cache_maintenance_lock:
-            snapshot = await asyncio.to_thread(store.retry_failed, job_id)
-        if snapshot is None:
-            raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        return snapshot
+        raise HTTPException(status_code=410, detail="Bulk retry was replaced by the audited dead-letter queue actions.")
+
+    def require_dlq_operator(request: Request) -> str:
+        if operator_credentials is None:
+            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
+        if not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        return operator_credentials.username
+
+    @app.get("/api/v1/dead-letter")
+    async def list_dead_letter_tasks(
+        request: Request, job_id: str | None = None, error_code: str | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> dict[str, Any]:
+        require_dlq_operator(request)
+        return await asyncio.to_thread(store.list_dead_letter_tasks,
+            job_id=job_id, error_code=error_code, limit=limit, offset=offset)
+
+    @app.get("/api/v1/crawl-tasks/{task_id}/attempts")
+    async def list_task_attempts(task_id: str, request: Request) -> list[dict[str, Any]]:
+        require_dlq_operator(request)
+        attempts = await asyncio.to_thread(store.list_task_attempts, task_id)
+        if attempts is None:
+            raise HTTPException(status_code=404, detail="Crawl task history was not found.")
+        return attempts
+
+    @app.post("/api/v1/dead-letter/actions")
+    async def apply_dead_letter_action(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        actor = require_dlq_operator(request)
+        action = str(payload.get("action") or "")
+        request_id = str(payload.get("requestId") or "")
+        reason = str(payload.get("reason") or "")
+        task_ids = payload.get("taskIds")
+        task_ids = [str(value) for value in task_ids if isinstance(value, str)] if isinstance(task_ids, list) else None
+        expected_count = payload.get("expectedCount")
+        if action not in {"requeue", "delete"} or not isinstance(expected_count, int) or isinstance(expected_count, bool):
+            raise HTTPException(status_code=422, detail="A supported action and exact expectedCount are required.")
+        try:
+            if action == "requeue":
+                outcome = await asyncio.to_thread(store.requeue_dead_letter_tasks,
+                    task_ids, job_id=str(payload["jobId"]) if payload.get("jobId") else None,
+                    error_code=str(payload["errorCode"]) if payload.get("errorCode") else None,
+                    expected_count=expected_count, request_id=request_id, actor=actor, reason=reason)
+            else:
+                if not task_ids:
+                    raise ValueError("Delete requires an explicit task ID scope.")
+                outcome = await asyncio.to_thread(store.delete_dead_letter_tasks,
+                    task_ids, expected_count=expected_count, request_id=request_id, actor=actor, reason=reason)
+            return outcome
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed-syncs")
     def retry_failed_syncs(job_id: str) -> dict[str, Any]:

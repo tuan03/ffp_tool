@@ -2,6 +2,10 @@ import type {
   AmazonAsinChecker,
   AmazonAsinPreflightResult,
   AmazonCrawlerInput,
+  AmazonCrawlerDeadLetterActionInput,
+  AmazonCrawlerDeadLetterActionResult,
+  AmazonCrawlerDeadLetterPage,
+  AmazonCrawlerTaskAttempt,
   AmazonCrawlerAgentRelease,
   AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerCacheClearer,
@@ -797,6 +801,56 @@ export function createAmazonCrawlerJobController({
         `${baseUrl}/api/v1/crawl-tasks/${encodeURIComponent(taskId)}/cancel`,
         { method: "POST" },
       ));
+    },
+    async listDeadLetterTasks(options = {}) {
+      const query = new URLSearchParams();
+      if (options.jobId) query.set("job_id", options.jobId);
+      if (options.errorCode) query.set("error_code", options.errorCode);
+      query.set("limit", String(Math.max(1, Math.min(100, options.limit ?? 100))));
+      query.set("offset", String(Math.max(0, options.offset ?? 0)));
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/dead-letter?${query}`));
+      if (!isRecord(payload) || !Array.isArray(payload.items)
+          || typeof payload.total !== "number" || typeof payload.limit !== "number" || typeof payload.offset !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid dead-letter page.", "INVALID_ENGINE_RESPONSE");
+      }
+      const items = payload.items.filter((value): value is Record<string, unknown> => isRecord(value));
+      return { items: items.map((item) => ({
+        taskId: String(item.taskId ?? ""), jobId: String(item.jobId ?? ""), asin: String(item.asin ?? ""),
+        status: "dead_letter" as const, failureCount: Number(item.failureCount ?? 0), maxRetry: Number(item.maxRetry ?? 0),
+        requeueCount: Number(item.requeueCount ?? 0), attemptCount: Number(item.attemptCount ?? 0),
+        errorCode: String(item.errorCode ?? "UNKNOWN"), errorMessage: String(item.errorMessage ?? ""),
+        nextRetryAt: typeof item.nextRetryAt === "string" ? item.nextRetryAt : null,
+        createdAt: String(item.createdAt ?? ""), failedAt: typeof item.failedAt === "string" ? item.failedAt : null,
+      })), total: payload.total, limit: payload.limit, offset: payload.offset };
+    },
+    async listTaskAttempts(taskId) {
+      const payload = await readJson(await fetchImplementation(
+        `${baseUrl}/api/v1/crawl-tasks/${encodeURIComponent(taskId)}/attempts`,
+      ));
+      if (!Array.isArray(payload)) throw new AmazonCrawlerServiceError("Coordinator returned invalid task attempts.", "INVALID_ENGINE_RESPONSE");
+      return payload.filter((value): value is Record<string, unknown> => isRecord(value)).map((item) => ({
+        attemptId: String(item.attemptId ?? ""), taskId: String(item.taskId ?? taskId),
+        jobId: typeof item.jobId === "string" ? item.jobId : null, clientId: String(item.clientId ?? ""),
+        status: String(item.status ?? "unknown"), errorCode: typeof item.errorCode === "string" ? item.errorCode : null,
+        errorMessage: typeof item.errorMessage === "string" ? item.errorMessage : null,
+        agentVersion: String(item.agentVersion ?? "unknown"), crawlerVersion: String(item.crawlerVersion ?? "unknown"),
+        parserVersion: String(item.parserVersion ?? "unknown"), leasedAt: String(item.leasedAt ?? ""),
+        startedAt: String(item.startedAt ?? ""), finishedAt: typeof item.finishedAt === "string" ? item.finishedAt : null,
+        durationMs: typeof item.durationMs === "number" ? item.durationMs : null, archived: item.archived === true,
+      }));
+    },
+    async applyDeadLetterAction(input: AmazonCrawlerDeadLetterActionInput): Promise<AmazonCrawlerDeadLetterActionResult> {
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/dead-letter/actions`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      }));
+      if (!isRecord(payload) || (payload.action !== "requeue" && payload.action !== "delete")
+          || typeof payload.changed !== "number" || !Array.isArray(payload.taskIds)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid dead-letter action result.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { action: payload.action, changed: payload.changed,
+        taskIds: payload.taskIds.filter((value): value is string => typeof value === "string"),
+        jobId: typeof payload.jobId === "string" ? payload.jobId : null,
+        errorCode: typeof payload.errorCode === "string" ? payload.errorCode : null };
     },
     async invalidateProductCache(asin, amazonZip) {
       const path = `${baseUrl}/api/v1/clients/cache/products/${encodeURIComponent(asin)}`;

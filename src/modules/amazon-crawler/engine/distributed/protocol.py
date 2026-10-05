@@ -135,6 +135,8 @@ def hello_message(
         "type": "hello",
         "protocolVersion": PROTOCOL_VERSION,
         "agentVersion": AGENT_VERSION,
+        "crawlerVersion": AGENT_VERSION,
+        "parserVersion": AGENT_VERSION,
         "clientId": client_id,
         "displayName": display_name,
         "availableSlots": max(0, available_slots),

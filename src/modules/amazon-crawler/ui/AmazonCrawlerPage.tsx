@@ -33,6 +33,7 @@ import {
 import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
+import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
 
 import {
   abortCrawlerJob,
@@ -1393,6 +1394,8 @@ export function AmazonCrawlerPage({
         <h1 className="text-3xl font-bold tracking-tight">Amazon Crawler</h1>
         <p className="mt-2 text-sm text-slate-400">Cào Amazon family, tách product và xử lý Customize — không rewrite dữ liệu.</p>
       </div>
+
+      <AmazonCrawlerDeadLetterPanel controller={amazonCrawlerJobs} />
 
       <section className="rounded-xl border border-slate-700 bg-slate-950/50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

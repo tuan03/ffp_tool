@@ -27,7 +27,7 @@ LOG_FIELDS = set(TRACE_FIELDS) | {
     "hasRunningCrawler",
 }
 ERROR_LOG_FIELDS = set(TRACE_FIELDS) | {
-    "code", "message", "source", "status", "retryable", "elapsedMs", "notFoundConfirmed",
+    "code", "errorCode", "message", "source", "status", "retryable", "elapsedMs", "notFoundConfirmed",
     "completedAsins", "failedAsins", "retryableAsins", "nonRetryableAsins",
 }
 _trace: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("crawl_trace", default={})

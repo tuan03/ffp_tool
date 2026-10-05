@@ -19,6 +19,14 @@ class CoordinatorMigrationTests(unittest.TestCase):
             self.assertIn("global_admission_gate_revision", {
                 column["name"] for column in inspect(engine).get_columns("crawler_clients")
             })
+            self.assertTrue({"next_retry_at", "max_retry", "requeue_count"}.issubset({
+                column["name"] for column in inspect(engine).get_columns("crawl_tasks")
+            }))
+            self.assertTrue({"error_code", "agent_version", "crawler_version", "parser_version", "duration_ms"}.issubset({
+                column["name"] for column in inspect(engine).get_columns("task_attempts")
+            }))
+            self.assertIn("archived_task_attempts", inspect(engine).get_table_names())
+            self.assertIn("crawler_dlq_actions", inspect(engine).get_table_names())
             with engine.connect() as connection:
                 state = connection.execute(
                     select(GlobalAdmissionGate.state).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)

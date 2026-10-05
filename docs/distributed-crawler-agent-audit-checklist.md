@@ -1,6 +1,6 @@
 # Distributed Crawler Agent — checklist audit và nâng cấp từng task
 
-> Trạng thái: **TASK 13 CHỜ NGƯỜI DÙNG TEST**. Task 12 đã được duyệt qua yêu cầu chuyển tiếp. Xem [báo cáo Task 13](audits/distributed-crawler/task-13-agent-key-creation.md). Tạo key chỉ có trong app factory bật operator; chưa bật auth trên runtime/VPS.
+> Trạng thái hiện tại: **Tasks 33–35 đã qua source QA local, chờ người dùng review/nghiệm thu**; 16 test engine opt-in bị skip, bao gồm gate PostgreSQL nên chưa xác nhận runtime PostgreSQL. Xem [báo cáo Tasks 33–35](audits/distributed-crawler/task-33-35-retry-attempt-dlq.md). Các ô checklist chỉ được tick sau nghiệm thu; chưa push, rebuild/restart Docker hoặc cutover.
 > Nhánh làm việc theo yêu cầu: `cua_pro`. Không tự tạo nhánh, merge, push, deploy VPS hoặc publish release.
 > Tài liệu kỹ thuật: [Kế hoạch nâng cấp](distributed-crawler-agent-upgrade-plan.md).
 > Nguồn yêu cầu: `D:\Shopify_Workspace\distributed_crawler_agent_server_task_spec.md`, mục 1–58.
@@ -182,6 +182,8 @@ Tasks 25–27 đã được triển khai gộp trên `cua_pro` local; quyết đ
 | [ ] | 36 | Dashboard thống nhất states/commands/backlog | 3, 6–7, 21–22, 47–48 (UI/heartbeat) | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Duyệt màn agent/job/key/command hiện có |
 | [ ] | 37 | Regression consumers chung và runtime | 49, 56 (regression; thêm ràng buộc FFP) | 36; G3/G4 | Amazon Reviews/Pinterest/Review Studio/pipeline/internal routes; đúng ba container | Smoke các màn/flow liên quan trên test instance |
 | [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Xem báo cáo + demo, phân biệt giả và máy thật |
+
+Tasks 33–35 đã có source implementation và assistant QA local theo báo cáo liên kết ở đầu file; trạng thái vẫn để `[ ]` cho tới khi người dùng review. D9 chưa có ngưỡng retention được duyệt: hiện không tự xóa attempt/archive, vì vậy chính sách dung lượng/retention là giới hạn cần chốt trước khi coi Task 34 được nghiệm thu đầy đủ.
 
 UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhất và lấp khoảng thiếu, không dồn toàn bộ khả năng quan sát tới cuối. Nếu thiếu máy/tài nguyên cho Task 38, ghi CHỜ ĐIỀU KIỆN; không dùng test nhỏ để tự tick MVP.
 

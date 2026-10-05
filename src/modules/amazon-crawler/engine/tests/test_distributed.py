@@ -2303,7 +2303,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             })
             statuses.append(str(response["status"]))
 
-        self.assertEqual(statuses, ["queued", "queued", "failed"])
+        self.assertEqual(statuses, ["queued", "queued", "dead_letter"])
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "partial")
 
     def test_retry_after_delays_reassignment_to_any_client(self) -> None:
@@ -2333,7 +2333,7 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(errors[0]["status"], "not_found")
         self.assertFalse(errors[0]["retryable"])
         second = self.store.create_job({"urls": ["B0FR4MSS2H"]})
-        self.assertEqual(second["taskCounts"], {"failed": 1})
+        self.assertEqual(second["taskCounts"], {"dead_letter": 1})
         self.assertEqual(self.store.lease_tasks("client-a", 1), [])
         self.store.clear_negative_cache()
         third = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -2410,7 +2410,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(output["nonRetryableAsins"], ["B012345679"])
         self.assertEqual(output["errors"][0]["completedAsins"], ["B012345678", "B012345680"])
 
-    def test_expired_lease_requeues_without_counting_as_crawl_failure(self) -> None:
+    @patch("engine.distributed.coordinator_store.retry_delay", return_value=0)
+    def test_expired_lease_requeues_with_persistent_separate_failure_reason(self, _retry_delay) -> None:
         self._create_four_task_job()
         self.store.register_client(client_hello(slots=1))
         lease = self.store.lease_tasks("client-a", 1)[0]
@@ -2424,7 +2425,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         with self.sessions() as session:
             task = session.scalar(select(CrawlTask).where(CrawlTask.id == lease["taskId"]))
             self.assertEqual(task.status, "queued")
-            self.assertEqual(task.failure_count, 0)
+            self.assertEqual(task.failure_count, 1)
+            self.assertEqual(task.last_error["errorCode"], "LEASE_EXPIRED")
 
     def test_equal_clients_dynamically_share_one_hundred_tasks(self) -> None:
         urls = [f"B{index:09d}" for index in range(100)]
@@ -2460,7 +2462,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         with self.sessions.begin() as session:
             task = session.get(CrawlTask, first["taskId"])
             task.lease_expires_at = task.started_at
-        self.store.reap_expired()
+        with patch("engine.distributed.coordinator_store.retry_delay", return_value=0):
+            self.store.reap_expired()
         second = self.store.lease_tasks("client-b", 1)[0]
 
         rejected = self.store.accept_result(
@@ -2571,7 +2574,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         def upload(lease, client_id):
             return self.store.accept_product(lease["taskId"], client_id, lease["leaseId"], "fixture-product", "checksum", payload)
         self.assertEqual(upload(first, "client-a")["status"], "stale")
-        self.store.reap_expired()
+        with patch("engine.distributed.coordinator_store.retry_delay", return_value=0):
+            self.store.reap_expired()
         second = self.store.lease_tasks("client-b", 1)[0]
         self.assertEqual(upload(first, "client-a")["status"], "stale")
         with self.sessions() as session:
@@ -3216,7 +3220,8 @@ class CoordinatorApiTests(unittest.TestCase):
                 first = store.lease_tasks("client-a", 1)[0]
                 with store.sessions.begin() as session:
                     session.get(CrawlTask, first["taskId"]).lease_expires_at = utc_now() - timedelta(seconds=1)
-                store.reap_expired()
+                with patch("engine.distributed.coordinator_store.retry_delay", return_value=0):
+                    store.reap_expired()
                 second = store.lease_tasks("client-b", 1)[0]
 
                 def upload(lease, client_id):

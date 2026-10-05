@@ -488,6 +488,68 @@ export interface AmazonCrawlerJobController {
   clearTemporaryData(): Promise<AmazonCrawlerCacheClearResult>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   delete(jobId: string): Promise<void>;
+  listDeadLetterTasks?(options?: { jobId?: string; errorCode?: string; limit?: number; offset?: number }): Promise<AmazonCrawlerDeadLetterPage>;
+  listTaskAttempts?(taskId: string): Promise<readonly AmazonCrawlerTaskAttempt[]>;
+  applyDeadLetterAction?(input: AmazonCrawlerDeadLetterActionInput): Promise<AmazonCrawlerDeadLetterActionResult>;
+}
+
+export interface AmazonCrawlerDeadLetterTask {
+  taskId: string;
+  jobId: string;
+  asin: string;
+  status: "dead_letter";
+  failureCount: number;
+  maxRetry: number;
+  requeueCount: number;
+  attemptCount: number;
+  errorCode: string;
+  errorMessage: string;
+  nextRetryAt: string | null;
+  createdAt: string;
+  failedAt: string | null;
+}
+
+export interface AmazonCrawlerDeadLetterPage {
+  items: readonly AmazonCrawlerDeadLetterTask[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AmazonCrawlerTaskAttempt {
+  attemptId: string;
+  taskId: string;
+  jobId: string | null;
+  clientId: string;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  agentVersion: string;
+  crawlerVersion: string;
+  parserVersion: string;
+  leasedAt: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  archived: boolean;
+}
+
+export interface AmazonCrawlerDeadLetterActionInput {
+  action: "requeue" | "delete";
+  requestId: string;
+  taskIds?: readonly string[];
+  jobId?: string;
+  errorCode?: string;
+  expectedCount: number;
+  reason: string;
+}
+
+export interface AmazonCrawlerDeadLetterActionResult {
+  action: "requeue" | "delete";
+  changed: number;
+  taskIds: readonly string[];
+  jobId: string | null;
+  errorCode: string | null;
 }
 
 export interface AmazonCrawlerAgentObservability {

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import select
 
@@ -109,11 +110,12 @@ class LeaseMutationTests(unittest.TestCase):
         self.store.heartbeat("a", [self.local])
         self.store.update_progress("a", {**self.local, "progress": {"message": "current"}})
         self.assertEqual(self.store.reconcile_tasks("a", [self.local])["resumeTaskIds"], [self.lease["taskId"]])
-        self.assertEqual(self.store.fail_task("a", {**self.local, "error": {"retryable": False}})["status"], "failed")
+        self.assertEqual(self.store.fail_task("a", {**self.local, "error": {"retryable": False}})["status"], "dead_letter")
 
     def test_cancel_ack_from_old_owner_cannot_cancel_current_owner(self):
         self.expire()
-        self.store.reap_expired()
+        with patch("engine.distributed.coordinator_store.retry_delay", return_value=0):
+            self.store.reap_expired()
         current = self.store.lease_tasks("b", 1)[0]
         self.store.cancel_job(self.job["id"])
         before = self.snapshot()
