@@ -61,8 +61,14 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
     },
     getReconciliationReport: store => request(`reconciliation?${storeQuery(store)}`),
     getDecisionCards: store => request(`decisions?${storeQuery(store)}`),
-    getAiStrategicReport: (store, refresh = false) => request(`ai-analyze?${storeQuery(store)}&refresh=${refresh}`, { method: "POST" }),
     syncNow: store => request(`sync?${storeQuery(store)}`, { method: "POST" }),
+    getAiStrategicReport: (store, refresh = false, runner, model) => {
+      const q = new URLSearchParams({ storeId: store ?? "chillgen", refresh: String(refresh) });
+      if (runner) q.set("runner", runner);
+      if (model) q.set("model", model);
+      return request(`ai-analyze?${q}`, jsonRequest("POST", { runner, model }));
+    },
+    getLocalAiRunners: () => request("local-ai/detect"),
     getCompetitorIntelligence(store, refresh = false, filters) {
       const params = new URLSearchParams({ storeId: store ?? "chillgen", refresh: String(refresh) });
       for (const [key, value] of Object.entries(filters ?? {})) {

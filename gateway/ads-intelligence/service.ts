@@ -531,7 +531,7 @@ export class AdsIntelligenceService {
 
     const [summary, reconciliation, profile] = await Promise.all([
       this.getStoreSummary(storeId, forceRefresh),
-      this.getReconciliationReport(storeId, forceRefresh),
+      this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
       Promise.resolve(loadStoreAdsProfile(storeId)),
     ]);
 
@@ -553,8 +553,14 @@ export class AdsIntelligenceService {
     return cards;
   }
 
-  async getAiStrategicReport(storeId = "chillgen", forceRefresh = false): Promise<AiStrategicReport> {
-    const cacheKey = `${storeId}:ai-report`;
+  async getAiStrategicReport(
+    storeId = "chillgen",
+    forceRefresh = false,
+    options?: { runner?: "codex" | "agy"; model?: string }
+  ): Promise<AiStrategicReport> {
+    const runner = options?.runner || "codex";
+    const model = options?.model;
+    const cacheKey = `${storeId}:ai-report:${runner}:${model || "default"}`;
     if (!forceRefresh) {
       const cached = adsIntelligenceCache.get<AiStrategicReport>(cacheKey);
       if (cached) {
@@ -562,11 +568,12 @@ export class AdsIntelligenceService {
       }
     }
 
-    const [summary, reconciliation, decisionCards, profile] = await Promise.all([
+    const [summary, reconciliation, decisionCards, profile, competitorReport] = await Promise.all([
       this.getStoreSummary(storeId, forceRefresh),
-      this.getReconciliationReport(storeId, forceRefresh),
+      this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
       this.getDecisionCards(storeId, forceRefresh),
       Promise.resolve(loadStoreAdsProfile(storeId)),
+      this.getCompetitorIntelligence(storeId, forceRefresh).catch(() => null),
     ]);
 
     let campaigns: readonly AdsHierarchyCampaign[] = [];
@@ -582,6 +589,9 @@ export class AdsIntelligenceService {
       campaigns,
       decisionCards,
       profile,
+      competitorReport,
+      runner,
+      model,
     });
 
     adsIntelligenceCache.set(cacheKey, report, 30 * 60 * 1000);

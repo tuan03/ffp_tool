@@ -527,7 +527,8 @@ export interface AdsIntelligenceClient {
   getReconciliationReport?(storeId?: string): Promise<AdsReconciliationReport>;
   syncNow?(storeId?: string): Promise<{ success: boolean; refreshedAt: string; message: string }>;
   getDecisionCards?(storeId?: string): Promise<readonly DecisionCard[]>;
-  getAiStrategicReport?(storeId?: string, forceRefresh?: boolean): Promise<AiStrategicReport>;
+  getAiStrategicReport?(storeId?: string, forceRefresh?: boolean, runner?: "codex" | "agy", model?: string): Promise<AiStrategicReport>;
+  getLocalAiRunners?(): Promise<LocalAiDetectionResult>;
   getCompetitorIntelligence?(storeId?: string, forceRefresh?: boolean, filters?: { pageId?: string; format?: string; hookType?: string }): Promise<CompetitorIntelligenceReport>;
   getBriefs?(storeId?: string): Promise<readonly CreativeBrief[]>;
   generateBrief?(storeId: string, payload: { source: "decision" | "gap" | "custom"; sourceId?: string; brief?: CreativeBrief }): Promise<CreativeBrief>;
@@ -538,6 +539,21 @@ export interface AdsIntelligenceClient {
   updateExperimentOutcome?(experimentId: string, payload: { results?: ExperimentResults; learning?: ExperimentLearning; status?: ExperimentStatus; statusReason?: string }): Promise<AdsExperiment>;
   proposeGuardedWrite?(storeId: string, decisionIdOrEntityId: string): Promise<GuardedWriteProposal>;
   executeGuardedWrite?(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }): Promise<GuardedWriteExecutionResult>;
+}
+
+export interface LocalAiRunnerInfo {
+  readonly id: "codex" | "agy";
+  readonly name: string;
+  readonly available: boolean;
+  readonly executablePath?: string;
+  readonly version?: string;
+  readonly defaultModel: string;
+  readonly models: readonly string[];
+}
+
+export interface LocalAiDetectionResult {
+  readonly platform: string;
+  readonly runners: readonly LocalAiRunnerInfo[];
 }
 
 

@@ -11,6 +11,7 @@ import { formatBriefMarkdown } from "./brief-generator";
 import { generateAdsOpenApiSpec } from "./openapi-spec";
 import { adsGuardedWritesService, type WritePreviewRequest, type WriteApproval } from "./guarded-writes";
 import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStatus, AdsExperiment, CreativeBrief } from "./types";
+import { localAiRunner } from "./local-ai-runner";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = statusCode;
@@ -224,11 +225,29 @@ export async function handleAdsIntelligenceHttpRequest(
       return true;
     }
 
+    if (pathname === "/api/ads-intelligence/local-ai/detect" && req.method === "GET") {
+      const detection = await localAiRunner.detectRunners();
+      sendJson(res, 200, detection);
+      return true;
+    }
+
     if (
       (pathname === "/api/ads-intelligence/ai-analyze" || pathname === "/api/ads-intelligence/ai-report") &&
       (req.method === "POST" || req.method === "GET")
     ) {
-      const aiReport = await adsIntelligenceService.getAiStrategicReport(storeId, forceRefresh);
+      let runner = parsedUrl.searchParams.get("runner") as "codex" | "agy" | undefined;
+      let model = parsedUrl.searchParams.get("model") || undefined;
+      if (req.method === "POST") {
+        try {
+          const body = await readJsonBody<{ runner?: "codex" | "agy"; model?: string }>(req);
+          if (body?.runner) runner = body.runner;
+          if (body?.model) model = body.model;
+        } catch {
+          // ignore empty body
+        }
+      }
+
+      const aiReport = await adsIntelligenceService.getAiStrategicReport(storeId, forceRefresh, { runner, model });
       sendJson(res, 200, aiReport, {
         "x-ads-cache": aiReport.fromCache ? "HIT" : "MISS",
       });

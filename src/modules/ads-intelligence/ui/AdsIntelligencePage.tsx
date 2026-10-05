@@ -16,6 +16,7 @@ import type {
   GuardedWriteProposal,
   GuardedWriteExecutionResult,
   ExperimentOutcomeVerdict,
+  LocalAiRunnerInfo,
 } from "../types";
 import {
   readActiveStoreId,
@@ -87,6 +88,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
   const [decisions, setDecisions] = useState<readonly DecisionCard[]>([]);
   const [aiReport, setAiReport] = useState<AiStrategicReport | null>(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [localAiRunners, setLocalAiRunners] = useState<readonly LocalAiRunnerInfo[]>([]);
   const [competitorReport, setCompetitorReport] = useState<CompetitorIntelligenceReport | null>(null);
   const [briefs, setBriefs] = useState<readonly CreativeBrief[]>([]);
   const [experiments, setExperiments] = useState<readonly AdsExperiment[]>([]);
@@ -114,6 +116,11 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
     setShopifySummary(null);
     setSummary(null); setCampaigns([]); setHealth(null); setReconciliation(null);
     setDecisions([]); setAiReport(null); setCompetitorReport(null); setBriefs([]); setExperiments([]);
+    if (client.getLocalAiRunners) {
+      void client.getLocalAiRunners().then((res) => {
+        if (res?.runners) setLocalAiRunners(res.runners);
+      }).catch(() => {});
+    }
     async function loadSource<T>(name: string, task: () => Promise<T>, update: (value: T) => void): Promise<void> {
       try {
         const value = await task();
@@ -161,13 +168,13 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
     }
   };
 
-  const handleAiAnalyze = async () => {
+  const handleAiAnalyze = async (runner?: "codex" | "agy", model?: string) => {
     if (!client.getAiStrategicReport) return;
     setAiAnalyzing(true);
     try {
-      const res = await client.getAiStrategicReport(currentStoreId, true);
+      const res = await client.getAiStrategicReport(currentStoreId, true, runner, model);
       setAiReport(res);
-      setActionNotification("✨ Đã cập nhật Báo cáo Chiến lược AI mới nhất!");
+      setActionNotification(`✨ Đã hoàn tất phân tích với ${runner === "agy" ? "Antigravity CLI" : "Codex CLI"} (${res.modelUsed})!`);
     } catch {
       setActionNotification("Không thể phân tích AI: cần dữ liệu đã xác minh từ các nguồn.");
     } finally {
@@ -374,6 +381,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
               decisions={decisions}
               aiReport={aiReport}
               aiAnalyzing={aiAnalyzing}
+              localAiRunners={localAiRunners}
               onRunAiAnalysis={handleAiAnalyze}
               onSelectCard={(card) => setSelectedDrawerCard(card)}
               onTriggerGuardedWrite={undefined}
