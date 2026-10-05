@@ -14,10 +14,12 @@ test("operator transport binds credentials to crawler routes and rejects redirec
   await transport("https://fixture.test/api/v1/clients");
   await transport("https://fixture.test/api/v1/clients/agent-1/commands?limit=20");
   await transport("https://fixture.test/api/v1/admission-gate");
+  await transport("https://fixture.test/api/v1/dead-letter/actions", { method: "POST" });
+  await transport("https://fixture.test/api/v1/crawl-tasks/task-1/attempts");
   await assert.rejects(transport("https://other.test/api/v1/clients"));
   await assert.rejects(transport("https://fixture.test/api/shopify"));
   await assert.rejects(transport("https://fixture.test/api/v1/worker/register"));
-  assert.equal(calls, 3);
+  assert.equal(calls, 5);
 });
 
 test("operator transport dispatches the validated absolute destination", async () => {
@@ -31,8 +33,13 @@ test("operator transport dispatches the validated absolute destination", async (
   await transport("/api/v1/clients");
 });
 
-test("discovery accepts explicit auth or legacy 404 but fails closed for invalid responses", async () => {
-  assert.equal(await discoverCrawlerOperatorAuth("https://fixture.test", async () => new Response(null, { status: 404 })), false);
+test("operator discovery uses its own contract independently from agent authentication", async () => {
+  const requestedUrls: string[] = [];
+  assert.equal(await discoverCrawlerOperatorAuth("https://fixture.test", async (url) => {
+    requestedUrls.push(String(url));
+    return new Response(null, { status: 404 });
+  }), false);
+  assert.deepEqual(requestedUrls, ["https://fixture.test/api/v1/operator/security", "https://fixture.test/api/v1/worker/security"]);
   assert.equal(await discoverCrawlerOperatorAuth("https://fixture.test", async () => Response.json({ authRequired: true, authProtocol: 1 })), true);
   await assert.rejects(discoverCrawlerOperatorAuth("https://fixture.test", async () => Response.json({ authRequired: false })));
   await assert.rejects(discoverCrawlerOperatorAuth("https://fixture.test", async () => new Response(null, { status: 503 })));

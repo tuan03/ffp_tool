@@ -45,9 +45,12 @@ interface JobCreatedResponse {
 }
 
 export async function discoverCrawlerOperatorAuth(engineUrl: string, fetchImplementation: typeof fetch = fetch): Promise<boolean> {
-  const response = await fetchImplementation(`${engineUrl.replace(/\/+$/, "")}/api/v1/worker/security`, {
-    redirect: "error", cache: "no-store", signal: AbortSignal.timeout(8000),
-  });
+  const baseUrl = engineUrl.replace(/\/+$/, "");
+  const requestOptions = { redirect: "error" as const, cache: "no-store" as const, signal: AbortSignal.timeout(8000) };
+  let response = await fetchImplementation(`${baseUrl}/api/v1/operator/security`, requestOptions);
+  if (response.status === 404) {
+    response = await fetchImplementation(`${baseUrl}/api/v1/worker/security`, requestOptions);
+  }
   if (response.status === 404) return false;
   if (!response.ok) throw new Error("Không kiểm tra được chế độ xác thực Coordinator.");
   const payload: unknown = await response.json();
@@ -70,7 +73,7 @@ export function createCrawlerOperatorFetch(options: {
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : String(input), base);
     if (target.origin !== base.origin || target.username || target.password
-      || !/^\/api\/v1\/(clients|crawl-jobs|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate)(\/|$)/.test(target.pathname)) {
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys)(\/|$)/.test(target.pathname)) {
       throw new Error("Operator credential destination rejected.");
     }
     options.sessionSignal?.throwIfAborted();

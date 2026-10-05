@@ -36,6 +36,22 @@ class OperatorAuthorizationTests(unittest.TestCase):
                 self.assertEqual(cancelled.status_code, 200, cancelled.text)
                 self.assertIn(cancelled.json()["status"], {"cancelled", "cancelling"})
 
+    def test_operator_discovery_is_public_and_separate_from_agent_security(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("engine.distributed.coordinator_server.find_project_root", return_value=root):
+                app = create_coordinator_app(
+                    database_url=f"sqlite:///{(root / 'operator-discovery.db').as_posix()}",
+                    operator_credentials=OperatorCredentials("operator", "fixture-secret"),
+                )
+            with TestClient(app) as client:
+                discovery = client.get("/api/v1/operator/security")
+                self.assertEqual(discovery.status_code, 200)
+                self.assertEqual(discovery.json(), {"authRequired": True, "authProtocol": 1})
+                self.assertEqual(client.get("/api/v1/worker/security").status_code, 404)
+                self.assertEqual(client.get("/api/v1/clients").status_code, 401)
+                self.assertEqual(client.get("/api/v1/clients", auth=("operator", "fixture-secret")).status_code, 200)
+
     def test_operator_allowed_anonymous_and_agent_denied_with_safe_audit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
