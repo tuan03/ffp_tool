@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from tkinter import messagebox, ttk
 
+from .client_storage_pressure import storage_warning_text
 
 STATE_LABELS = {
     "queued": "Đang chờ", "recovering": "Đang đối chiếu", "running": "Đang xử lý",
@@ -269,9 +270,14 @@ class AgentDashboardWindow:
         self.title.configure(text=f"FFP Agent — {snapshot.get('displayName', '')}")
         connected = "Đã kết nối server" if snapshot.get("isConnected") else "Mất kết nối / đang kết nối lại"
         operating = "Tạm ngưng nhận việc mới" if snapshot.get("isPaused") else ("Đang làm việc" if snapshot.get("activeTasks") else "Sẵn sàng nhận việc")
+        if _mapping(snapshot.get("storage")).get("blocked"):
+            operating = "Tạm ngưng nhận việc do lưu trữ"
         self.connection.configure(text=f"{connected}  •  {operating}")
         self.counters.configure(text=f"Chạy: {snapshot.get('runningTasks', 0)}  |  Chờ: {snapshot.get('queuedTasks', 0)}  |  Slot: {snapshot.get('activeTasks', 0)}/{snapshot.get('maxConcurrentInputs', 0)}  |  Chờ gửi: {snapshot.get('pendingProducts', 0)} sản phẩm + {snapshot.get('pendingResults', 0)} kết quả")
         warnings = []
+        storage_warning = storage_warning_text(snapshot.get("storage"))
+        if storage_warning:
+            warnings.append(storage_warning)
         if snapshot.get("agentStopped"):
             warnings.append("Agent đã dừng do lỗi. Hãy thoát và mở lại agent; xem log trong thư mục dữ liệu.")
         if snapshot.get("waitingCaptcha"):

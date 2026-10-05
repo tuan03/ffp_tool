@@ -390,7 +390,7 @@ export function SeoHandoffModal({
                     <>
                       <span className="text-slate-600">•</span>
                       <span className="rounded bg-indigo-950 border border-indigo-700/60 px-2 py-0.5 text-[11px] font-semibold text-indigo-300">
-                        Jeminise 47 variants
+                        Jeminise preset
                       </span>
                     </>
                   )}

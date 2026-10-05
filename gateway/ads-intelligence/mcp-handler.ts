@@ -58,7 +58,7 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
           mcpStreamableHttp: req.url?.split("?")[0] || "/mcp/ads",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 32, // 15 canonical tools + 15 ffp_* aliases
+        toolsCount: 37, // Includes store discovery and research publishing tools
       });
       return;
     }

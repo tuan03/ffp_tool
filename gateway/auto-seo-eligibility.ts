@@ -28,18 +28,21 @@ export interface AutoSeoEligibilityRequest {
 
 export interface AutoSeoEligibilityItem {
   readonly productId: string;
+  readonly jobId?: string;
   readonly state: AutoSeoEligibilityState;
   readonly reason:
     | "NO_HISTORY"
     | "LAST_DISPATCH_FAILED"
     | "SHOPIFY_UPDATED"
     | "UP_TO_DATE"
+    | "SHOPIFY_SYNCED"
     | "HASH_VERIFICATION_REQUIRED"
     | "SOURCE_TIMESTAMP_UNKNOWN"
     | "BASELINE_TIMESTAMP_UNKNOWN"
     | "ACTIVE_DISPATCH"
     | "ACTIVE_QUEUE"
-    | "ACTIVE_REVIEW";
+    | "ACTIVE_REVIEW"
+    | "QUEUE_CLEARED";
   readonly lastSuccessfulShopifyUpdatedAt?: string;
 }
 
@@ -263,6 +266,24 @@ function buildAutoSeoEligibility(
       "auto_seo",
       normalizeProductId(product.productId),
     );
+    if (
+      queueJob?.shopifySyncStatus === "SYNCED" &&
+      isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))
+    ) {
+      return {
+        productId: product.productId,
+        jobId: queueJob.id,
+        state: "current",
+        reason: "SHOPIFY_SYNCED",
+      };
+    }
+    if (
+      queueJob?.status === "CANCELLED" &&
+      queueJob.cancellationReason === "OPERATOR_QUEUE_CLEAR" &&
+      isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))
+    ) {
+      return { productId: product.productId, state: "retry", reason: "QUEUE_CLEARED" };
+    }
     if (
       isQueueJobActive(queueJob) &&
       isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))

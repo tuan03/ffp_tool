@@ -47,6 +47,7 @@ export function readCrawlerMetrics(value: unknown): AmazonCrawlerMetrics {
   const counts = record(payload.counts);
   const rates = record(payload.rates);
   const queue = record(payload.queue);
+  const scheduler = payload.scheduler === undefined ? undefined : record(payload.scheduler);
   if (!Array.isArray(payload.agents) || payload.agents.length > 100) throw new TypeError("Invalid crawler metrics response.");
   return {
     windowStartedAt: text(payload.windowStartedAt), retainedSince: payload.retainedSince === null ? null : text(payload.retainedSince),
@@ -61,9 +62,21 @@ export function readCrawlerMetrics(value: unknown): AmazonCrawlerMetrics {
     rates: { cacheHit: rate(rates.cacheHit), httpSuccess: rate(rates.httpSuccess), playwrightFallback: rate(rates.playwrightFallback), captcha: rate(rates.captcha) },
     averageCrawlDurationMs: payload.averageCrawlDurationMs === null ? null : number(payload.averageCrawlDurationMs),
     queue: { crawl: number(queue.crawl), crawlActive: number(queue.crawlActive), pipeline: number(queue.pipeline) },
+    scheduler: scheduler ? {
+      activeAgents: number(scheduler.activeAgents), queuedTasks: number(scheduler.queuedTasks),
+      oldestQueuedAgeSeconds: number(scheduler.oldestQueuedAgeSeconds), totalCapacity: number(scheduler.totalCapacity),
+      activeTasks: number(scheduler.activeTasks), availableCapacity: number(scheduler.availableCapacity),
+      capacityUtilization: rate(scheduler.capacityUtilization), overCapacityAgents: number(scheduler.overCapacityAgents),
+      completedTasks24hSpread: number(scheduler.completedTasks24hSpread),
+    } : undefined,
     agents: payload.agents.map((value) => {
       const agent = record(value);
-      return { ...agentObservability(agent), agentId: text(agent.agentId), displayName: text(agent.displayName) };
+      return { ...agentObservability(agent), agentId: text(agent.agentId), displayName: text(agent.displayName),
+        agentGroup: agent.agentGroup === undefined ? undefined : text(agent.agentGroup),
+        activeTasks: optionalNumber(agent.activeTasks), maxConcurrentInputs: optionalNumber(agent.maxConcurrentInputs),
+        availableCapacity: optionalNumber(agent.availableCapacity), overCapacity: agent.overCapacity === true,
+        completedTasks24h: optionalNumber(agent.completedTasks24h),
+        averageTaskDurationMs24h: agent.averageTaskDurationMs24h === null ? null : optionalNumber(agent.averageTaskDurationMs24h) };
     }),
   };
 }

@@ -358,14 +358,8 @@ export function normalizeSnapshotAd(
     };
   });
 
-  const inspectionLevel: CompetitorInspectionLevel =
-    mediaType === "VIDEO"
-      ? "VIDEO_AND_AUDIO_REVIEWED"
-      : allMediaUrls.length > 0
-      ? "IMAGE_REVIEWED"
-      : thumbnailUrl
-      ? "THUMBNAIL_ONLY"
-      : "TEXT_ONLY";
+  // Receiving a media URL does not mean its content has been inspected.
+  const inspectionLevel: CompetitorInspectionLevel = thumbnailUrl ? "THUMBNAIL_ONLY" : "TEXT_ONLY";
 
   const hookType = classifyHookType(copy, headline);
   const visualStyle = classifyVisualStyle(copy, mediaType);
@@ -585,6 +579,41 @@ export class DefaultCompetitorClient implements CompetitorClient {
       process.env.SEARCHAPI_API_KEY || process.env.SEARCH_API_KEY;
   }
 
+  async searchCompanies(query: string): Promise<readonly { pageId: string; pageName: string; pageAlias: string }[]> {
+    const key = this.scrapeCreatorsKey?.trim();
+    if (!key) throw new Error("COMPETITOR_NOT_CONFIGURED");
+    const response = await fetch(`https://api.scrapecreators.com/v1/facebook/adLibrary/search/companies?${new URLSearchParams({ query })}`, {
+      headers: { "x-api-key": key, Accept: "application/json" }, signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) throw new Error(`COMPETITOR_PROVIDER_HTTP_${response.status}`);
+    const body: unknown = await response.json();
+    if (!body || typeof body !== "object" || !("success" in body) || body.success !== true || !("searchResults" in body) || !Array.isArray(body.searchResults)) throw new Error("COMPETITOR_PROVIDER_INVALID_RESPONSE");
+    return body.searchResults.flatMap((entry: unknown) => {
+      if (!entry || typeof entry !== "object" || !("page_id" in entry) || typeof entry.page_id !== "string" || !/^\d+$/.test(entry.page_id) || !("name" in entry) || typeof entry.name !== "string") return [];
+      return [{ pageId: entry.page_id, pageName: entry.name, pageAlias: "page_alias" in entry && typeof entry.page_alias === "string" ? entry.page_alias : "" }];
+    });
+  }
+
+  async searchLiveAds(query: string, options: { country: string; cursor?: string; activeStatus?: "ACTIVE" | "ALL" | "INACTIVE" }): Promise<{ ads: readonly CompetitorAd[]; nextCursor?: string }> {
+    const key = this.scrapeCreatorsKey?.trim();
+    if (!key) throw new Error("COMPETITOR_NOT_CONFIGURED");
+    const { country, cursor, activeStatus = "ACTIVE" } = options;
+    const params = { query, country, status: activeStatus, ad_type: "all", search_type: "keyword_unordered", trim: "false", ...(cursor ? { cursor } : {}) };
+    const endpoint = "https://api.scrapecreators.com/v1/facebook/adLibrary/search/ads";
+    const queryString = new URLSearchParams(params).toString();
+    const usePost = queryString.length > 7000;
+    const response = await fetch(usePost ? endpoint : `${endpoint}?${queryString}`, {
+      method: usePost ? "POST" : "GET",
+      headers: { "x-api-key": key, Accept: "application/json", "Content-Type": "application/json" },
+      body: usePost ? JSON.stringify(params) : undefined,
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) throw new Error(`COMPETITOR_PROVIDER_HTTP_${response.status}`);
+    const body: unknown = await response.json();
+    if (!body || typeof body !== "object" || !("success" in body) || body.success !== true || !("searchResults" in body) || !Array.isArray(body.searchResults)) throw new Error("COMPETITOR_PROVIDER_INVALID_RESPONSE");
+    return { ads: body.searchResults.map((entry: unknown) => normalizeSnapshotAd(entry, "", "scrapecreators")), nextCursor: "cursor" in body && typeof body.cursor === "string" ? body.cursor : undefined };
+  }
+
   async listAds(pageId: string, options: ListAdsOptions = {}, cursor?: string): Promise<ListAdsResult> {
     const limit = options.limit ?? 20;
 
@@ -596,7 +625,8 @@ export class DefaultCompetitorClient implements CompetitorClient {
           return liveResult;
         }
       } catch (error) {
-        console.warn(`[CompetitorClient] ScrapeCreators request failed for page ${pageId}:`, error);
+        if (error instanceof Error && /COMPETITOR_PROVIDER_HTTP_(402|403|429)/.test(error.message)) throw error;
+        console.warn(`[CompetitorClient] ScrapeCreators request failed for page ${pageId}:`, error instanceof Error ? error.message : "Source error");
       }
     }
 
@@ -662,7 +692,7 @@ export class DefaultCompetitorClient implements CompetitorClient {
     });
 
     if (!response.ok) {
-      throw new Error(`ScrapeCreators returned HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`COMPETITOR_PROVIDER_HTTP_${response.status}`);
     }
 
     const data = (await response.json()) as Record<string, unknown>;

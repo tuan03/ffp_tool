@@ -2,12 +2,21 @@ import type {
   AmazonAsinChecker,
   AmazonAsinPreflightResult,
   AmazonCrawlerInput,
+  AmazonCrawlerDeadLetterActionInput,
+  AmazonCrawlerDeadLetterActionResult,
+  AmazonCrawlerDeadLetterPage,
+  AmazonCrawlerTaskAttempt,
   AmazonCrawlerAgentRelease,
+  AmazonCrawlerAgentRuntimeConfig,
   AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerCacheClearResult,
   AmazonCrawlerClientSummary,
   AmazonCrawlerClientsLoader,
+  AmazonCrawlerCommandController,
+  AmazonCrawlerPendingPurgePreview,
+  AmazonCrawlerAdmissionGate,
+  AmazonCrawlerAdmissionGateController,
   AmazonCrawlerHydratedJob,
   AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,
@@ -28,11 +37,113 @@ import type {
   ImageProcessingProfile,
   ImageProcessingProfileManager,
 } from "./types";
-import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
+import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG, DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 import { readCrawlerMetrics, readCrawlerTrace } from "./observability-response";
 
 interface JobCreatedResponse {
   jobId: string;
+}
+
+export async function discoverCrawlerOperatorAuth(engineUrl: string, fetchImplementation: typeof fetch = fetch): Promise<boolean> {
+  const baseUrl = engineUrl.replace(/\/+$/, "");
+  const requestOptions = { redirect: "error" as const, cache: "no-store" as const, signal: AbortSignal.timeout(8000) };
+  let response = await fetchImplementation(`${baseUrl}/api/v1/operator/security`, requestOptions);
+  if (response.status === 404) {
+    response = await fetchImplementation(`${baseUrl}/api/v1/worker/security`, requestOptions);
+  }
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error("Không kiểm tra được chế độ xác thực Coordinator.");
+  const payload: unknown = await response.json();
+  if (!isRecord(payload) || payload.authRequired !== true || payload.authProtocol !== 1) {
+    throw new Error("Coordinator trả contract xác thực không hợp lệ.");
+  }
+  return true;
+}
+
+export function createCrawlerOperatorFetch(options: {
+  engineUrl: string; username: string; password: string;
+  fetchImplementation?: typeof fetch; sessionSignal?: AbortSignal;
+  onUnauthorized?: () => void;
+}): typeof fetch {
+  const base = new URL(options.engineUrl || "/", typeof window === "undefined" ? "http://127.0.0.1" : window.location.origin);
+  if (base.protocol !== "https:" && !(base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname))) {
+    throw new Error("Operator credentials require HTTPS.");
+  }
+  const authorization = `Basic ${btoa(Array.from(new TextEncoder().encode(`${options.username}:${options.password}`), (byte) => String.fromCharCode(byte)).join(""))}`;
+  return async (input, init) => {
+    const target = new URL(input instanceof Request ? input.url : String(input), base);
+    if (target.origin !== base.origin || target.username || target.password
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys)(\/|$)/.test(target.pathname)) {
+      throw new Error("Operator credential destination rejected.");
+    }
+    options.sessionSignal?.throwIfAborted();
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    headers.set("Authorization", authorization);
+    const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signals = [options.sessionSignal, requestSignal].filter((signal): signal is AbortSignal => signal != null);
+    const response = await (options.fetchImplementation ?? fetch)(input instanceof Request ? input : target.href, {
+      ...init, headers, redirect: "error", cache: "no-store",
+      ...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
+    });
+    if (response.status === 401) options.onUnauthorized?.();
+    return response;
+  };
+}
+
+export interface AgentKeySummary {
+  id: string;
+  name: string;
+  status: string;
+  agentId: string | null;
+  maxWorkers: number;
+  crawlers: string[];
+  environment: string;
+}
+
+export async function requestAgentKeyManagement(options: {
+  username: string;
+  password: string;
+  action: "list" | "create" | "rotate" | "revoke";
+  keyId?: string;
+  limit?: number;
+  offset?: number;
+  payload?: Readonly<Record<string, unknown>>;
+  fetchImplementation?: typeof fetch;
+}): Promise<{ keys: AgentKeySummary[]; total: number; key?: string }> {
+  const suffix = options.action === "rotate" || options.action === "revoke"
+    ? `/${encodeURIComponent(options.keyId ?? "")}/${options.action}` : "";
+  const query = options.action === "list"
+    ? `?limit=${Math.max(1, Math.min(100, options.limit ?? 50))}&offset=${Math.max(0, options.offset ?? 0)}`
+    : "";
+  const encoded = btoa(Array.from(new TextEncoder().encode(`${options.username}:${options.password}`),
+    (byte) => String.fromCharCode(byte)).join(""));
+  const response = await (options.fetchImplementation ?? fetch)(`/api/v1/agent-keys${suffix}${query}`, {
+    method: options.action === "list" ? "GET" : "POST",
+    headers: { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" },
+    cache: "no-store",
+    redirect: "error",
+    ...(options.action === "list" ? {} : { body: JSON.stringify(options.payload ?? {}) }),
+  });
+  if (!response.ok) {
+    throw new Error(`Agent key operation failed (HTTP ${response.status}). No automatic retry was made.`);
+  }
+  const payload: unknown = await response.json();
+  if (!isRecord(payload)) throw new Error("Invalid agent key response.");
+  const keys: AgentKeySummary[] = [];
+  if (Array.isArray(payload.keys)) {
+    for (const key of payload.keys) {
+      if (!isRecord(key) || typeof key.id !== "string" || typeof key.name !== "string" || typeof key.status !== "string"
+        || typeof key.maxWorkers !== "number" || typeof key.environment !== "string"
+        || !Array.isArray(key.crawlers) || !key.crawlers.every((crawler: unknown) => typeof crawler === "string")) {
+        throw new Error("Invalid agent key metadata.");
+      }
+      keys.push({ id: key.id, name: key.name, status: key.status, agentId: typeof key.agentId === "string" ? key.agentId : null,
+        maxWorkers: key.maxWorkers, environment: key.environment, crawlers: key.crawlers.filter((crawler: unknown): crawler is string => typeof crawler === "string") });
+    }
+  }
+  return { keys, total: typeof payload.total === "number" && Number.isSafeInteger(payload.total) && payload.total >= 0 ? payload.total : keys.length,
+    ...(typeof payload.key === "string" ? { key: payload.key } : {}) };
 }
 function readCacheClearResult(value: unknown): AmazonCrawlerCacheClearResult {
   if (!isRecord(value) || typeof value.removedFiles !== "number" || typeof value.removedBytes !== "number") {
@@ -290,7 +401,7 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
   };
 }
 
-const AVAILABLE_CLIENT_STATUSES = new Set(["online", "busy", "waiting_captcha"]);
+const AVAILABLE_CLIENT_STATUSES = new Set(["online", "busy", "waiting_captcha", "degraded"]);
 
 function readClients(value: unknown): AmazonCrawlerClientSummary[] {
   if (!Array.isArray(value)) throw new AmazonCrawlerServiceError("Coordinator returned an invalid client list.", "INVALID_ENGINE_RESPONSE");
@@ -301,6 +412,7 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
     return {
       id: client.id,
       displayName: client.displayName,
+      agentGroup: typeof client.agentGroup === "string" ? client.agentGroup : "default",
       agentVersion: typeof client.agentVersion === "string" ? client.agentVersion : "unknown",
       status: client.status as AmazonCrawlerClientSummary["status"],
       isConnected: client.isConnected === true,
@@ -309,8 +421,241 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
       leasedTasks: typeof client.leasedTasks === "number" ? client.leasedTasks : 0,
       availableSlots: typeof client.availableSlots === "number" ? client.availableSlots : 0,
       lastSeenAt: typeof client.lastSeenAt === "string" ? client.lastSeenAt : null,
+      desiredExecutionState: readExecutionState(client.desiredExecutionState),
+      appliedExecutionState: readExecutionState(client.appliedExecutionState),
+      commandSequence: typeof client.commandSequence === "number" ? client.commandSequence : 0,
+      lastProcessedCommandSequence: typeof client.lastProcessedCommandSequence === "number" ? client.lastProcessedCommandSequence : 0,
+      desiredConfigVersion: typeof client.desiredConfigVersion === "number" ? client.desiredConfigVersion : 0,
+      appliedConfigVersion: typeof client.appliedConfigVersion === "number" ? client.appliedConfigVersion : 0,
+      desiredAgentConfig: readAgentRuntimeConfig(client.desiredAgentConfig),
+      observability: isRecord(client.observability) && isRecord(client.observability.workerHealth)
+        ? {
+          workerHealth: {
+            state: client.observability.workerHealth.state === "degraded" ? "degraded" : "healthy",
+            failuresInWindow: typeof client.observability.workerHealth.failuresInWindow === "number" ? client.observability.workerHealth.failuresInWindow : 0,
+            failureLimit: typeof client.observability.workerHealth.failureLimit === "number" ? client.observability.workerHealth.failureLimit : 5,
+            windowSeconds: typeof client.observability.workerHealth.windowSeconds === "number" ? client.observability.workerHealth.windowSeconds : 600,
+            configuredConcurrency: typeof client.observability.workerHealth.configuredConcurrency === "number" ? client.observability.workerHealth.configuredConcurrency : 0,
+            effectiveConcurrency: typeof client.observability.workerHealth.effectiveConcurrency === "number" ? client.observability.workerHealth.effectiveConcurrency : 0,
+          },
+        }
+        : undefined,
     };
   });
+}
+
+function readExecutionState(value: unknown): AmazonCrawlerClientSummary["desiredExecutionState"] {
+  return value === "PAUSED" || value === "DRAINING" || value === "DRAINED" ? value : "RUNNING";
+}
+
+function readAgentRuntimeConfig(value: unknown): AmazonCrawlerAgentRuntimeConfig {
+  if (!isRecord(value) || !isRecord(value.limits)) return DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+  const limits = value.limits;
+  const numbers = [value.maxConcurrentInputs, value.heartbeatIntervalSeconds, value.clientOfflineAfterSeconds,
+    value.leaseSeconds, limits.productThreads, limits.variantThreads, limits.urllibThreads,
+    limits.browserProfiles, limits.browserTabs];
+  if (!numbers.every((candidate) => typeof candidate === "number" && Number.isSafeInteger(candidate))) {
+    return DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+  }
+  if (typeof limits.headless !== "boolean") return DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+  return value as unknown as AmazonCrawlerAgentRuntimeConfig;
+}
+
+export function createAmazonCrawlerCommandController({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerCommandController {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return {
+    async submit(agentId, type) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type }),
+      });
+      await readJson(response);
+    },
+    async bulkCommand(agentGroup, type, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/bulk-commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type, agentGroup, reason }),
+      });
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || typeof payload.requested !== "number"
+          || typeof payload.queued !== "number" || typeof payload.failed !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid bulk-command response.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { requested: payload.requested, queued: payload.queued, failed: payload.failed };
+    },
+    async previewPendingPurge(agentId, taskIds): Promise<AmazonCrawlerPendingPurgePreview> {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_PENDING_TASKS",
+          taskIds, dryRun: true }),
+      });
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || payload.scope !== "pending" || !Array.isArray(payload.eligibleTaskIds)
+          || typeof payload.requestedCount !== "number" || typeof payload.pendingCount !== "number"
+          || typeof payload.ineligibleCount !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid pending-purge preview.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { scope: "pending", requestedCount: payload.requestedCount, pendingCount: payload.pendingCount,
+        ineligibleCount: payload.ineligibleCount,
+        eligibleTaskIds: payload.eligibleTaskIds.filter((taskId): taskId is string => typeof taskId === "string") };
+    },
+    async purgePending(agentId, taskIds, expectedPendingCount, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_PENDING_TASKS", taskIds,
+          expectedPendingCount, confirmation: `PURGE_PENDING_TASKS:${expectedPendingCount}`, reason }),
+      });
+      await readJson(response);
+    },
+    async previewPurgeAllLocal(agentId): Promise<AmazonCrawlerPendingPurgePreview> {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_ALL_LOCAL_TASKS", includeRunning: false, dryRun: true }),
+      });
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || payload.scope !== "all-local" || !Array.isArray(payload.eligibleTaskIds)
+          || typeof payload.pendingCount !== "number" || typeof payload.ineligibleCount !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid purge-all preview.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { scope: "all-local", requestedCount: typeof payload.requestedCount === "number" ? payload.requestedCount : 0,
+        pendingCount: payload.pendingCount, ineligibleCount: payload.ineligibleCount,
+        eligibleTaskIds: payload.eligibleTaskIds.filter((taskId): taskId is string => typeof taskId === "string") };
+    },
+    async purgeAllLocal(agentId, expectedPendingCount, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_ALL_LOCAL_TASKS",
+          includeRunning: false, expectedPendingCount,
+          confirmation: `PURGE_ALL_LOCAL_TASKS:${expectedPendingCount}`, reason }),
+      });
+      await readJson(response);
+    },
+    async restart(agentId, type, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type, reason,
+          confirmation: `${type}:${agentId}`, expiresInSeconds: 600 }),
+      });
+      await readJson(response);
+    },
+    async reloadConfig(agentId, config) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "RELOAD_CONFIG", config }),
+      });
+      await readJson(response);
+    },
+    async drain(agentId, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "DRAIN", reason, expiresInSeconds: 86400 }),
+      });
+      await readJson(response);
+    },
+    async selfTest(agentId, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "RUN_SELF_TEST", reason }),
+      });
+      await readJson(response);
+    },
+    async updateAgent(agentId, targetVersion, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "UPDATE_AGENT", targetVersion, reason,
+          expiresInSeconds: 86400 }),
+      });
+      await readJson(response);
+    },
+    async rollbackAgent(agentId, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "ROLLBACK_AGENT", reason,
+          expiresInSeconds: 86400 }),
+      });
+      await readJson(response);
+    },
+    async history(agentId) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || !Array.isArray(payload.commands)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid command history.", "INVALID_ENGINE_RESPONSE");
+      }
+      return payload.commands.filter((entry): entry is Record<string, unknown> => isRecord(entry)).map((entry) => ({
+        commandId: typeof entry.commandId === "string" ? entry.commandId : "",
+        sequence: typeof entry.sequence === "number" ? entry.sequence : 0,
+        type: entry.type === "PAUSE" ? "PAUSE" as const
+          : entry.type === "RELOAD_CONFIG" ? "RELOAD_CONFIG" as const
+          : entry.type === "DRAIN" ? "DRAIN" as const
+          : entry.type === "RUN_SELF_TEST" ? "RUN_SELF_TEST" as const
+          : entry.type === "UPDATE_AGENT" ? "UPDATE_AGENT" as const
+          : entry.type === "ROLLBACK_AGENT" ? "ROLLBACK_AGENT" as const
+          : entry.type === "PURGE_PENDING_TASKS" ? "PURGE_PENDING_TASKS" as const
+          : entry.type === "PURGE_ALL_LOCAL_TASKS" ? "PURGE_ALL_LOCAL_TASKS" as const
+          : entry.type === "RESTART_WORKERS" ? "RESTART_WORKERS" as const
+          : entry.type === "RESTART_AGENT" ? "RESTART_AGENT" as const : "RESUME" as const,
+        status: typeof entry.status === "string" ? entry.status : "UNKNOWN",
+        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
+        error: typeof entry.error === "string" ? entry.error : null,
+        events: Array.isArray(entry.events) ? entry.events.filter((event): event is Record<string, unknown> => isRecord(event)).map((event) => ({
+          status: typeof event.status === "string" ? event.status : "UNKNOWN",
+          at: typeof event.at === "string" ? event.at : null,
+          detail: isRecord(event.detail) ? event.detail : {},
+        })) : [],
+      })).filter((entry) => entry.commandId.length > 0);
+    },
+  };
+}
+
+function readAdmissionGate(value: unknown): AmazonCrawlerAdmissionGate {
+  if (!isRecord(value) || (value.state !== "OPEN" && value.state !== "STOPPED")
+    || value.scope !== "crawler" || typeof value.revision !== "number") {
+    throw new AmazonCrawlerServiceError("Coordinator returned an invalid admission-gate response.", "INVALID_ENGINE_RESPONSE");
+  }
+  return {
+    state: value.state,
+    scope: "crawler",
+    revision: value.revision,
+    actor: typeof value.actor === "string" ? value.actor : null,
+    reason: typeof value.reason === "string" ? value.reason : null,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+    confirmedAgents: typeof value.confirmedAgents === "number" ? value.confirmedAgents : 0,
+    pendingAgents: typeof value.pendingAgents === "number" ? value.pendingAgents : 0,
+    confirmations: Array.isArray(value.confirmations) ? value.confirmations
+      .filter((item): item is Record<string, unknown> => isRecord(item))
+      .map((item) => ({
+        agentId: typeof item.agentId === "string" ? item.agentId : "",
+        displayName: typeof item.displayName === "string" ? item.displayName : "Unknown agent",
+        isConnected: item.isConnected === true,
+        state: item.state === "STOPPED" ? "STOPPED" as const : "OPEN" as const,
+        revision: typeof item.revision === "number" ? item.revision : 0,
+        status: item.status === "confirmed" ? "confirmed" as const : "pending_confirmation" as const,
+      })).filter((item) => item.agentId.length > 0) : [],
+  };
+}
+
+export function createAmazonCrawlerAdmissionGateController({
+  engineUrl,
+  fetchImplementation = fetch,
+}: AmazonCrawlerClientOptions): AmazonCrawlerAdmissionGateController {
+  const baseUrl = normalizeEngineUrl(engineUrl);
+  return {
+    async load() {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/admission-gate`, { cache: "no-store" });
+      return readAdmissionGate(await readJson(response));
+    },
+    async setState(state, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/admission-gate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID().replaceAll("-", ""), state, reason }),
+      });
+      return readAdmissionGate(await readJson(response));
+    },
+  };
 }
 
 function readAgentRelease(value: unknown): AmazonCrawlerAgentRelease {
@@ -536,6 +881,62 @@ export function createAmazonCrawlerJobController({
       const response = await fetchImplementation(`${jobUrl(jobId)}/cancel${query}`, { method: "POST" });
       return readJobSnapshot(await readJson(response));
     },
+    async cancelTask(taskId) {
+      await readJson(await fetchImplementation(
+        `${baseUrl}/api/v1/crawl-tasks/${encodeURIComponent(taskId)}/cancel`,
+        { method: "POST" },
+      ));
+    },
+    async listDeadLetterTasks(options = {}) {
+      const query = new URLSearchParams();
+      if (options.jobId) query.set("job_id", options.jobId);
+      if (options.errorCode) query.set("error_code", options.errorCode);
+      query.set("limit", String(Math.max(1, Math.min(100, options.limit ?? 100))));
+      query.set("offset", String(Math.max(0, options.offset ?? 0)));
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/dead-letter?${query}`));
+      if (!isRecord(payload) || !Array.isArray(payload.items)
+          || typeof payload.total !== "number" || typeof payload.limit !== "number" || typeof payload.offset !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid dead-letter page.", "INVALID_ENGINE_RESPONSE");
+      }
+      const items = payload.items.filter((value): value is Record<string, unknown> => isRecord(value));
+      return { items: items.map((item) => ({
+        taskId: String(item.taskId ?? ""), jobId: String(item.jobId ?? ""), asin: String(item.asin ?? ""),
+        status: "dead_letter" as const, failureCount: Number(item.failureCount ?? 0), maxRetry: Number(item.maxRetry ?? 0),
+        requeueCount: Number(item.requeueCount ?? 0), attemptCount: Number(item.attemptCount ?? 0),
+        errorCode: String(item.errorCode ?? "UNKNOWN"), errorMessage: String(item.errorMessage ?? ""),
+        nextRetryAt: typeof item.nextRetryAt === "string" ? item.nextRetryAt : null,
+        createdAt: String(item.createdAt ?? ""), failedAt: typeof item.failedAt === "string" ? item.failedAt : null,
+      })), total: payload.total, limit: payload.limit, offset: payload.offset };
+    },
+    async listTaskAttempts(taskId) {
+      const payload = await readJson(await fetchImplementation(
+        `${baseUrl}/api/v1/crawl-tasks/${encodeURIComponent(taskId)}/attempts`,
+      ));
+      if (!Array.isArray(payload)) throw new AmazonCrawlerServiceError("Coordinator returned invalid task attempts.", "INVALID_ENGINE_RESPONSE");
+      return payload.filter((value): value is Record<string, unknown> => isRecord(value)).map((item) => ({
+        attemptId: String(item.attemptId ?? ""), taskId: String(item.taskId ?? taskId),
+        jobId: typeof item.jobId === "string" ? item.jobId : null, clientId: String(item.clientId ?? ""),
+        status: String(item.status ?? "unknown"), errorCode: typeof item.errorCode === "string" ? item.errorCode : null,
+        errorMessage: typeof item.errorMessage === "string" ? item.errorMessage : null,
+        agentVersion: String(item.agentVersion ?? "unknown"), crawlerVersion: String(item.crawlerVersion ?? "unknown"),
+        parserVersion: String(item.parserVersion ?? "unknown"), leasedAt: String(item.leasedAt ?? ""),
+        startedAt: String(item.startedAt ?? ""), finishedAt: typeof item.finishedAt === "string" ? item.finishedAt : null,
+        durationMs: typeof item.durationMs === "number" ? item.durationMs : null, archived: item.archived === true,
+      }));
+    },
+    async applyDeadLetterAction(input: AmazonCrawlerDeadLetterActionInput): Promise<AmazonCrawlerDeadLetterActionResult> {
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/dead-letter/actions`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      }));
+      if (!isRecord(payload) || (payload.action !== "requeue" && payload.action !== "delete")
+          || typeof payload.changed !== "number" || !Array.isArray(payload.taskIds)) {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid dead-letter action result.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { action: payload.action, changed: payload.changed,
+        taskIds: payload.taskIds.filter((value): value is string => typeof value === "string"),
+        jobId: typeof payload.jobId === "string" ? payload.jobId : null,
+        errorCode: typeof payload.errorCode === "string" ? payload.errorCode : null };
+    },
     async invalidateProductCache(asin, amazonZip) {
       const path = `${baseUrl}/api/v1/clients/cache/products/${encodeURIComponent(asin)}`;
       const response = await fetchImplementation(`${path}?amazonZip=${encodeURIComponent(amazonZip)}`, { method: "DELETE" });
@@ -650,9 +1051,7 @@ export function createAmazonCrawlerClientsLoader({
   return async () => {
     try {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients`);
-      return readClients(await readJson(response)).filter(
-        (client) => client.isConnected && client.status !== "offline",
-      );
+      return readClients(await readJson(response));
     } catch (error: unknown) {
       if (error instanceof AmazonCrawlerServiceError) throw error;
       throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");

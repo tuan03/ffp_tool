@@ -265,7 +265,7 @@ test("Competitor Normalizer: accurately normalizes nested Meta snapshot ads into
   assert.equal(normalized.cards?.length, 1);
   assert.equal(normalized.cards?.[0].headline, "Card 1: Choose Style");
   assert.equal(normalized.provider, "scrapecreators");
-  assert.equal(normalized.inspectionLevel, "VIDEO_AND_AUDIO_REVIEWED");
+  assert.equal(normalized.inspectionLevel, "THUMBNAIL_ONLY");
   assert.ok(PAGE_REGISTRY["102971998671051"] !== undefined);
   assert.ok(PAGE_REGISTRY["188723992071586"] !== undefined);
   assert.ok(PAGE_REGISTRY["100254708876376"] !== undefined);

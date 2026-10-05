@@ -26,7 +26,7 @@ async function connectInMemoryClient(storeId = "chillgen") {
   return { client, server };
 }
 
-test("Ads MCP Server initializes with instructions and registers all 32 tools including Gateway store discovery", async () => {
+test("Ads MCP Server initializes with instructions and registers all 37 tools including Gateway store discovery", async () => {
   const { client, server } = await connectInMemoryClient();
 
   try {
@@ -86,7 +86,9 @@ test("Ads MCP Server initializes with instructions and registers all 32 tools in
       assert.ok(toolNames.includes(alias), `Expected alias ${alias} to be registered`);
     }
 
-    assert.equal(toolNames.length, 32);
+    assert.equal(toolNames.length, 37);
+    assert.ok(toolNames.includes("ads_publish_competitor_research"));
+    assert.ok(toolNames.includes("ads_get_competitor_research"));
     assert.ok(toolNames.includes("ads_list_stores"));
     assert.ok(toolNames.includes("ads_get_shopify_summary"));
 
@@ -358,7 +360,7 @@ test("Ads MCP HTTP Handler serves GET probe info and handles requests", async ()
   const parsed = JSON.parse(responseBody);
   assert.equal(parsed.status, "ok");
   assert.equal(parsed.server, "ffp-ads-intelligence");
-  assert.equal(parsed.toolsCount, 32);
+  assert.equal(parsed.toolsCount, 37);
 });
 
 test("OpenAPI spec generator produces valid 3.1.0 schema with all endpoints", async () => {
@@ -429,5 +431,5 @@ test("Gateway HTTP handler serves /api/ads-intelligence/openapi.json and /mcp/in
   assert.equal(mcpInfoStatus, 200);
   const parsedMcp = JSON.parse(mcpInfoBody);
   assert.equal(parsedMcp.server, "ffp-ads-intelligence");
-  assert.equal(parsedMcp.toolsCount, 32);
+  assert.equal(parsedMcp.toolsCount, 37);
 });

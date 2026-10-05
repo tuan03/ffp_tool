@@ -41,6 +41,17 @@ def payload_checksum(value: Any) -> str:
     return hashlib.sha256(canonical_json(value)).hexdigest()
 
 
+def product_source_key(product: dict[str, Any]) -> str:
+    explicit = str(product.get("sourceKey") or "").strip()
+    if explicit:
+        return explicit
+    split = product.get("splitContext") if isinstance(product.get("splitContext"), dict) else {}
+    parent_asin = str(product.get("parentAsin") or "unknown").strip().upper()
+    attribute = str(split.get("attribute") or "none").strip().casefold()
+    value = str(split.get("value") or "none").strip().casefold()
+    return f"amazon:{parent_asin}:{attribute}:{value}"
+
+
 def settings_fingerprint(settings: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json(settings)).hexdigest()[:20]
 
@@ -115,11 +126,19 @@ def hello_message(
     product_invalidation_generation: int = 0,
     temporary_cleanup_generation: int = 0,
     pinterest_browser_logged_in: bool = False,
+    last_processed_command_sequence: int = 0,
+    desired_execution_state: str = "RUNNING",
+    applied_execution_state: str = "RUNNING",
+    executing_task_ids: list[str] | None = None,
+    agent_config_version: int = 0,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
         "protocolVersion": PROTOCOL_VERSION,
         "agentVersion": AGENT_VERSION,
+        "crawlerVersion": AGENT_VERSION,
+        "parserVersion": AGENT_VERSION,
+        "agentConfigVersion": max(0, int(agent_config_version)),
         "clientId": client_id,
         "displayName": display_name,
         "availableSlots": max(0, available_slots),
@@ -132,6 +151,8 @@ def hello_message(
             "captcha": not limits.headless,
             "offlineSpool": True,
             "mediaGalleryV2": True,
+            "durablePendingPurgeV1": True,
+            "durableRestartV1": True,
         },
         "limits": {
             "productThreads": limits.product_threads,
@@ -142,8 +163,12 @@ def hello_message(
             "headless": limits.headless,
         },
         "localTasks": list(local_tasks or []),
+        "executingTaskIds": list(executing_task_ids or []),
         "cancelIntents": list(cancel_intents or []),
         "cacheGeneration": max(0, int(cache_generation)),
         "productInvalidationGeneration": max(0, int(product_invalidation_generation)),
         "temporaryCleanupGeneration": max(0, int(temporary_cleanup_generation)),
+        "lastProcessedCommandSequence": max(0, int(last_processed_command_sequence)),
+        "desiredExecutionState": desired_execution_state if desired_execution_state in {"RUNNING", "PAUSED"} else "RUNNING",
+        "appliedExecutionState": applied_execution_state if applied_execution_state in {"RUNNING", "PAUSED"} else "RUNNING",
     }

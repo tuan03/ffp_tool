@@ -1,0 +1,2 @@
+# OS credential storage only; the bridge uses Python's standard HTTP libraries.
+keyring>=25,<26

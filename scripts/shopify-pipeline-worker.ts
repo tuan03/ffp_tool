@@ -13,6 +13,7 @@ import {
   loadLocalEnv,
   startGatewayServer,
 } from "../gateway/index";
+import { getAutoSeoDatabaseUrl } from "../gateway/auto-seo-database-url";
 import {
   normalizeCustomizationProduct,
   type CrawlProduct,
@@ -107,6 +108,7 @@ const seoEnvironmentKeys = [
   "SEO_EMBEDDING_PROVIDER",
   "SEO_EMBEDDING_MODEL",
   "SEO_CONFLICT_CORPUS_PATH",
+  "AUTO_SEO_DATABASE_URL",
   "DATABASE_URL",
   "SEO_CONTENT_PROVIDER",
 ] as const;
@@ -1288,9 +1290,9 @@ process.on("SIGTERM", () => { void stop(); });
 async function main(): Promise<void> {
   // Amazon image CDN IPv6 connections can reset on Windows while IPv4 succeeds.
   setDefaultResultOrder("ipv4first");
-  const databaseUrl = env.DATABASE_URL?.trim();
+  const databaseUrl = getAutoSeoDatabaseUrl(env);
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required; SEO Content refuses file or memory fallback in the Pipeline Worker");
+    throw new Error("AUTO_SEO_DATABASE_URL or DATABASE_URL is required; SEO Content refuses file or memory fallback in the Pipeline Worker");
   }
   seoPersistence = await PostgresSeoContentRuntime.create({ databaseUrl });
   if (!env.SHOPIFY_GATEWAY_URL) {

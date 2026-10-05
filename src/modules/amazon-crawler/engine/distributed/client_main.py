@@ -6,13 +6,35 @@ from ..observability import redact
 
 import argparse
 import asyncio
+from contextlib import contextmanager
 import json
 import multiprocessing
 import os
 import sys
 import time
+import re
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
+
+from .instance_lock import AgentAlreadyRunningError, AgentInstanceLock
+
+
+@contextmanager
+def _acquire_agent_lock(data_directory: Path, *, restart_command_id: str | None) -> Iterator[AgentInstanceLock]:
+    deadline = time.monotonic() + (90 if restart_command_id else 0)
+    while True:
+        lock = AgentInstanceLock(data_directory)
+        try:
+            lock.__enter__()
+            break
+        except AgentAlreadyRunningError:
+            if restart_command_id is None or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
+    try:
+        yield lock
+    finally:
+        lock.__exit__(None, None, None)
 
 
 def _configure_packaged_browser() -> None:
@@ -40,7 +62,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-tray", action="store_true", help="Run in the foreground without a tray icon.")
     parser.add_argument("--start-minimized", action="store_true", help="Start in the tray without opening the dashboard.")
     parser.add_argument("--check-config", action="store_true", help="Validate configuration and exit.")
+    parser.add_argument("--enroll", action="store_true", help="Prompt privately for an Agent Key and enroll over HTTPS.")
     parser.add_argument("--installation-report", type=Path, help="Write the stable client identity during --check-config for installer verification.")
+    parser.add_argument("--restart-command-id", help=argparse.SUPPRESS)
+    parser.add_argument("--restore-update-database", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-command-id", help=argparse.SUPPRESS)
+    parser.add_argument("--database-backup-path", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--database-backup-sha256", help=argparse.SUPPRESS)
     return parser
 
 
@@ -49,13 +77,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_packaged_browser()
     from .client_agent import DistributedCrawlerAgent
     from .client_config import AgentConfig
-    from .instance_lock import AgentAlreadyRunningError, AgentInstanceLock
-
     arguments = build_parser().parse_args(argv)
+    if arguments.restart_command_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arguments.restart_command_id):
+        print("FFP Amazon Crawler restart command ID is invalid.", file=sys.stderr)
+        return 2
     try:
         config = AgentConfig.load(_resolve_config_path(arguments.config))
-        project_root = (arguments.project_root or config.data_directory).resolve()
+        default_project_root = (Path(sys.executable).parent if bool(getattr(sys, "frozen", False))
+                                else config.data_directory)
+        project_root = (arguments.project_root or default_project_root).resolve()
+        if arguments.restore_update_database:
+            if (not arguments.update_command_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arguments.update_command_id)
+                    or arguments.database_backup_path is None
+                    or not arguments.database_backup_sha256
+                    or not re.fullmatch(r"[a-f0-9]{64}", arguments.database_backup_sha256)):
+                raise ValueError("Offline Agent database rollback arguments are invalid.")
+            from .client_store import ClientStore
+            with AgentInstanceLock(config.data_directory):
+                ClientStore(config.data_directory / "agent.sqlite3").restore_agent_update_database(
+                    arguments.update_command_id, arguments.database_backup_path,
+                    arguments.database_backup_sha256)
+            print("Agent database rollback snapshot restored and verified.")
+            return 0
+        if arguments.enroll:
+            import getpass
+            from .client_credentials import enroll_agent, store_credential
+            from .client_store import ClientStore
+            if config.auth_mode != "key":
+                raise ValueError("Set authMode to key before enrollment.")
+            with AgentInstanceLock(config.data_directory):
+                store = ClientStore(config.data_directory / "agent.sqlite3")
+                store_credential(store, config.server_url, getpass.getpass("Agent Key (hidden): ").strip())
+                identity = enroll_agent(store, config.server_url, config.display_name)
+                print(json.dumps({"status": "enrolled", "clientId": identity}))
+            return 0
         if arguments.check_config:
+            if config.auth_mode == "key":
+                from .client_credentials import load_credential
+                from .client_store import ClientStore
+                load_credential(ClientStore(config.data_directory / "agent.sqlite3"), config.server_url)
             if arguments.installation_report:
                 from .client_store import ClientStore
                 identity = ClientStore(config.data_directory / "agent.sqlite3").client_id()
@@ -72,7 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         config.data_directory.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
-        with AgentInstanceLock(config.data_directory):
+        with _acquire_agent_lock(config.data_directory, restart_command_id=arguments.restart_command_id):
             use_tray = not arguments.no_tray and sys.platform == "win32"
             if use_tray:
                 try:
@@ -85,6 +145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 agent = DistributedCrawlerAgent(
                     project_root=project_root,
                     config=config,
+                    restart_command_id=arguments.restart_command_id,
                     on_status=lambda status: print(json.dumps(
                         {key: value for key, value in status.items() if key != "dashboard"},
                         ensure_ascii=False,
@@ -95,7 +156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             from .client_tray import TrayApplication
 
-            agent = DistributedCrawlerAgent(project_root=project_root, config=config)
+            agent = DistributedCrawlerAgent(project_root=project_root, config=config,
+                restart_command_id=arguments.restart_command_id)
             TrayApplication(agent, config.data_directory, start_minimized=arguments.start_minimized).run()
         return 0
     except KeyboardInterrupt:

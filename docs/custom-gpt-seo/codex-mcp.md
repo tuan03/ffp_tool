@@ -1,5 +1,38 @@
 # Codex MCP SEO
 
+## Unified Agent Access connection
+
+New installations need only the Agent Pack and one Agent Access token at
+`/mcp/seo-worker`. All worker tokens include Queue processing and the six SEO
+Performance audit/proposal tools below, scoped to their store and worker. Existing
+unexpired tokens also work after upgrade; no additional permission selection,
+Google credential on the worker, or second MCP installation is needed.
+
+New tokens created in Agent Access grant every store currently registered in FFP.
+The grant list is a snapshot at issuance, not a wildcard: new stores require a new
+token/login, not another installation. Existing tokens keep their previous store
+scope. The lifetime remains 24 hours. `worker_status.storeIds` lists the grants;
+`storeId` is the selected store. `worker_select_store` requires a fresh requestId,
+the target storeId and expectedStoreId from worker_status. It refuses unauthorized
+stores, concurrent stale selections and switching during an active run/lease.
+Finish existing work first, select, verify status and register a new session for
+Queue work. Run history stays in its original store; partial runs can be resumed
+after selecting that store again. Audit tools need no Queue session.
+
+One token is for one machine/controller, processing stores sequentially. Do not
+share it between concurrent Codex sessions. Revoking it from any granted store
+revokes all its grants and leases. Each store still needs its own Queue cutover
+and Google property mapping. Issuing a multi-store token does not enable either.
+
+Google connection/property mapping must still be configured in FFP by an operator.
+Disabled SEO Performance reports `SEO_PERFORMANCE_DISABLED` and does not block
+Queue processing. Every audit call rechecks expiry/revocation. No approve, publish,
+revision creation, store configuration or database tools are exposed.
+
+Restart Codex after deployment to refresh tool discovery. Update the installed
+skill from the new Agent Pack after reviewing local changes. Legacy connections
+below remain supported, but are not required for new Worker installations.
+
 SEO Performance adds six store-scoped audit/proposal tools when deployed. See [SEO Performance setup and operating procedure](../seo-performance-search-console.md). These tools read cached Search Console and storefront evidence and save proposals only; they cannot approve, publish, or create SEO revisions without the separate operator action.
 
 Codex MCP is an external SEO provider alongside Gemini and Custom GPT. Codex performs the reasoning in the active CLI or IDE session. The gateway MCP server only authenticates the store, exposes pending jobs and images, validates checkpoints, and submits drafts into the existing human review flow. It does not call the OpenAI Responses API and it has no Shopify write tool.

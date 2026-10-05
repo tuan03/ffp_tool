@@ -68,33 +68,25 @@ Add-Type -AssemblyName System.Net.Http
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('ffp-agent-release-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $temporaryRoot
 $manifestPath = Join-Path $temporaryRoot 'latest.json.part'
-$partPath = Join-Path $temporaryRoot 'installer.exe.part'
-$installerPath = Join-Path $temporaryRoot 'installer.exe'
+$installerPath = $null
 $reportPath = Join-Path $temporaryRoot 'identity.json'
 try {
-    Save-HttpsFile ([Uri]$ManifestUrl) $manifestPath 65536
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.schemaVersion -ne 1 -or $manifest.version -notmatch '^\d+\.\d+\.\d+$' -or
-        $manifest.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or [long]$manifest.size -le 0 -or [long]$manifest.size -gt 4GB -or
-        $manifest.signerThumbprint.ToUpperInvariant() -notin $pins) { throw 'Invalid or untrusted release manifest.' }
-    $artifactUri = Assert-HttpsUri $manifest.url
-    $expectedPath = '/tuan03/ffp_tool/releases/download/agent-v' + $manifest.version + '/FFP-Amazon-Crawler-Setup-' + $manifest.version + '.exe'
-    if ($artifactUri.Host -ne 'github.com' -or $artifactUri.AbsolutePath -ne $expectedPath) { throw 'Installer must come from the approved GitHub release.' }
-    Save-HttpsFile $artifactUri $partPath ([long]$manifest.size)
-    if ((Get-Item -LiteralPath $partPath).Length -ne [long]$manifest.size -or
-        (Get-FileHash -LiteralPath $partPath -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'Installer size or SHA-256 mismatch.' }
-    # Authenticode uses the file extension to select a SIP provider.
-    Move-Item -LiteralPath $partPath -Destination $installerPath
-    $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
-    if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or
-        $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $manifest.signerThumbprint.ToUpperInvariant()) {
-        throw 'Installer signature is invalid or belongs to another signer.'
+    $policyScriptPath = Join-Path $temporaryRoot 'agent-release-policy.ps1'
+    $localPolicyScript = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'agent-release-policy.ps1' } else { '' }
+    if ($localPolicyScript -and (Test-Path -LiteralPath $localPolicyScript -PathType Leaf)) {
+        Copy-Item -LiteralPath $localPolicyScript -Destination $policyScriptPath
+    } else {
+        Save-HttpsFile ([Uri]"$ServerUrl/agent-release-policy.ps1") $policyScriptPath 65536
     }
+    . $policyScriptPath
+    Save-HttpsFile ([Uri]$ManifestUrl) $manifestPath 65536
     $healthPath = Join-Path $temporaryRoot 'health.json'
     Save-HttpsFile ([Uri]"$ServerUrl/api/v1/health") $healthPath 65536
     $health = Get-Content -LiteralPath $healthPath -Raw | ConvertFrom-Json
-    if ([int]$health.protocolVersion -lt [int]$manifest.minimumProtocolVersion) { throw 'Coordinator protocol is too old for this installer.' }
-    if ([version]$health.serverVersion -lt [version]$manifest.minimumServerVersion) { throw 'Coordinator version is too old for this installer.' }
+    $policy = Get-AgentReleasePolicy -ManifestPath $manifestPath -TrustedSignerThumbprints $pins `
+        -CurrentProtocolVersion ([string]$health.protocolVersion) -CurrentServerVersion ([string]$health.serverVersion)
+    $installerPath = Receive-AgentReleaseArtifact -Policy $policy -DestinationDirectory $temporaryRoot `
+        -TrustedSignerThumbprints $pins
     $installDirectory = Join-Path $env:ProgramFiles 'FFP Amazon Crawler'
     $executable = Join-Path $installDirectory 'FFPAmazonCrawlerAgent.exe'
     if (Test-Path -LiteralPath $executable) {
@@ -104,10 +96,11 @@ try {
     $configPath = Join-Path $configDirectory 'agent.json'
     $null = New-Item -ItemType Directory -Force -Path $configDirectory
     if (-not (Test-Path -LiteralPath $configPath)) {
-        @{ serverUrl = $ServerUrl; displayName = $DisplayName; maxConcurrentInputs = 4 } |
+        @{ serverUrl = $ServerUrl; displayName = $DisplayName; dataDirectory = $configDirectory;
+            maxConcurrentInputs = 4; trustedSignerThumbprints = $pins } |
             ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
     }
-    $setup = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/SERVERURL=`"$ServerUrl`"", "/DISPLAYNAME=`"$DisplayName`"") -WindowStyle Hidden -Wait -PassThru
+    $setup = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/SERVERURL=`"$ServerUrl`"", "/DISPLAYNAME=`"$DisplayName`"", "/TRUSTEDSIGNERS=$($pins -join ',')") -WindowStyle Hidden -Wait -PassThru
     if ($setup.ExitCode -ne 0) { throw "Installer failed with exit code $($setup.ExitCode). Existing data was preserved." }
     $check = Start-Process -FilePath $executable -ArgumentList @('--check-config', "--config `"$configPath`"", "--installation-report `"$reportPath`"") -WindowStyle Hidden -Wait -PassThru
     if ($check.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $reportPath)) { throw 'Packaged agent configuration check failed.' }
@@ -126,9 +119,10 @@ try {
     throw 'Agent did not appear online within 90 seconds. Check the dashboard, HTTPS/WebSocket routing and firewall. Data has been preserved.'
 } finally {
     # Delete only our explicit temporary files, never an install/data directory.
-    foreach ($name in @('latest.json.part', 'installer.exe.part', 'installer.exe', 'identity.json', 'health.json', 'clients.json')) {
+    foreach ($name in @('latest.json.part', 'identity.json', 'health.json', 'clients.json')) {
         $path = Join-Path $temporaryRoot $name
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
     }
+    if ($installerPath -and (Test-Path -LiteralPath $installerPath)) { Remove-Item -LiteralPath $installerPath -Force }
     Remove-Item -LiteralPath $temporaryRoot
 }

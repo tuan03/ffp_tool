@@ -40,10 +40,23 @@ class ClientRecord(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(200))
+    agent_group: Mapped[str] = mapped_column(String(80), default="default", index=True)
     status: Mapped[str] = mapped_column(String(32), default="offline", index=True)
     agent_version: Mapped[str] = mapped_column(String(32), default="unknown")
+    crawler_version: Mapped[str] = mapped_column(String(64), default="unknown")
+    parser_version: Mapped[str] = mapped_column(String(64), default="unknown")
     protocol_version: Mapped[str] = mapped_column(String(16), default="1")
     max_concurrent_inputs: Mapped[int] = mapped_column(Integer, default=1)
+    desired_execution_state: Mapped[str] = mapped_column(String(16), default="RUNNING")
+    applied_execution_state: Mapped[str] = mapped_column(String(16), default="RUNNING")
+    command_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    last_processed_command_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    global_admission_gate_revision: Mapped[int] = mapped_column(Integer, default=0)
+    global_admission_gate_state: Mapped[str] = mapped_column(String(16), default="OPEN")
+    desired_agent_config: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
+    applied_agent_config: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
+    desired_config_version: Mapped[int] = mapped_column(Integer, default=0)
+    applied_config_version: Mapped[int] = mapped_column(Integer, default=0)
     capabilities: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
     limits: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -131,6 +144,9 @@ class CrawlTask(Base):
     canonical_url: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_retry: Mapped[int] = mapped_column(Integer, default=3)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    requeue_count: Mapped[int] = mapped_column(Integer, default=0)
     assigned_client_id: Mapped[str | None] = mapped_column(ForeignKey("crawler_clients.id"), nullable=True, index=True)
     lease_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -146,6 +162,7 @@ class CrawlTask(Base):
 
 class TaskAttempt(Base):
     __tablename__ = "task_attempts"
+    __table_args__ = (Index("ix_task_attempts_finished_at", "finished_at"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"), index=True)
@@ -153,10 +170,40 @@ class TaskAttempt(Base):
     lease_id: Mapped[str] = mapped_column(String(40), index=True)
     status: Mapped[str] = mapped_column(String(32), default="leased")
     error: Mapped[dict[str, Any] | None] = mapped_column(JSON_VALUE, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_version: Mapped[str] = mapped_column(String(64), default="unknown")
+    crawler_version: Mapped[str] = mapped_column(String(64), default="unknown")
+    parser_version: Mapped[str] = mapped_column(String(64), default="unknown")
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
     leased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     task: Mapped[CrawlTask] = relationship(back_populates="attempts")
+
+
+class ArchivedTaskAttempt(Base):
+    """Immutable attempt snapshot retained after an operator deletes a crawl job."""
+    __tablename__ = "archived_task_attempts"
+    __table_args__ = (Index("ix_archived_task_attempts_archived_at", "archived_at"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(40), index=True)
+    job_id: Mapped[str] = mapped_column(String(40), index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class CrawlerDlqAction(Base):
+    __tablename__ = "crawler_dlq_actions"
+    request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor: Mapped[str] = mapped_column(String(200))
+    action: Mapped[str] = mapped_column(String(24))
+    reason: Mapped[str] = mapped_column(Text)
+    scope: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE)
+    outcome: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class TaskResult(Base):
@@ -170,6 +217,16 @@ class TaskResult(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     task: Mapped[CrawlTask] = relationship(back_populates="result")
+
+
+class UploadReceipt(Base):
+    __tablename__ = "crawler_upload_receipts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"), index=True)
+    checksum: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class CrawlProductItem(Base):

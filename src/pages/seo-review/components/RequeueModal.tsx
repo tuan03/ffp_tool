@@ -8,6 +8,7 @@ export interface RequeueModalProps {
   readonly onClose: () => void;
   readonly onConfirm: (options: { provider: SeoProvider; instructions?: string }) => Promise<void>;
   readonly isBusy?: boolean;
+  readonly isRevision?: boolean;
 }
 
 export function RequeueModal({
@@ -17,6 +18,7 @@ export function RequeueModal({
   onClose,
   onConfirm,
   isBusy = false,
+  isRevision = false,
 }: RequeueModalProps): React.JSX.Element | null {
   const [provider, setProvider] = useState<SeoProvider>(defaultProvider);
   const [instructions, setInstructions] = useState("");
@@ -27,7 +29,7 @@ export function RequeueModal({
     e.preventDefault();
     if (isBusy) return;
     await onConfirm({
-      provider,
+      provider: isRevision ? "codex_mcp" : provider,
       instructions: instructions.trim() ? instructions.trim() : undefined,
     });
   };
@@ -47,10 +49,11 @@ export function RequeueModal({
             </span>
             <div>
               <h2 id="requeue-modal-title" className="text-base font-bold text-white">
-                Đưa vào Queue SEO lại
+                {isRevision ? "Tạo revision SEO mới" : "Đưa vào Queue SEO lại"}
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
                 Đưa <strong className="text-cyan-400 font-semibold">{count}</strong> sản phẩm đã chọn trở lại hàng đợi để AI xử lý lại.
+                {isRevision && " Đọc lại nguồn Shopify, giữ bản Review cũ; không tự duyệt hoặc Sync."}
               </p>
             </div>
           </div>
@@ -74,8 +77,9 @@ export function RequeueModal({
               <button
                 type="button"
                 onClick={() => setProvider("custom_gpt")}
+                disabled={isRevision}
                 className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer ${
-                  provider === "custom_gpt"
+                  !isRevision && provider === "custom_gpt"
                     ? "border-cyan-500 bg-cyan-950/60 text-cyan-200 ring-1 ring-cyan-500/30 font-semibold"
                     : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                 }`}
@@ -88,8 +92,9 @@ export function RequeueModal({
               <button
                 type="button"
                 onClick={() => setProvider("gemini")}
+                disabled={isRevision}
                 className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer ${
-                  provider === "gemini"
+                  !isRevision && provider === "gemini"
                     ? "border-cyan-500 bg-cyan-950/60 text-cyan-200 ring-1 ring-cyan-500/30 font-semibold"
                     : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                 }`}
@@ -103,7 +108,7 @@ export function RequeueModal({
                 type="button"
                 onClick={() => setProvider("codex_mcp")}
                 className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer ${
-                  provider === "codex_mcp"
+                  isRevision || provider === "codex_mcp"
                     ? "border-cyan-500 bg-cyan-950/60 text-cyan-200 ring-1 ring-cyan-500/30 font-semibold"
                     : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                 }`}

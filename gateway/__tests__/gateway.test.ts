@@ -537,6 +537,7 @@ describe("Gateway: Operations & Dispatcher", () => {
                   title: "Product 1 SEO Title",
                   description: "Product 1 SEO Description",
                 },
+                seoVersionMetafield: { value: "3", type: "number_integer" },
                 createdAt: "2026-09-01",
                 updatedAt: "2026-09-20",
                 variants: { edges: [] },
@@ -563,6 +564,7 @@ describe("Gateway: Operations & Dispatcher", () => {
         onlineStoreUrl?: string;
         featuredImage?: { id?: string; url: string; altText?: string; width?: number; height?: number };
         seo?: { title?: string; description?: string };
+        seoVersion?: number;
       }[];
       pageInfo: { hasNextPage: boolean };
     };
@@ -582,6 +584,7 @@ describe("Gateway: Operations & Dispatcher", () => {
       title: "Product 1 SEO Title",
       description: "Product 1 SEO Description",
     });
+    assert.equal(listData.products[0].seoVersion, 3);
 
     // Rejects non-positive limit
     await assert.rejects(

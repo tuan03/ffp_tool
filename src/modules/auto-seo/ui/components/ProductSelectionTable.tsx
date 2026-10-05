@@ -483,7 +483,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     🟣 Đang xử lý {eligibilityCounts ? `(${eligibilityCounts.active})` : ""}
                   </option>
                   <option value="current">
-                    🟢 Đã cập nhật {eligibilityCounts ? `(${eligibilityCounts.current})` : ""}
+                    🟢 Đã SEO {eligibilityCounts ? `(${eligibilityCounts.current})` : ""}
                   </option>
                   <option value="all">
                     Tất cả {eligibilityCounts ? `(${eligibilityCounts.all})` : ""}
@@ -733,7 +733,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
             {props.eligibilityFilter && props.eligibilityFilter !== "all" && (
               <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
-                SEO: {props.eligibilityFilter === "needs_seo" ? "Cần SEO" : props.eligibilityFilter === "active" ? "Đang xử lý" : "Đã cập nhật"}
+                SEO: {props.eligibilityFilter === "needs_seo" ? "Cần SEO" : props.eligibilityFilter === "active" ? "Đang xử lý" : "Đã SEO"}
                 <button
                   type="button"
                   onClick={() => props.onEligibilityFilterChange?.("all")}
@@ -1011,7 +1011,7 @@ function EligibilityBadge({ state }: { readonly state: AutoSeoEligibilityItem["s
     never_processed: "Chưa SEO",
     changed: "Có thay đổi",
     retry: "Thử lại",
-    current: "Đã cập nhật",
+    current: "Đã SEO",
     active: "Đang xử lý",
   };
   const colors: Readonly<Record<AutoSeoEligibilityItem["state"], string>> = {

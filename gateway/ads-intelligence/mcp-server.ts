@@ -1,3 +1,4 @@
+import { competitorResearchSchema, publishCompetitorResearch, readCompetitorResearch } from "./competitor-research";
 import { listAdsGatewayStores } from "./gateway-connection";
 import { ShopifyOrdersClient } from "./shopify-client";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -84,6 +85,48 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
   server.registerTool("ads_get_shopify_summary", { description: "Read eligible Shopify order totals over the last 30 complete UTC days through the selected Gateway connection and proxy.", inputSchema: { storeId: z.string().min(1) }, annotations: READ_ONLY }, async ({ storeId }) => {
     try { return jsonResult({ storeId, summary: await new ShopifyOrdersClient().getOrderSummary(storeId) }); }
     catch { return errorResult("SHOPIFY_SOURCE_UNAVAILABLE: check store registration, access and proxy in Gateway"); }
+  });
+
+  server.registerTool("ads_publish_competitor_research", {
+    description: "Save verified competitor research to the selected store dashboard. Does not change ad watchlists, campaigns or budgets. Requires explicit storeId and matching Gateway shopDomain. Returns the persisted report.",
+    inputSchema: { research: competitorResearchSchema }, annotations: { ...SAFE_WRITE, idempotentHint: true },
+  }, async ({ research }) => {
+    try { return jsonResult({ research: await publishCompetitorResearch(research) }); }
+    catch { return errorResult("RESEARCH_PUBLISH_FAILED: check store mapping, schema and observation date"); }
+  });
+  server.registerTool("ads_get_competitor_research", {
+    description: "Read the persisted product-matched competitor shortlist, separate from advertisement availability.",
+    inputSchema: { storeId: z.string().min(1) }, annotations: READ_ONLY,
+  }, async ({ storeId }) => {
+    try { return jsonResult({ research: await readCompetitorResearch(storeId) }); }
+    catch { return errorResult("RESEARCH_READ_FAILED: check store registration and mapping"); }
+  });
+
+  server.registerTool("ads_discover_advertisers", {
+    description: "Search the configured provider for advertiser Page IDs. Results are leads: verify page alias against the brand official website before collecting ads. One provider request; stop on quota errors.",
+    inputSchema: { storeId: z.string().min(1), query: z.string().min(2).max(100) }, annotations: { ...READ_ONLY, openWorldHint: true },
+  }, async ({ storeId, query }) => {
+    try {
+      await readCompetitorResearch(storeId);
+      return jsonResult({ storeId, advertisers: await service.discoverCompetitorAdvertisers(query) });
+    } catch (error) { return errorResult(error instanceof Error ? error.message : "COMPETITOR_DISCOVERY_FAILED"); }
+  });
+  server.registerTool("ads_fetch_competitor_page", {
+    description: "Fetch a page of real ads for an explicitly verified advertiser, independently of the old watchlist. Returns media URLs, IDs and pagination cursor. Caller must verify brand and product before publishing. One provider request, no watchlist changes.",
+    inputSchema: { storeId: z.string().min(1), pageId: z.string().regex(/^\d+$/), country: z.string().regex(/^(ALL|[A-Z]{2})$/).default("US"), activeStatus: z.enum(["ACTIVE", "ALL", "INACTIVE"]).default("ACTIVE"), cursor: z.string().max(50000).optional() }, annotations: { ...READ_ONLY, openWorldHint: true },
+  }, async ({ storeId, pageId, country, cursor, activeStatus }) => {
+    try {
+      await readCompetitorResearch(storeId);
+      return jsonResult({ storeId, ...await service.fetchCompetitorPage(pageId, { country, cursor, activeStatus }) });
+    } catch (error) { return errorResult(error instanceof Error ? error.message : "COMPETITOR_FETCH_FAILED"); }
+  });
+
+  server.registerTool("ads_search_live_library", {
+    description: "Search the live provider ad library by brand/product keywords, not the existing store watchlist. Treat returned ads as leads; verify advertiser, destination domain and product before publishing. One provider request with optional pagination.",
+    inputSchema: { storeId: z.string().min(1), query: z.string().min(2).max(200), country: z.string().regex(/^(ALL|[A-Z]{2})$/).default("US"), activeStatus: z.enum(["ACTIVE", "ALL", "INACTIVE"]).default("ACTIVE"), cursor: z.string().max(50000).optional() }, annotations: { ...READ_ONLY, openWorldHint: true },
+  }, async ({ storeId, query, country, cursor, activeStatus }) => {
+    try { await readCompetitorResearch(storeId); return jsonResult({ storeId, ...await service.searchLiveCompetitorAds(query, { country, cursor, activeStatus }) }); }
+    catch (error) { return errorResult(error instanceof Error ? error.message : "COMPETITOR_SEARCH_FAILED"); }
   });
 
   // Helper to register tool under primary name and optional alias
