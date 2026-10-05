@@ -545,6 +545,7 @@ export interface AdsIntelligenceClient {
   getStoreProfile?(storeId?: string): Promise<{ configured: boolean; storeId: string; shopDomain?: string; profile: any | null }>;
   saveStoreProfile?(storeId: string, payload: any): Promise<{ success: boolean; storeId: string; profile: any }>;
   testMetaConnection?(accountId: string): Promise<{ success: boolean; account?: any; error?: string }>;
+  testGa4Connection?(propertyId: string): Promise<{ success: boolean; propertyId?: string; sessions?: number; currency?: string; error?: string }>;
   proposeGuardedWrite?(storeId: string, decisionIdOrEntityId: string): Promise<GuardedWriteProposal>;
   executeGuardedWrite?(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }): Promise<GuardedWriteExecutionResult>;
 }

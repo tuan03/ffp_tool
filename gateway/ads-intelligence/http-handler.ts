@@ -252,6 +252,22 @@ export async function handleAdsIntelligenceHttpRequest(
       }
       return true;
     }
+
+    if (pathname === "/api/ads-intelligence/profile/test-ga4" && req.method === "POST") {
+      const body = await readJsonBody<{ propertyId: string }>(req);
+      const rawProp = body.propertyId || "";
+      if (!rawProp) {
+        sendJson(res, 400, { success: false, error: "Vui lòng nhập GA4 Property ID" });
+        return true;
+      }
+      try {
+        const testResult = await adsIntelligenceService.testGa4PropertyConnection(rawProp);
+        sendJson(res, 200, testResult);
+      } catch (err: any) {
+        sendJson(res, 400, { success: false, error: err.message || "Không thể kết nối GA4 Property này." });
+      }
+      return true;
+    }
     if (pathname === "/api/ads-intelligence/shopify" && req.method === "GET") {
       sendJson(res, 200, await new ShopifyOrdersClient().getOrderSummary(storeId));
       return true;

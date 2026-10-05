@@ -9,6 +9,8 @@ export interface StoreProfileModalProps {
   readonly onSaved: (storeId: string) => void;
 }
 
+const GA4_SERVICE_ACCOUNT_EMAIL = "ga4-data-reader@vaulted-night-510508-j8.iam.gserviceaccount.com";
+
 export function StoreProfileModal({
   storeId,
   shopDomain,
@@ -16,17 +18,31 @@ export function StoreProfileModal({
   onClose,
   onSaved,
 }: StoreProfileModalProps): React.JSX.Element {
-  const [tab, setTab] = useState<"form" | "json">("form");
+  const [showAdvancedJson, setShowAdvancedJson] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [copiedEmail, setCopiedEmail] = useState(false);
+
+  // Meta Test State
   const [testingMeta, setTestingMeta] = useState(false);
-  const [testResult, setTestResult] = useState<{
+  const [metaTestResult, setMetaTestResult] = useState<{
     success: boolean;
     name?: string;
     currency?: string;
     timezone?: string;
     error?: string;
   } | null>(null);
+
+  // GA4 Test State
+  const [testingGa4, setTestingGa4] = useState(false);
+  const [ga4TestResult, setGa4TestResult] = useState<{
+    success: boolean;
+    propertyId?: string;
+    sessions?: number;
+    currency?: string;
+    error?: string;
+  } | null>(null);
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Form Fields
@@ -71,19 +87,27 @@ export function StoreProfileModal({
     };
   }, [client, storeId]);
 
+  const handleCopyEmail = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard.writeText(GA4_SERVICE_ACCOUNT_EMAIL);
+      setCopiedEmail(true);
+      setTimeout(() => setCopiedEmail(false), 3000);
+    }
+  };
+
   const handleTestMeta = async () => {
     if (!metaAccountId.trim()) {
       setErrorMessage("Vui lòng nhập Meta Ad Account ID để kiểm tra.");
       return;
     }
     setTestingMeta(true);
-    setTestResult(null);
+    setMetaTestResult(null);
     setErrorMessage(null);
     try {
       if (client.testMetaConnection) {
         const res = await client.testMetaConnection(metaAccountId.trim());
         if (res.success && res.account) {
-          setTestResult({
+          setMetaTestResult({
             success: true,
             name: res.account.name,
             currency: res.account.currency,
@@ -91,39 +115,52 @@ export function StoreProfileModal({
           });
           if (res.account.timezone) setAccountTimezone(res.account.timezone);
         } else {
-          setTestResult({ success: false, error: res.error || "Không thể kết nối" });
+          setMetaTestResult({ success: false, error: res.error || "Không thể kết nối tài khoản Meta." });
         }
       }
     } catch (err) {
-      setTestResult({
+      setMetaTestResult({
         success: false,
-        error: err instanceof Error ? err.message : "Kiểm tra thất bại",
+        error: err instanceof Error ? err.message : "Kiểm tra kết nối Meta thất bại.",
       });
     } finally {
       setTestingMeta(false);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result;
-      if (typeof text === "string") {
-        setRawJson(text);
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed.meta?.accountIds?.[0]) setMetaAccountId(parsed.meta.accountIds[0]);
-          if (parsed.business?.targetCpa) setTargetCpa(String(parsed.business.targetCpa));
-          if (parsed.business?.breakEvenRoas) setBreakEvenRoas(String(parsed.business.breakEvenRoas));
-          if (parsed.ga4?.propertyId) setGa4PropertyId(String(parsed.ga4.propertyId));
-        } catch {
-          // Keep raw text even if not valid JSON yet
+  const handleTestGa4 = async () => {
+    if (!ga4PropertyId.trim()) {
+      setErrorMessage("Vui lòng nhập GA4 Property ID để kiểm tra.");
+      return;
+    }
+    setTestingGa4(true);
+    setGa4TestResult(null);
+    setErrorMessage(null);
+    try {
+      if (client.testGa4Connection) {
+        const res = await client.testGa4Connection(ga4PropertyId.trim());
+        if (res.success) {
+          setGa4TestResult({
+            success: true,
+            propertyId: res.propertyId,
+            sessions: res.sessions,
+            currency: res.currency,
+          });
+        } else {
+          setGa4TestResult({
+            success: false,
+            error: res.error || "Không thể truy vấn dữ liệu từ GA4 Property này.",
+          });
         }
       }
-    };
-    reader.readAsText(file);
+    } catch (err) {
+      setGa4TestResult({
+        success: false,
+        error: err instanceof Error ? err.message : "Kiểm tra kết nối GA4 thất bại.",
+      });
+    } finally {
+      setTestingGa4(false);
+    }
   };
 
   const handleSave = async () => {
@@ -136,7 +173,7 @@ export function StoreProfileModal({
       }
 
       let payload: unknown;
-      if (tab === "json") {
+      if (showAdvancedJson) {
         try {
           payload = JSON.parse(rawJson);
         } catch {
@@ -186,10 +223,10 @@ export function StoreProfileModal({
             </span>
             <div>
               <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                Cấu hình Ads Profile: <span className="text-cyan-400 font-mono">{storeId}</span>
+                Thiết lập Quảng cáo & Đo lường: <span className="text-cyan-400 font-mono">{storeId}</span>
               </h3>
               <p className="text-xs text-slate-400">
-                {shopDomain ? `Shopify Domain: ${shopDomain} · ` : ""}Kết nối Meta Graph API, GA4 & Mục tiêu CPA
+                {shopDomain ? `Shopify: ${shopDomain} · ` : ""}Chỉ cần điền ID, hệ thống tự động kết nối API
               </p>
             </div>
           </div>
@@ -202,183 +239,216 @@ export function StoreProfileModal({
           </button>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800">
-          <button
-            type="button"
-            onClick={() => setTab("form")}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              tab === "form" ? "bg-cyan-950/80 text-cyan-300 shadow-sm border border-cyan-800/60" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <span>📝</span>
-            <span>Điền Form Trực Quan</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("json")}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              tab === "json" ? "bg-cyan-950/80 text-cyan-300 shadow-sm border border-cyan-800/60" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <span>📄</span>
-            <span>Dán / Tải File JSON</span>
-          </button>
-        </div>
-
         {loading ? (
-          <p className="text-xs text-slate-400 py-6 text-center">Đang tải cấu hình hiện tại…</p>
+          <p className="text-xs text-slate-400 py-6 text-center">Đang nạp cấu hình store…</p>
         ) : (
-          <>
-            {/* Form Mode */}
-            {tab === "form" && (
-              <div className="space-y-4 text-xs">
-                {/* Meta Ad Account ID */}
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-slate-200 flex items-center justify-between">
-                    <span>Meta Ad Account ID <span className="text-rose-400">*</span></span>
-                    <span className="text-[11px] text-slate-400 font-normal">Định dạng act_xxxxxxxxxxxxxxx</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={metaAccountId}
-                      onChange={(e) => setMetaAccountId(e.target.value)}
-                      placeholder="Ví dụ: act_1569725310249145 hoặc 1569725310249145"
-                      className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleTestMeta}
-                      disabled={testingMeta || !metaAccountId.trim()}
-                      className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
-                    >
-                      {testingMeta ? "Đang test…" : "⚡ Test kết nối"}
-                    </button>
-                  </div>
-                  {/* Test Connection Badge */}
-                  {testResult && (
-                    <div
-                      className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
-                        testResult.success
-                          ? "bg-emerald-950/60 border-emerald-800/70 text-emerald-300"
-                          : "bg-rose-950/60 border-rose-800/70 text-rose-300"
-                      }`}
-                    >
-                      <span>{testResult.success ? "✓" : "✕"}</span>
-                      {testResult.success ? (
-                        <span>
-                          Kết nối thành công! Tài khoản: <strong>{testResult.name}</strong> ({testResult.currency} · {testResult.timezone})
-                        </span>
-                      ) : (
-                        <span>{testResult.error}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Target CPA & Break Even ROAS */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="font-semibold text-slate-200">
-                      Target CPA (USD) <span className="text-rose-400">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={targetCpa}
-                      onChange={(e) => setTargetCpa(e.target.value)}
-                      placeholder="22.0"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                    />
-                    <p className="text-[10px] text-slate-400">Chi phí chuyển đổi mục tiêu cho 1 đơn hàng</p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="font-semibold text-slate-200">
-                      Break-even ROAS
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={breakEvenRoas}
-                      onChange={(e) => setBreakEvenRoas(e.target.value)}
-                      placeholder="2.2"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                    />
-                    <p className="text-[10px] text-slate-400">Ngưỡng ROAS hòa vốn của sản phẩm</p>
-                  </div>
-                </div>
-
-                {/* Account Timezone & GA4 */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="font-semibold text-slate-200">Múi giờ Ad Account</label>
-                    <input
-                      type="text"
-                      value={accountTimezone}
-                      onChange={(e) => setAccountTimezone(e.target.value)}
-                      placeholder="Asia/Manila hoặc America/New_York"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="font-semibold text-slate-200">GA4 Property ID (Tùy chọn)</label>
-                    <input
-                      type="text"
-                      value={ga4PropertyId}
-                      onChange={(e) => setGa4PropertyId(e.target.value)}
-                      placeholder="Ví dụ: 555699138"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Competitor Watchlist */}
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-slate-200 flex items-center justify-between">
-                    <span>Watchlist Đối thủ (Page ID / Tùy chọn)</span>
-                    <span className="text-[10px] text-slate-400 font-normal">Mỗi Page ID một dòng</span>
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={watchlistText}
-                    onChange={(e) => setWatchlistText(e.target.value)}
-                    placeholder="100064829182341&#10;100083124589211"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
+          <div className="space-y-5 text-xs">
+            {/* SECTION 1: META ADS */}
+            <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                <span className="font-bold text-cyan-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                  <span>📘</span> 1. Tài khoản Meta Ads
+                </span>
+                <span className="text-[10px] text-slate-500">Tự động kết nối qua Meta Graph API</span>
               </div>
-            )}
 
-            {/* JSON Mode */}
-            {tab === "json" && (
-              <div className="space-y-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-slate-200">
-                    File Cấu hình Ads Profile (JSON)
-                  </label>
-                  <label className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer">
-                    <span>📁 Tải lên file .json</span>
-                    <input
-                      type="file"
-                      accept=".json,.yaml,.yml"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
-                  </label>
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-200 flex items-center justify-between">
+                  <span>Meta Ad Account ID <span className="text-rose-400">*</span></span>
+                  <span className="text-[10px] text-slate-400 font-normal">Dãy số hoặc act_xxxxxxxxxxxxxxx</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={metaAccountId}
+                    onChange={(e) => setMetaAccountId(e.target.value)}
+                    placeholder="Ví dụ: act_1569725310249145 hoặc 1569725310249145"
+                    className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTestMeta}
+                    disabled={testingMeta || !metaAccountId.trim()}
+                    className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {testingMeta ? "Đang test…" : "⚡ Test Meta"}
+                  </button>
                 </div>
-                <textarea
-                  rows={12}
-                  value={rawJson}
-                  onChange={(e) => setRawJson(e.target.value)}
-                  placeholder={`{\n  "storeId": "${storeId}",\n  "mode": "read_only",\n  "marketCountries": ["US"],\n  "reportingCurrency": "USD",\n  "meta": {\n    "accountIds": ["act_xxxxxxxxxxxxxxx"],\n    "accountTimezone": "Asia/Manila"\n  }\n}`}
-                  className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
+
+                {metaTestResult && (
+                  <div
+                    className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
+                      metaTestResult.success
+                        ? "bg-emerald-950/60 border-emerald-800/70 text-emerald-300"
+                        : "bg-rose-950/60 border-rose-800/70 text-rose-300"
+                    }`}
+                  >
+                    <span>{metaTestResult.success ? "✓" : "✕"}</span>
+                    {metaTestResult.success ? (
+                      <span>
+                        Meta xác nhận: <strong>{metaTestResult.name}</strong> ({metaTestResult.currency} · {metaTestResult.timezone})
+                      </span>
+                    ) : (
+                      <span>{metaTestResult.error}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-medium text-slate-300 text-[11px]">Múi giờ tài khoản Meta</label>
+                <input
+                  type="text"
+                  value={accountTimezone}
+                  onChange={(e) => setAccountTimezone(e.target.value)}
+                  placeholder="Asia/Manila hoặc America/New_York"
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-slate-200 font-mono text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
-            )}
-          </>
+            </div>
+
+            {/* SECTION 2: GOOGLE ANALYTICS 4 (1 EMAIL DÙNG CHUNG) */}
+            <div className="rounded-xl border border-indigo-900/60 bg-indigo-950/20 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-indigo-900/40 pb-2">
+                <span className="font-bold text-indigo-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                  <span>📊</span> 2. Google Analytics 4 (GA4)
+                </span>
+                <span className="text-[10px] text-emerald-400 font-semibold">1 Email dùng chung cho tất cả store</span>
+              </div>
+
+              {/* Service Account Callout Banner */}
+              <div className="p-3 rounded-lg bg-slate-950/90 border border-indigo-800/50 space-y-2">
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  💡 <strong>Không cần tạo file JSON:</strong> Chỉ cần vào Google Analytics của store này (<em>Admin ➔ Property Access Management</em>), bấm <strong>Add User</strong> và thêm email sau với quyền <strong>Viewer</strong>:
+                </p>
+                <div className="flex items-center justify-between gap-2 bg-slate-900 p-2 rounded border border-slate-800 font-mono text-[11px] text-cyan-300">
+                  <span className="truncate select-all">{GA4_SERVICE_ACCOUNT_EMAIL}</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyEmail}
+                    className="shrink-0 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-sans text-[10px] font-semibold transition cursor-pointer"
+                  >
+                    {copiedEmail ? "✓ Đã chép" : "📋 Sao chép email"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-200 flex items-center justify-between">
+                  <span>GA4 Property ID (Dãy số)</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Xem trong GA4 Property Settings</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ga4PropertyId}
+                    onChange={(e) => setGa4PropertyId(e.target.value)}
+                    placeholder="Ví dụ: 555699138"
+                    className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTestGa4}
+                    disabled={testingGa4 || !ga4PropertyId.trim()}
+                    className="px-3 py-2 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 border border-indigo-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {testingGa4 ? "Đang test…" : "⚡ Test GA4"}
+                  </button>
+                </div>
+
+                {ga4TestResult && (
+                  <div
+                    className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
+                      ga4TestResult.success
+                        ? "bg-emerald-950/60 border-emerald-800/70 text-emerald-300"
+                        : "bg-rose-950/60 border-rose-800/70 text-rose-300"
+                    }`}
+                  >
+                    <span>{ga4TestResult.success ? "✓" : "✕"}</span>
+                    {ga4TestResult.success ? (
+                      <span>
+                        GA4 xác nhận: Kết nối thành công! Đã ghi nhận <strong>{ga4TestResult.sessions} lượt truy cập (sessions)</strong> trong 7 ngày qua ({ga4TestResult.currency}).
+                      </span>
+                    ) : (
+                      <span>{ga4TestResult.error}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SECTION 3: ECONOMICS & RULES */}
+            <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
+              <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px] border-b border-slate-800/80 pb-2">
+                <span>🎯</span> 3. Mục tiêu Kinh tế & Quyết định AI (Economics)
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-semibold text-slate-200">Target CPA (USD) <span className="text-rose-400">*</span></label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={targetCpa}
+                    onChange={(e) => setTargetCpa(e.target.value)}
+                    placeholder="22.0"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                  />
+                  <p className="text-[10px] text-slate-400">Chi phí tối đa chấp nhận để có 1 đơn hàng</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-slate-200">Break-even ROAS</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={breakEvenRoas}
+                    onChange={(e) => setBreakEvenRoas(e.target.value)}
+                    placeholder="2.2"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                  />
+                  <p className="text-[10px] text-slate-400">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ</p>
+                </div>
+              </div>
+
+              <div className="space-y-1 pt-1">
+                <label className="font-medium text-slate-300 text-[11px] flex items-center justify-between">
+                  <span>Watchlist Đối thủ (Page ID / Tùy chọn)</span>
+                  <span className="text-[10px] text-slate-500">Mỗi Page ID một dòng</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={watchlistText}
+                  onChange={(e) => setWatchlistText(e.target.value)}
+                  placeholder="100064829182341&#10;100083124589211"
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-slate-200 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+            </div>
+
+            {/* Collapsible Advanced JSON Toggle */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedJson(!showAdvancedJson)}
+                className="text-[11px] text-slate-400 hover:text-cyan-400 font-medium transition cursor-pointer flex items-center gap-1"
+              >
+                <span>{showAdvancedJson ? "▼" : "▶"}</span>
+                <span>Chế độ nâng cao (Xem / chỉnh sửa JSON trực tiếp)</span>
+              </button>
+
+              {showAdvancedJson && (
+                <div className="mt-2 space-y-2 animate-in fade-in duration-200">
+                  <textarea
+                    rows={8}
+                    value={rawJson}
+                    onChange={(e) => setRawJson(e.target.value)}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-cyan-300 font-mono text-[11px] focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Error Alert */}

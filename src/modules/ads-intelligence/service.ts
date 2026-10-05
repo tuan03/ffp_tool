@@ -100,6 +100,7 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
     getStoreProfile: store => request(`profile?${storeQuery(store)}`),
     saveStoreProfile: (storeId, payload) => request(`profile?${storeQuery(storeId)}`, jsonRequest("POST", payload)),
     testMetaConnection: accountId => request("profile/test-connection", jsonRequest("POST", { accountId })),
+    testGa4Connection: propertyId => request("profile/test-ga4", jsonRequest("POST", { propertyId })),
     async proposeGuardedWrite() {
       throw new Error("Thực thi quảng cáo chưa khả dụng. Hãy xác minh và thao tác trực tiếp trong Meta Ads Manager.");
     },
