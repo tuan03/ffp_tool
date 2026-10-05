@@ -232,7 +232,7 @@ class ClientTrayTests(unittest.TestCase):
         tray._confirm.assert_not_called()
         tray._launch_lifecycle_script.assert_not_called()
 
-    def test_update_prompts_and_launches_only_for_newer_release(self) -> None:
+    def test_update_refuses_unverified_legacy_source_installer(self) -> None:
         tray = object.__new__(TrayApplication)
         tray.agent = Mock()
         tray.agent.config.server_url = "http://coordinator.test"
@@ -241,11 +241,14 @@ class ClientTrayTests(unittest.TestCase):
         tray._lifecycle_is_safe = Mock(return_value=True)
         tray._confirm = Mock(return_value=True)
         tray._launch_lifecycle_script = Mock()
+        tray._icon = None
+        tray._notify = Mock()
 
         tray._run_update_agent()
 
-        tray._confirm.assert_called_once_with("Cập nhật Agent từ 5.2.2 lên 5.3.0 và tự khởi động lại?")
-        tray._launch_lifecycle_script.assert_called_once()
+        tray._notify.assert_called_once_with("Có bản Agent mới nhưng tự cập nhật đang tạm khóa cho tới khi DRAIN, cài đặt ký số và rollback được nghiệm thu. Agent hiện tại chưa bị thay đổi.")
+        tray._confirm.assert_not_called()
+        tray._launch_lifecycle_script.assert_not_called()
 
 
 class PackagedClientTests(unittest.TestCase):

@@ -30,6 +30,16 @@ test("publication rejects invalid signer configuration", { skip: process.platfor
   assert.match(processResult.stderr + processResult.stdout, /trusted code-signing/);
 });
 
+test("legacy source updater fails closed before touching an installed Agent", { skip: process.platform !== "win32" }, () => {
+  const processResult = spawnSync("powershell.exe", [
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/update-agent.ps1",
+    "-ServerUrl", "https://crawler.invalid", "-InstallDirectory", "C:/FFP/Agent",
+  ], { encoding: "utf8" });
+  assert.notEqual(processResult.status, 0);
+  assert.match(processResult.stderr + processResult.stdout, /Automatic Agent updates are disabled/);
+  assert.match(processResult.stderr + processResult.stdout, /No installed files were changed/);
+});
+
 test("Windows package never copies developer agent or proxy configuration", async () => {
   const buildScript = await readFile(buildScriptUrl, "utf8");
   assert.doesNotMatch(buildScript, /config\/amazon-crawler-agent\.json/);
@@ -55,4 +65,23 @@ test("agent release pipeline uses one version and stable asset names", async () 
   assert.match(workflow, /FFP-Amazon-Crawler-Setup-\$agentVersion\.exe\.sha256/);
   assert.match(workflow, /create-agent-release\.ps1/);
   assert.match(workflow, /installer-output\/latest\.json/);
+  const [bootstrap, policy, legacyUpdater] = await Promise.all([
+    readFile(new URL("./install-agent.ps1", import.meta.url), "utf8"),
+    readFile(new URL("./agent-release-policy.ps1", import.meta.url), "utf8"),
+    readFile(new URL("./update-agent.ps1", import.meta.url), "utf8"),
+  ]);
+  assert.match(bootstrap, /Get-AgentReleasePolicy/);
+  assert.match(bootstrap, /Receive-AgentReleaseArtifact/);
+  assert.match(policy, /Get-AuthenticodeSignature/);
+  assert.match(policy, /githubusercontent\.com/);
+  assert.match(legacyUpdater, /Automatic Agent updates are disabled/);
+  const [clientDockerfile, clientNginx, sourcePackager] = await Promise.all([
+    readFile(new URL("../deploy/client/Dockerfile", import.meta.url), "utf8"),
+    readFile(new URL("../deploy/client/nginx.conf", import.meta.url), "utf8"),
+    readFile(new URL("./package-agent-source.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(bootstrap, /\$ServerUrl\/agent-release-policy\.ps1/);
+  assert.match(clientDockerfile, /COPY scripts\/agent-release-policy\.ps1/);
+  assert.match(clientNginx, /location = \/agent-release-policy\.ps1/);
+  assert.match(sourcePackager, /"scripts\/agent-release-policy\.ps1"/);
 });

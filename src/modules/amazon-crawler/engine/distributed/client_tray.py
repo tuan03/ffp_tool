@@ -223,15 +223,7 @@ class TrayApplication:
         if self._version_parts(latest) <= self._version_parts(AGENT_VERSION):
             self._notify(f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất. Không cần cập nhật.")
             return
-        if not self._lifecycle_is_safe():
-            return
-        if not self._confirm(f"Cập nhật Agent từ {AGENT_VERSION} lên {latest} và tự khởi động lại?"):
-            return
-        self._launch_lifecycle_script("update-agent.ps1", [
-            "-ServerUrl", self.agent.config.server_url,
-            "-InstallDirectory", str(self.agent.project_root),
-            "-AgentProcessId", str(os.getpid()),
-        ])
+        self._notify("Có bản Agent mới nhưng tự cập nhật đang tạm khóa cho tới khi DRAIN, cài đặt ký số và rollback được nghiệm thu. Agent hiện tại chưa bị thay đổi.")
 
     def _update_agent(self, _icon: Any, _item: Any) -> None:
         self._defer_menu_action(self._run_update_agent, name="ffp-agent-update-confirm")

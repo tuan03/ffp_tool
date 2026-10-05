@@ -199,7 +199,7 @@ UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhấ
 | [x] | 40 | DRAIN báo đúng khi hết running | 6, 8–9 (drain) | 39; E5.2 | 25 focused Python + 34 service tests; full npm test, typecheck, build pass; includes quarantine/outbox ACK fence | Automated local QA passed; physical connected-agent UI check remains optional |
 | [x] | 41 | RUN_SELF_TEST không tạo tác động nghiệp vụ thật | 8, 41 (self-test) | 40; E5.2 | 32 focused Python + 35 service tests; full npm test, typecheck, build pass; report allowlist verified | Automated local QA passed; physical-agent manual UI check remains |
 | [x] | 42 | Rà nhánh updater và chốt phần tái sử dụng | 40, 54 (audit updater) | 41; E0.3/E5.3, owner xác nhận | Read-only audit of updater commits/files; rejected wholesale merge due separate Coordinator+Postgres topology and missing DRAIN/journal/rollback guarantees | Audit documented; selective reuse only, no merge |
-| [ ] | 43 | Artifact/manifest được xác minh trước thực thi | 23, 40 (xác minh artifact) | 42; E5.3 | Hash/signature/version, partial download, disk-full | Xem artifact sai bị từ chối, bản cũ còn |
+| [x] | 43 | Artifact/manifest được xác minh trước thực thi | 23, 40 (xác minh artifact) | 42; E5.3 | Windows PowerShell artifact tests + 6 Node release tests + 6 tray tests; exact manifest/hash/size/pin/version gate | Code QA pass; real trusted Authenticode release + clean VM await Task 46 |
 | [ ] | 44 | UPDATE_AGENT giữ identity/data và ACK sau boot | 8, 40, 51 (update) | 43; E5.3 | Drain/install/reboot journal/self-test, outbox nguyên vẹn | Update agent test, đối chiếu trước/sau |
 | [ ] | 45 | ROLLBACK_AGENT tương thích schema và dữ liệu | 8, 40 (rollback) | 44; E5.3 | Bản mới lỗi, rollback an toàn, backup recovery | Demo rollback test, không mất credential/profile |
 | [ ] | 46 | Clean-machine installer và canary rehearsal | 2, 5, 40, 54 (installer/canary) | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | Nghiệm thu trên VM/máy sạch; release thật cần duyệt riêng |
@@ -284,7 +284,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 43: release artifact verification; Tasks 39–41 passed local code QA, Task 42 audit complete |
+| Task đang chạy | Task 44: DRAIN-based UPDATE_AGENT; Tasks 39–43 passed automated local QA, Task 42 audit complete |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -305,7 +305,8 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 40 | Đã qua local code QA; xem [báo cáo Task 40](audits/distributed-crawler/task-40-drain.md); physical agent UI check chưa chạy |
 | Task 41 | Đã qua local code QA; xem [báo cáo Task 41](audits/distributed-crawler/task-41-agent-self-test.md); physical-agent UI check chưa chạy |
 | Task 42 | Đã audit, không merge nhánh; xem [báo cáo Task 42](audits/distributed-crawler/task-42-updater-branch-audit.md) |
-| Task 43–53 | Chưa làm |
+| Task 43 | Code QA passed; see [Task 43 report](audits/distributed-crawler/task-43-verified-agent-artifacts.md); trusted signed release/clean VM pending Task 46 |
+| Task 44–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
