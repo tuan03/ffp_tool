@@ -4,8 +4,14 @@ import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
+import { createSeoPublishTransport } from "./seo-worker/publish-transport";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
+import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
+import { createSeoRevision } from "./seo-worker/revision-service";
+import { handleWorkerMcp } from "./seo-worker/mcp-handler";
+import { createWorkerWorkflow } from "./seo-worker/workflow";
+import { createWorkerSourceGuard } from "./seo-worker/source-guard";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -145,6 +151,8 @@ export function startGatewayServer(
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
+  const isBackendPublishEnabled = (process.env.SEO_WORKER_PUBLISH_ENABLED ?? env.SEO_WORKER_PUBLISH_ENABLED) === "true" && Boolean(operatorUsername) && Boolean(getAutoSeoDatabaseUrl());
+  if (isBackendPublishEnabled) getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher));
   configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
   const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
   const storeControlPlane = new StoreControlPlane({
@@ -180,6 +188,16 @@ export function startGatewayServer(
       await getCustomGptRuntime().mcpHandler(req, res);
       return;
     }
+    if (url === "/mcp/seo-worker") {
+      try {
+        const runtime = getCustomGptRuntime(); await runtime.initialize();
+        await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, {
+          checkSource: createWorkerSourceGuard(dispatcher),
+          performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(job.storeId, job.input.productId ?? job.sourceIdentity) ?? { status: "disabled" },
+        }), getPerformanceService);
+      } catch { if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: { code: "WORKER_UNAVAILABLE" } })); } }
+      return;
+    }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
       return;
@@ -196,6 +214,18 @@ export function startGatewayServer(
         durableUploads: env.REVIEW_IMAGE_DURABLE_UPLOADS === "true",
         reviewImageOutputDir: env.REVIEW_IMAGE_OUTPUT_DIR,
         dispatcher,
+      });
+      return;
+    }
+    if (url.startsWith("/api/seo-agent/")) {
+      await handleSeoAgentHttp(req, res, {
+        operator: isAuthenticatedOperator ? operatorUsername : undefined,
+        hasStore: storeId => storeRegistry.hasStore(storeId),
+        listStoreIds: () => storeRegistry.listStores().map(store => store.storeId),
+        repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
+        publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
+        createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },
+        history: async (storeId, jobId, offset) => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workerHistory.list(storeId, jobId, offset); },
       });
       return;
     }

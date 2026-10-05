@@ -9,6 +9,7 @@ import type { CrawlProduct } from "../../modules/customization-normalizer";
 import type { AmazonCrawlerReviewTarget } from "../../modules/amazon-crawler";
 import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 import type { GeneratedFaqItem } from "../../modules/seo-content";
+import type { SeoPublishReceipt } from "../../modules/custom-gpt-seo";
 
 export type ProductSourceOrigin = "all" | "distributed_crawler" | "pinterest_pod" | "auto_seo";
 
@@ -54,6 +55,8 @@ export interface SeoProductBackup {
 export interface SeoProductUiViewModel {
   readonly id: string;
   readonly gptJobId?: string;
+  readonly backendPublishRequired?: boolean;
+  readonly backendPublish?: SeoPublishReceipt;
   readonly storeId?: string;
   readonly productId?: string;
   readonly asin?: string;

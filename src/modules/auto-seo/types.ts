@@ -176,12 +176,14 @@ export type AutoSeoEligibilityReason =
   | "LAST_DISPATCH_FAILED"
   | "SHOPIFY_UPDATED"
   | "UP_TO_DATE"
+  | "SHOPIFY_SYNCED"
   | "HASH_VERIFICATION_REQUIRED"
   | "SOURCE_TIMESTAMP_UNKNOWN"
   | "BASELINE_TIMESTAMP_UNKNOWN"
   | "ACTIVE_DISPATCH"
   | "ACTIVE_QUEUE"
-  | "ACTIVE_REVIEW";
+  | "ACTIVE_REVIEW"
+  | "QUEUE_CLEARED";
 
 export interface AutoSeoEligibilityProductSummary {
   readonly productId: string;
@@ -195,6 +197,7 @@ export interface AutoSeoEligibilityRequest {
 
 export interface AutoSeoEligibilityItem {
   readonly productId: string;
+  readonly jobId?: string;
   readonly state: AutoSeoEligibilityState;
   readonly reason: AutoSeoEligibilityReason;
   readonly lastSuccessfulShopifyUpdatedAt?: string;
@@ -233,6 +236,11 @@ export interface AutoSeoClient {
   loadProductDetailFresh?(storeId: string, productId: string): Promise<ShopifyProductForAutoSeoUi>;
   runAutoSeo(input: AutoSeoSelectionInput): Promise<AutoSeoOutput>;
   getProductEligibility?(request: AutoSeoEligibilityRequest): Promise<AutoSeoEligibilityResponse>;
+  createSeoRevision?(
+    storeId: string,
+    jobId: string,
+    requestId: string,
+  ): Promise<{ readonly jobId: string; readonly previousJobId: string }>;
   runAutoSeoBackup(request: AutoSeoBackupRequest): Promise<AutoSeoBackupResponse>;
   hydrateSelectedProductsFresh(
     productIds: readonly string[],

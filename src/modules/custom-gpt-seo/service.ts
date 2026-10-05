@@ -1,4 +1,4 @@
-import type { GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider } from "./types";
+import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, ClearQueueResult, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -32,6 +32,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function createCustomGptClient(fetcher: typeof fetch = fetch) {
+  async function agentRequest<T>(route: string, storeId: string, body?: unknown): Promise<T> {
+    const response = await fetcher(`/api/seo-agent/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, {
+      method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json", "x-ffp-agent": "1" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (!response.ok) {
+      if (route.startsWith("publish") || route === "revisions") {
+        const payload: unknown = await response.json().catch(() => null);
+        const code = isRecord(payload) && isRecord(payload.error) ? payload.error.code : undefined;
+        const messages: Record<string, string> = {
+          PUBLISH_UNRESOLVED: "Lần Sync trước chưa xác định kết quả. Đối chiếu Shopify trước khi tạo revision.",
+          REVISION_ALREADY_EXISTS: "Bản Review này đã có revision mới. Mở SEO Queue để tiếp tục.",
+          REVISION_PROVIDER_UNSUPPORTED: "Luồng revision Worker hiện chỉ hỗ trợ Codex MCP; không tự đổi AI xử lý.",
+          REVIEW_SUPERSEDED: "Bản Review đã có revision mới; không thể đồng bộ bản cũ.",
+          REVISION_NOT_READY: "Job đang xử lý; chưa thể tạo revision mới.",
+          PUBLISH_DISABLED: "Backend publish chưa được bật. Không chuyển sang ghi từ trình duyệt.",
+          SOURCE_REASSESSMENT_REQUIRED: "Nguồn hoặc bản duyệt cần được đánh giá lại; không thể gửi lại bản cũ.",
+          STALE_SOURCE: "Nguồn Shopify đã thay đổi. Cần tạo revision mới để đánh giá lại.",
+          OPERATOR_REQUIRED: "Đăng nhập bằng tài khoản quản trị để Sync Shopify.",
+          APPROVED_REVIEW_REQUIRED: "Cần lưu và duyệt bản Review hợp lệ trước khi Sync.",
+          VERSION_CONFLICT: "Bản Review đã thay đổi. Tải lại trước khi Sync.",
+        };
+        throw new Error(typeof code === "string" && messages[code] ? messages[code] : route === "revisions"
+          ? "Chưa tạo được revision. Kiểm tra quyền quản trị, kết nối Shopify và trạng thái job; mở Queue trước khi thử lại."
+          : "Chưa xác nhận được tác vụ publish. Tải lại Review để kiểm tra; không ghi lại Shopify.");
+      }
+      throw new Error(response.status === 401 ? "Đăng nhập bằng tài khoản quản trị để quản lý Agent Access." : "Không thể quản lý worker. Kiểm tra kết nối và thử lại.");
+    }
+    return await response.json() as T;
+  }
   async function request<T>(route: string, storeId: string, body?: unknown): Promise<T> {
     const response = await fetcher(`/api/v1/gpt-seo/admin/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const payload: unknown = await response.json();
@@ -65,6 +96,17 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    workerReviewHistory: (storeId: string, jobId: string, offset = 0) => agentRequest<WorkerReviewHistory>(`review-history?jobId=${encodeURIComponent(jobId)}&offset=${offset}`, storeId),
+    workerMetrics: (storeId: string, hours = 24) => agentRequest<WorkerMetrics>(`metrics?hours=${hours}`, storeId),
+    createRevision: (storeId: string, jobId: string, requestId: string, instructions?: string) => agentRequest<{ jobId: string; previousJobId: string }>("revisions", storeId, { jobId, requestId, instructions }),
+    reconcilePublish: (storeId: string, jobId: string) => agentRequest<SeoPublishReceipt>("publish-reconcile", storeId, { jobId }),
+    publishStatus: (storeId: string, jobId: string) => agentRequest<{ managed: boolean; operation: SeoPublishReceipt | null }>(`publish?jobId=${encodeURIComponent(jobId)}`, storeId),
+    publishReview: (storeId: string, jobId: string, reviewUpdatedAt: number, requestId: string) => agentRequest<SeoPublishReceipt>("publish", storeId, { jobId, reviewUpdatedAt, requestId }),
+    agentAccess: (storeId: string, offset = 0) => agentRequest<AgentAccessPage>(`tokens?offset=${offset}`, storeId),
+    agentRuns: (storeId: string, offset = 0) => agentRequest<AgentRunPage>(`runs?offset=${offset}`, storeId),
+    createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: number }>("tokens", storeId, { workerId }),
+    revokeAgentToken: (storeId: string, tokenId: string) => agentRequest<{ revoked: true }>("revoke", storeId, { tokenId }),
+    deleteAgentToken: (storeId: string, tokenId: string) => agentRequest<{ deleted: true }>("delete-token", storeId, { tokenId }),
     stores: listStores,
     settings: (storeId: string) => request<GptSeoSettings>("settings", storeId),
     configure: (storeId: string, settings: GptSeoSettings) => request<GptSeoSettings>("settings", storeId, settings),
@@ -80,6 +122,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     requeue: (storeId: string, jobIds: readonly string[], options?: { provider?: SeoProvider; instructions?: string }) =>
       request<{ readonly requeued: number }>("requeue", storeId, { jobIds, ...options }),
     cancelReview: (storeId: string, jobId: string) => request<{ readonly cancelled: boolean }>("cancel", storeId, { jobId }),
+    clearQueue: (storeId: string) => request<ClearQueueResult>("clear", storeId, {}),
     transfer: (storeId: string, jobId: string, provider: SeoProvider) => request<unknown>("transfer", storeId, { jobId, provider }),
     beginSync: (storeId: string, jobId: string) => request<{ token: string }>("begin-sync", storeId, { jobId }),
     finishSync: (storeId: string, jobId: string, token: string, status: "SYNCED" | "UNKNOWN") => request<unknown>("finish-sync", storeId, { jobId, token, status }),

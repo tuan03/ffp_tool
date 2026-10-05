@@ -143,6 +143,43 @@ test("legacy corpus importer is idempotent", {
   }
 });
 
+test("legacy corpus importer treats blank handles as missing identities", {
+  skip: connectionString ? false : "SEO_CONTENT_TEST_DATABASE_URL is not configured",
+}, async () => {
+  const pool = new Pool({ connectionString });
+  const marker = `seo-blank-handle-${Date.now()}`;
+  const directory = await mkdtemp(join(tmpdir(), "seo-blank-handle-"));
+  const corpusPath = resolve(directory, "seo-conflict-corpus.json");
+  try {
+    await runSeoContentMigrations(pool);
+    await writeFile(corpusPath, JSON.stringify({
+      schemaVersion: 1, normalizationVersion: 1, revision: 1,
+      updatedAt: new Date().toISOString(),
+      products: [
+        { storeId: marker, productKey: `store:${marker}:id:first`, productId: "first", handle: "",
+          updatedAt: new Date().toISOString(), keywords: [{ keyword: "first quilt", normalizedKeyword: "first quilt", rank: 0 }] },
+        { storeId: marker, productKey: `store:${marker}:id:second`, productId: "second", handle: "   ",
+          updatedAt: new Date().toISOString(), keywords: [{ keyword: "second quilt", normalizedKeyword: "second quilt", rank: 0 }] },
+      ],
+    }), "utf8");
+
+    const imported = await importSeoContentLegacyData(pool, {
+      corpusJsonPaths: [corpusPath],
+      checkpointDirectory: join(directory, "none"),
+    });
+    const snapshot = await new PostgresSeoConflictCorpus(pool, { storeId: marker }).getSnapshot();
+
+    assert.equal(imported.corpusProducts, 2);
+    assert.equal(snapshot.products.length, 2);
+    assert.deepEqual(snapshot.products.map(product => product.handle), [undefined, undefined]);
+  } finally {
+    await clearTestRows(pool, marker).catch(() => undefined);
+    await pool.query("DELETE FROM seo_legacy_imports WHERE source_key=$1", [corpusPath]).catch(() => undefined);
+    await pool.end();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("completion commits run, review handoff and outbox together", {
   skip: connectionString ? false : "SEO_CONTENT_TEST_DATABASE_URL is not configured",
 }, async () => {

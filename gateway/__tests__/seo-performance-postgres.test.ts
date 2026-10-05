@@ -15,6 +15,10 @@ import { inspectHtml } from "../seo-performance/page-audit";
 import { registerPerformanceTools } from "../seo-performance/mcp-tools";
 import { PERFORMANCE_SCHEMA_SQL } from "../seo-performance/schema";
 import { pacificDate } from "../seo-performance/analytics";
+import { getQueueSchemaSql } from "../custom-gpt-seo/postgres-database";
+import { SeoWorkerRepository } from "../seo-worker/repository";
+import { createWorkerMcpServer } from "../seo-worker/mcp-server";
+import { createWorkerWorkflow } from "../seo-worker/workflow";
 
 test("SEO Performance executes PostgreSQL schema, OAuth, reports, jobs and MCP safely", async t => {
   const database = await PGlite.create();
@@ -51,6 +55,17 @@ test("SEO Performance executes PostgreSQL schema, OAuth, reports, jobs and MCP s
   const service = new PerformanceService(repository, google, { settings: async () => settings, revise: async () => ({ jobId: "new-job" }), syncState: async () => null });
   try {
     await repository.initialize();
+    await t.test("worker evidence is cached, product-ID scoped and fails closed on ambiguous mapping", async () => {
+      await repository.map("worker-evidence", "sc-domain:worker.example", "https://worker.example");
+      await repository.putPage("worker-evidence", "https://worker.example/products/one", { id: "gid://shopify/Product/123" });
+      assert.match(JSON.stringify(await service.workerProductEvidence("worker-evidence", "123")), /available/);
+      assert.deepEqual(await service.workerProductEvidence("other-store", "123"), { status: "not_mapped" });
+      await repository.putPage("worker-evidence", "https://worker.example/products/alias", { id: "123" });
+      assert.deepEqual(await service.workerProductEvidence("worker-evidence", "123"), { status: "not_mapped" });
+      // Do not let the later scheduler tests discover this fixture store.
+      await adapter.query("DELETE FROM sp_pages WHERE store_id='worker-evidence'");
+      await adapter.query("DELETE FROM sp_mappings WHERE store_id='worker-evidence'");
+    });
     await t.test("OAuth state is session bound and one-use; refresh credentials stay encrypted", async () => {
       const connection = await google.connect("session-a");
       const state = new URL(connection.url).searchParams.get("state") ?? "";
@@ -144,6 +159,47 @@ test("SEO Performance executes PostgreSQL schema, OAuth, reports, jobs and MCP s
         assert.equal(tools.tools.some(tool => "storeId" in (tool.inputSchema.properties ?? {})), false);
         const forbidden = await client.callTool({ name: "get_page_seo_evidence", arguments: { url: "https://other.example/products/private" } });
         assert.equal(forbidden.isError, true);
+      } finally { await client.close(); await server.close(); }
+    });
+    await t.test("one worker credential audits without a Queue run and cannot cross stores or survive revocation", async () => {
+      await database.exec(getQueueSchemaSql("public"));
+      const workers = new SeoWorkerRepository({ transaction: operation => database.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) });
+      const issued = await workers.issueToken({ storeId: "store-a", storeIds: ["store-a", "store-b"], workerId: "unified-worker", createdBy: "operator" });
+      const server = createWorkerMcpServer(workers, createWorkerWorkflow(workers, { checkSource: async () => undefined }), issued.token, () => service);
+      const client = new Client({ name: "unified-test", version: "1" });
+      const [left, right] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(right), client.connect(left)]);
+      try {
+        const url = "https://example.com/products/a";
+        const evidence = await service.evidence("store-a", url) as { snapshotId: string; rulesVersion: string };
+        const proposal = { requestId: "unified-proposal", url, snapshotId: evidence.snapshotId, rulesVersion: evidence.rulesVersion, issue: "Description missing", evidence: ["META_DESCRIPTION_NOT_OBSERVED"], proposed: "Grounded proposal", rationale: "Clarify facts", risk: "No guarantee", priority: "medium", confidence: "low", startDate: "2026-01-01", endDate: "2026-01-28" };
+        const calls = [
+          { name: "get_seo_performance", arguments: {} },
+          { name: "list_seo_opportunities", arguments: {} },
+          { name: "get_page_seo_evidence", arguments: { url } },
+          { name: "get_seo_change_history", arguments: {} },
+          { name: "save_seo_recommendation", arguments: proposal },
+        ];
+        for (const call of calls) {
+          const response = await client.callTool(call);
+          assert.notEqual(response.isError, true, JSON.stringify(response));
+        }
+        const first = await client.callTool(calls[4]);
+        assert.deepEqual(await client.callTool(calls[4]), first);
+        assert.equal((await client.callTool({ name: "save_seo_recommendation", arguments: { ...proposal, proposed: "Changed" } })).isError, true);
+        assert.equal((await client.callTool({ name: "get_page_seo_evidence", arguments: { url: "https://other.example/private" } })).isError, true);
+        assert.equal((await repository.recommendations("store-b")).total, 0);
+        const switched = await client.callTool({ name: "worker_select_store", arguments: { storeId: "store-b", expectedStoreId: "store-a", requestId: "select-b" } });
+        assert.notEqual(switched.isError, true);
+        assert.equal((await client.callTool({ name: "get_page_seo_evidence", arguments: { url } })).isError, true);
+        assert.equal((await client.callTool(calls[4])).isError, true);
+        assert.equal((await repository.recommendations("store-b")).total, 0);
+        await workers.revoke("store-a", issued.tokenId);
+        for (const call of [...calls, { name: "request_page_inspection", arguments: { url } }]) {
+          const denied = await client.callTool(call);
+          assert.equal(denied.isError, true);
+          assert.match(JSON.stringify(denied), /TOKEN_REVOKED/);
+        }
       } finally { await client.close(); await server.close(); }
     });
     await t.test("URL Inspection caches indexed snapshots and caps daily quota", async () => {

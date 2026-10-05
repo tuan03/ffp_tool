@@ -130,15 +130,17 @@ export function requireAutoSeoMigrationDatabase(databaseUrl: string, allowProduc
 export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
   private readonly pool: Pool;
   private readonly schema: string;
+  private readonly expectedServerPort: number;
   private verifiedTarget: Promise<void> | undefined;
 
   public constructor(options: AutoSeoPostgresRepositoryOptions) {
-    validateDatabaseUrl(options.databaseUrl);
+    const databaseUrl = validateDatabaseUrl(options.databaseUrl);
     const schema = options.schema ?? "public";
     if (!/^[a-z_][a-z0-9_]*$/.test(schema)) {
       throw new Error("Invalid PostgreSQL schema identifier");
     }
     this.schema = schema;
+    this.expectedServerPort = Number(databaseUrl.port || "5432");
     this.pool = new Pool({ connectionString: options.databaseUrl });
   }
 
@@ -155,7 +157,7 @@ export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
         if (
           target?.database_name !== "ffp_tool" ||
           target.user_name !== "ffp_tool" ||
-          target.server_port !== 5432
+          target.server_port !== this.expectedServerPort
         ) {
           throw new Error("Connected PostgreSQL target is not the expected local database");
         }

@@ -7,11 +7,14 @@ export interface AutoSeoToolbarProps {
   isRunningAutoSeo: boolean;
   totalProductsCount: number;
   selectedCount: number;
+  reSeoCount?: number;
   visibleProductsCount?: number;
   onLoadProducts(): void;
   onSelectAll?(): void;
   onClearSelection?(): void;
   onRunAutoSeo(): void | Promise<void>;
+  onReSeo?(): void | Promise<void>;
+  isCreatingRevisions?: boolean;
   stores?: readonly AutoSeoStoreOption[];
   selectedStoreId?: string;
   onSelectStore?(storeId: string): void;
@@ -30,9 +33,12 @@ export function AutoSeoToolbar({
   isRunningAutoSeo,
   totalProductsCount,
   selectedCount,
+  reSeoCount = 0,
   onLoadProducts,
   onClearSelection,
   onRunAutoSeo,
+  onReSeo,
+  isCreatingRevisions = false,
   stores,
   selectedStoreId,
   onSelectStore,
@@ -221,12 +227,12 @@ export function AutoSeoToolbar({
                 }`}
                 title={
                   eligibilityFilter === "current"
-                    ? "Đang lọc: Đã cập nhật (click để bỏ lọc)"
+                    ? "Đang lọc: Đã SEO (click để bỏ lọc)"
                     : "Click để lọc các sản phẩm đã cập nhật SEO"
                 }
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                Đã cập nhật: {eligibilityCounts.current}
+                Đã SEO: {eligibilityCounts.current}
               </button>
 
               <button
@@ -254,24 +260,37 @@ export function AutoSeoToolbar({
           )}
         </div>
 
-        {/* Right: Primary Run Button (Fixed at right, never pushed to line 3) */}
-        <button
-          type="button"
-          onClick={onRunAutoSeo}
-          disabled={isRunningAutoSeo || selectedCount === 0 || totalProductsCount === 0}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-900/30 hover:from-cyan-500 hover:via-blue-500 hover:to-indigo-500 transition-all transform active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none whitespace-nowrap self-start md:self-auto"
-        >
-          {isRunningAutoSeo ? (
-            <>
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Đang tạo payload SEO...
-            </>
-          ) : (
-            <>
-              <span>🚀</span> Run Auto SEO {selectedCount > 0 ? `(${selectedCount})` : ""}
-            </>
+        {/* Right: create first SEO draft or a new revision for synced products. */}
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+          {onReSeo && (
+            <button
+              type="button"
+              onClick={onReSeo}
+              disabled={isCreatingRevisions || isRunningAutoSeo || reSeoCount === 0}
+              title="Tạo bản SEO mới cho sản phẩm đã Sync; chưa duyệt và chưa ghi Shopify"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-600/80 bg-amber-950/60 px-5 py-2.5 text-xs font-bold text-amber-200 transition hover:bg-amber-900/70 disabled:cursor-not-allowed disabled:opacity-40 whitespace-nowrap"
+            >
+              {isCreatingRevisions ? "Đang tạo bản SEO lại..." : `SEO lại${reSeoCount > 0 ? ` (${reSeoCount})` : ""}`}
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={onRunAutoSeo}
+            disabled={isCreatingRevisions || isRunningAutoSeo || selectedCount === 0 || totalProductsCount === 0}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-900/30 hover:from-cyan-500 hover:via-blue-500 hover:to-indigo-500 transition-all transform active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none whitespace-nowrap"
+          >
+            {isRunningAutoSeo ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Đang tạo payload SEO...
+              </>
+            ) : (
+              <>
+                <span>🚀</span> Run Auto SEO {selectedCount > 0 ? `(${selectedCount})` : ""}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

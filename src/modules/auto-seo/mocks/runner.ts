@@ -335,6 +335,14 @@ export class MockAutoSeoClient implements AutoSeoClient {
     };
   }
 
+  public async createSeoRevision(
+    _storeId: string,
+    jobId: string,
+    requestId: string,
+  ): Promise<{ readonly jobId: string; readonly previousJobId: string }> {
+    return { jobId: `mock-revision-${requestId}`, previousJobId: jobId };
+  }
+
   public async runAutoSeoBackup(
     request: AutoSeoBackupRequest,
   ): Promise<AutoSeoBackupResponse> {
