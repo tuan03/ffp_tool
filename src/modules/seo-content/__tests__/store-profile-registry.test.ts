@@ -1,17 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { JEMINISE_BEDDING_PROFILE, normalizeDomain, resolveStoreProfile } from "../internal/store-profiles";
+import {
+  CAPOZEN_RUG_PROFILE,
+  JEMINISE_BEDDING_PROFILE,
+  normalizeDomain,
+  resolveStoreProfile,
+} from "../internal/store-profiles";
 import { projectStoreContentProfile } from "../internal/store-profiles/types";
 
 test("normalizeDomain strips protocols, www, paths, queries, and ports", () => {
   assert.equal(normalizeDomain("https://www.jeminise.com:443/products/x?q=1"), "jeminise.com");
 });
 
-test("registry resolves Jeminise only before the semantic contract is built", () => {
+test("registry resolves Jeminise before the semantic contract is built", () => {
   assert.equal(resolveStoreProfile({ storeId: "jeminise" }), JEMINISE_BEDDING_PROFILE);
   assert.equal(resolveStoreProfile({ siteDomain: "b6-theme-test.myshopify.com" }), JEMINISE_BEDDING_PROFILE);
   assert.equal(resolveStoreProfile({ siteDomain: "unknown.example" }), undefined);
+});
+
+test("registry resolves the Capozen rug profile by store ID and Shopify domain", () => {
+  assert.equal(resolveStoreProfile({ storeId: "capozen" }), CAPOZEN_RUG_PROFILE);
+  assert.equal(resolveStoreProfile({ siteDomain: "capozen.myshopify.com" }), CAPOZEN_RUG_PROFILE);
+  assert.equal(CAPOZEN_RUG_PROFILE.niche, "Rugs & Doormats");
+  assert.equal(CAPOZEN_RUG_PROFILE.catalogPolicies, undefined);
 });
 
 test("Jeminise V2 profile is versioned and declares three structured offerings", () => {

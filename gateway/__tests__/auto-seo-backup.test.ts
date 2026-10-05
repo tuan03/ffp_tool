@@ -597,6 +597,34 @@ test("18. explicitly configured mock runner returns success without runtime stor
   assert.ok(res.message);
 });
 
+test("18a. runSeoContent hands Capozen products to the V2 contract with its rug profile", async () => {
+  const res = await runSeoContent(
+    {
+      workflowId: "wf-capozen-profile",
+      storeId: "capozen",
+      shopDomain: "capozen.myshopify.com",
+      products: [createMockProduct({ id: "p1" })],
+    },
+    {
+      runner: async (input) => {
+        assert.deepEqual(Object.keys(input).sort(), ["images", "niche", "storeProfile"]);
+        assert.equal(input.niche, "Rugs & Doormats");
+        assert.equal(input.storeProfile.profileId, "capozen-rugs");
+        return {
+          productTitle: "Image-grounded rug",
+          productDescription: "<p>Image-grounded rug description.</p>",
+          productSeoTitle: "Image-grounded rug",
+          productSeoDescription: "Image-grounded rug description.",
+          images: [],
+        };
+      },
+    },
+  );
+
+  assert.equal(res.success, true);
+  assert.equal(res.processedCount, 1);
+});
+
 test("18b. runSeoContent exposes the first item failure for server diagnostics", async () => {
   const res = await runSeoContent(
     {

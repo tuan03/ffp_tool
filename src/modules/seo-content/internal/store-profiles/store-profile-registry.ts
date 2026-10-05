@@ -1,9 +1,16 @@
 import type { SeoStoreProfile } from "../../types";
+import { CAPOZEN_RUG_PROFILE } from "./capozen-rug-profile";
 import { JEMINISE_BEDDING_PROFILE } from "./jeminise-bedding-profile";
 
 export const STORE_PROFILES_REGISTRY: readonly SeoStoreProfile[] = Object.freeze([
+  CAPOZEN_RUG_PROFILE,
   JEMINISE_BEDDING_PROFILE,
 ]);
+
+const STORE_DOMAIN_ALIASES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  capozen: Object.freeze(["capozen.myshopify.com"]),
+  jeminise: Object.freeze(["jeminise.com", "b6-theme-test.myshopify.com", "f4hgwc-hu.myshopify.com"]),
+});
 
 export interface StoreProfileQuery {
   readonly storeId?: string;
@@ -56,9 +63,7 @@ export function resolveStoreProfile(
     }
 
     if (normalizedDomain) {
-      const aliases = profile.storeId === "jeminise"
-        ? ["jeminise.com", "b6-theme-test.myshopify.com", "f4hgwc-hu.myshopify.com"]
-        : [];
+      const aliases = STORE_DOMAIN_ALIASES[profile.storeId.toLowerCase()] ?? [];
       for (const alias of aliases) {
         const normalizedAlias = normalizeDomain(alias);
         if (
