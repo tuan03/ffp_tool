@@ -1260,6 +1260,16 @@ class CoreTests(unittest.TestCase):
         pillow_options = {v["options"]["Set Options"] for v in variants}
         self.assertIn("No Pillowcases", pillow_options)
         self.assertIn("2 Pillowcases + 1 Sheet", pillow_options)
+        # Verify Comforter sizes are standardized to inches
+        comforter_sizes = {
+            v["options"]["Size"]
+            for v in variants
+            if v["options"]["Bedding Type"] == "Comforter"
+        }
+        self.assertEqual(
+            comforter_sizes,
+            {'Twin (68" x 86")', 'Full (79" x 90")', 'Queen (90" x 90")', 'King (90" x 104")'}
+        )
 
     def test_jeminise_blanket_preset_is_exactly_8_variants(self) -> None:
         variants = build_jeminise_blanket_variants("B0BB96K6H8")

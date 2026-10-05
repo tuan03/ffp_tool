@@ -40,7 +40,7 @@ function createJeminiseMockVariants(): AmazonFinalVariant[] {
   const types = [
     { name: "Duvet Cover", code: "DV", pillows: { P0: 0, P1: 10, P2: 20 }, sizes: [["US Twin (68\" x 88\")", "TW", 34.9], ["US Full (78\" x 88\")", "FU", 44.9], ["US Queen (88\" x 88\")", "QU", 49.9], ["US King (104\" x 88\")", "KI", 59.9]] as const },
     { name: "Quilt", code: "QT", pillows: { P0: 0, P1: 10, P2: 20 }, sizes: [["Throw (60\" x 70\")", "TH", 46.9], ["Twin (68\" x 86\")", "TW", 61.9], ["Full (80\" x 90\")", "FU", 71.9], ["Queen (90\" x 90\")", "QU", 81.9], ["King (102\" x 91\")", "KI", 91.9]] as const },
-    { name: "Comforter", code: "CF", pillows: { P0: 0, P1: 10, P2: 15, P2S: 45, P4: 25 }, sizes: [["Twin (173 x 218 cm)", "TW", 64.9], ["Full (200 x 230 cm)", "FU", 79.9], ["Queen (228 x 228 cm)", "QU", 94.9], ["King (228 x 264 cm)", "KI", 109.9]] as const },
+    { name: "Comforter", code: "CF", pillows: { P0: 0, P1: 10, P2: 15, P2S: 45, P4: 25 }, sizes: [["Twin (68\" x 86\")", "TW", 64.9], ["Full (79\" x 90\")", "FU", 79.9], ["Queen (90\" x 90\")", "QU", 94.9], ["King (90\" x 104\")", "KI", 109.9]] as const },
   ] as const;
   const variants: AmazonFinalVariant[] = [];
   for (const beddingType of types) {
