@@ -65,7 +65,7 @@ test("canonical SEO snapshots normalize LF and ignore context and source orderin
   assert.equal(first.images[0]?.mediaGid, "gid://shopify/MediaImage/1");
   assert.equal(first.images[0]?.alt, "Front\nview");
   assert.deepEqual(JSON.parse(first.canonicalContentJson), {
-    snapshotSchemaVersion: "seo-content-snapshot-v1",
+    snapshotSchemaVersion: "seo-snapshot-v1",
     fieldSetVersion: "seo-fields-v1",
     title: "Viking Quilt\nSet",
     descriptionHtml: "<p>Soft\ndescription</p>",

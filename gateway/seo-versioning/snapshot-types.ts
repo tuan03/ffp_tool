@@ -1,5 +1,12 @@
-export const SEO_SNAPSHOT_SCHEMA_VERSION = "seo-content-snapshot-v1";
-export const SEO_FIELD_SET_VERSION = "seo-fields-v1";
+import {
+  SEO_FIELD_SET_VERSION,
+  SEO_SNAPSHOT_SCHEMA_VERSION,
+} from "./domain";
+
+export {
+  SEO_FIELD_SET_VERSION,
+  SEO_SNAPSHOT_SCHEMA_VERSION,
+} from "./domain";
 
 export const PUBLISHED_AEO_METAFIELDS = [
   { namespace: "custom", key: "aeo_quick_summary" },

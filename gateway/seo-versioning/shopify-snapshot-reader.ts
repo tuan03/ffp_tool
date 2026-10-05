@@ -64,6 +64,28 @@ export interface ShopifyMediaPageSource {
   readonly readMediaPage: (request: ShopifyMediaPageRequest) => Promise<unknown>;
 }
 
+export function createDispatcherMediaPageSource(
+  dispatcher: Pick<GatewayDispatcher, "dispatch">,
+): ShopifyMediaPageSource {
+  return {
+    async readMediaPage(request) {
+      const response = await dispatcher.dispatch({
+        storeId: request.storeId,
+        operation: "products.mediaPage",
+        payload: {
+          id: request.productGid,
+          first: 50,
+          after: request.after,
+        },
+      });
+      if (!response.success) {
+        throw new SeoSnapshotReadError("SHOPIFY_READ_FAILED", "Failed to read a Shopify product media page");
+      }
+      return response.data;
+    },
+  };
+}
+
 export interface ReadShopifySeoSnapshotRequest {
   readonly storeId: string;
   readonly shopifyProductGid: string;
