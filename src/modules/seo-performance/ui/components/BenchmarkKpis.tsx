@@ -3,10 +3,11 @@ import { formatPercent, formatPositionChange, formatPp } from "../presentation";
 
 interface BenchmarkKpisProps {
   readonly kpis: BenchmarkSummaryKpis;
+  readonly isQueryFilterActive?: boolean;
   readonly onStatusSelect?: (status: string) => void;
 }
 
-export function BenchmarkKpis({ kpis, onStatusSelect }: BenchmarkKpisProps): React.JSX.Element {
+export function BenchmarkKpis({ kpis, isQueryFilterActive = false, onStatusSelect }: BenchmarkKpisProps): React.JSX.Element {
   const cohort = kpis.cohortTotals;
 
   return (
@@ -216,26 +217,42 @@ export function BenchmarkKpis({ kpis, onStatusSelect }: BenchmarkKpisProps): Rea
           {/* Organic Sessions */}
           <div className="rounded-lg bg-slate-950/50 p-3">
             <span className="text-xs text-slate-400">Google Organic Sessions</span>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-slate-100">
-                {cohort.afterOrganicSessions != null ? cohort.afterOrganicSessions.toLocaleString("vi-VN") : "—"}
-              </span>
-              <span
-                className={`text-xs font-semibold ${
-                  (cohort.organicSessionsDelta ?? 0) > 0
-                    ? "text-emerald-400"
-                    : (cohort.organicSessionsDelta ?? 0) < 0
-                      ? "text-rose-400"
-                      : "text-slate-400"
-                }`}
-              >
-                {(cohort.organicSessionsDelta ?? 0) > 0 ? "+" : ""}
-                {cohort.organicSessionsDelta ?? "—"}
-              </span>
-            </div>
-            <div className="mt-1 text-xs text-slate-500">
-              Kỳ trước: {cohort.beforeOrganicSessions != null ? cohort.beforeOrganicSessions.toLocaleString("vi-VN") : "—"}
-            </div>
+            {isQueryFilterActive || cohort.isGscQueryFilterApplied ? (
+              <div className="mt-1">
+                <span
+                  className="text-sm font-semibold text-amber-400 italic"
+                  title="GSC query filter is not supported by this GA4 report (Rule 12.7: từ khóa GSC không liên kết trực tiếp với phiên/user trong GA4)"
+                >
+                  N/A (Query filter)
+                </span>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Không khả dụng khi lọc query GSC
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-slate-100">
+                    {cohort.afterOrganicSessions != null ? cohort.afterOrganicSessions.toLocaleString("vi-VN") : "—"}
+                  </span>
+                  <span
+                    className={`text-xs font-semibold ${
+                      (cohort.organicSessionsDelta ?? 0) > 0
+                        ? "text-emerald-400"
+                        : (cohort.organicSessionsDelta ?? 0) < 0
+                          ? "text-rose-400"
+                          : "text-slate-400"
+                    }`}
+                  >
+                    {(cohort.organicSessionsDelta ?? 0) > 0 ? "+" : ""}
+                    {cohort.organicSessionsDelta ?? "—"}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Kỳ trước: {cohort.beforeOrganicSessions != null ? cohort.beforeOrganicSessions.toLocaleString("vi-VN") : "—"}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

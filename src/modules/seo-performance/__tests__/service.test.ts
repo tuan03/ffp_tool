@@ -71,6 +71,8 @@ test("benchmark mock runner returns items with 11-column metrics, summary KPIs a
   // GSC Query filter marks GA4 organic sessions as N/A notice
   const queryRes = await mock.benchmark("jeminise", { query: "chan long cuu" });
   assert.equal(queryRes.items[0].organicSessions.isGscQueryFilterApplied, true);
+  assert.equal(queryRes.kpis.cohortTotals.isGscQueryFilterApplied, true);
+  assert.equal(allRes.kpis.cohortTotals.isGscQueryFilterApplied, undefined);
 
   // Product detail
   const detail = await mock.productDetail("jeminise", "prod_01");

@@ -1,6 +1,7 @@
 import type {
   BenchmarkFilters,
   BenchmarkProductItem,
+  BenchmarkSummaryKpis,
   PerformanceList,
   ProductSeoDetailData,
   SeoPerformanceClient,
@@ -204,10 +205,21 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
       const limit = filters.limit ?? 20;
       const paginated = filtered.slice(offset, offset + limit);
 
+      const baseKpis = structuredClone(MOCK_SUMMARY_KPIS);
+      const kpis: BenchmarkSummaryKpis = filters.query
+        ? {
+            ...baseKpis,
+            cohortTotals: {
+              ...baseKpis.cohortTotals,
+              isGscQueryFilterApplied: true,
+            },
+          }
+        : baseKpis;
+
       return {
         items: structuredClone(paginated),
         total: filtered.length,
-        kpis: structuredClone(MOCK_SUMMARY_KPIS),
+        kpis,
       };
     },
 

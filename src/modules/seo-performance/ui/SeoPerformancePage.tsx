@@ -135,6 +135,9 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
     setSelectedProductDetail(null);
     setSelectedBatchDetail(null);
     setConnectionsSyncData(null);
+    setBenchmarkItems([]);
+    setBenchmarkTotal(0);
+    setBenchmarkKpis(null);
     if (storeId) persistBrowserActiveStoreId(storeId);
   }, [storeId]);
 
@@ -388,6 +391,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
           {benchmarkKpis && (
             <BenchmarkKpis
               kpis={benchmarkKpis}
+              isQueryFilterActive={Boolean(benchmarkFilters.query && benchmarkFilters.query.trim().length > 0)}
               onStatusSelect={status => {
                 if (status === "v0") {
                   setBenchmarkFilters(prev => ({ ...prev, versionFilter: "v0" }));

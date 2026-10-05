@@ -209,11 +209,12 @@ export function downloadCsv(filename: string, headers: readonly string[], rows: 
   URL.revokeObjectURL(url);
 }
 
-export function exportBenchmarkCsv(
+export type CsvCellValue = string | number | null | undefined;
+export type CsvRow = readonly CsvCellValue[];
+
+export function buildBenchmarkCsvRows(
   items: readonly BenchmarkProductItem[],
-  storeId: string,
-  windowDays: number,
-): void {
+): { readonly headers: readonly string[]; readonly rows: readonly CsvRow[] } {
   const headers = [
     "Product Title",
     "Product URL",
@@ -285,8 +286,8 @@ export function exportBenchmarkCsv(
     item.queries.beforeCount ?? "",
     item.queries.delta ?? "",
     item.organicSessions.isGscQueryFilterApplied ? "N/A (Query filter applied)" : item.organicSessions.after ?? "",
-    item.organicSessions.before ?? "",
-    item.organicSessions.deltaAbsolute ?? "",
+    item.organicSessions.isGscQueryFilterApplied ? "N/A (Query filter applied)" : item.organicSessions.before ?? "",
+    item.organicSessions.isGscQueryFilterApplied ? "N/A (Query filter applied)" : item.organicSessions.deltaAbsolute ?? "",
     item.status.label,
     item.status.reason,
     item.status.technicalFlags.join("; "),
@@ -294,6 +295,15 @@ export function exportBenchmarkCsv(
     item.status.lastEvaluatedAt ?? "",
   ]);
 
+  return { headers, rows };
+}
+
+export function exportBenchmarkCsv(
+  items: readonly BenchmarkProductItem[],
+  storeId: string,
+  windowDays: number,
+): void {
+  const { headers, rows } = buildBenchmarkCsvRows(items);
   const filename = `seo-benchmark-${storeId}-${windowDays}d-${new Date().toISOString().slice(0, 10)}.csv`;
   downloadCsv(filename, headers, rows);
 }

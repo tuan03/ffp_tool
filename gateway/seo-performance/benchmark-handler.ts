@@ -337,10 +337,20 @@ export async function loadBenchmarkProducts(
   const offset = Number(searchParams.get("offset") ?? 0);
   const limit = Number(searchParams.get("limit") ?? 20);
 
+  const kpis: BenchmarkSummaryKpis = queryParam
+    ? {
+        ...BASELINE_KPIS,
+        cohortTotals: {
+          ...BASELINE_KPIS.cohortTotals,
+          isGscQueryFilterApplied: true,
+        },
+      }
+    : BASELINE_KPIS;
+
   return {
     items: filtered.slice(offset, offset + limit),
     total: filtered.length,
-    kpis: BASELINE_KPIS,
+    kpis,
   };
 }
 

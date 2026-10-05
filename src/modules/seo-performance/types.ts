@@ -263,6 +263,7 @@ export interface BenchmarkSummaryKpis {
     readonly beforeOrganicSessions: number | null;
     readonly afterOrganicSessions: number | null;
     readonly organicSessionsDelta: number | null;
+    readonly isGscQueryFilterApplied?: boolean;
   };
 }
 

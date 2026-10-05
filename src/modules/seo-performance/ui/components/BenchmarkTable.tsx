@@ -355,7 +355,7 @@ export function BenchmarkTable({
                       {item.organicSessions.isGscQueryFilterApplied ? (
                         <span
                           className="text-[11px] text-amber-400 italic"
-                          title="GSC query filter is not supported by this GA4 report"
+                          title="GSC query filter is not supported by this GA4 report (Rule 12.7: từ khóa GSC không map trực tiếp vào phiên GA4)"
                         >
                           N/A (Query filter)
                         </span>

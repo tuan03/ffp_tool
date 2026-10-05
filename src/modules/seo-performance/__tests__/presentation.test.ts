@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildBenchmarkCsvRows,
   formatPercent,
   formatPositionChange,
   formatPp,
@@ -73,4 +74,61 @@ test("sanitizeHtmlContent strips malicious tags and scripts while keeping safe f
   assert.ok(clean.includes("Hello"));
   assert.ok(clean.includes("World"));
 });
+
+test("buildBenchmarkCsvRows masks organic sessions when GSC query filter is active (Rule 12.7)", () => {
+  const sampleItem = {
+    productId: "prod_01",
+    shopifyProductGid: "gid://shopify/Product/1001",
+    title: "Sample Product",
+    url: "https://jeminise.com/products/sample",
+    thumbnailUrl: "",
+    currentVersion: "v1",
+    versionSource: "AUTO_SEO" as const,
+    promptVersion: "v2.1",
+    batchId: "batch_1",
+    publishedAt: "2026-08-01T00:00:00.000Z",
+    hasExternalDrift: false,
+    seoAge: 30,
+    targetDays: 28,
+    coverageDays: 28,
+    clicks: { after: 10, before: 5, deltaAbsolute: 5, deltaPercent: 100, isNewActivity: false },
+    impressions: { after: 100, before: 50, deltaAbsolute: 50, deltaPercent: 100 },
+    ctr: { after: 0.1, before: 0.1, deltaPercentagePoints: 0 },
+    position: { after: 10, before: 12, improvement: 2 },
+    queries: { afterCount: 5, beforeCount: 3, delta: 2, newlyObserved: 2, noLongerObserved: 0, matchedCount: 3 },
+    organicSessions: { after: 20, before: 15, deltaAbsolute: 5, deltaPercent: 33.3, isGscQueryFilterApplied: false },
+    status: {
+      dataStatus: "FRESH" as const,
+      measurementStatus: "ELIGIBLE" as const,
+      performanceStatus: "IMPROVING" as const,
+      technicalFlags: [],
+      label: "Improving",
+      reason: "OK",
+      rulesetVersion: "v1.0.0",
+      lastEvaluatedAt: "2026-10-04T00:00:00.000Z",
+    },
+    action: { type: "VIEW" as const, label: "Xem", enabled: true },
+  };
+
+  // Normal case: sessions are numbers
+  const normalResult = buildBenchmarkCsvRows([sampleItem]);
+  assert.equal(normalResult.rows.length, 1);
+  assert.equal(normalResult.rows[0][29], 20); // Organic Sessions After
+  assert.equal(normalResult.rows[0][30], 15); // Organic Sessions Before
+  assert.equal(normalResult.rows[0][31], 5);  // Organic Sessions Delta
+
+  // Filtered case: Rule 12.7 applies, sessions replaced with N/A
+  const filteredItem = {
+    ...sampleItem,
+    organicSessions: {
+      ...sampleItem.organicSessions,
+      isGscQueryFilterApplied: true,
+    },
+  };
+  const filteredResult = buildBenchmarkCsvRows([filteredItem]);
+  assert.equal(filteredResult.rows[0][29], "N/A (Query filter applied)");
+  assert.equal(filteredResult.rows[0][30], "N/A (Query filter applied)");
+  assert.equal(filteredResult.rows[0][31], "N/A (Query filter applied)");
+});
+
 
