@@ -29,6 +29,7 @@ export interface AmazonCrawlerSettings {
   browserTabs: number;
   headless: boolean;
   amazonZip: string;
+  allowedAgentGroup?: string;
   captchaTimeoutSeconds: number;
   dnsTimeoutSeconds?: number;
   connectTimeoutSeconds?: number;
@@ -74,6 +75,7 @@ export interface AmazonCrawlerActiveVariant {
 }
 
 export interface AmazonCrawlerProgressItem {
+  taskId?: string;
   source: string;
   asin: string;
   phase: AmazonCrawlerProgress["phase"];
@@ -482,10 +484,73 @@ export interface AmazonCrawlerJobController {
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
   cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
+  cancelTask(taskId: string): Promise<void>;
   invalidateProductCache(asin: string, amazonZip: string): Promise<AmazonCrawlerCacheClearResult>;
   clearTemporaryData(): Promise<AmazonCrawlerCacheClearResult>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   delete(jobId: string): Promise<void>;
+  listDeadLetterTasks?(options?: { jobId?: string; errorCode?: string; limit?: number; offset?: number }): Promise<AmazonCrawlerDeadLetterPage>;
+  listTaskAttempts?(taskId: string): Promise<readonly AmazonCrawlerTaskAttempt[]>;
+  applyDeadLetterAction?(input: AmazonCrawlerDeadLetterActionInput): Promise<AmazonCrawlerDeadLetterActionResult>;
+}
+
+export interface AmazonCrawlerDeadLetterTask {
+  taskId: string;
+  jobId: string;
+  asin: string;
+  status: "dead_letter";
+  failureCount: number;
+  maxRetry: number;
+  requeueCount: number;
+  attemptCount: number;
+  errorCode: string;
+  errorMessage: string;
+  nextRetryAt: string | null;
+  createdAt: string;
+  failedAt: string | null;
+}
+
+export interface AmazonCrawlerDeadLetterPage {
+  items: readonly AmazonCrawlerDeadLetterTask[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AmazonCrawlerTaskAttempt {
+  attemptId: string;
+  taskId: string;
+  jobId: string | null;
+  clientId: string;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  agentVersion: string;
+  crawlerVersion: string;
+  parserVersion: string;
+  leasedAt: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  archived: boolean;
+}
+
+export interface AmazonCrawlerDeadLetterActionInput {
+  action: "requeue" | "delete";
+  requestId: string;
+  taskIds?: readonly string[];
+  jobId?: string;
+  errorCode?: string;
+  expectedCount: number;
+  reason: string;
+}
+
+export interface AmazonCrawlerDeadLetterActionResult {
+  action: "requeue" | "delete";
+  changed: number;
+  taskIds: readonly string[];
+  jobId: string | null;
+  errorCode: string | null;
 }
 
 export interface AmazonCrawlerAgentObservability {
@@ -501,6 +566,25 @@ export interface AmazonCrawlerAgentObservability {
   backlog: number;
   dropped: number;
   sampledAt?: string;
+  agentGroup?: string;
+  activeTasks?: number;
+  maxConcurrentInputs?: number;
+  availableCapacity?: number;
+  overCapacity?: boolean;
+  completedTasks24h?: number;
+  averageTaskDurationMs24h?: number | null;
+}
+
+export interface AmazonCrawlerSchedulerMetrics {
+  activeAgents: number;
+  queuedTasks: number;
+  oldestQueuedAgeSeconds: number;
+  totalCapacity: number;
+  activeTasks: number;
+  availableCapacity: number;
+  capacityUtilization: number | null;
+  overCapacityAgents: number;
+  completedTasks24hSpread: number;
 }
 
 export interface AmazonCrawlerMetrics {
@@ -527,6 +611,7 @@ export interface AmazonCrawlerMetrics {
   rates: { cacheHit: number | null; httpSuccess: number | null; playwrightFallback: number | null; captcha: number | null };
   averageCrawlDurationMs: number | null;
   queue: { crawl: number; crawlActive: number; pipeline: number };
+  scheduler?: AmazonCrawlerSchedulerMetrics;
   agents: Array<AmazonCrawlerAgentObservability & { agentId: string; displayName: string }>;
 }
 
@@ -623,11 +708,21 @@ export interface AmazonCrawlerCacheClearer {
   (): Promise<AmazonCrawlerCacheClearResult>;
 }
 
-export type AmazonCrawlerClientStatus = "online" | "offline" | "busy" | "waiting_captcha" | "paused";
+export type AmazonCrawlerClientStatus = "online" | "offline" | "busy" | "waiting_captcha" | "paused" | "degraded";
+
+export interface AmazonCrawlerWorkerHealth {
+  state: "healthy" | "degraded";
+  failuresInWindow: number;
+  failureLimit: number;
+  windowSeconds: number;
+  configuredConcurrency: number;
+  effectiveConcurrency: number;
+}
 
 export interface AmazonCrawlerClientSummary {
   id: string;
   displayName: string;
+  agentGroup?: string;
   agentVersion: string;
   status: AmazonCrawlerClientStatus;
   isConnected: boolean;
@@ -636,6 +731,112 @@ export interface AmazonCrawlerClientSummary {
   leasedTasks: number;
   availableSlots: number;
   lastSeenAt: string | null;
+  desiredExecutionState?: "RUNNING" | "PAUSED" | "DRAINING" | "DRAINED";
+  appliedExecutionState?: "RUNNING" | "PAUSED" | "DRAINING" | "DRAINED";
+  commandSequence?: number;
+  lastProcessedCommandSequence?: number;
+  desiredConfigVersion?: number;
+  appliedConfigVersion?: number;
+  desiredAgentConfig?: AmazonCrawlerAgentRuntimeConfig;
+  observability?: {
+    workerHealth?: AmazonCrawlerWorkerHealth;
+  };
+}
+
+export interface AmazonCrawlerAgentRuntimeConfig {
+  maxConcurrentInputs: number;
+  heartbeatIntervalSeconds: number;
+  clientOfflineAfterSeconds: number;
+  leaseSeconds: number;
+  limits: {
+    productThreads: number;
+    variantThreads: number;
+    urllibThreads: number;
+    browserProfiles: number;
+    browserTabs: number;
+    headless: boolean;
+  };
+}
+
+export const DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG: AmazonCrawlerAgentRuntimeConfig = {
+  maxConcurrentInputs: 4,
+  heartbeatIntervalSeconds: 10,
+  clientOfflineAfterSeconds: 30,
+  leaseSeconds: 60,
+  limits: {
+    productThreads: 4,
+    variantThreads: 8,
+    urllibThreads: 12,
+    browserProfiles: 4,
+    browserTabs: 2,
+    headless: false,
+  },
+};
+
+export interface AmazonCrawlerAgentCommandEvent {
+  status: string;
+  at: string | null;
+  detail: Readonly<Record<string, unknown>>;
+}
+
+export interface AmazonCrawlerAgentCommandSummary {
+  commandId: string;
+  sequence: number;
+  type: "PAUSE" | "RESUME" | "RELOAD_CONFIG" | "DRAIN" | "RUN_SELF_TEST" | "UPDATE_AGENT" | "ROLLBACK_AGENT" | "PURGE_PENDING_TASKS" | "PURGE_ALL_LOCAL_TASKS" | "RESTART_WORKERS" | "RESTART_AGENT";
+  status: string;
+  createdAt: string | null;
+  error: string | null;
+  events: readonly AmazonCrawlerAgentCommandEvent[];
+}
+
+export interface AmazonCrawlerCommandController {
+  submit(agentId: string, type: "PAUSE" | "RESUME"): Promise<void>;
+  bulkCommand(agentGroup: string, type: "PAUSE" | "RESUME" | "DRAIN", reason: string): Promise<{ requested: number; queued: number; failed: number }>;
+  previewPendingPurge(agentId: string, taskIds: readonly string[]): Promise<AmazonCrawlerPendingPurgePreview>;
+  purgePending(agentId: string, taskIds: readonly string[], expectedPendingCount: number, reason: string): Promise<void>;
+  previewPurgeAllLocal(agentId: string): Promise<AmazonCrawlerPendingPurgePreview>;
+  purgeAllLocal(agentId: string, expectedPendingCount: number, reason: string): Promise<void>;
+  restart(agentId: string, type: "RESTART_WORKERS" | "RESTART_AGENT", reason: string): Promise<void>;
+  reloadConfig(agentId: string, config: AmazonCrawlerAgentRuntimeConfig): Promise<void>;
+  drain(agentId: string, reason: string): Promise<void>;
+  selfTest(agentId: string, reason: string): Promise<void>;
+  updateAgent(agentId: string, targetVersion: string, reason: string): Promise<void>;
+  rollbackAgent(agentId: string, reason: string): Promise<void>;
+  history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
+}
+
+export interface AmazonCrawlerPendingPurgePreview {
+  scope: "pending" | "all-local";
+  requestedCount: number;
+  pendingCount: number;
+  eligibleTaskIds: readonly string[];
+  ineligibleCount: number;
+}
+
+export interface AmazonCrawlerAdmissionGate {
+  state: "OPEN" | "STOPPED";
+  scope: "crawler";
+  revision: number;
+  actor: string | null;
+  reason: string | null;
+  updatedAt: string | null;
+  confirmedAgents: number;
+  pendingAgents: number;
+  confirmations: readonly AmazonCrawlerAdmissionConfirmation[];
+}
+
+export interface AmazonCrawlerAdmissionConfirmation {
+  agentId: string;
+  displayName: string;
+  isConnected: boolean;
+  state: "OPEN" | "STOPPED";
+  revision: number;
+  status: "confirmed" | "pending_confirmation";
+}
+
+export interface AmazonCrawlerAdmissionGateController {
+  load(): Promise<AmazonCrawlerAdmissionGate>;
+  setState(state: "OPEN" | "STOPPED", reason: string): Promise<AmazonCrawlerAdmissionGate>;
 }
 
 export interface AmazonCrawlerClientsLoader {

@@ -7,6 +7,8 @@ export const crawlerMockMetrics: AmazonCrawlerMetrics = {
     parserFailures: 1, networkRetries: 2, taskRetries: 1, retryCount: 3 },
   rates: { cacheHit: 0.3, httpSuccess: 0.9, playwrightFallback: 0.1, captcha: 1 / 23 },
   averageCrawlDurationMs: 30000, queue: { crawl: 4, crawlActive: 2, pipeline: 3 },
+  scheduler: { activeAgents: 1, queuedTasks: 4, oldestQueuedAgeSeconds: 12, totalCapacity: 4,
+    activeTasks: 2, availableCapacity: 2, capacityUtilization: 0.5, overCapacityAgents: 0, completedTasks24hSpread: 0 },
   agents: [{ agentId: "mock-agent", displayName: "Mock crawler", cache: { hit: 3, miss: 7, corrupt: 0, evicted: 0 },
     resources: { rssBytes: 128 * 1024 * 1024, browserProcesses: 4, browserContexts: 2, browserPages: 2, processCount: 6, isComplete: true },
     backlog: 0, dropped: 0, sampledAt: "2026-01-02T00:00:00Z" }],

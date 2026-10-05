@@ -1534,7 +1534,7 @@ test("Mock client getCrawlerClients returns connected crawler agents", async () 
   assert.equal(clients[0].currentTasks?.[0]?.niche, "leather bag");
 });
 
-test("Real client getCrawlerClients fetches from /api/v1/clients and handles errors gracefully", async () => {
+test("Real client loads agents through Pinterest and surfaces network errors", async () => {
   const originalFetch = globalThis.fetch;
   const calls: { url: string }[] = [];
 
@@ -1560,14 +1560,13 @@ test("Real client getCrawlerClients fetches from /api/v1/clients and handles err
     assert.equal(clients.length, 1);
     assert.equal(clients[0].id, "client_node_1");
     assert.equal(clients[0].currentTasks?.[0]?.jobId, "job_1");
-    assert.ok(calls[0].url.includes("/api/v1/clients"));
+    assert.equal(calls[0].url, "/api/pinterest-pod/clients");
 
-    // Test error fallback
+    // A failed request must not look like a successful empty list.
     globalThis.fetch = async () => {
       throw new Error("Network unreachable");
     };
-    const emptyClients = await getCrawlerClients();
-    assert.deepEqual(emptyClients, []);
+    await assert.rejects(getCrawlerClients());
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1586,7 +1585,7 @@ test("forgetCrawlerClient deletes the selected offline Agent registration", asyn
 
   try {
     await forgetCrawlerClient("client with spaces");
-    assert.deepEqual(calls, [{ url: "/api/v1/clients/client%20with%20spaces", method: "DELETE" }]);
+    assert.deepEqual(calls, [{ url: "/api/pinterest-pod/clients/client%20with%20spaces/forget", method: "POST" }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

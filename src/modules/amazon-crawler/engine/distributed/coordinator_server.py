@@ -19,16 +19,24 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
-from .coordinator_models import Base, create_database_engine, create_session_factory
+from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
-from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
+from .operator_authorization import OperatorAudit, OperatorCredentials, install_operator_authorization
+from .agent_keys import install_agent_key_routes
+from .agent_identity import AgentSecurity, install_enrollment_routes
+from .agent_key_lifecycle import install_key_lifecycle_routes
+from .agent_command_ledger import AgentCommandLedger, AgentCommandRequest, BulkAgentCommandRequest
+from .agent_runtime_config import AgentRuntimeConfig
+from .global_admission_gate import GlobalAdmissionGateRequest
+from .fleet_circuit_breaker import FleetCircuitBreakerResetRequest, reset as reset_fleet_circuit_breaker, snapshot as fleet_circuit_breaker_snapshot
+from .protocol import payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
 
@@ -102,6 +110,7 @@ class ConnectionManager:
         active_tasks: int,
         available_slots: int,
         current_tasks: Any = None,
+        executing_task_ids: Any = None,
         capabilities: Any = None,
     ) -> None:
         async with self.lock:
@@ -111,7 +120,9 @@ class ConnectionManager:
             runtime = {
                 "activeTasks": max(0, int(active_tasks)),
                 "availableSlots": max(0, int(available_slots)),
+                "readyForTasks": bool(previous.get("readyForTasks", False)),
                 "currentTasks": self._bounded_current_tasks(current_tasks) if current_tasks is not None else list(previous.get("currentTasks") or []),
+                "executingTaskIds": sorted({str(value) for value in executing_task_ids[:32] if isinstance(value, str) and value}) if isinstance(executing_task_ids, list) else list(previous.get("executingTaskIds") or []),
                 "capabilities": self._bounded_capabilities(capabilities) if capabilities is not None else dict(previous.get("capabilities") or {}),
             }
             self.runtime[client_id] = runtime
@@ -122,17 +133,22 @@ class ConnectionManager:
                 client_id: {
                     **status,
                     "currentTasks": [dict(task) for task in status.get("currentTasks") or []],
+                    "executingTaskIds": list(status.get("executingTaskIds") or []),
                     "capabilities": dict(status.get("capabilities") or {}),
                 }
                 for client_id, status in self.runtime.items()
             }
+
+    async def is_connected(self, client_id: str) -> bool:
+        async with self.lock:
+            return client_id in self.connections
 
     @staticmethod
     def _bounded_capabilities(value: Any) -> dict[str, bool]:
         source = value if isinstance(value, dict) else {}
         return {
             key: bool(source.get(key))
-            for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn")
+                for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1", "durableRestartV1")
             if key in source
         }
 
@@ -179,11 +195,38 @@ class ConnectionManager:
             available = max(0, min(int(available_slots), capacity))
             status["availableSlots"] = available
             status["activeTasks"] = capacity - available
+            status["readyForTasks"] = True
+
+    async def update_running_task_ids(self, client_id: str, task_ids: list[str]) -> None:
+        async with self.lock:
+            if client_id not in self.connections:
+                return
+            previous = self.runtime.get(client_id, {})
+            current_tasks = self._bounded_current_tasks([{"taskId": task_id} for task_id in task_ids])
+            self.runtime[client_id] = {
+                "activeTasks": len(current_tasks),
+                "availableSlots": max(0, int(previous.get("availableSlots", 0))),
+                "readyForTasks": bool(previous.get("readyForTasks", False)),
+                "currentTasks": current_tasks,
+                "executingTaskIds": sorted({str(value) for value in task_ids[:32] if isinstance(value, str) and value}),
+                "capabilities": dict(previous.get("capabilities") or {}),
+            }
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
         async with self.lock:
             connections = list(self.connections.values())
         await asyncio.gather(*(connection.send_json(payload) for connection in connections), return_exceptions=True)
+
+    async def send_to_client(self, client_id: str, payload: dict[str, Any]) -> bool:
+        async with self.lock:
+            connection = self.connections.get(client_id)
+        if connection is None:
+            return False
+        try:
+            await connection.send_json(payload)
+            return True
+        except Exception:
+            return False
 
     async def connected_client_ids(self) -> set[str]:
         async with self.lock:
@@ -258,10 +301,15 @@ def find_project_root() -> Path:
     return current.parent
 
 
-def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True) -> FastAPI:
+def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True,
+                           operator_credentials: OperatorCredentials | None = None,
+                           agent_environment: str | None = None) -> FastAPI:
+    if agent_environment is not None and operator_credentials is None:
+        raise ValueError("Secure agents require operator authorization")
     engine = create_database_engine(database_url)
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
+    command_ledger = AgentCommandLedger(sessions)
     manager = ConnectionManager()
     cache_maintenance_lock = asyncio.Lock()
     project_root = find_project_root()
@@ -296,6 +344,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             while not stop.is_set():
                 await asyncio.to_thread(store.reap_expired)
                 await asyncio.to_thread(store.purge_stopped_jobs)
+                await asyncio.to_thread(command_ledger.expire_pending)
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_cleanup_at:
                     await asyncio.to_thread(store.cleanup_telemetry)
@@ -303,6 +352,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         store.cleanup_history,
                         retention_minutes=history_retention_minutes,
                     )
+                    await asyncio.to_thread(store.cleanup_attempt_history)
                     protected_tokens = await asyncio.to_thread(store.review_image_tokens)
                     await asyncio.to_thread(image_service.clear_expired, protected_tokens)
                     next_cleanup_at = loop_time + 60
@@ -328,6 +378,14 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.connection_manager = manager
     app.state.image_processing_service = image_service
     app.state.is_ready = False
+    security = AgentSecurity(sessions, agent_environment) if agent_environment is not None else None
+    app.state.agent_security = security
+    if security is not None:
+        install_enrollment_routes(app, security)
+    if operator_credentials is not None:
+        install_operator_authorization(app, sessions, operator_credentials)
+        install_key_lifecycle_routes(app, sessions, operator_credentials.username)
+        install_agent_key_routes(app, sessions, operator_credentials.username)
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
         "" if os.environ.get("NODE_ENV") == "production" else "http://localhost:5173,http://127.0.0.1:5173",
@@ -392,7 +450,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             enriched_payload["imageProfileSlug"] = image_profile["slug"]
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
             async with cache_maintenance_lock:
-                return await asyncio.to_thread(store.create_job, enriched_payload)
+                job = await asyncio.to_thread(store.create_job, enriched_payload)
+            await manager.broadcast({"type": "work_available"})
+            return job
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:
@@ -413,6 +473,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/pinterest-assets/{job_id}/{filename}")
     @app.put("/api/v1/pinterest-assets/{job_id}/{filename}")
     async def upload_pinterest_asset(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+        if security is not None:
+            security.authenticate(request.headers.get("authorization", ""))
+            from .agent_assets import save_agent_asset
+            try:
+                body = await read_request_body_limited(request, maximum_bytes=10 * 1024 * 1024)
+            except ResultPayloadTooLarge:
+                raise HTTPException(413, detail="ASSET_TOO_LARGE") from None
+            await asyncio.to_thread(save_agent_asset, security, request.headers.get("authorization", ""),
+                pinterest_job_root, job_id, filename, request.headers.get("x-task-id", ""),
+                request.headers.get("x-lease-id", ""), body)
+            return {"ok": True, "url": f"/api/pinterest-pod/assets/{job_id}/{filename}"}
         safe_job_id = "".join(character for character in job_id if character.isalnum() or character in ("-", "_"))
         safe_filename = Path(filename).name
         if not safe_job_id or not safe_filename:
@@ -601,6 +672,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         await asyncio.to_thread(store.purge_stopped_jobs)
         return snapshot
 
+    @app.post("/api/v1/crawl-tasks/{task_id}/cancel")
+    async def cancel_task(task_id: str) -> dict[str, Any]:
+        connected_client_ids = await manager.connected_client_ids()
+        cancellation = await asyncio.to_thread(store.cancel_task, task_id, connected_client_ids)
+        if cancellation is None:
+            raise HTTPException(status_code=404, detail="Crawl task was not found.")
+        if cancellation["status"] == "cancelling" and cancellation.get("clientId"):
+            await manager.send_to_client(str(cancellation["clientId"]), {
+                "type": "cancel_task",
+                "taskId": cancellation["taskId"],
+                "leaseId": cancellation["leaseId"],
+            })
+        return cancellation
+
     @app.post("/api/v1/crawl-jobs/{job_id}/replace", status_code=202)
     async def replace_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         source_job = store.get_job(job_id)
@@ -644,11 +729,57 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
     async def retry_failed(job_id: str) -> dict[str, Any]:
-        async with cache_maintenance_lock:
-            snapshot = await asyncio.to_thread(store.retry_failed, job_id)
-        if snapshot is None:
-            raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        return snapshot
+        raise HTTPException(status_code=410, detail="Bulk retry was replaced by the audited dead-letter queue actions.")
+
+    def require_dlq_operator(request: Request) -> str:
+        if operator_credentials is None:
+            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
+        if not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        return operator_credentials.username
+
+    @app.get("/api/v1/dead-letter")
+    async def list_dead_letter_tasks(
+        request: Request, job_id: str | None = None, error_code: str | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> dict[str, Any]:
+        require_dlq_operator(request)
+        return await asyncio.to_thread(store.list_dead_letter_tasks,
+            job_id=job_id, error_code=error_code, limit=limit, offset=offset)
+
+    @app.get("/api/v1/crawl-tasks/{task_id}/attempts")
+    async def list_task_attempts(task_id: str, request: Request) -> list[dict[str, Any]]:
+        require_dlq_operator(request)
+        attempts = await asyncio.to_thread(store.list_task_attempts, task_id)
+        if attempts is None:
+            raise HTTPException(status_code=404, detail="Crawl task history was not found.")
+        return attempts
+
+    @app.post("/api/v1/dead-letter/actions")
+    async def apply_dead_letter_action(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        actor = require_dlq_operator(request)
+        action = str(payload.get("action") or "")
+        request_id = str(payload.get("requestId") or "")
+        reason = str(payload.get("reason") or "")
+        task_ids = payload.get("taskIds")
+        task_ids = [str(value) for value in task_ids if isinstance(value, str)] if isinstance(task_ids, list) else None
+        expected_count = payload.get("expectedCount")
+        if action not in {"requeue", "delete"} or not isinstance(expected_count, int) or isinstance(expected_count, bool):
+            raise HTTPException(status_code=422, detail="A supported action and exact expectedCount are required.")
+        try:
+            if action == "requeue":
+                outcome = await asyncio.to_thread(store.requeue_dead_letter_tasks,
+                    task_ids, job_id=str(payload["jobId"]) if payload.get("jobId") else None,
+                    error_code=str(payload["errorCode"]) if payload.get("errorCode") else None,
+                    expected_count=expected_count, request_id=request_id, actor=actor, reason=reason)
+            else:
+                if not task_ids:
+                    raise ValueError("Delete requires an explicit task ID scope.")
+                outcome = await asyncio.to_thread(store.delete_dead_letter_tasks,
+                    task_ids, expected_count=expected_count, request_id=request_id, actor=actor, reason=reason)
+            return outcome
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed-syncs")
     def retry_failed_syncs(job_id: str) -> dict[str, Any]:
@@ -656,6 +787,89 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return snapshot
+
+    async def global_admission_gate_status() -> dict[str, Any]:
+        gate = await asyncio.to_thread(store.get_global_admission_gate)
+        clients = await asyncio.to_thread(store.list_clients)
+        connected = await manager.connected_client_ids()
+        confirmations = [
+            {
+                "agentId": client["id"],
+                "displayName": client["displayName"],
+                "isConnected": client["id"] in connected,
+                "state": client["globalAdmissionGateState"],
+                "revision": client["globalAdmissionGateRevision"],
+                "status": "confirmed" if (
+                    client["globalAdmissionGateRevision"] == gate["revision"]
+                    and client["globalAdmissionGateState"] == gate["state"]
+                ) else "pending_confirmation",
+            }
+            for client in clients
+        ]
+        return {
+            **gate,
+            "confirmations": confirmations,
+            "confirmedAgents": sum(item["status"] == "confirmed" for item in confirmations),
+            "pendingAgents": sum(item["status"] != "confirmed" for item in confirmations),
+        }
+
+    @app.get("/api/v1/admission-gate")
+    async def get_global_admission_gate(request: Request) -> dict[str, Any]:
+        if operator_credentials is None:
+            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
+        if not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        try:
+            return await global_admission_gate_status()
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="Global crawler admission gate is unavailable.") from None
+
+    @app.post("/api/v1/admission-gate")
+    async def update_global_admission_gate(
+        payload: GlobalAdmissionGateRequest, request: Request,
+    ) -> dict[str, Any]:
+        if operator_credentials is None:
+            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
+        if not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        try:
+            gate = await asyncio.to_thread(store.set_global_admission_gate,
+                payload.state,
+                request_id=payload.requestId.lower(),
+                actor=operator_credentials.username,
+                reason=payload.reason,
+            )
+            await manager.broadcast({
+                "type": "global_admission_gate",
+                "revision": gate["revision"],
+                "state": gate["state"],
+            })
+            return await global_admission_gate_status()
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="Global crawler admission gate is unavailable.") from None
+
+    @app.get("/api/v1/fleet-circuit-breaker")
+    async def get_fleet_circuit_breaker(request: Request) -> dict[str, Any]:
+        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        with store.sessions() as session:
+            return fleet_circuit_breaker_snapshot(session)
+
+    @app.post("/api/v1/fleet-circuit-breaker/reset")
+    async def reset_fleet_circuit_breaker_route(payload: FleetCircuitBreakerResetRequest, request: Request) -> dict[str, Any]:
+        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        with store.sessions.begin() as session:
+            audit = session.get(OperatorAudit, request.state.operator_audit_id)
+            if audit is None or audit.actor != operator_credentials.username or audit.outcome != "authorized":
+                raise HTTPException(status_code=503, detail="Operator audit record is unavailable.")
+            audit.target_id = "fleet"
+            audit.reason = f"FLEET_BREAKER_RESET: {payload.reason.strip()}"
+            state = reset_fleet_circuit_breaker(session, actor=operator_credentials.username,
+                reason=payload.reason.strip())
+        return state
 
     @app.get("/api/v1/clients")
     async def list_clients() -> list[dict[str, Any]]:
@@ -670,6 +884,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "leasedTasks": client["activeTasks"],
                 "activeTasks": runtime.get(client["id"], {}).get("activeTasks", 0),
                 "availableSlots": runtime.get(client["id"], {}).get("availableSlots", 0),
+                "readyForTasks": bool(runtime.get(client["id"], {}).get("readyForTasks", False)),
                 "currentTasks": [
                     {key: value for key, value in task.items() if key != "leaseId"}
                     for task in runtime.get(client["id"], {}).get("currentTasks", [])
@@ -681,6 +896,234 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             }
             for client in clients
         ]
+
+    @app.post("/api/v1/clients/bulk-commands", status_code=202)
+    async def submit_bulk_agent_command(payload: BulkAgentCommandRequest, request: Request) -> dict[str, Any]:
+        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        if payload.allAgents == bool(payload.agentGroup):
+            raise HTTPException(status_code=422, detail="Choose exactly one explicit group or allAgents scope.")
+        clients = await asyncio.to_thread(store.list_clients)
+        if payload.jobId:
+            with store.sessions() as session:
+                job_client_ids = set(session.scalars(select(CrawlTask.assigned_client_id).where(
+                    CrawlTask.job_id == payload.jobId,
+                    CrawlTask.assigned_client_id.is_not(None),
+                    CrawlTask.status.in_(["leased", "running", "cancelling"]),
+                )).all())
+            if not job_client_ids:
+                raise HTTPException(status_code=404, detail="No active agents are assigned to the selected job.")
+        else:
+            job_client_ids = None
+        crawler_capability = {"amazon": "amazon", "pinterest": "pinterest"}.get(payload.crawler or "")
+        selected = [client for client in clients
+            if (payload.allAgents or client.get("agentGroup") == payload.agentGroup)
+            and (payload.agentVersion is None or client.get("agentVersion") == payload.agentVersion)
+            and (crawler_capability is None or (client.get("capabilities") or {}).get(crawler_capability) is True)
+            and (job_client_ids is None or client.get("id") in job_client_ids)]
+        if len(selected) > 500:
+            raise HTTPException(status_code=413, detail="Bulk command scope exceeds 500 agents; narrow the filters.")
+        with store.sessions.begin() as session:
+            audit = session.get(OperatorAudit, request.state.operator_audit_id)
+            if audit is None or audit.actor != operator_credentials.username or audit.outcome != "authorized":
+                raise HTTPException(status_code=503, detail="Operator audit record is unavailable.")
+            audit.target_id = payload.agentGroup or "all-agents"
+            audit.reason = f"BULK_{payload.type}: {payload.reason.strip()}"
+        outcomes = []
+        for client in selected:
+            client_id = str(client["id"])
+            try:
+                command = await asyncio.to_thread(command_ledger.submit, client_id,
+                    uuid.uuid5(payload.requestId, client_id).hex, payload.type,
+                    payload.expiresInSeconds,
+                    {"reason": payload.reason.strip(), "scope": "agent", "waitForOutboxAck": True}
+                        if payload.type == "DRAIN" else None)
+                await dispatch_next_agent_command(client_id)
+                outcomes.append({"agentId": client_id, "status": "queued", "commandId": command["commandId"]})
+            except Exception:
+                outcomes.append({"agentId": client_id, "status": "failed"})
+        return {"requested": len(selected), "queued": sum(item["status"] == "queued" for item in outcomes),
+                "failed": sum(item["status"] == "failed" for item in outcomes), "agents": outcomes}
+
+    @app.post("/api/v1/clients/{client_id}/commands", status_code=202)
+    async def submit_agent_command(client_id: str, payload: AgentCommandRequest) -> dict[str, Any]:
+        if security is None:
+            raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
+        command_payload_value: dict[str, Any] | None = None
+        if payload.type == "RELOAD_CONFIG":
+            try:
+                runtime_config = AgentRuntimeConfig.from_payload(payload.config)
+            except (TypeError, ValueError) as error:
+                raise HTTPException(status_code=422, detail=f"Invalid agent configuration: {error}") from error
+            command = await asyncio.to_thread(
+                command_ledger.submit_config, client_id, payload.requestId.hex,
+                payload.expiresInSeconds, runtime_config,
+            )
+            await dispatch_next_agent_command(client_id)
+            return command
+        if payload.type == "DRAIN":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Drain command requires an audited reason of at least 10 characters.")
+            command_payload_value = {"reason": payload.reason.strip(), "scope": "agent", "waitForOutboxAck": True}
+        if payload.type == "RUN_SELF_TEST":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Self-test requires an audited reason of at least 10 characters.")
+            command_payload_value = {"reason": payload.reason.strip(), "scope": "read-only"}
+        if payload.type == "UPDATE_AGENT":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Agent update requires an audited reason of at least 10 characters.")
+            if not re.fullmatch(r"\d+\.\d+\.\d+", payload.targetVersion or ""):
+                raise HTTPException(status_code=422, detail="Agent update requires an explicit stable target version.")
+            current_version = command_ledger.current_agent_version(client_id)
+            if (current_version is None or not re.fullmatch(r"\d+\.\d+\.\d+", current_version)
+                    or tuple(map(int, payload.targetVersion.split("."))) <= tuple(map(int, current_version.split(".")))):
+                raise HTTPException(status_code=409, detail="Agent update target must be newer than its reported version.")
+            if not command_ledger.update_allowed(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be DRAINED with every outbox entry ACKed before update.")
+            if not await manager.is_connected(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be online to begin its verified update.")
+            runtime = await manager.runtime_snapshot()
+            if (runtime.get(client_id) or {}).get("executingTaskIds"):
+                raise HTTPException(status_code=409, detail="Agent still has active tasks; wait for DRAIN to complete.")
+            command_payload_value = {"reason": payload.reason.strip(), "targetVersion": payload.targetVersion,
+                "previousVersion": current_version}
+        if payload.type == "ROLLBACK_AGENT":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Agent rollback requires an audited reason of at least 10 characters.")
+            failed_update = command_ledger.rollback_target(client_id)
+            if failed_update is None:
+                raise HTTPException(status_code=409, detail="Rollback requires a failed update, DRAINED state and all commands acknowledged.")
+            if not await manager.is_connected(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be online to begin rollback.")
+            runtime = await manager.runtime_snapshot()
+            if (runtime.get(client_id) or {}).get("executingTaskIds"):
+                raise HTTPException(status_code=409, detail="Agent still has active tasks; rollback is refused.")
+            failed_payload = failed_update.get("payload") or {}
+            command_payload_value = {"reason": payload.reason.strip(),
+                "updateCommandId": failed_update.get("commandId"),
+                "failedVersion": failed_payload.get("targetVersion"),
+                "previousVersion": failed_payload.get("previousVersion")}
+        if payload.type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
+            is_purge_all = payload.type == "PURGE_ALL_LOCAL_TASKS"
+            if is_purge_all and payload.includeRunning:
+                raise HTTPException(status_code=422, detail="Running-task cancellation is not enabled for purge-all.")
+            if (is_purge_all and payload.taskIds) or (not is_purge_all and (not payload.taskIds or len(set(payload.taskIds)) != len(payload.taskIds))):
+                raise HTTPException(status_code=422, detail="Purge requires a valid, explicit task scope.")
+            if is_purge_all and not payload.dryRun and (payload.expectedPendingCount is None or not payload.confirmation):
+                raise HTTPException(status_code=422, detail="Purge-all requires a count and explicit confirmation.")
+            purge_payload = {
+                "taskIds": list(payload.taskIds),
+                "scope": "all-local" if is_purge_all else "pending",
+                "includeRunning": payload.includeRunning,
+                "expectedPendingCount": payload.expectedPendingCount,
+                "reason": payload.reason.strip() if payload.reason else "",
+            }
+            existing = await asyncio.to_thread(command_ledger.request_snapshot, client_id, payload.requestId.hex)
+            if existing is not None:
+                if is_purge_all:
+                    existing_payload = existing.get("payload") or {}
+                    if existing_payload.get("reason") != purge_payload["reason"]:
+                        raise HTTPException(status_code=409, detail="Request ID was already used for a different purge reason.")
+                    purge_payload = existing_payload
+                command = await asyncio.to_thread(
+                    command_ledger.submit, client_id, payload.requestId.hex,
+                    payload.type, payload.expiresInSeconds, purge_payload,
+                )
+                await dispatch_next_agent_command(client_id)
+                return command
+            if not command_ledger.purge_allowed(client_id):
+                raise HTTPException(status_code=409, detail="Pause the agent and wait for PAUSED acknowledgement before purging pending assignments.")
+            runtime = await manager.runtime_snapshot()
+            executing_task_ids = set((runtime.get(client_id) or {}).get("executingTaskIds") or [])
+            preview = await asyncio.to_thread(
+                store.preview_all_local_pending_tasks if is_purge_all else store.preview_pending_tasks,
+                client_id, *( (executing_task_ids,) if is_purge_all else (payload.taskIds, executing_task_ids) ),
+            )
+            if preview.get("overflow"):
+                raise HTTPException(status_code=409, detail="Purge-all scope exceeds the 500-task safety limit; use explicit task IDs.")
+            if payload.dryRun:
+                return JSONResponse(status_code=200, content={"dryRun": True, **preview})
+            confirmation = f"{payload.type}:{payload.expectedPendingCount}"
+            if (payload.expectedPendingCount != preview["pendingCount"]
+                    or (preview["ineligibleCount"] != 0 and not is_purge_all)
+                    or payload.confirmation != confirmation
+                    or not payload.reason or len(payload.reason.strip()) < 10):
+                raise HTTPException(status_code=409, detail={
+                    "message": "Purge confirmation does not match the current pending scope.",
+                    "scope": "all-local" if is_purge_all else "pending", "beforeCount": preview["pendingCount"],
+                    "ineligibleCount": preview["ineligibleCount"],
+                })
+            if is_purge_all:
+                purge_payload["taskIds"] = list(preview["eligibleTaskIds"])
+            runtime = await manager.runtime_snapshot()
+            executing_task_ids = set((runtime.get(client_id) or {}).get("executingTaskIds") or [])
+            fenced = await asyncio.to_thread(store.cancel_pending_tasks, client_id,
+                preview["eligibleTaskIds"] if is_purge_all else payload.taskIds, executing_task_ids)
+            if fenced is None:
+                raise HTTPException(status_code=409, detail="Pending assignments changed during confirmation; run dry-run again.")
+            for assignment in fenced:
+                if assignment.get("status") == "cancelled":
+                    await manager.send_to_client(client_id, {
+                        "type": "cancel_task", "taskId": assignment["taskId"],
+                        "leaseId": assignment["leaseId"],
+                    })
+            command_payload_value = purge_payload
+        elif payload.type in {"RESTART_WORKERS", "RESTART_AGENT"}:
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Restart command requires an audited reason of at least 10 characters.")
+            if payload.confirmation != f"{payload.type}:{client_id}":
+                raise HTTPException(status_code=409, detail="Restart confirmation does not match this agent and command.")
+            command_payload_value = {
+                "reason": payload.reason.strip(),
+                "scope": "worker-processes" if payload.type == "RESTART_WORKERS" else "agent-process",
+                "includeRunning": False,
+            }
+            existing = await asyncio.to_thread(command_ledger.request_snapshot, client_id, payload.requestId.hex)
+            if existing is not None:
+                if existing.get("type") != payload.type or existing.get("payload") != command_payload_value:
+                    raise HTTPException(status_code=409, detail="Request ID was already used for a different restart command.")
+                command = await asyncio.to_thread(command_ledger.submit, client_id, payload.requestId.hex,
+                    payload.type, payload.expiresInSeconds, command_payload_value)
+                await dispatch_next_agent_command(client_id)
+                return command
+            if not command_ledger.restart_allowed(client_id):
+                raise HTTPException(status_code=409, detail="Agent must advertise durable restart support and be PAUSED before restart.")
+            if not await manager.is_connected(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be online to confirm restart readiness.")
+            runtime = await manager.runtime_snapshot()
+            if (runtime.get(client_id) or {}).get("executingTaskIds"):
+                raise HTTPException(status_code=409, detail="Agent still has running tasks; wait for them to finish before restart.")
+        command = await asyncio.to_thread(
+            command_ledger.submit, client_id, payload.requestId.hex,
+            payload.type, payload.expiresInSeconds, command_payload_value,
+        )
+        await dispatch_next_agent_command(client_id)
+        return command
+
+    @app.get("/api/v1/clients/{client_id}/commands")
+    async def list_agent_commands(client_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+        if security is None:
+            raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
+        history = await asyncio.to_thread(command_ledger.history, client_id, limit=limit)
+        return {"commands": history}
+
+    async def dispatch_next_agent_command(client_id: str, after_sequence: int = 0) -> None:
+        if security is None:
+            return
+        rows = await asyncio.to_thread(command_ledger.commands_after, client_id, after_sequence)
+        commands = rows[0]
+        # Replay includes terminal rows too: a restarted agent can reconstruct the
+        # final desired state and advance its local sequence without receiving leases.
+        ordered = []
+        for command in commands:
+            if command["status"] in {"PENDING", "DELIVERED", "ACKED", "RUNNING"}:
+                command = await asyncio.to_thread(command_ledger.mark_delivered, client_id, command["commandId"])
+                if command is None:
+                    break
+            ordered.append(command)
+        await manager.send_to_client(client_id, {"type": "command_batch", "commands": ordered,
+            "latestCommandSequence": rows[1], "desiredExecutionState": rows[2],
+            "appliedExecutionState": rows[3], "serverLastProcessedCommandSequence": rows[4]})
 
     @app.get("/api/v1/agent-release")
     async def agent_release() -> dict[str, str]:
@@ -775,6 +1218,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         x_lease_id: str = Header(alias="X-Lease-Id"),
         x_result_checksum: str | None = Header(default=None, alias="X-Result-Checksum"),
     ) -> dict[str, Any]:
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != x_client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
         try:
             body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
         except ResultPayloadTooLarge as error:
@@ -806,6 +1253,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=400, detail="Result checksum does not match payload.")
         response = store.accept_result(task_id, x_client_id, x_lease_id, checksum, payload)
         status = response["status"]
+        if status == "conflict":
+            raise HTTPException(status_code=409, detail={"code": "UPLOAD_CHECKSUM_CONFLICT", "reason": response.get("reason")})
         if status == "missing":
             raise HTTPException(status_code=404, detail="Crawler task was not found.")
         if status == "cancelled":
@@ -816,6 +1265,56 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=400, detail="Result job identity does not match the leased task.")
         return response
 
+    @app.put("/api/v1/worker/results/batch")
+    async def upload_result_batch(
+        request: Request,
+        x_client_id: str = Header(alias="X-Client-Id"),
+    ) -> dict[str, Any]:
+        """Accept independently receipted final results; one bad item never rolls back siblings."""
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != x_client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
+        try:
+            body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
+            if request.headers.get("content-encoding", "").casefold() == "gzip":
+                body = decompress_gzip_limited(body, maximum_bytes=50 * 1024 * 1024)
+        except ResultPayloadTooLarge as error:
+            raise HTTPException(status_code=413, detail="Decompressed result batch exceeds 50 MB.") from error
+        except (OSError, EOFError) as error:
+            raise HTTPException(status_code=400, detail="Invalid gzip result batch.") from error
+        try:
+            envelope = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise HTTPException(status_code=400, detail="Result batch must be valid JSON.") from error
+        items = envelope.get("items") if isinstance(envelope, dict) else None
+        if not isinstance(items, list) or not items or len(items) > 25:
+            raise HTTPException(status_code=400, detail="Result batch must contain 1 to 25 items.")
+
+        receipts: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                receipts.append({"status": "invalid", "reason": "item_not_object"})
+                continue
+            task_id = str(item.get("taskId") or "")
+            lease_id = str(item.get("leaseId") or "")
+            payload = item.get("payload")
+            if not task_id or not lease_id or not isinstance(payload, dict):
+                receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "invalid_envelope"})
+                continue
+            if any(str(payload.get(name) or "") != expected for name, expected in (
+                ("taskId", task_id), ("clientId", x_client_id), ("leaseId", lease_id),
+            )):
+                receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "identity_mismatch"})
+                continue
+            checksum = payload_checksum(payload)
+            if item.get("checksum") and item["checksum"] != checksum:
+                receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "checksum_mismatch"})
+                continue
+            accepted = store.accept_result(task_id, x_client_id, lease_id, checksum, payload)
+            receipts.append({"taskId": task_id, "leaseId": lease_id, **accepted})
+        return {"results": receipts}
+
     @app.put("/api/v1/worker/tasks/{task_id}/products/{product_key}")
     async def upload_product(
         task_id: str,
@@ -825,6 +1324,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         x_lease_id: str = Header(alias="X-Lease-Id"),
         x_result_checksum: str | None = Header(default=None, alias="X-Result-Checksum"),
     ) -> dict[str, Any]:
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != x_client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
         try:
             body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
             if request.headers.get("content-encoding", "").casefold() == "gzip":
@@ -852,6 +1355,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         )
         if response["status"] == "missing":
             raise HTTPException(status_code=404, detail="Crawler task was not found.")
+        if response["status"] == "conflict":
+            raise HTTPException(status_code=409, detail={"code": "UPLOAD_CHECKSUM_CONFLICT", "reason": response.get("reason")})
         if response["status"] in {"cancelled", "stale"}:
             raise HTTPException(status_code=409, detail="Crawler task is cancelled or the lease is stale.")
         if response["status"] == "invalid":
@@ -1333,7 +1838,22 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         await websocket.accept()
         client_id = ""
         try:
+            principal = security.authenticate(websocket.headers.get("authorization", "")) if security else None
             hello = require_message(await asyncio.wait_for(websocket.receive_json(), timeout=15), "hello")
+            def restrict_agent_message(message):
+                if principal is None:
+                    return
+                capabilities = dict(message.get("capabilities") or {})
+                for capability, crawler in (("amazon", "amazon"), ("amazonReviews", "amazon"), ("pinterest", "pinterest")):
+                    capabilities[capability] = bool(capabilities.get(capability, False)) and crawler in principal.crawlers
+                message["capabilities"] = capabilities
+                message["maxConcurrentInputs"] = min(16, principal.max_workers, max(1, int(message.get("maxConcurrentInputs") or 1)))
+                message["availableSlots"] = min(16, principal.max_workers, max(0, int(message.get("availableSlots") or 0)))
+
+            if principal is not None:
+                if hello.get("authProtocol") != 1 or hello.get("clientId") != principal.agent_id:
+                    raise HTTPException(403, detail="AGENT_IDENTITY_MISMATCH")
+                restrict_agent_message(hello)
             if str(hello.get("protocolVersion")) not in SUPPORTED_PROTOCOL_VERSIONS:
                 await websocket.close(code=4002, reason="Unsupported protocol version.")
                 return
@@ -1350,7 +1870,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await websocket.close(code=4001, reason="This agent is already connected.")
                 return
             client = await asyncio.to_thread(store.register_client, hello)
-            cancel_intents = [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
+            cancel_intents = [] if security else [str(value) for value in list(hello.get("cancelIntents") or []) if str(value)]
             acknowledged_intents: list[str] = []
             stop_clients = await manager.connected_client_ids()
             stop_clients.add(client_id)
@@ -1360,6 +1880,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     acknowledged_intents.append(job_id)
             local_tasks = [value for value in list(hello.get("localTasks") or []) if isinstance(value, dict)]
             reconciliation = await asyncio.to_thread(store.reconcile_tasks, client_id, local_tasks)
+            admission_gate = await asyncio.to_thread(store.get_global_admission_gate)
             maximum_slots = int(client.get("maxConcurrentInputs") or 0)
             required_cache_generation = await asyncio.to_thread(store.current_cache_generation)
             client_cache_generation = max(0, int(hello.get("cacheGeneration") or 0))
@@ -1372,22 +1893,47 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 max(0, int(hello.get("temporaryCleanupGeneration") or 0)) < required_temporary_cleanup_generation
             ) else set()
             is_cache_ready = client_cache_generation >= required_cache_generation
+            reported_command_sequence = max(0, int(hello.get("lastProcessedCommandSequence") or 0))
+            reported_available_slots = max(0, int(hello.get("availableSlots") or 0))
+            reported_applied_state = str(hello.get("appliedExecutionState") or "RUNNING")
+            command_state = await asyncio.to_thread(command_ledger.commands_after, client_id, reported_command_sequence)
+            replay_commands = []
+            for command in command_state[0]:
+                if command["status"] in {"PENDING", "DELIVERED", "ACKED", "RUNNING"}:
+                    command = await asyncio.to_thread(command_ledger.mark_delivered, client_id, command["commandId"])
+                    if command is None:
+                        continue
+                replay_commands.append(command)
+            applied_agent_config = await asyncio.to_thread(store.applied_agent_runtime_config, client_id)
+            client_config_state = await asyncio.to_thread(store.agent_runtime_config_versions, client_id)
             available_slots = max(0, int(hello.get("availableSlots") or 0)) if is_cache_ready else 0
             await manager.update_runtime(
                 client_id,
                 active_tasks=max(0, maximum_slots - available_slots),
                 available_slots=available_slots,
+                executing_task_ids=hello.get("executingTaskIds"),
                 capabilities=hello.get("capabilities"),
             )
             await websocket.send_json({
                 "type": "hello_ack", "protocolVersion": PROTOCOL_VERSION,
-                "heartbeatIntervalSeconds": HEARTBEAT_INTERVAL_SECONDS, "leaseSeconds": LEASE_SECONDS,
+                "heartbeatIntervalSeconds": applied_agent_config["heartbeatIntervalSeconds"],
+                "clientOfflineAfterSeconds": applied_agent_config["clientOfflineAfterSeconds"],
+                "leaseSeconds": applied_agent_config["leaseSeconds"],
+                "desiredConfigVersion": client_config_state.get("desiredConfigVersion", 0),
+                "appliedConfigVersion": client_config_state.get("appliedConfigVersion", 0),
                 **reconciliation,
                 "acknowledgedCancelIntents": acknowledged_intents,
                 "requiredCacheGeneration": required_cache_generation,
                 "productInvalidations": product_invalidations,
                 "requiredTemporaryCleanupGeneration": required_temporary_cleanup_generation,
                 "validJobIds": sorted(valid_job_ids),
+                "commands": replay_commands, "latestCommandSequence": command_state[1],
+                "desiredExecutionState": command_state[2], "appliedExecutionState": command_state[3],
+                "serverLastProcessedCommandSequence": command_state[4],
+                "globalAdmissionGate": {
+                    "revision": admission_gate["revision"],
+                    "state": admission_gate["state"],
+                },
             })
             for cancelled_job_id in acknowledged_intents:
                 await manager.broadcast({
@@ -1400,6 +1946,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             async def assign(slots: int) -> None:
                 if not is_cache_ready:
                     return
+                if security:
+                    security.authenticate(websocket.headers.get("authorization", ""))
+                    if not await asyncio.to_thread(command_ledger.admission_open, client_id,
+                            reported_command_sequence, reported_applied_state):
+                        return
                 leases = await asyncio.to_thread(store.lease_tasks, client_id, slots)
                 await manager.reserve_tasks(client_id, len(leases))
                 for lease in leases:
@@ -1408,15 +1959,33 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             if is_cache_ready:
                 await assign(int(hello.get("availableSlots") or 0))
             while True:
-                message = require_message(await websocket.receive_json())
+                if security:
+                    security.authenticate(websocket.headers.get("authorization", ""))
+                    try:
+                        message = require_message(await asyncio.wait_for(websocket.receive_json(), timeout=2))
+                    except asyncio.TimeoutError:
+                        continue
+                    security.authenticate(websocket.headers.get("authorization", ""))
+                    restrict_agent_message(message)
+                else:
+                    message = require_message(await websocket.receive_json())
                 message_type = message["type"]
                 if message_type == "heartbeat":
+                    reported_command_sequence = max(reported_command_sequence,
+                        max(0, int(message.get("lastProcessedCommandSequence") or 0)))
+                    reported_available_slots = max(0, int(message.get("availableSlots") or 0))
+                    reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
                     running = list(message.get("running") or [])
+                    raw_executing_task_ids = message.get("executingTaskIds")
+                    executing_task_ids = ({str(task_id) for task_id in raw_executing_task_ids[:32]
+                        if isinstance(task_id, str) and task_id}
+                        if isinstance(raw_executing_task_ids, list) else set())
                     await manager.update_runtime(
                         client_id,
                         active_tasks=len(running),
                         available_slots=int(message.get("availableSlots") or 0),
                         current_tasks=running,
+                        executing_task_ids=message.get("executingTaskIds"),
                         capabilities=message.get("capabilities"),
                     )
                     cancelled_job_ids = await asyncio.to_thread(
@@ -1426,6 +1995,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         str(message.get("status") or "online"),
                         message.get("observability"),
                         message.get("capabilities"),
+                        executing_task_ids=executing_task_ids,
                     )
                     for cancelled_job_id in cancelled_job_ids:
                         await websocket.send_json({
@@ -1437,9 +2007,51 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     if is_cache_ready:
                         await assign(int(message.get("availableSlots") or 0))
                 elif message_type == "ready":
-                    await manager.update_available_slots(client_id, int(message.get("availableSlots") or 0))
+                    reported_command_sequence = max(reported_command_sequence,
+                        max(0, int(message.get("lastProcessedCommandSequence") or 0)))
+                    reported_available_slots = max(0, int(message.get("availableSlots") or 0))
+                    reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
+                    await manager.update_available_slots(client_id, reported_available_slots)
                     if is_cache_ready:
-                        await assign(int(message.get("availableSlots") or 0))
+                        await assign(reported_available_slots)
+                elif message_type == "global_gate_ack":
+                    try:
+                        acknowledged_revision = max(0, int(message.get("revision") or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    acknowledged_state = str(message.get("state") or "")
+                    acknowledged = await asyncio.to_thread(
+                        store.acknowledge_global_admission_gate,
+                        client_id, acknowledged_revision, acknowledged_state,
+                    )
+                    await websocket.send_json({
+                        "type": "global_gate_ack_received",
+                        "revision": acknowledged_revision,
+                        "accepted": acknowledged,
+                    })
+                    if acknowledged:
+                        reported_available_slots = max(0, int(message.get("availableSlots") or 0))
+                        await manager.update_available_slots(client_id, reported_available_slots)
+                        if is_cache_ready:
+                            await assign(reported_available_slots)
+                elif message_type == "command_sync":
+                    after_sequence = max(0, int(message.get("afterSequence") or 0))
+                    await dispatch_next_agent_command(client_id, after_sequence)
+                elif message_type == "command_update":
+                    update = await asyncio.to_thread(command_ledger.update, client_id, message)
+                    if update["status"] == "SUCCESS" and isinstance(message.get("runningTaskIds"), list):
+                        await manager.update_running_task_ids(client_id, [
+                            str(task_id) for task_id in message["runningTaskIds"]
+                            if isinstance(task_id, str) and task_id
+                        ])
+                    if update["status"] in {"SUCCESS", "FAILED", "EXPIRED"}:
+                        reported_command_sequence = max(reported_command_sequence,
+                            max(0, int(message.get("sequence") or 0)))
+                        if update["status"] == "SUCCESS":
+                            reported_applied_state = str(message.get("appliedExecutionState") or reported_applied_state)
+                        await dispatch_next_agent_command(client_id, reported_command_sequence)
+                        if is_cache_ready:
+                            await assign(reported_available_slots)
                 elif message_type == "progress":
                     await asyncio.to_thread(store.update_progress, client_id, message)
                 elif message_type == "telemetry":
@@ -1490,6 +2102,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                             jobId=str(message.get("jobId") or ""),
                             purgedJobs=purged,
                         )
+        except HTTPException:
+            await websocket.close(code=4004, reason="AGENT_NEED_REAUTH")
         except (WebSocketDisconnect, asyncio.TimeoutError):
             pass
         except ValueError as error:

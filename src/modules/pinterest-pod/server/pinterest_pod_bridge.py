@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from job_repository import get_job_repository
+from operator_security import open_coordinator_request
 
 logger = logging.getLogger("pinterest_pod_bridge")
 
@@ -506,7 +507,7 @@ def save_job_manifest(job_id: str, data: dict[str, Any]) -> None:
 
 def http_get_json(url: str, timeout: float = 10.0) -> Any:
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "ShopifyToolBridge/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with open_coordinator_request(req, timeout=timeout) as resp:
         body = resp.read().decode("utf-8")
         return json.loads(body)
 
@@ -520,7 +521,7 @@ def http_post_json(url: str, data: dict[str, Any], timeout: float = 30.0) -> tup
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_coordinator_request(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             return resp.status, json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
@@ -539,7 +540,7 @@ def http_delete_json(url: str, timeout: float = 10.0) -> tuple[int, dict[str, An
         method="DELETE",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_coordinator_request(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             return resp.status, json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
@@ -557,10 +558,10 @@ def pinterest_coordinator_url() -> str:
 
 def check_pinterest_coordinator_ready() -> bool:
     try:
-        response = http_get_json(f"{pinterest_coordinator_url()}/api/v1/health", timeout=2.0)
+        response = http_get_json(f"{pinterest_coordinator_url()}/api/v1/clients", timeout=2.0)
     except Exception:
         return False
-    return isinstance(response, dict) and response.get("status") == "ok"
+    return isinstance(response, list)
 
 
 def submit_distributed_pinterest_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -3610,8 +3611,12 @@ def list_recent_jobs_and_runs() -> list[dict[str, Any]]:
                         if isinstance(candidate, dict) and candidate.get("image_url")
                     ],
                 })
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RuntimeError("PINTEREST_COORDINATOR_AUTH_FAILED") from exc
+        logger.warning("Could not list distributed Pinterest jobs (HTTP %s)", exc.code)
     except Exception as exc:
-        logger.warning("Could not list distributed Pinterest jobs: %s", exc)
+        logger.warning("Could not list distributed Pinterest jobs: %s", type(exc).__name__)
 
     # 1. Cached local jobs
     if TEMP_DIR.exists():

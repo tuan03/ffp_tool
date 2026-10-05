@@ -6,6 +6,7 @@ import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.routing import Match
 
 from .contracts import CreateImage, DeleteTemplates, FinishUpload, UploadImage, UploadTemplate
 from .extension_bridge import ExtensionBridge
@@ -149,4 +150,19 @@ def create_review_app(*, engine, runtime_root, internal_token, extension_token, 
     async def extension(socket: WebSocket):
         await bridge.connect(socket)
 
+    def authorizes_operator_request(scope, token):
+        # Composition may delegate only an existing HTTP route that already has
+        # our internal-token dependency. Never grant rights by URL prefix alone.
+        if scope.get("type") != "http" or not secrets.compare_digest(token or "", internal_token):
+            return False
+        for route in app.router.routes:
+            if not getattr(route, "path", "").startswith("/api/review-images/"):
+                continue
+            if not any(dependency.dependency is authorize for dependency in getattr(route, "dependencies", [])):
+                continue
+            if route.matches(scope)[0] == Match.FULL:
+                return True
+        return False
+
+    app.state.authorizes_operator_request = authorizes_operator_request
     return app
