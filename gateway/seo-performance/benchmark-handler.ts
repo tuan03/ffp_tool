@@ -7,6 +7,7 @@ import type {
   ConnectionsSyncData,
   Ga4IntegrationSummary,
   GscIntegrationSummary,
+  PerformanceIntegrationStatus,
   ProductSeoDetailData,
 } from "../../src/modules/seo-performance";
 import type { PerformanceService } from "./service";
@@ -841,12 +842,53 @@ export async function loadConnectionsSync(
   const gsc = integrations.find((i): i is GscIntegrationSummary => i.source === "gsc");
   const ga4 = integrations.find((i): i is Ga4IntegrationSummary => i.source === "ga4");
 
+  let ga4Status: PerformanceIntegrationStatus = ga4?.status ?? "NOT_CONFIGURED";
+  const latestGa4Job = jobs.find(j => j.kind === "ga4_sync");
+
+  // Active validation: if marked CONNECTED or has connection and property, verify whether GA4 API is actually reachable or disabled/forbidden (403)
+  if (ga4?.connectionId && ga4.property?.propertyId) {
+    try {
+      const token = await service.google.tokenForConnection(ga4.connectionId);
+      const res = await fetch(
+        `https://analyticsdata.googleapis.com/v1beta/properties/${ga4.property.propertyId}/metadata`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(3000),
+        },
+      );
+      if (!res.ok) {
+        if (res.status === 403) {
+          ga4Status = "PERMISSION_DENIED";
+        } else if (res.status === 401) {
+          ga4Status = "RECONNECT_REQUIRED";
+        } else {
+          ga4Status = "ERROR";
+        }
+      } else {
+        ga4Status = "CONNECTED";
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("PERMISSION") || msg.includes("403") || msg.includes("SERVICE_DISABLED")) {
+        ga4Status = "PERMISSION_DENIED";
+      } else if (msg.includes("RECONNECT") || msg.includes("401") || msg.includes("INVALID_GRANT")) {
+        ga4Status = "RECONNECT_REQUIRED";
+      } else if (latestGa4Job?.error) {
+        ga4Status = latestGa4Job.error === "GA4_PERMISSION_OR_QUOTA" ? "PERMISSION_DENIED" : "ERROR";
+      } else {
+        ga4Status = "ERROR";
+      }
+    }
+  } else if (!ga4 || !ga4.property?.propertyId) {
+    ga4Status = "NOT_CONFIGURED";
+  }
+
   return {
     gsc: {
       connectionId: gsc?.connectionId ?? null,
-      status: gsc?.status ?? "CONNECTED",
-      property: gsc?.property ?? "sc-domain:jeminise.com",
-      origin: gsc?.origin ?? "https://jeminise.com",
+      status: gsc?.status ?? "NOT_CONFIGURED",
+      property: gsc?.property ?? null,
+      origin: gsc?.origin ?? null,
       grantedScopes: [
         "https://www.googleapis.com/auth/webmasters.readonly",
         "https://www.googleapis.com/auth/webmasters",
@@ -861,12 +903,12 @@ export async function loadConnectionsSync(
     },
     ga4: {
       connectionId: ga4?.connectionId ?? null,
-      status: ga4?.status ?? "CONNECTED",
-      propertyId: ga4?.property?.propertyId ?? "549055707",
-      hostnameScope: ga4?.property?.hostnameScope ?? "jeminise.com",
-      streamId: ga4?.property?.streamId ?? "9876543210",
-      timezone: ga4?.property?.timeZone ?? "America/Los_Angeles",
-      currency: ga4?.property?.currencyCode ?? "USD",
+      status: ga4Status,
+      propertyId: ga4?.property?.propertyId ?? null,
+      hostnameScope: ga4?.property?.hostnameScope ?? null,
+      streamId: ga4?.property?.streamId ?? null,
+      timezone: ga4?.property?.timeZone ?? null,
+      currency: ga4?.property?.currencyCode ?? null,
       grantedScopes: [
         "https://www.googleapis.com/auth/analytics.readonly",
       ],

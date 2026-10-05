@@ -72,6 +72,8 @@ export function ConnectionsSyncView({
                 className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                   data.gsc.status === "CONNECTED"
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                    : data.gsc.status === "ERROR" || data.gsc.status === "PERMISSION_DENIED"
+                    ? "bg-rose-950 text-rose-300 border border-rose-800"
                     : "bg-amber-950 text-amber-300 border border-amber-800"
                 }`}
               >
@@ -184,6 +186,8 @@ export function ConnectionsSyncView({
                 className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                   data.ga4.status === "CONNECTED"
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                    : data.ga4.status === "ERROR" || data.ga4.status === "PERMISSION_DENIED"
+                    ? "bg-rose-950 text-rose-300 border border-rose-800"
                     : "bg-amber-950 text-amber-300 border border-amber-800"
                 }`}
               >
