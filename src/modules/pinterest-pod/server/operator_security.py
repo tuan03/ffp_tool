@@ -20,12 +20,22 @@ def operator_credentials():
     return (username + ":" + password).encode("utf-8")
 
 
+def coordinator_operator_credentials():
+    username = os.getenv("PINTEREST_COORDINATOR_OPERATOR_USERNAME", "")
+    password = os.getenv("PINTEREST_COORDINATOR_OPERATOR_PASSWORD", "")
+    if not username and not password:
+        return None
+    if not username or not password or ":" in username:
+        raise ValueError("Incomplete Pinterest Coordinator operator configuration")
+    return (username + ":" + password).encode("utf-8")
+
+
 def credential_fingerprint(credentials):
     return hashlib.sha256(credentials).hexdigest()
 
 
 def coordinator_headers(url):
-    credentials = operator_credentials()
+    credentials = coordinator_operator_credentials()
     if credentials is None:
         return {}
     target = urlsplit(url)

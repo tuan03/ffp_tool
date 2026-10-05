@@ -11,12 +11,32 @@ import operator_security as security
 class OperatorSecurityTests(unittest.TestCase):
     def test_coordinator_credentials_are_destination_bound(self):
         with patch.dict('os.environ', {
-            'PINTEREST_OPERATOR_USERNAME': 'fixture', 'PINTEREST_OPERATOR_PASSWORD': 'secret',
+            'PINTEREST_COORDINATOR_OPERATOR_USERNAME': 'fixture', 'PINTEREST_COORDINATOR_OPERATOR_PASSWORD': 'secret',
             'PINTEREST_COORDINATOR_URL': 'https://coordinator.invalid',
         }):
             self.assertIn('Authorization', security.coordinator_headers('https://coordinator.invalid/api/v1/clients'))
             self.assertEqual(security.coordinator_headers('https://external.invalid/api/v1/clients'), {})
             self.assertEqual(security.coordinator_headers('https://coordinator.invalid/unrelated'), {})
+
+    def test_coordinator_credentials_do_not_enable_pinterest_ui_authentication(self):
+        with patch.dict('os.environ', {
+            'PINTEREST_COORDINATOR_OPERATOR_USERNAME': 'fixture',
+            'PINTEREST_COORDINATOR_OPERATOR_PASSWORD': 'secret',
+            'PINTEREST_OPERATOR_USERNAME': '',
+            'PINTEREST_OPERATOR_PASSWORD': '',
+            'PINTEREST_COORDINATOR_URL': 'http://127.0.0.1:8766',
+        }):
+            self.assertIsNone(security.operator_credentials())
+            self.assertEqual(security.coordinator_headers('http://127.0.0.1:8766/api/v1/clients')['Authorization'],
+                'Basic Zml4dHVyZTpzZWNyZXQ=')
+
+    def test_partial_coordinator_credentials_fail_closed(self):
+        with patch.dict('os.environ', {
+            'PINTEREST_COORDINATOR_OPERATOR_USERNAME': 'fixture',
+            'PINTEREST_COORDINATOR_OPERATOR_PASSWORD': '',
+        }):
+            with self.assertRaisesRegex(ValueError, 'Incomplete Pinterest Coordinator'):
+                security.coordinator_operator_credentials()
 
     def test_sessions_expire_and_revoke_without_storing_password(self):
         sessions = security.OperatorSessions()
@@ -34,7 +54,7 @@ class OperatorSecurityTests(unittest.TestCase):
 
     def test_credential_transport_rejects_remote_http_and_redirects(self):
         with patch.dict('os.environ', {
-            'PINTEREST_OPERATOR_USERNAME': 'fixture', 'PINTEREST_OPERATOR_PASSWORD': 'secret',
+            'PINTEREST_COORDINATOR_OPERATOR_USERNAME': 'fixture', 'PINTEREST_COORDINATOR_OPERATOR_PASSWORD': 'secret',
             'PINTEREST_COORDINATOR_URL': 'http://remote.invalid',
         }):
             with self.assertRaises(ValueError):

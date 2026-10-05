@@ -90,6 +90,8 @@ test("server and client receive operator credentials while only client creates t
   const clientService = compose.slice(compose.indexOf("  client:"));
   assert.match(serverService, /FFP_OPERATOR_USERNAME: \$\{FFP_OPERATOR_USERNAME:\?/);
   assert.match(serverService, /FFP_OPERATOR_PASSWORD: \$\{FFP_OPERATOR_PASSWORD:\?/);
+  assert.match(serverService, /PINTEREST_COORDINATOR_OPERATOR_USERNAME: \$\{FFP_OPERATOR_USERNAME:\?/);
+  assert.match(serverService, /PINTEREST_COORDINATOR_OPERATOR_PASSWORD: \$\{FFP_OPERATOR_PASSWORD:\?/);
   assert.match(clientService, /FFP_OPERATOR_USERNAME: \$\{FFP_OPERATOR_USERNAME:\?/);
   assert.match(clientService, /FFP_OPERATOR_PASSWORD: \$\{FFP_OPERATOR_PASSWORD:\?/);
   assert.doesNotMatch(clientService, /GATEWAY_AUTH_TOKEN/);
