@@ -362,6 +362,23 @@ test("drain command requires a durable operator reason and requests no purge", a
   assert.equal(body.payload, undefined);
 });
 
+test("self-test command sends only read-only request and audited reason", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "self-test-command" }, 202);
+    },
+  });
+  await controller.selfTest("agent-1", "operator readiness verification");
+  const body = requestBody as { type?: unknown; reason?: unknown; taskIds?: unknown; includeRunning?: unknown };
+  assert.equal(body.type, "RUN_SELF_TEST");
+  assert.equal(body.reason, "operator readiness verification");
+  assert.equal(body.taskIds, undefined);
+  assert.equal(body.includeRunning, undefined);
+});
+
 test("pending purge controller previews and sends exact scoped confirmation", async () => {
   const requests: Array<{ body: string; method: string }> = [];
   const controller = createAmazonCrawlerCommandController({

@@ -92,6 +92,11 @@ class ClientStore:
             if connection is not None:
                 connection.close()
 
+    def self_test_database_integrity(self) -> bool:
+        """Run SQLite's read-only quick check without changing agent state."""
+        with self._connection() as connection:
+            return connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+
     def client_id(self) -> str:
         with self._connection() as connection:
             row = connection.execute("SELECT client_id FROM agent_identity WHERE singleton = 1").fetchone()
@@ -479,7 +484,7 @@ class ClientStore:
         except (TypeError, ValueError):
             raise ValueError("Invalid command sequence.") from None
         if not command_id or command_type not in {
-            "PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
+            "PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
             "RESTART_WORKERS", "RESTART_AGENT",
         }:
             raise ValueError("Unsupported or malformed server command.")

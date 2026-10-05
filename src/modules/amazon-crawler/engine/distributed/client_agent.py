@@ -33,6 +33,7 @@ from .agent_runtime_config import AgentRuntimeConfig
 from .client_dashboard_state import DashboardState
 from .client_store import ClientStore
 from .client_storage_pressure import storage_pressure
+from .client_self_test import build_self_test_report
 from .worker_health import WorkerHealth
 from .client_restart import launch_replacement_agent
 from .protocol import hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
@@ -539,6 +540,8 @@ class DistributedCrawlerAgent:
                         update["result"] = {"appliedConfigVersion": self._agent_config_version}
                     elif str(command.get("type") or "") == "DRAIN":
                         update["result"] = {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}
+                    elif str(command.get("type") or "") == "RUN_SELF_TEST":
+                        update["result"] = await asyncio.to_thread(self._run_self_test)
                 await self.outbound_queue.put(update)
                 continue
             if receipt["decision"] == "expired":
@@ -560,6 +563,15 @@ class DistributedCrawlerAgent:
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
                     "sequence": sequence, "status": "RUNNING"})
                 self._publish_status()
+                continue
+            if command_type == "RUN_SELF_TEST":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                report = await asyncio.to_thread(self._run_self_test)
+                await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "SUCCESS", "result": report})
                 continue
             if command_type == "RELOAD_CONFIG":
                 await asyncio.to_thread(self.store.set_server_command_running, command_id)
@@ -1152,6 +1164,25 @@ class DistributedCrawlerAgent:
 
     def _storage_pressure(self) -> dict[str, Any]:
         return storage_pressure(self.store, self.config.outbox, self.project_root)
+
+    def _run_self_test(self) -> dict[str, Any]:
+        try:
+            database_integrity = self.store.self_test_database_integrity()
+        except (OSError, sqlite3.Error):
+            database_integrity = False
+        try:
+            storage = self._storage_pressure()
+        except (OSError, sqlite3.Error, ValueError):
+            storage = {"blocked": True, "freeBytes": None,
+                       "reasons": ["STORAGE_PROBE_FAILED"], "warnings": []}
+        try:
+            worker_health = self._worker_health_snapshot()
+        except Exception:
+            worker_health = {"state": "degraded", "failuresInWindow": 0, "effectiveConcurrency": 0}
+        return build_self_test_report(
+            session_authenticated=self._is_connected and self.connection_status != "NEED_REAUTH",
+            storage=storage, database_integrity=database_integrity, worker_health=worker_health,
+        )
 
     def _available_slots(self) -> int:
         if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete

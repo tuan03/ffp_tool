@@ -776,6 +776,7 @@ export interface AmazonCrawlerCommandController {
   restart(agentId: string, type: "RESTART_WORKERS" | "RESTART_AGENT", reason: string): Promise<void>;
   reloadConfig(agentId: string, config: AmazonCrawlerAgentRuntimeConfig): Promise<void>;
   drain(agentId: string, reason: string): Promise<void>;
+  selfTest(agentId: string, reason: string): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 

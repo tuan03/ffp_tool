@@ -125,6 +125,32 @@ class AgentCommandLedgerTests(unittest.TestCase):
             self.assertEqual(agent.desired_execution_state, "DRAINED")
             self.assertEqual(agent.applied_execution_state, "DRAINED")
 
+    def test_self_test_result_is_bounded_and_does_not_change_execution_state(self) -> None:
+        payload = {"reason": "operator readiness verification", "scope": "read-only"}
+        request_id = uuid.uuid4().hex
+        command = self.ledger.submit("agent-1", request_id, "RUN_SELF_TEST", 300, payload)
+        replay = self.ledger.submit("agent-1", request_id, "RUN_SELF_TEST", 300, payload)
+        self.assertEqual(command["commandId"], replay["commandId"])
+        with self.assertRaisesRegex(Exception, "different command scope"):
+            self.ledger.submit("agent-1", request_id, "RUN_SELF_TEST", 300,
+                {"reason": "different audited reason", "scope": "read-only"})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1, "status": status})
+        self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1, "status": "SUCCESS",
+            "result": {"status": "DEGRADED", "secret": "must not persist", "checks": {
+                "worker": {"status": "DEGRADED", "detail": {"failuresInWindow": 3, "secret": "hidden"}},
+                "invalid": {"status": "PASS", "detail": "ignored"},
+            }}})
+        history = self.ledger.history("agent-1", limit=10)
+        result = next(event["detail"]["result"] for event in history[0]["events"] if "result" in event["detail"])
+        self.assertEqual(result["status"], "DEGRADED")
+        self.assertEqual(set(result["checks"]), {"worker"})
+        self.assertEqual(result["checks"]["worker"]["detail"], {"failuresInWindow": 3})
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, "agent-1")
+            self.assertEqual(agent.desired_execution_state, "RUNNING")
+            self.assertEqual(agent.applied_execution_state, "RUNNING")
+
 
 class AgentCommandInboxTests(unittest.TestCase):
     def test_receipt_state_and_sequence_survive_restart_and_duplicates_are_safe(self) -> None:
@@ -213,6 +239,28 @@ class AgentCommandInboxTests(unittest.TestCase):
 
 
 class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_self_test_is_read_only_and_reports_all_required_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="fixture", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=root / "agent"))
+            agent._is_connected = True
+            agent.connection_status = "online"
+            command = {"commandId": "self-test-1", "sequence": 1, "type": "RUN_SELF_TEST",
+                "payload": {"reason": "operator requested readiness check"}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+            before = agent.store.outbox_usage()
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1})
+            self.assertEqual(agent.store.server_command_status("self-test-1"), "SUCCESS")
+            self.assertEqual(agent.store.outbox_usage(), before)
+            self.assertEqual((await agent.outbound_queue.get())["status"], "ACKED")
+            self.assertEqual((await agent.outbound_queue.get())["status"], "RUNNING")
+            update = await agent.outbound_queue.get()
+            self.assertEqual(update["status"], "SUCCESS")
+            self.assertEqual(update["result"]["status"], "PASS")
+            self.assertEqual(set(update["result"]["checks"]), {"authentication", "disk", "worker", "serialization"})
+
     async def test_drain_waits_for_durable_tasks_and_outbox_ack(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -503,6 +551,35 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentCommandWebSocketTests(unittest.TestCase):
+    def test_self_test_requires_audited_reason_and_is_queued_as_read_only(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'self-test.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"), agent_environment="test")
+            client = stack.enter_context(TestClient(app))
+            auth = ("operator", "fixture")
+            key = client.post("/api/v1/agent-keys", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "name": "self-test fixture", "maxWorkers": 1,
+                "crawlers": ["amazon"], "environment": "test",
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+            }).json()["key"]
+            agent_id = client.post("/api/v1/worker/register", headers={"Authorization": "Bearer " + key},
+                json={"requestId": uuid.uuid4().hex, "displayName": "self-test fixture"}).json()["agentId"]
+            rejected = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "RUN_SELF_TEST", "reason": "short",
+            })
+            self.assertEqual(rejected.status_code, 422)
+            accepted = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "RUN_SELF_TEST", "reason": "verify agent readiness",
+            })
+            self.assertEqual(accepted.status_code, 202, accepted.text)
+            self.assertEqual(accepted.json()["payload"]["scope"], "read-only")
+
     def test_drain_operator_command_is_audited_and_closes_admission_without_purging(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

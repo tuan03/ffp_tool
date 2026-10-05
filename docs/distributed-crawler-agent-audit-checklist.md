@@ -197,7 +197,7 @@ UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhấ
 | --- | --- | --- | --- | --- | --- | --- |
 | [x] | 39 | Config version và RELOAD_CONFIG giữ last-good | 7–8, 39 (config) | 38; E5.1 | Local Python suite + isolated PostgreSQL ACK/LKG audit pass twice; typecheck/build pass | Operator UI chưa được chạy thủ công với agent thật; xem [báo cáo Task 39](audits/distributed-crawler/task-39-versioned-agent-config.md) |
 | [x] | 40 | DRAIN báo đúng khi hết running | 6, 8–9 (drain) | 39; E5.2 | 25 focused Python + 34 service tests; full npm test, typecheck, build pass; includes quarantine/outbox ACK fence | Automated local QA passed; physical connected-agent UI check remains optional |
-| [ ] | 41 | RUN_SELF_TEST không tạo tác động nghiệp vụ thật | 8, 41 (self-test) | 40; E5.2 | PASS/DEGRADED/FAIL, auth/disk/worker/serialize | Chạy self-test, đọc từng nguyên nhân |
+| [x] | 41 | RUN_SELF_TEST không tạo tác động nghiệp vụ thật | 8, 41 (self-test) | 40; E5.2 | 32 focused Python + 35 service tests; full npm test, typecheck, build pass; report allowlist verified | Automated local QA passed; physical-agent manual UI check remains |
 | [ ] | 42 | Rà nhánh updater và chốt phần tái sử dụng | 40, 54 (audit updater) | 41; E0.3/E5.3, owner xác nhận | Diff/compatibility/topology, không tự merge | Duyệt reuse/gap và scope tích hợp |
 | [ ] | 43 | Artifact/manifest được xác minh trước thực thi | 23, 40 (xác minh artifact) | 42; E5.3 | Hash/signature/version, partial download, disk-full | Xem artifact sai bị từ chối, bản cũ còn |
 | [ ] | 44 | UPDATE_AGENT giữ identity/data và ACK sau boot | 8, 40, 51 (update) | 43; E5.3 | Drain/install/reboot journal/self-test, outbox nguyên vẹn | Update agent test, đối chiếu trước/sau |
@@ -284,7 +284,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 41: RUN_SELF_TEST; Tasks 39–40 đã qua local code QA |
+| Task đang chạy | Task 42: audit updater branch; Tasks 39–41 đã qua local code QA |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -303,7 +303,8 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 20–38 | Đã qua các cổng ghi ở checklist; Task 38 có ngoại lệ ngưỡng 5 agent so với spec 20 |
 | Task 39 | Đã qua code QA local và PostgreSQL schema cô lập; chưa chạy UI thủ công với agent thật |
 | Task 40 | Đã qua local code QA; xem [báo cáo Task 40](audits/distributed-crawler/task-40-drain.md); physical agent UI check chưa chạy |
-| Task 41–53 | Chưa làm |
+| Task 41 | Đã qua local code QA; xem [báo cáo Task 41](audits/distributed-crawler/task-41-agent-self-test.md); physical-agent UI check chưa chạy |
+| Task 42–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 

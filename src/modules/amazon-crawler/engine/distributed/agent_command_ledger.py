@@ -17,7 +17,7 @@ from .protocol import utc_now
 
 
 JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
-COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "DRAIN": 5, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "DRAIN": 5, "RUN_SELF_TEST": 4, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
                     "RESTART_WORKERS": 5, "RESTART_AGENT": 6}
 TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
 ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
@@ -27,7 +27,7 @@ class AgentCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requestId: uuid.UUID
-    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
+    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
     expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
     taskIds: list[str] = Field(default_factory=list, max_length=500)
     includeRunning: bool = Field(default=False, strict=True)
@@ -89,6 +89,38 @@ def _bounded_count(value: Any) -> int:
         return 0
 
 
+def _bounded_self_test_checks(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    checks: dict[str, dict[str, Any]] = {}
+    for name in ("authentication", "disk", "worker", "serialization"):
+        check = value.get(name)
+        if not isinstance(check, dict):
+            continue
+        status = check.get("status")
+        if status not in {"PASS", "DEGRADED", "FAIL"}:
+            status = "FAIL"
+        detail = check.get("detail")
+        if isinstance(detail, dict):
+            safe_detail = {}
+            for key in ("databaseIntegrity", "freeBytes", "blocked", "reasons", "warnings",
+                        "state", "failuresInWindow", "effectiveConcurrency", "bytes"):
+                if key not in detail:
+                    continue
+                item = detail.get(key)
+                if type(item) is int:
+                    safe_detail[key] = _bounded_count(item)
+                elif type(item) is bool or item is None or isinstance(item, str):
+                    safe_detail[key] = item if not isinstance(item, str) else item[:80]
+                elif isinstance(item, list):
+                    safe_detail[key] = [str(entry)[:64] for entry in item[:8]]
+            detail = safe_detail
+        else:
+            detail = str(detail or "")[:160]
+        checks[name] = {"status": status, "detail": detail}
+    return checks
+
+
 def command_payload(command: AgentCommand) -> dict[str, Any]:
     return {
         "commandId": command.id,
@@ -119,7 +151,7 @@ class AgentCommandLedger:
             if existing is not None:
                 if existing.command_type != command_type:
                     raise HTTPException(409, detail="Command requestId was reused with a different command.")
-                if command_type in {"DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"} and existing.payload != (command_payload_value or {}):
+                if command_type in {"DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"} and existing.payload != (command_payload_value or {}):
                     raise HTTPException(409, detail="Command requestId was reused with a different command scope.")
                 return self._snapshot(session, existing)
             agent = session.get(ClientRecord,
@@ -134,7 +166,7 @@ class AgentCommandLedger:
                 id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
                 sequence=sequence, command_type=command_type,
                 payload=(dict(command_payload_value or {}) if command_type in {
-                    "DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
+                    "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
                 }
                          else {"desiredExecutionState": target_state}),
                 priority=COMMAND_PRIORITY[command_type], status="PENDING",
@@ -302,11 +334,17 @@ class AgentCommandLedger:
             detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
             result = update.get("result") if command.command_type in {
                 "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
-                "RELOAD_CONFIG", "DRAIN",
+                "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST",
             } else None
             event_detail = {"error": detail} if detail else {}
             if isinstance(result, dict):
-                event_detail["result"] = {
+                if command.command_type == "RUN_SELF_TEST":
+                    event_detail["result"] = {
+                        "status": result.get("status") if result.get("status") in {"PASS", "DEGRADED", "FAIL"} else "FAIL",
+                        "checks": _bounded_self_test_checks(result.get("checks")),
+                    }
+                else:
+                    event_detail["result"] = {
                     **({
                         "scope": "all-local" if command.command_type == "PURGE_ALL_LOCAL_TASKS" else "pending",
                         "beforeCount": _bounded_count(result.get("beforeCount")),
@@ -325,7 +363,7 @@ class AgentCommandLedger:
                         "restartedWorkers": _bounded_count(result.get("restartedWorkers")),
                         "clearedWorkerFailures": _bounded_count(result.get("clearedWorkerFailures")),
                     }),
-                }
+                    }
             if status == "ACKED":
                 command.acknowledged_at = now
             elif status == "RUNNING":

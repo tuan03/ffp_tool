@@ -539,6 +539,13 @@ export function createAmazonCrawlerCommandController({
       });
       await readJson(response);
     },
+    async selfTest(agentId, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "RUN_SELF_TEST", reason }),
+      });
+      await readJson(response);
+    },
     async history(agentId) {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
       const payload: unknown = await readJson(response);
