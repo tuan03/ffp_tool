@@ -10,7 +10,7 @@ import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
 } from "./pinterest-pod-handler";
-import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, isSameOriginRequest, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -29,33 +29,6 @@ import {
 export interface ShopifyGatewayDevPluginOptions {
   readonly authToken?: string;
   readonly maxBodyBytes?: number;
-}
-
-function isSameOriginRequest(headers: Record<string, string | string[] | undefined>): boolean {
-  if (headers["sec-fetch-site"] === "same-origin") {
-    return true;
-  }
-  const host = typeof headers.host === "string" ? headers.host : undefined;
-  if (!host) {
-    return false;
-  }
-  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
-  if (origin) {
-    try {
-      return new URL(origin).host.toLowerCase() === host.toLowerCase();
-    } catch {
-      return false;
-    }
-  }
-  const referer = typeof headers.referer === "string" ? headers.referer : undefined;
-  if (referer) {
-    try {
-      return new URL(referer).host.toLowerCase() === host.toLowerCase();
-    } catch {
-      return false;
-    }
-  }
-  return false;
 }
 
 export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions): Plugin {

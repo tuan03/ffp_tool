@@ -21,7 +21,7 @@ import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
 } from "./pinterest-pod-handler";
-import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, isSameOriginRequest, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -165,6 +165,9 @@ export function startGatewayServer(
       isOperatorAuthorized(req.headers.authorization, operatorUsername, operatorPassword),
     );
     if (isAuthenticatedOperator && authToken) req.headers["x-gateway-key"] = authToken;
+    if (authToken && isSameOriginRequest(req.headers) && !req.headers["x-gateway-key"] && !req.headers["authorization"]) {
+      req.headers["x-gateway-key"] = authToken;
+    }
 
     if (url === "/health") {
       res.statusCode = 200;

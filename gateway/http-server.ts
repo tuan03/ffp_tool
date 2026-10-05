@@ -61,6 +61,40 @@ export function isGatewayAuthorized(
   return checkMatch(gatewayKey) || checkMatch(bearerToken);
 }
 
+export function isSameOriginRequest(headers: Record<string, string | string[] | undefined>): boolean {
+  if (headers["sec-fetch-site"] === "same-origin") {
+    return true;
+  }
+  const rawHost = typeof headers.host === "string" ? headers.host : undefined;
+  if (!rawHost) {
+    return false;
+  }
+  const hostNoPort = rawHost.split(":")[0].toLowerCase();
+  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
+  if (origin) {
+    try {
+      const url = new URL(origin);
+      if (url.host.toLowerCase() === rawHost.toLowerCase() || url.hostname.toLowerCase() === hostNoPort) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  const referer = typeof headers.referer === "string" ? headers.referer : undefined;
+  if (referer) {
+    try {
+      const url = new URL(referer);
+      if (url.host.toLowerCase() === rawHost.toLowerCase() || url.hostname.toLowerCase() === hostNoPort) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export function isLocalHost(host?: string | boolean): boolean {
   if (host === undefined || host === false) {
     return true;

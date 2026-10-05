@@ -40,3 +40,12 @@ test("Ads reads Shopify through Gateway token provider and rejects unknown store
   await assert.rejects(assertAdsStoreDomain("new-shop", "other.myshopify.com"), /ADS_STORE_MAPPING_MISMATCH/);
   await assert.rejects(new ShopifyOrdersClient().getOrderSummary("absent"), /ADS_STORE_NOT_REGISTERED/);
 });
+
+test("isSameOriginRequest recognizes same-origin fetch and referer headers", async () => {
+  const { isSameOriginRequest } = await import("../http-server");
+  assert.equal(isSameOriginRequest({ "sec-fetch-site": "same-origin" }), true);
+  assert.equal(isSameOriginRequest({ host: "localhost:3010", origin: "http://localhost:3010" }), true);
+  assert.equal(isSameOriginRequest({ host: "localhost:3010", referer: "http://localhost:3010/ads" }), true);
+  assert.equal(isSameOriginRequest({ host: "localhost:3010", origin: "http://attacker.com" }), false);
+  assert.equal(isSameOriginRequest({ host: "localhost:3010", referer: "http://attacker.com/page" }), false);
+});
