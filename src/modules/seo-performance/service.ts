@@ -24,7 +24,10 @@ export function createSeoPerformanceClient(fetcher: typeof fetch = fetch): SeoPe
       return payload.data.stores.flatMap((store: unknown) => store && typeof store === "object" && "storeId" in store && typeof store.storeId === "string" && "shopDomain" in store && typeof store.shopDomain === "string" ? [{ storeId: store.storeId, shopDomain: store.shopDomain }] : []);
     },
     overview: (storeId, filters) => request("overview", storeId, undefined, filters),
-    properties: () => request("properties"), connect: () => request("oauth/start", undefined, {}), disconnect: () => request("disconnect", undefined, {}),
+    integrations: storeId => request("integrations", storeId),
+    properties: storeId => request("properties", storeId),
+    connect: (storeId, sources = ["gsc", "ga4"]) => request("oauth/start", storeId, { sources }),
+    disconnect: storeId => request("disconnect", storeId, {}),
     map: (storeId, property, origin) => request("mapping", storeId, { property, origin, confirmed: true }),
     start: (storeId, kind) => request("jobs", storeId, { kind }),
     pages: (storeId, filters) => request("pages", storeId, undefined, filters),

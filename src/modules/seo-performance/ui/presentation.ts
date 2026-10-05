@@ -22,4 +22,4 @@ export function displayDate(value: string | null | undefined): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString("vi-VN", { timeZone: "UTC" }) : value;
 }
-export const JOB_LABELS: Readonly<Record<string, string>> = { sync: "Đồng bộ Google", crawl: "Kiểm tra website", inspection: "Kiểm tra chỉ mục", report: "Báo cáo", pending: "Đang chờ", running: "Đang xử lý", done: "Hoàn tất", failed: "Không thành công" };
+export const JOB_LABELS: Readonly<Record<string, string>> = { sync: "Đồng bộ GSC (legacy)", gsc_sync: "Đồng bộ Search Console", ga4_sync: "Đồng bộ GA4", crawl: "Kiểm tra website", inspection: "Kiểm tra chỉ mục", report: "Báo cáo", benchmark: "Tính benchmark", recommendation: "Đánh giá đề xuất", health: "Kiểm tra đồng bộ", pending: "Đang chờ", running: "Đang xử lý", done: "Hoàn tất", failed: "Không thành công" };

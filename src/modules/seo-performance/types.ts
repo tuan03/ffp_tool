@@ -85,7 +85,7 @@ export interface SeoRecommendation extends RecommendationInput {
   readonly jobId: string | null;
 }
 export interface PerformanceJob {
-  readonly id: string; readonly kind: "sync" | "crawl" | "inspection" | "report";
+  readonly id: string; readonly kind: "sync" | "gsc_sync" | "ga4_sync" | "crawl" | "inspection" | "report" | "benchmark" | "recommendation" | "health";
   readonly status: "pending" | "running" | "done" | "failed";
   readonly progress: number; readonly error: string | null; readonly updatedAt: string;
 }
@@ -103,11 +103,12 @@ export interface SeoPerformanceClient {
   report(storeId: string, input: SearchReportFilters, view?: SearchReportView): Promise<SearchReport>;
   stores(): Promise<readonly { readonly storeId: string; readonly shopDomain: string }[]>;
   overview(storeId: string, filters?: PerformanceFilters): Promise<PerformanceOverview>;
-  properties(): Promise<readonly { readonly siteUrl: string; readonly permissionLevel: string }[]>;
-  connect(): Promise<{ readonly url: string }>;
-  disconnect(): Promise<void>;
+  integrations(storeId: string): Promise<readonly PerformanceIntegrationSummary[]>;
+  properties(storeId: string): Promise<readonly { readonly siteUrl: string; readonly permissionLevel: string }[]>;
+  connect(storeId: string, sources?: readonly PerformanceDataSource[]): Promise<{ readonly url: string }>;
+  disconnect(storeId: string): Promise<void>;
   map(storeId: string, property: string, origin: string): Promise<void>;
-  start(storeId: string, kind: "sync" | "crawl"): Promise<{ readonly jobId: string }>;
+  start(storeId: string, kind: "sync" | "gsc_sync" | "ga4_sync" | "crawl"): Promise<{ readonly jobId: string }>;
   pages(storeId: string, filters?: PerformanceFilters): Promise<PerformanceList<PerformancePage>>;
   queries(storeId: string, url: string, filters?: PerformanceFilters): Promise<PerformanceList<{ readonly query: string; readonly metrics: SearchMetrics }>>;
   recommendations(storeId: string, offset?: number): Promise<PerformanceList<SeoRecommendation>>;
