@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { createSeoPublishTransport } from "./seo-worker/publish-transport";
+import { createDispatcherMediaPageSource, createShopifySeoSnapshotReader } from "./seo-versioning";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
 import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
@@ -152,7 +153,10 @@ export function startGatewayServer(
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
   const isBackendPublishEnabled = (process.env.SEO_WORKER_PUBLISH_ENABLED ?? env.SEO_WORKER_PUBLISH_ENABLED) === "true" && Boolean(operatorUsername) && Boolean(getAutoSeoDatabaseUrl());
-  if (isBackendPublishEnabled) getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher));
+  if (isBackendPublishEnabled) {
+    const snapshotReader = createShopifySeoSnapshotReader(dispatcher, createDispatcherMediaPageSource(dispatcher));
+    getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher, snapshotReader));
+  }
   configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
   const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
   const storeControlPlane = new StoreControlPlane({

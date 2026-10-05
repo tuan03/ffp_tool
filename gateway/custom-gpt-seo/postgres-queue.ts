@@ -7,11 +7,13 @@ import type { QueueListFilters } from "./queue";
 import type { ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
 import { getWorkerProductKey, SeoWorkerError } from "../seo-worker/protocol";
+import type { WorkerDatabase } from "../seo-worker/database";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { SeoPublishRepository } from "../seo-worker/publish-repository";
 import { SeoRevisionRepository } from "../seo-worker/revision-repository";
 import { SeoCutoverRepository } from "../seo-worker/cutover";
 import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
+import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
 import { normalizeSeoEnqueue } from "./input-contract";
 
 const LEASE_MS = 30 * 60_000;
@@ -31,10 +33,15 @@ export class PostgresCustomGptQueue implements SeoQueue {
   readonly revisions: SeoRevisionRepository;
   readonly cutover: SeoCutoverRepository;
   readonly workerHistory: SeoReviewHistoryRepository;
+  readonly versioning: SeoVersionRepository;
+  readonly publishVersioning: SeoPublishVersioningIntegration;
   constructor(options: SeoQueuePostgresOptions, private readonly now: () => number = Date.now) {
     this.db = new PostgresQueueDatabase(options);
-    this.workers = new SeoWorkerRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
-    this.publisher = new SeoPublishRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
+    const workerDatabase: WorkerDatabase = { transaction: operation => this.db.withClientTransaction(operation) };
+    this.versioning = new SeoVersionRepository(workerDatabase, this.db.schema);
+    this.publishVersioning = new SeoPublishVersioningIntegration(this.versioning);
+    this.workers = new SeoWorkerRepository(workerDatabase, now);
+    this.publisher = new SeoPublishRepository(workerDatabase, now, this.publishVersioning);
     this.revisions = new SeoRevisionRepository({ transaction: operation => this.db.withClientTransaction(operation) }, (input, previousJobId) => this.enqueueRevision(input, previousJobId), now);
     this.cutover = new SeoCutoverRepository({ transaction: operation => this.db.withClientTransaction(operation) }, storeId => this.workers.enableStore(storeId), now, storeId => this.expire(storeId, "codex_mcp"));
     this.workerHistory = new SeoReviewHistoryRepository({ transaction: operation => this.db.withClientTransaction(operation) });
