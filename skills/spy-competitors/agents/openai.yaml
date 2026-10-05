@@ -1,0 +1,11 @@
+interface:
+  display_name: "Spy Competitors"
+  short_description: "Find verified product-matched competitors for any store"
+  default_prompt: "Use $spy-competitors to identify up to 10 verified competitors for my store and analyze relevant ads."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "ffp-ads"
+      description: "FFP Ads Intelligence for store context and competitor ad evidence"
+policy:
+  allow_implicit_invocation: true

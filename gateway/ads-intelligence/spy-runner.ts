@@ -14,9 +14,19 @@ import { classifySpyRunnerResult } from "./spy-runner-result";
 const execFileAsync = promisify(execFile);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");
-const skillRoot = process.env.ADS_SPY_SKILL_DIR || join(codexHome, "skills/spy-competitors");
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/;
 let catalog: { expires: number; value: SpyCapabilities } | undefined;
+
+export async function resolveSkillRoot(): Promise<string> {
+  if (process.env.ADS_SPY_SKILL_DIR) return process.env.ADS_SPY_SKILL_DIR;
+  const repoSkill = join(projectRoot, "skills/spy-competitors");
+  try {
+    await access(join(repoSkill, "SKILL.md"), constants.R_OK);
+    return repoSkill;
+  } catch {
+    return join(codexHome, "skills/spy-competitors");
+  }
+}
 
 async function findRunner(id: "codex" | "agy"): Promise<string | undefined> {
   const names = process.platform === "win32" ? [`${id}.exe`, `${id}.cmd`, id] : [id];
@@ -44,6 +54,7 @@ export async function detectSpyRunners(): Promise<SpyCapabilities> {
   }
   const configured = (process.env.ADS_SPY_CODEX_MODELS ?? "").split(",").map(model => model.trim()).filter(model => modelPattern.test(model));
   if (configured.length) codexModels = configured;
+  const skillRoot = await resolveSkillRoot();
   let skillAvailable = true;
   try { await access(join(skillRoot, "SKILL.md")); } catch { skillAvailable = false; }
   const value: SpyCapabilities = { skillAvailable, runners: [
@@ -60,6 +71,7 @@ export async function executeSpy({ job, directory, signal }: SpyExecution): Prom
   // AGY can make --add-dir its primary workspace. Keep its helper and job
   // artifacts in one directory so it never needs to copy executables around.
   const workspace = job.runner === "agy" ? directory : await mkdtemp(join(tmpdir(), "ffp-spy-"));
+  const skillRoot = await resolveSkillRoot();
   const documents = await Promise.all(["SKILL.md", "references/qualification.md", "references/ad-collection.md", "references/dashboard-publishing.md"].map(async file => `\n--- ${file} ---\n${await readFile(join(skillRoot, file), "utf8")}`));
   const broker = join(projectRoot, "gateway/ads-intelligence/spy-tool.ts");
   const loader = join(projectRoot, "node_modules/tsx/dist/loader.mjs");
