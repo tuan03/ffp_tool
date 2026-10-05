@@ -105,6 +105,9 @@ export class SeoPublishVersioningIntegration {
       approvedBy: operation.operator,
       appliedBy: operation.operator,
       appliedAt: confirmedAt,
+      // The publisher's read-back uses Shopify Admin API. It proves the write was
+      // applied, but it is not evidence that the storefront serves this version.
+      publicEffectiveAt: null,
       jobId: operation.jobId,
     });
     return { outcome: result.outcome, versionId: result.version.id, versionNumber: result.version.versionNumber };

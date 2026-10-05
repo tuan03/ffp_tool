@@ -134,7 +134,7 @@ test("authoritative no-change is terminal with zero Shopify writes and zero new 
   } finally { await f.pg.close(); }
 });
 
-test("verified publish commits and links exactly one authoritative version", async () => {
+test("verified Admin publish records applied time without fabricating public-effective time", async () => {
   const f = await fixture();
   let live = f.original;
   let liveFields: PublishFields = { ...f.operation.fields, title: "Old" };
@@ -154,6 +154,11 @@ test("verified publish commits and links exactly one authoritative version", asy
     const receipt = (await f.pg.query<{ seo_version_id: string }>("SELECT seo_version_id FROM seo_publish_versions")).rows[0];
     assert.ok(receipt.seo_version_id);
     assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_versions WHERE publish_operation_id=$1", [f.operation.id])).rows[0].count, 1);
+    const version = (await f.pg.query<{ applied_at_utc: number; public_effective_at_utc: number | null }>(
+      "SELECT applied_at_utc,public_effective_at_utc FROM seo_versions WHERE publish_operation_id=$1",
+      [f.operation.id],
+    )).rows[0];
+    assert.deepEqual(version, { applied_at_utc: 1_000, public_effective_at_utc: null });
   } finally { await f.pg.close(); }
 });
 
@@ -178,6 +183,11 @@ test("lost response recovery commits one version without repeating the Shopify w
     assert.equal(writes, 1);
     assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_versions")).rows[0].count, 2);
     assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_publish_versions")).rows[0].count, 1);
+    const version = (await f.pg.query<{ applied_at_utc: number; public_effective_at_utc: number | null }>(
+      "SELECT applied_at_utc,public_effective_at_utc FROM seo_versions WHERE publish_operation_id=$1",
+      [f.operation.id],
+    )).rows[0];
+    assert.deepEqual(version, { applied_at_utc: 121_001, public_effective_at_utc: null });
   } finally { await f.pg.close(); }
 });
 
