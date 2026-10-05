@@ -396,6 +396,23 @@ test("agent update command includes the explicit target version and audited reas
   assert.equal(body.expiresInSeconds, 86400);
 });
 
+test("agent rollback command includes an audited reason and stable request envelope", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "rollback-command" }, 202);
+    },
+  });
+  await controller.rollbackAgent("agent-1", "restore last known good agent");
+  const body = requestBody as { type?: unknown; reason?: unknown; expiresInSeconds?: unknown; requestId?: unknown };
+  assert.equal(body.type, "ROLLBACK_AGENT");
+  assert.equal(body.reason, "restore last known good agent");
+  assert.equal(body.expiresInSeconds, 86400);
+  assert.equal(typeof body.requestId, "string");
+});
+
 test("pending purge controller previews and sends exact scoped confirmation", async () => {
   const requests: Array<{ body: string; method: string }> = [];
   const controller = createAmazonCrawlerCommandController({

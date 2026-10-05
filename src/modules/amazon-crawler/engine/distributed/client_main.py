@@ -65,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--enroll", action="store_true", help="Prompt privately for an Agent Key and enroll over HTTPS.")
     parser.add_argument("--installation-report", type=Path, help="Write the stable client identity during --check-config for installer verification.")
     parser.add_argument("--restart-command-id", help=argparse.SUPPRESS)
+    parser.add_argument("--restore-update-database", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-command-id", help=argparse.SUPPRESS)
+    parser.add_argument("--database-backup-path", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--database-backup-sha256", help=argparse.SUPPRESS)
     return parser
 
 
@@ -82,6 +86,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         default_project_root = (Path(sys.executable).parent if bool(getattr(sys, "frozen", False))
                                 else config.data_directory)
         project_root = (arguments.project_root or default_project_root).resolve()
+        if arguments.restore_update_database:
+            if (not arguments.update_command_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arguments.update_command_id)
+                    or arguments.database_backup_path is None
+                    or not arguments.database_backup_sha256
+                    or not re.fullmatch(r"[a-f0-9]{64}", arguments.database_backup_sha256)):
+                raise ValueError("Offline Agent database rollback arguments are invalid.")
+            from .client_store import ClientStore
+            with AgentInstanceLock(config.data_directory):
+                ClientStore(config.data_directory / "agent.sqlite3").restore_agent_update_database(
+                    arguments.update_command_id, arguments.database_backup_path,
+                    arguments.database_backup_sha256)
+            print("Agent database rollback snapshot restored and verified.")
+            return 0
         if arguments.enroll:
             import getpass
             from .client_credentials import enroll_agent, store_credential

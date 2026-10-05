@@ -38,7 +38,8 @@ from .client_storage_pressure import storage_pressure
 from .client_self_test import build_self_test_report
 from .worker_health import WorkerHealth
 from .client_restart import launch_replacement_agent
-from .client_update import launch_agent_update
+from .client_update import (discard_agent_update_backup, launch_agent_rollback,
+                            launch_agent_update, prepare_agent_update_backup)
 from .protocol import hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
@@ -92,7 +93,8 @@ class DistributedCrawlerAgent:
         crawler_factory: Callable[..., Any] = AmazonCrawler,
         restart_command_id: str | None = None,
         restart_launcher: Callable[[str, Path], bool] = launch_replacement_agent,
-        update_launcher: Callable[[str, str, Path, Path | None, int], bool] = launch_agent_update,
+        update_launcher: Callable[[str, str, Path, Path | None, int, str, str, str], bool] = launch_agent_update,
+        rollback_launcher: Callable[[str, Path, Path | None, str, str, int], bool] = launch_agent_rollback,
         on_restart_requested: Callable[[], None] | None = None,
     ) -> None:
         self.project_root = project_root
@@ -103,6 +105,7 @@ class DistributedCrawlerAgent:
         self.restart_command_id = restart_command_id
         self.restart_launcher = restart_launcher
         self.update_launcher = update_launcher
+        self.rollback_launcher = rollback_launcher
         self.on_restart_requested = on_restart_requested or (lambda: None)
         self._restart_attempted: set[str] = set()
         self._boot_id = uuid.uuid4().hex
@@ -610,6 +613,9 @@ class DistributedCrawlerAgent:
                                     "identityRetained": True, "pendingOutboxCount": 0, "selfTest": report,
                                 }})
                             continue
+                    if error:
+                        await asyncio.to_thread(self.store.save_agent_update_journal,
+                            {**journal, "stage": "FAILED", "selfTestStatus": "FAIL"})
                 else:
                     error = ""
                     drain = self.store.drain_command()
@@ -623,16 +629,112 @@ class DistributedCrawlerAgent:
                           or tuple(map(int, target_version.split("."))) <= tuple(map(int, AGENT_VERSION.split(".")))):
                         error = "UPDATE_AGENT target version is invalid or already installed."
                     else:
-                        journal = {"commandId": command_id, "targetVersion": target_version,
-                            "previousVersion": AGENT_VERSION, "stage": "INSTALLING", "clientId": self.client_id,
-                            "selfTestStatus": "PENDING"}
-                        await asyncio.to_thread(self.store.save_agent_update_journal, journal)
-                        if not self.update_launcher(command_id, target_version, self.project_root,
-                                                    self.config.config_file_path, os.getpid()):
+                        backup: dict[str, str] | None = None
+                        journal: dict[str, str] | None = None
+                        try:
+                            backup = prepare_agent_update_backup(command_id, self.project_root, self.config.data_directory)
+                            database_backup = self.store.backup_agent_database(command_id, Path(backup["backupDirectory"]))
+                            journal = {"commandId": command_id, "targetVersion": target_version,
+                                "previousVersion": AGENT_VERSION, "stage": "INSTALLING", "clientId": self.client_id,
+                                "selfTestStatus": "PENDING", **backup, **database_backup}
+                            await asyncio.to_thread(self.store.save_agent_update_journal, journal)
+                        except (OSError, sqlite3.Error, ValueError) as failure:
+                            if backup is not None:
+                                try:
+                                    discard_agent_update_backup(command_id, self.config.data_directory)
+                                except OSError:
+                                    pass
+                            error = f"Could not prepare a verified Agent rollback snapshot: {redact(failure)}"
+                        if not error and journal is not None and not self.update_launcher(command_id, target_version, self.project_root,
+                                                    self.config.config_file_path, os.getpid(),
+                                                    journal["backupDirectory"], journal["installManifestSha256"],
+                                                    journal["databaseBackupSha256"]):
                             error = "The verified Agent updater could not be launched."
-                        else:
+                            await asyncio.to_thread(self.store.save_agent_update_journal,
+                                {**journal, "stage": "FAILED", "selfTestStatus": "PENDING"})
+                        elif not error:
                             self.stop_event.set()
                             return
+                await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
+                failure_result = ({"rollbackAvailable": True,
+                    "previousVersion": journal.get("previousVersion"), "version": journal.get("targetVersion"),
+                    "identityRetained": True, "pendingOutboxCount": 0,
+                    "selfTest": {"status": journal.get("selfTestStatus", "PENDING")}}
+                    if journal and journal.get("stage") == "FAILED" and journal.get("databaseBackupPath")
+                    and journal.get("installManifestSha256") else None)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "FAILED", "error": error,
+                    **({"result": failure_result} if failure_result else {})})
+                continue
+            if command_type == "ROLLBACK_AGENT":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                journal = self.store.agent_update_journal()
+                rollback_payload_matches = (isinstance(payload, dict) and journal is not None
+                    and payload.get("updateCommandId") == journal.get("commandId")
+                    and payload.get("failedVersion") == journal.get("targetVersion")
+                    and payload.get("previousVersion") == journal.get("previousVersion"))
+                if (receipt["decision"] == "resume" and journal
+                        and journal.get("stage") == "ROLLBACK_INSTALLING" and rollback_payload_matches):
+                    if AGENT_VERSION != journal.get("previousVersion"):
+                        error = "The previous verified Agent version did not boot; Agent remains DRAINED."
+                    elif self.store.client_id() != journal.get("clientId") or self.store.drain_outbox_count() != 0:
+                        error = "Rollback identity or acknowledged-outbox invariant failed."
+                    else:
+                        report = await asyncio.to_thread(self._run_self_test)
+                        error = "Post-rollback self-test did not PASS." if report.get("status") != "PASS" else ""
+                        if not error:
+                            await asyncio.to_thread(self.store.save_agent_update_journal,
+                                {**journal, "stage": "ROLLED_BACK", "selfTestStatus": "PASS"})
+                            await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                            await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                                "sequence": sequence, "status": "SUCCESS", "result": {
+                                    "previousVersion": journal.get("targetVersion"), "version": AGENT_VERSION,
+                                    "identityRetained": True, "pendingOutboxCount": 0, "selfTest": report,
+                                }})
+                            continue
+                else:
+                    error = ""
+                    if (rollback_payload_matches and journal is not None and journal.get("stage") == "FAILED"
+                            and AGENT_VERSION == journal.get("previousVersion")
+                            and self._remote_execution_state == "DRAINED" and not self.executing_task_ids
+                            and not self.active and self.assignment_queue.empty()
+                            and self.store.drain_outbox_count() == 0
+                            and self.store.client_id() == journal.get("clientId")):
+                        report = await asyncio.to_thread(self._run_self_test)
+                        if report.get("status") == "PASS":
+                            await asyncio.to_thread(self.store.save_agent_update_journal,
+                                {**journal, "stage": "ROLLED_BACK", "selfTestStatus": "PASS"})
+                            await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                            await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                                "sequence": sequence, "status": "SUCCESS", "result": {
+                                    "previousVersion": journal.get("targetVersion"), "version": AGENT_VERSION,
+                                    "identityRetained": True, "pendingOutboxCount": 0, "selfTest": report,
+                                }})
+                            continue
+                        error = "The last-known-good Agent is already installed, but its self-test did not PASS."
+                    elif (not rollback_payload_matches or journal is None or journal.get("stage") != "FAILED"
+                            or self._remote_execution_state != "DRAINED" or self.executing_task_ids or self.active
+                            or not self.assignment_queue.empty() or self.store.drain_outbox_count() != 0):
+                        error = "ROLLBACK_AGENT requires a failed update, DRAINED state and zero unacknowledged outbox."
+                    else:
+                        try:
+                            await asyncio.to_thread(self.store.save_agent_update_journal,
+                                {**journal, "stage": "ROLLBACK_INSTALLING", "selfTestStatus": "PENDING"})
+                            await asyncio.to_thread(self.store.restore_agent_update_database, journal["commandId"],
+                                Path(journal["databaseBackupPath"]), journal["databaseBackupSha256"])
+                            if not self.rollback_launcher(command_id, self.project_root, self.config.config_file_path,
+                                    journal["backupDirectory"], journal["installManifestSha256"], os.getpid()):
+                                error = "Verified previous Agent files could not be launched for rollback."
+                        except (OSError, sqlite3.Error, ValueError, KeyError) as failure:
+                            error = redact(failure)
+                        if not error:
+                            self.stop_event.set()
+                            return
+                if error and journal and journal.get("stage") == "ROLLBACK_INSTALLING":
+                    await asyncio.to_thread(self.store.save_agent_update_journal,
+                        {**journal, "stage": "FAILED", "selfTestStatus": "FAIL"})
                 await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
                     "sequence": sequence, "status": "FAILED", "error": error})

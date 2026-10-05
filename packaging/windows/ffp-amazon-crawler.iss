@@ -24,6 +24,7 @@ WizardStyle=modern
 [Files]
 Source: "..\..\artifacts\windows\FFPAmazonCrawlerAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\scripts\update-agent.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\..\scripts\rollback-agent.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\..\scripts\agent-release-policy.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 [Icons]
@@ -125,6 +126,7 @@ begin
       Payload := '{' + #13#10 +
         '  "serverUrl": "' + JsonEscape(Trim(ServerPage.Values[0])) + '",' + #13#10 +
         '  "displayName": "' + JsonEscape(Trim(ServerPage.Values[1])) + '",' + #13#10 +
+        '  "dataDirectory": "' + JsonEscape(ExpandConstant('{commonappdata}\FFP Amazon Crawler')) + '",' + #13#10 +
         '  "maxConcurrentInputs": 4,' + #13#10 +
         PinJson +
         '  "limits": {' + #13#10 +

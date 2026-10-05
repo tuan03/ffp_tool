@@ -201,8 +201,8 @@ UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhấ
 | [x] | 42 | Rà nhánh updater và chốt phần tái sử dụng | 40, 54 (audit updater) | 41; E0.3/E5.3, owner xác nhận | Read-only audit of updater commits/files; rejected wholesale merge due separate Coordinator+Postgres topology and missing DRAIN/journal/rollback guarantees | Audit documented; selective reuse only, no merge |
 | [x] | 43 | Artifact/manifest được xác minh trước thực thi | 23, 40 (xác minh artifact) | 42; E5.3 | Windows PowerShell artifact tests + 6 Node release tests + 6 tray tests; exact manifest/hash/size/pin/version gate | Code QA pass; real trusted Authenticode release + clean VM await Task 46 |
 | [x] | 44 | UPDATE_AGENT giữ identity/data và ACK sau boot | 8, 40, 51 (update) | 43; E5.3 | 40 focused Python + 36 crawler service tests; typecheck/build/tooling pass; full suite in Task 44 report | Simulated replacement boot pass; real signed installer/canary waits for Task 46 |
-| [ ] | 45 | ROLLBACK_AGENT tương thích schema và dữ liệu | 8, 40 (rollback) | 44; E5.3 | Bản mới lỗi, rollback an toàn, backup recovery | Demo rollback test, không mất credential/profile |
-| [ ] | 46 | Clean-machine installer và canary rehearsal | 2, 5, 40, 54 (installer/canary) | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | Nghiệm thu trên VM/máy sạch; release thật cần duyệt riêng |
+| [x] | 45 | ROLLBACK_AGENT tương thích schema và dữ liệu | 8, 40 (rollback) | 44; E5.3 | 35 Python command tests pass including failed-update + schema-addition rollback simulation; web/tooling/typecheck/build and PowerShell parser pass; see [Task 45 report](audits/distributed-crawler/task-45-agent-rollback.md) | Simulated rollback passed; actual signed Windows replacement is explicitly deferred to Task 46 |
+| [ ] | 46 | Clean-machine installer và canary rehearsal | 2, 5, 40, 54 (installer/canary) | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | **Blocked on external prerequisites:** approved Authenticode signer and clean Windows VM; see [Task 46 runbook](audits/distributed-crawler/task-46-clean-machine-canary-runbook.md) |
 
 Task 42 là review sâu đúng lúc tích hợp; trong Task 01 chỉ ghi nhận nhánh/owner liên quan nếu cần, không tự làm luôn task updater. Thiếu chứng thư/máy sạch không được thay bằng test giả rồi công bố đạt.
 
@@ -284,7 +284,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 45: compatible ROLLBACK_AGENT; Tasks 39–44 passed automated local QA, Task 42 audit complete |
+| Task đang chạy | Task 46: clean-machine installer/canary acceptance; Tasks 39–45 passed local automated QA, Task 42 audit complete; Task 46 awaits Authenticode signer and clean Windows VM |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -307,7 +307,9 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 42 | Đã audit, không merge nhánh; xem [báo cáo Task 42](audits/distributed-crawler/task-42-updater-branch-audit.md) |
 | Task 43 | Code QA passed; see [Task 43 report](audits/distributed-crawler/task-43-verified-agent-artifacts.md); trusted signed release/clean VM pending Task 46 |
 | Task 44 | DRAIN-based update protocol and durable post-boot ACK implemented; see [Task 44 report](audits/distributed-crawler/task-44-drained-agent-update.md); real signed Windows replacement remains pending Task 46 |
-| Task 44–53 | Chưa làm |
+| Task 45 | DRAIN-preserving verified rollback implemented and locally tested; see [Task 45 report](audits/distributed-crawler/task-45-agent-rollback.md) |
+| Task 46 | Runbook prepared; acceptance not run because no production Authenticode signer or clean Windows VM is available |
+| Task 47–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 

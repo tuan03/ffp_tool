@@ -4,13 +4,19 @@ param(
     [Parameter(Mandatory = $true)][string]$ConfigPath,
     [Parameter(Mandatory = $true)][string]$CommandId,
     [Parameter(Mandatory = $true)][string]$TargetVersion,
-    [Parameter(Mandatory = $true)][int]$AgentProcessId
+    [Parameter(Mandatory = $true)][int]$AgentProcessId,
+    [Parameter(Mandatory = $true)][string]$BackupDirectory,
+    [Parameter(Mandatory = $true)][string]$ManifestSha256,
+    [Parameter(Mandatory = $true)][string]$DatabaseBackupSha256
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($CommandId -notmatch '^[A-Za-z0-9_-]{1,64}$' -or $TargetVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw 'Update command identity or target version is invalid.'
+}
+if ($ManifestSha256 -notmatch '^[a-f0-9]{64}$' -or $DatabaseBackupSha256 -notmatch '^[a-f0-9]{64}$') {
+    throw 'Rollback snapshot checksum is invalid.'
 }
 $installRoot = [IO.Path]::GetFullPath($InstallDirectory)
 $configFullPath = [IO.Path]::GetFullPath($ConfigPath)
@@ -35,7 +41,13 @@ $healthPath = Join-Path ([IO.Path]::GetTempPath()) ('ffp-agent-health-' + [Guid]
 $manifestPath = Join-Path ([IO.Path]::GetTempPath()) ('ffp-agent-manifest-' + [Guid]::NewGuid().ToString('N') + '.json')
 $downloadDirectory = Join-Path ([IO.Path]::GetTempPath()) ('ffp-agent-update-' + [Guid]::NewGuid().ToString('N'))
 $installerPath = $null
+$agentStopped = $false
+$installerAttempted = $false
+$updatedAgent = $null
 try {
+    try { Wait-Process -Id $AgentProcessId -Timeout 120 -ErrorAction Stop }
+    catch { throw 'Agent did not stop cleanly after DRAIN; installer was not run.' }
+    $agentStopped = $true
     $healthResponse = Invoke-WebRequest -UseBasicParsing -Uri "$($server.AbsoluteUri.TrimEnd('/'))/api/v1/health" -TimeoutSec 30
     if ($healthResponse.StatusCode -ne 200) { throw 'Coordinator health check failed.' }
     [IO.File]::WriteAllText($healthPath, [string]$healthResponse.Content, [Text.UTF8Encoding]::new($false))
@@ -48,14 +60,51 @@ try {
     $installerPath = Receive-AgentReleaseArtifact -Policy $policy -DestinationDirectory $downloadDirectory `
         -TrustedSignerThumbprints $pins
 
-    try { Wait-Process -Id $AgentProcessId -Timeout 120 -ErrorAction Stop }
-    catch { throw 'Agent did not stop cleanly after DRAIN; installer was not run.' }
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"",
         "/SERVERURL=`"$($server.AbsoluteUri.TrimEnd('/'))`"", "/DISPLAYNAME=`"$([string]$config.displayName)`"")
+    $installerAttempted = $true
     $setup = Start-Process -FilePath $installerPath -ArgumentList $arguments -Wait -PassThru
     if ($setup.ExitCode -ne 0) { throw "Signed Agent setup failed with exit code $($setup.ExitCode)." }
-    Start-Process -FilePath $exePath -ArgumentList @('--config', $configFullPath, '--start-minimized') `
-        -WorkingDirectory $installRoot -WindowStyle Hidden
+    $updatedAgent = Start-Process -FilePath $exePath -ArgumentList @('--config', $configFullPath, '--start-minimized') `
+        -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        Start-Sleep -Seconds 2
+        if (-not (Get-Process -Id $updatedAgent.Id -ErrorAction SilentlyContinue)) {
+            throw 'Updated Agent exited during its startup stabilization window.'
+        }
+    }
+} catch {
+    $failure = $_
+    if ($agentStopped) {
+        if ($installerAttempted) {
+            if ($updatedAgent) {
+                try {
+                    $databaseRestore = Start-Process -FilePath $exePath -ArgumentList @('--config', $configFullPath,
+                        '--restore-update-database', '--update-command-id', $CommandId,
+                        '--database-backup-path', (Join-Path $BackupDirectory 'agent.sqlite3'),
+                        '--database-backup-sha256', $DatabaseBackupSha256) `
+                        -WorkingDirectory $installRoot -Wait -PassThru -WindowStyle Hidden
+                    if ($databaseRestore.ExitCode -ne 0) { throw 'Offline Agent database rollback failed.' }
+                } catch { throw 'Could not restore the verified Agent database after failed first boot.' }
+            }
+            $rollbackScript = Join-Path $BackupDirectory 'install\scripts\rollback-agent.ps1'
+            if (-not (Test-Path -LiteralPath $rollbackScript -PathType Leaf)) {
+                $rollbackScript = Join-Path $installRoot 'scripts\rollback-agent.ps1'
+            }
+            if (Test-Path -LiteralPath $rollbackScript -PathType Leaf) {
+                try {
+                    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive',
+                        '-ExecutionPolicy', 'Bypass', '-File', $rollbackScript, '-InstallDirectory', $installRoot,
+                        '-ConfigPath', $configFullPath, '-CommandId', $CommandId, '-BackupDirectory', $BackupDirectory,
+                        '-ManifestSha256', $ManifestSha256, '-AgentProcessId', '0') -Wait -PassThru | Out-Null
+                } catch { }
+            }
+        } else {
+            Start-Process -FilePath $exePath -ArgumentList @('--config', $configFullPath, '--start-minimized') `
+                -WorkingDirectory $installRoot -WindowStyle Hidden
+        }
+    }
+    throw $failure
 } finally {
     foreach ($path in @($healthPath, $manifestPath)) {
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }

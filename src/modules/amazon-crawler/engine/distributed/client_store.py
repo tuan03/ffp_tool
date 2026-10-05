@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sqlite3
 import uuid
 import time
@@ -11,6 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 from .protocol import utc_iso, payload_checksum
 from .client_outbox_migrations import migrate_outbox
 from .client_outbox_retention import block_attempt, block_job, blocked_reason, quarantine_row, row_job_id
@@ -485,7 +494,7 @@ class ClientStore:
             raise ValueError("Invalid command sequence.") from None
         if not command_id or command_type not in {
             "PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "RUN_SELF_TEST", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
-            "RESTART_WORKERS", "RESTART_AGENT", "UPDATE_AGENT",
+            "RESTART_WORKERS", "RESTART_AGENT", "UPDATE_AGENT", "ROLLBACK_AGENT",
         }:
             raise ValueError("Unsupported or malformed server command.")
         expires_at = str(command.get("expiresAt") or "")
@@ -635,11 +644,102 @@ class ClientStore:
         journal = {key[len(prefix):]: value for key, value in rows.items()}
         return journal or None
 
+    def backup_agent_database(self, command_id: str, backup_directory: Path) -> dict[str, str]:
+        if not command_id or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for character in command_id):
+            raise ValueError("Agent update backup command ID is invalid.")
+        expected_directory = (self.path.parent / "agent-update-backups" / command_id).resolve()
+        if backup_directory.resolve() != expected_directory:
+            raise ValueError("Agent update database backup must use its command-scoped data directory.")
+        destination = backup_directory / "agent.sqlite3"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with self._connection() as source:
+            backup = sqlite3.connect(destination)
+            try:
+                source.backup(backup)
+                if backup.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise sqlite3.DatabaseError("Agent update database backup failed integrity verification.")
+            finally:
+                backup.close()
+        digest = _sha256_file(destination)
+        return {"databaseBackupPath": str(destination.resolve()), "databaseBackupSha256": digest}
+
+    def restore_agent_update_database(self, command_id: str, backup_path: Path, expected_sha256: str) -> None:
+        if (not command_id or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for character in command_id)
+                or len(expected_sha256) != 64 or any(character not in "0123456789abcdef" for character in expected_sha256)):
+            raise ValueError("Agent rollback backup identity is invalid.")
+        backup = backup_path.resolve()
+        backup_root = (self.path.parent / "agent-update-backups" / command_id).resolve()
+        if backup.parent != backup_root or backup.name != "agent.sqlite3" or not backup.is_file():
+            raise ValueError("Agent rollback database backup is outside its command-scoped directory.")
+        digest = _sha256_file(backup)
+        if digest != expected_sha256:
+            raise ValueError("Agent rollback database backup checksum mismatch.")
+
+        temporary_path = backup_root / f"agent.sqlite3.restore-{uuid.uuid4().hex}.part"
+        failed_current_path = backup_root / f"agent.sqlite3.failed-current-{uuid.uuid4().hex}"
+        current = sqlite3.connect(self.path, timeout=30)
+        current.row_factory = sqlite3.Row
+        try:
+            checkpoint = current.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if checkpoint is not None and int(checkpoint[0]) != 0:
+                raise sqlite3.OperationalError("Agent database is still busy; rollback was not applied.")
+            current_commands = [dict(row) for row in current.execute("SELECT * FROM agent_commands").fetchall()]
+            current_state = [tuple(row) for row in current.execute("SELECT key,value FROM agent_state").fetchall()]
+            backup_connection = sqlite3.connect(backup)
+            restored = sqlite3.connect(temporary_path)
+            try:
+                backup_connection.backup(restored)
+                restored.row_factory = sqlite3.Row
+                if restored.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise sqlite3.DatabaseError("Agent rollback backup failed integrity verification.")
+                backup_columns = {str(row[1]) for row in restored.execute("PRAGMA table_info(agent_commands)")}
+                required_columns = {"command_id", "sequence", "command_type", "status"}
+                if not required_columns.issubset(backup_columns):
+                    raise sqlite3.DatabaseError("Agent rollback snapshot lacks the stable command identity fields.")
+                for row in current_commands:
+                    columns = [name for name in row if name in backup_columns]
+                    placeholders = ",".join("?" for _ in columns)
+                    names = ",".join(f'"{name}"' for name in columns)
+                    restored.execute(f"INSERT OR REPLACE INTO agent_commands({names}) VALUES ({placeholders})",
+                        [row[name] for name in columns])
+                for key, value in current_state:
+                    restored.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES(?,?)", (key, value))
+                restored.commit()
+                if restored.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise sqlite3.DatabaseError("Restored Agent database failed integrity verification.")
+            finally:
+                backup_connection.close()
+                restored.close()
+
+            failed_snapshot = sqlite3.connect(failed_current_path)
+            try:
+                current.backup(failed_snapshot)
+            finally:
+                failed_snapshot.close()
+            current.close()
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(str(self.path) + suffix)
+                if sidecar.exists():
+                    sidecar.unlink()
+            os.replace(self.path, failed_current_path.with_suffix(".pre-restore"))
+            try:
+                os.replace(temporary_path, self.path)
+            except OSError:
+                os.replace(failed_current_path.with_suffix(".pre-restore"), self.path)
+                raise
+        except Exception:
+            if current:
+                current.close()
+            if temporary_path.exists():
+                temporary_path.unlink()
+            raise
+
     def save_agent_update_journal(self, journal: dict[str, str]) -> None:
-        allowed = {"commandId", "targetVersion", "previousVersion", "stage", "clientId", "selfTestStatus"}
+        allowed = {"commandId", "targetVersion", "previousVersion", "stage", "clientId", "selfTestStatus",
+            "backupDirectory", "installManifestPath", "installManifestSha256", "databaseBackupPath", "databaseBackupSha256"}
         if (set(journal) != allowed or any(not isinstance(value, str) or not value for value in journal.values())
-                or journal.get("stage") not in {"INSTALLING", "ACKED"}
-                or journal.get("selfTestStatus") not in {"PENDING", "PASS"}):
+                or journal.get("stage") not in {"INSTALLING", "ACKED", "FAILED", "ROLLBACK_INSTALLING", "ROLLED_BACK"}
+                or journal.get("selfTestStatus") not in {"PENDING", "PASS", "FAIL"}):
             raise ValueError("Agent update journal is malformed.")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")

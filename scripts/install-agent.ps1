@@ -96,7 +96,8 @@ try {
     $configPath = Join-Path $configDirectory 'agent.json'
     $null = New-Item -ItemType Directory -Force -Path $configDirectory
     if (-not (Test-Path -LiteralPath $configPath)) {
-        @{ serverUrl = $ServerUrl; displayName = $DisplayName; maxConcurrentInputs = 4; trustedSignerThumbprints = $pins } |
+        @{ serverUrl = $ServerUrl; displayName = $DisplayName; dataDirectory = $configDirectory;
+            maxConcurrentInputs = 4; trustedSignerThumbprints = $pins } |
             ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
     }
     $setup = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/SERVERURL=`"$ServerUrl`"", "/DISPLAYNAME=`"$DisplayName`"", "/TRUSTEDSIGNERS=$($pins -join ',')") -WindowStyle Hidden -Wait -PassThru

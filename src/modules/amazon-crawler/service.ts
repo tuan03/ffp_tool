@@ -554,6 +554,14 @@ export function createAmazonCrawlerCommandController({
       });
       await readJson(response);
     },
+    async rollbackAgent(agentId, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "ROLLBACK_AGENT", reason,
+          expiresInSeconds: 86400 }),
+      });
+      await readJson(response);
+    },
     async history(agentId) {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
       const payload: unknown = await readJson(response);

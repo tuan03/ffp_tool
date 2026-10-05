@@ -10,7 +10,7 @@ import os
 from contextlib import ExitStack
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -154,6 +154,39 @@ class AgentCommandLedgerTests(unittest.TestCase):
         self.assertEqual(event["selfTestStatus"], "PASS")
         self.assertNotIn("checks", event)
 
+    def test_rollback_target_requires_failed_update_after_drained_and_success_is_verified(self) -> None:
+        drain = self.ledger.submit("agent-1", uuid.uuid4().hex, "DRAIN", 86400,
+            {"reason": "approved update recovery", "scope": "agent", "waitForOutboxAck": True})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": drain["commandId"], "sequence": 1, "status": status})
+        self.ledger.update("agent-1", {"commandId": drain["commandId"], "sequence": 1, "status": "SUCCESS",
+            "result": {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}})
+        update = self.ledger.submit("agent-1", uuid.uuid4().hex, "UPDATE_AGENT", 86400,
+            {"reason": "approved safe update", "targetVersion": "5.3.0", "previousVersion": "5.2.2"})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": update["commandId"], "sequence": 2, "status": status})
+        self.ledger.update("agent-1", {"commandId": update["commandId"], "sequence": 2,
+            "status": "FAILED", "error": "simulated installer failure"})
+        target = self.ledger.rollback_target("agent-1")
+        self.assertIsNotNone(target)
+        self.assertEqual(target["commandId"], update["commandId"])
+        rollback = self.ledger.submit("agent-1", uuid.uuid4().hex, "ROLLBACK_AGENT", 86400,
+            {"reason": "restore verified previous agent", "updateCommandId": update["commandId"],
+                "failedVersion": "5.3.0", "previousVersion": "5.2.2"})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": rollback["commandId"], "sequence": 3, "status": status})
+        unsafe = {"previousVersion": "5.3.0", "version": "5.2.2", "identityRetained": True,
+            "pendingOutboxCount": 1, "selfTest": {"status": "PASS"}}
+        with self.assertRaisesRegex(Exception, "ROLLBACK_AGENT success requires"):
+            self.ledger.update("agent-1", {"commandId": rollback["commandId"], "sequence": 3,
+                "status": "SUCCESS", "result": unsafe})
+        safe = {**unsafe, "pendingOutboxCount": 0}
+        self.ledger.update("agent-1", {"commandId": rollback["commandId"], "sequence": 3,
+            "status": "SUCCESS", "result": safe})
+        result_event = self.ledger.history("agent-1")[-1]["events"][-1]["detail"]["result"]
+        self.assertEqual(result_event["version"], "5.2.2")
+        self.assertNotIn("checks", result_event)
+
     def test_self_test_result_is_bounded_and_does_not_change_execution_state(self) -> None:
         payload = {"reason": "operator readiness verification", "scope": "read-only"}
         request_id = uuid.uuid4().hex
@@ -272,11 +305,14 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target_version = "99.0.0"
+            install_root = root / "install"
+            install_root.mkdir()
+            (install_root / "agent.exe").write_bytes(b"previous-agent-binary")
             config = AgentConfig(server_url="https://crawler.example", display_name="fixture",
-                max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent",
+                max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "data",
                 trusted_signer_thumbprints=("A" * 40,))
             launcher = Mock(return_value=True)
-            old_agent = DistributedCrawlerAgent(project_root=root, config=config, update_launcher=launcher)
+            old_agent = DistributedCrawlerAgent(project_root=install_root, config=config, update_launcher=launcher)
             old_agent._remote_execution_state = "DRAINED"
             drain = {"commandId": "update-drain-1", "sequence": 1, "type": "DRAIN",
                 "payload": {"reason": "safe updater rehearsal"}, "createdAt": utc_now().isoformat(),
@@ -296,14 +332,20 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
             launcher.assert_called_once()
             self.assertTrue(old_agent.stop_event.is_set())
             self.assertEqual(old_agent.store.server_command_status("update-agent-1"), "RUNNING")
-            self.assertEqual(old_agent.store.agent_update_journal(), {
-                "commandId": "update-agent-1", "targetVersion": target_version,
-                "previousVersion": AGENT_VERSION,
-                "stage": "INSTALLING", "clientId": identity, "selfTestStatus": "PENDING",
-            })
+            journal = old_agent.store.agent_update_journal()
+            self.assertEqual(journal["commandId"], "update-agent-1")
+            self.assertEqual(journal["targetVersion"], target_version)
+            self.assertEqual(journal["previousVersion"], AGENT_VERSION)
+            self.assertEqual(journal["stage"], "INSTALLING")
+            self.assertEqual(journal["clientId"], identity)
+            self.assertTrue(Path(journal["databaseBackupPath"]).is_file())
+            self.assertTrue(Path(journal["installManifestPath"]).is_file())
+            launcher.assert_called_once_with("update-agent-1", target_version, install_root,
+                config.config_file_path, ANY, journal["backupDirectory"], journal["installManifestSha256"],
+                journal["databaseBackupSha256"])
 
             with patch("engine.distributed.client_agent.AGENT_VERSION", target_version):
-                replacement = DistributedCrawlerAgent(project_root=root, config=config)
+                replacement = DistributedCrawlerAgent(project_root=install_root, config=config)
                 replacement._remote_execution_state = "DRAINED"
                 replacement.store.reconcile_remote_execution_state("DRAINED")
                 with patch.object(replacement, "_run_self_test", return_value={"status": "PASS", "checks": {}}):
@@ -323,9 +365,11 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             launcher = Mock(return_value=True)
-            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+            install_root = root / "install"
+            install_root.mkdir()
+            agent = DistributedCrawlerAgent(project_root=install_root, config=AgentConfig(
                 server_url="https://crawler.example", display_name="fixture", max_concurrent_inputs=1,
-                limits=AgentLimits(), data_directory=root / "agent", trusted_signer_thumbprints=("A" * 40,)),
+                limits=AgentLimits(), data_directory=root / "data", trusted_signer_thumbprints=("A" * 40,)),
                 update_launcher=launcher)
             agent._remote_execution_state = "DRAINED"
             drain = {"commandId": "pending-drain-1", "sequence": 1, "type": "DRAIN",
@@ -345,6 +389,67 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
             launcher.assert_not_called()
             self.assertEqual(agent.store.server_command_status(command["commandId"]), "FAILED")
             self.assertEqual(agent.store.drain_outbox_count(), 1)
+
+    async def test_failed_update_rolls_back_files_and_database_without_losing_drain_or_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            install_root.mkdir()
+            (install_root / "agent.exe").write_bytes(b"previous-agent-binary")
+            config = AgentConfig(server_url="https://crawler.example", display_name="fixture",
+                max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "data",
+                trusted_signer_thumbprints=("A" * 40,))
+            updater = Mock(return_value=True)
+            rollback = Mock(return_value=True)
+            agent = DistributedCrawlerAgent(project_root=install_root, config=config,
+                update_launcher=updater, rollback_launcher=rollback)
+            agent._remote_execution_state = "DRAINED"
+            drain = {"commandId": "rollback-drain-1", "sequence": 1, "type": "DRAIN",
+                "payload": {"reason": "safe rollback rehearsal"}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            agent.store.begin_server_command(drain)
+            agent.store.set_server_command_running(drain["commandId"])
+            agent.store.set_drain_command(drain["commandId"], 1, "DRAINING")
+            agent.store.complete_drain_command(drain["commandId"], 1)
+            identity = agent.client_id
+            update = {"commandId": "rollback-update-1", "sequence": 2, "type": "UPDATE_AGENT",
+                "payload": {"reason": "approved update rehearsal", "targetVersion": "99.0.0",
+                    "previousVersion": AGENT_VERSION}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            await agent._process_command_batch({"commands": [update], "latestCommandSequence": 2,
+                "desiredExecutionState": "DRAINED", "appliedExecutionState": "DRAINED",
+                "serverLastProcessedCommandSequence": 1})
+            agent.store.complete_server_command(update["commandId"], 2, "FAILED", None, "simulated installer failure")
+            failed_journal = agent.store.agent_update_journal()
+            self.assertEqual(failed_journal["stage"], "INSTALLING")
+            agent.store.save_agent_update_journal({**failed_journal, "stage": "FAILED", "selfTestStatus": "FAIL"})
+            with agent.store._connection() as connection:
+                connection.execute("ALTER TABLE agent_commands ADD COLUMN future_marker TEXT")
+                connection.commit()
+            rollback_command = {"commandId": "rollback-command-1", "sequence": 3, "type": "ROLLBACK_AGENT",
+                "payload": {"reason": "restore last known good after failed update", "updateCommandId": "rollback-update-1",
+                    "failedVersion": "99.0.0",
+                    "previousVersion": AGENT_VERSION}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+            with patch("engine.distributed.client_agent.AGENT_VERSION", "99.0.0"):
+                await agent._process_command_batch({"commands": [rollback_command], "latestCommandSequence": 3,
+                    "desiredExecutionState": "DRAINED", "appliedExecutionState": "DRAINED",
+                    "serverLastProcessedCommandSequence": 2})
+            rollback.assert_called_once()
+            self.assertTrue(agent.stop_event.is_set())
+            self.assertEqual(agent.store.agent_update_journal()["stage"], "ROLLBACK_INSTALLING")
+
+            replacement = DistributedCrawlerAgent(project_root=install_root, config=config)
+            replacement._remote_execution_state = "DRAINED"
+            replacement.store.reconcile_remote_execution_state("DRAINED")
+            with patch.object(replacement, "_run_self_test", return_value={"status": "PASS", "checks": {}}):
+                await replacement._process_command_batch({"commands": [rollback_command], "latestCommandSequence": 3,
+                    "desiredExecutionState": "DRAINED", "appliedExecutionState": "DRAINED",
+                    "serverLastProcessedCommandSequence": 2})
+            self.assertEqual(replacement.store.server_command_status(rollback_command["commandId"]), "SUCCESS")
+            self.assertEqual(replacement.store.agent_update_journal()["stage"], "ROLLED_BACK")
+            self.assertEqual(replacement.store.client_id(), identity)
+            self.assertEqual(replacement.store.drain_outbox_count(), 0)
 
     async def test_run_self_test_is_read_only_and_reports_all_required_checks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

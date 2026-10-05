@@ -545,6 +545,26 @@ export function AmazonCrawlerPage({
     }
   }
 
+  async function handleAgentRollback(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || !client.isConnected
+        || client.desiredExecutionState !== "DRAINED" || client.appliedExecutionState !== "DRAINED"
+        || client.activeTasks !== 0) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (reason.length < 10 || !window.confirm("Phục hồi bản Agent trước khi cập nhật thất bại? Agent phải vẫn DRAINED và toàn bộ outbox đã được server ACK.")) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.rollbackAgent(client.id, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được yêu cầu rollback Agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
   async function handleAgentConfigReload(client: AmazonCrawlerClientSummary): Promise<void> {
     if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
@@ -1613,7 +1633,13 @@ export function AmazonCrawlerPage({
         {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có crawler agent đã đăng ký. Hãy mở FFP Amazon Crawler Agent.</p> : null}
         {clients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {visibleClients.map((client) => (
+            {visibleClients.map((client) => {
+              const clientCommandHistory = commandHistories[client.id] ?? [];
+              const latestUpdate = [...clientCommandHistory].reverse().find((command) => command.type === "UPDATE_AGENT");
+              const latestUpdateResult = latestUpdate?.events.map((event) => event.detail.result)
+                .find((value): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value));
+              const canRollbackLatestUpdate = latestUpdate?.status === "FAILED" && latestUpdateResult?.rollbackAvailable === true;
+              return (
               <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
@@ -1720,6 +1746,15 @@ export function AmazonCrawlerPage({
                         className="rounded border border-emerald-700 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-50">
                         Cập nhật đã DRAINED
                       </button>
+                      {canRollbackLatestUpdate ?
+                        <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                          || !client.isConnected || client.desiredExecutionState !== "DRAINED"
+                          || client.appliedExecutionState !== "DRAINED" || client.activeTasks !== 0
+                          || (purgeReasons[client.id] ?? "").trim().length < 10}
+                          onClick={() => void handleAgentRollback(client)}
+                          className="rounded border border-rose-700 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                          Rollback bản cập nhật lỗi
+                        </button> : null}
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
@@ -1766,6 +1801,7 @@ export function AmazonCrawlerPage({
                         : command.type === "DRAIN" ? "Drain agent"
                         : command.type === "RUN_SELF_TEST" ? "Self-test agent"
                         : command.type === "UPDATE_AGENT" ? "Cập nhật Agent"
+                        : command.type === "ROLLBACK_AGENT" ? "Rollback Agent"
                         : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local"
                         : command.type === "PURGE_PENDING_TASKS" ? "Purge pending"
                         : command.type === "RESTART_AGENT" ? "Restart agent" : "Restart workers"} — {command.status}
@@ -1795,7 +1831,8 @@ export function AmazonCrawlerPage({
                   {commandHistoryErrors[client.id] ? <p role="status" className="mt-2 text-[11px] text-amber-300">Không tải được trạng thái lệnh mới; lịch sử bên dưới có thể đã cũ.</p> : null}
                 </div> : null}
               </article>
-            ))}
+              );
+            })}
           </div>
         ) : null}
         {clients.length > CLIENTS_PER_PAGE ? <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">

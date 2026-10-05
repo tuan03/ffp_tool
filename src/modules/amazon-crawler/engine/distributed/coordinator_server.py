@@ -911,6 +911,22 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 raise HTTPException(status_code=409, detail="Agent still has active tasks; wait for DRAIN to complete.")
             command_payload_value = {"reason": payload.reason.strip(), "targetVersion": payload.targetVersion,
                 "previousVersion": current_version}
+        if payload.type == "ROLLBACK_AGENT":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Agent rollback requires an audited reason of at least 10 characters.")
+            failed_update = command_ledger.rollback_target(client_id)
+            if failed_update is None:
+                raise HTTPException(status_code=409, detail="Rollback requires a failed update, DRAINED state and all commands acknowledged.")
+            if not await manager.is_connected(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be online to begin rollback.")
+            runtime = await manager.runtime_snapshot()
+            if (runtime.get(client_id) or {}).get("executingTaskIds"):
+                raise HTTPException(status_code=409, detail="Agent still has active tasks; rollback is refused.")
+            failed_payload = failed_update.get("payload") or {}
+            command_payload_value = {"reason": payload.reason.strip(),
+                "updateCommandId": failed_update.get("commandId"),
+                "failedVersion": failed_payload.get("targetVersion"),
+                "previousVersion": failed_payload.get("previousVersion")}
         if payload.type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
             is_purge_all = payload.type == "PURGE_ALL_LOCAL_TASKS"
             if is_purge_all and payload.includeRunning:

@@ -778,6 +778,7 @@ export interface AmazonCrawlerCommandController {
   drain(agentId: string, reason: string): Promise<void>;
   selfTest(agentId: string, reason: string): Promise<void>;
   updateAgent(agentId: string, targetVersion: string, reason: string): Promise<void>;
+  rollbackAgent(agentId: string, reason: string): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 
