@@ -68,6 +68,18 @@ test("Agent Access client scopes tokens to store, disables cache and includes mu
   assert.equal((await mock.agentRuns("demo")).total, 0);
 });
 
+test("Agent Access deletes a revoked token through the protected store-scoped route", async () => {
+  const client = createCustomGptClient(async (url, init) => {
+    assert.equal(String(url), "/api/seo-agent/delete-token?storeId=demo");
+    assert.equal(init?.method, "POST");
+    assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
+    assert.deepEqual(JSON.parse(String(init?.body)), { tokenId: "token-id" });
+    return new Response(JSON.stringify({ deleted: true }));
+  });
+  assert.deepEqual(await client.deleteAgentToken("demo", "token-id"), { deleted: true });
+  assert.deepEqual(await createMockCustomGptClient().deleteAgentToken("demo", "token-id"), { deleted: true });
+});
+
 test("Custom GPT client preserves store scope and reports server errors", async () => {
   let requested = "";
   const client = createCustomGptClient(async (url) => { requested = String(url); return new Response(JSON.stringify({ error: { message: "Invalid batch size" } }), { status: 400 }); });
@@ -89,6 +101,21 @@ test("Custom GPT client cancels a review through the store-scoped admin route", 
   assert.equal(requestedUrl, "/api/v1/gpt-seo/admin/cancel?storeId=store%20one");
   assert.equal(requestedInit?.method, "POST");
   assert.deepEqual(JSON.parse(String(requestedInit?.body)), { jobId: "job-123" });
+});
+
+test("Custom GPT client clears only the selected store queue", async () => {
+  let requestedUrl = "";
+  let requestedInit: RequestInit | undefined;
+  const client = createCustomGptClient(async (url, init) => {
+    requestedUrl = String(url);
+    requestedInit = init;
+    return new Response(JSON.stringify({ cleared: 12, preservedActive: 1, preservedSynced: 2 }), { status: 200 });
+  });
+
+  assert.deepEqual(await client.clearQueue("store one"), { cleared: 12, preservedActive: 1, preservedSynced: 2 });
+  assert.equal(requestedUrl, "/api/v1/gpt-seo/admin/clear?storeId=store%20one");
+  assert.equal(requestedInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), {});
 });
 
 test("Custom GPT client lists configured Shopify stores for the queue selector", async () => {

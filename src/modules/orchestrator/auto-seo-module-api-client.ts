@@ -90,7 +90,7 @@ function mapShopifyProductToUi(
     hasMoreImages: product.hasMoreImages,
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
-    seoVersion: extractProductSeoVersion(product.tags),
+    seoVersion: product.seoVersion ?? extractProductSeoVersion(product.tags),
   };
 }
 
@@ -664,6 +664,55 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
     }
   }
 
+  public async createSeoRevision(
+    storeId: string,
+    jobId: string,
+    requestId: string,
+  ): Promise<{ readonly jobId: string; readonly previousJobId: string }> {
+    try {
+      const response = await fetch(`/api/seo-agent/revisions?storeId=${encodeURIComponent(storeId)}`, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "x-ffp-agent": "1",
+        },
+        body: JSON.stringify({ jobId, requestId }),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok || !payload || typeof payload !== "object") {
+        const errorCode = payload && typeof payload === "object" && "error" in payload &&
+          payload.error && typeof payload.error === "object" && "code" in payload.error
+          ? String(payload.error.code)
+          : "AUTO_SEO_REVISION_FAILED";
+        const messages: Readonly<Record<string, string>> = {
+          REVISION_ALREADY_EXISTS: "Sản phẩm đã có bản SEO lại trong Queue.",
+          REVISION_PROVIDER_UNSUPPORTED: "Chỉ sản phẩm do Codex MCP xử lý mới hỗ trợ SEO lại tại đây.",
+          REVISION_NOT_READY: "Sản phẩm chưa hoàn tất bản SEO hiện tại.",
+          PUBLISH_UNRESOLVED: "Lần Sync trước chưa xác định kết quả; cần đối chiếu Shopify trước.",
+          STALE_SOURCE: "Sản phẩm trên Shopify đã thay đổi; hãy tải lại danh sách trước.",
+        };
+        throw new AppError(
+          messages[errorCode] ?? "Không thể tạo bản SEO lại.",
+          errorCode,
+        );
+      }
+      const receipt = payload as { readonly jobId?: unknown; readonly previousJobId?: unknown };
+      if (typeof receipt.jobId !== "string" || typeof receipt.previousJobId !== "string") {
+        throw new AppError("Phản hồi tạo bản SEO lại không hợp lệ.", "AUTO_SEO_REVISION_FAILED");
+      }
+      return { jobId: receipt.jobId, previousJobId: receipt.previousJobId };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        error instanceof Error ? error.message : "Không thể tạo bản SEO lại.",
+        "AUTO_SEO_REVISION_FAILED",
+        error,
+      );
+    }
+  }
+
   public async runAutoSeoBackup(
     request: AutoSeoBackupRequest,
   ): Promise<AutoSeoBackupResponse> {
@@ -760,8 +809,14 @@ function isAutoSeoEligibilityResponse(value: unknown): value is AutoSeoEligibili
   const validStates = new Set(["never_processed", "changed", "current", "active", "retry"]);
   if (!response.items.every((item) => {
     if (!item || typeof item !== "object") return false;
-    const entry = item as { readonly productId?: unknown; readonly state?: unknown; readonly reason?: unknown };
+    const entry = item as {
+      readonly productId?: unknown;
+      readonly jobId?: unknown;
+      readonly state?: unknown;
+      readonly reason?: unknown;
+    };
     return typeof entry.productId === "string" &&
+      (entry.jobId === undefined || typeof entry.jobId === "string") &&
       typeof entry.state === "string" && validStates.has(entry.state) &&
       typeof entry.reason === "string";
   })) return false;

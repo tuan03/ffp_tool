@@ -33,7 +33,7 @@ import {
   resetAutoSeoFilters,
   useAutoSeoSession,
 } from "./auto-seo-session";
-import { selectNextAutoSeoBatch } from "./smart-batch";
+import { selectNextAutoSeoBatch, selectSeoRevisionJobs } from "./smart-batch";
 import { AutoSeoOutputPanel } from "./components/AutoSeoOutputPanel";
 import { AutoSeoToolbar } from "./components/AutoSeoToolbar";
 import {
@@ -98,6 +98,7 @@ export function AutoSeoPage({
   const [isLoadingEligibility, setIsLoadingEligibility] = useState(false);
   const [eligibility, setEligibility] = useState<AutoSeoEligibilityResponse | null>(null);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
+  const [isCreatingRevisions, setIsCreatingRevisions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [activeProduct, setActiveProduct] = useState<ShopifyProductForAutoSeoUi | null>(null);
@@ -402,6 +403,11 @@ export function AutoSeoPage({
     setAutoSeoSelectedProductIds(next);
   }, [batchSize, eligibility, products, testSelectedProductIds]);
 
+  const selectedSeoRevisionJobs = useMemo(
+    () => selectSeoRevisionJobs(selectedProductIds, eligibility?.items ?? []),
+    [eligibility, selectedProductIds],
+  );
+
   // Open detail modal
   const handleOpenDetail = (product: ShopifyProductForAutoSeoUi): void => {
     void openProductDetail(product);
@@ -539,6 +545,71 @@ export function AutoSeoPage({
     }
   };
 
+  const handleReSeo = async (): Promise<void> => {
+    if (!selectedStoreId || selectedSeoRevisionJobs.length === 0) return;
+    const createSeoRevision = activeClient.createSeoRevision;
+    if (!createSeoRevision) {
+      setErrorMessage("Phiên bản hiện tại chưa hỗ trợ tạo bản SEO lại.");
+      return;
+    }
+
+    setIsCreatingRevisions(true);
+    setErrorMessage(null);
+    const successfulProductIds: string[] = [];
+    const failureMessages: string[] = [];
+    try {
+      for (let offset = 0; offset < selectedSeoRevisionJobs.length; offset += 5) {
+        const batch = selectedSeoRevisionJobs.slice(offset, offset + 5);
+        const results = await Promise.allSettled(batch.map(async revision => {
+          await createSeoRevision(
+            selectedStoreId,
+            revision.jobId,
+            crypto.randomUUID(),
+          );
+          return revision.productId;
+        }));
+        results.forEach((result) => {
+          if (result.status === "fulfilled") {
+            successfulProductIds.push(result.value);
+          } else {
+            failureMessages.push(result.reason instanceof Error ? result.reason.message : "Không thể tạo bản SEO lại.");
+          }
+        });
+      }
+
+      await refreshEligibility(products, selectedStoreId);
+      if (successfulProductIds.length > 0) {
+        const successfulIds = new Set(successfulProductIds);
+        const remainingSelection = selectedProductIds.filter(productId => !successfulIds.has(productId));
+        if (testSelectedProductIds !== undefined) setTestSelectedProductIds(remainingSelection);
+        setAutoSeoSelectedProductIds(remainingSelection);
+      }
+
+      if (failureMessages.length > 0) {
+        const uniqueMessages = [...new Set(failureMessages)];
+        throw new AppError(
+          `Đã tạo ${successfulProductIds.length}/${selectedSeoRevisionJobs.length} bản SEO lại. ${uniqueMessages[0]}`,
+          "AUTO_SEO_REVISION_PARTIAL",
+        );
+      }
+
+      const queueUrl = buildSeoQueueUrl(selectedStoreId);
+      notifyUser({
+        title: "Đã đưa sản phẩm vào SEO lại",
+        message: `${successfulProductIds.length} sản phẩm đã vào Queue. Version chỉ tăng sau khi duyệt và Sync Shopify thành công.`,
+        type: "success",
+        url: queueUrl,
+      });
+      navigate(queueUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Không thể tạo bản SEO lại.";
+      setErrorMessage(message);
+      notifyUser({ title: "Không thể SEO lại", message, type: "error", url: "/auto-seo" });
+    } finally {
+      setIsCreatingRevisions(false);
+    }
+  };
+
   const handleSendToSeo = async (): Promise<void> => {
     if (backendRunsSeo || !onHandoverToSeo || lastHydratedProducts.length === 0) {
       return;
@@ -635,11 +706,14 @@ export function AutoSeoPage({
         isRunningAutoSeo={isRunningAutoSeo}
         totalProductsCount={products.length}
         selectedCount={selectedProductIds.length}
+        reSeoCount={selectedSeoRevisionJobs.length}
         visibleProductsCount={filteredProducts.length}
         onLoadProducts={() => void handleLoadProducts()}
         onSelectAll={handleSelectAll}
         onClearSelection={handleClearSelection}
         onRunAutoSeo={handleRunAutoSeo}
+        onReSeo={handleReSeo}
+        isCreatingRevisions={isCreatingRevisions}
         stores={availableStores}
         selectedStoreId={selectedStoreId}
         onSelectStore={handleSelectStore}

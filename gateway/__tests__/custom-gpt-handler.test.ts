@@ -359,3 +359,41 @@ test("administration can cancel a ready review without deleting its audit data",
     db.close();
   }
 });
+
+test("administration clears only safe jobs in the selected store", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.enqueue(createTestEnqueue({
+    storeId: "capozen",
+    sourceIdentity: "clear-api",
+    input: { niche: "home", images: [] },
+    original: {},
+  }));
+  queue.enqueue(createTestEnqueue({
+    storeId: "other",
+    sourceIdentity: "keep-other",
+    input: { niche: "home", images: [] },
+    original: {},
+  }));
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/clear?storeId=capozen`, {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { cleared: 1, preservedActive: 0, preservedSynced: 0 });
+    assert.equal(queue.list("capozen").length, 0);
+    assert.equal(queue.list("other").length, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});

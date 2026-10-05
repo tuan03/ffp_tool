@@ -268,6 +268,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           break;
         }
         case "admin/cancel": (await queue.cancelReview(storeId, jobId)); result = { cancelled: true }; break;
+        case "admin/clear": {
+          if (req.method !== "POST") throw new Error("Queue clear requires POST");
+          result = await queue.clearQueue(storeId);
+          break;
+        }
         case "admin/bind-product": {
           await bindExternalSeoProduct({ storeId, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), productId: required(body.productId, "productId") });
           result = { bound: true }; break;

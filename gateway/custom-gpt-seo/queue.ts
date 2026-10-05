@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import type { ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
+import type { ClearQueueResult, ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
 import { normalizeSeoEnqueue } from "./input-contract";
 
@@ -69,8 +69,12 @@ export class CustomGptQueue {
     const inputHash = hash(input.input);
     const dedup = hash({ source: execution.source, identity: execution.sourceIdentity, revision: execution.sourceRevision, inputHash });
     return this.transaction(() => {
-      const existing = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(execution.storeId, dedup);
-      if (existing) return json(existing.payload) as GptSeoJob;
+      const existing = this.db.prepare("SELECT id,payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(execution.storeId, dedup);
+      if (existing) {
+        const existingJob = json(existing.payload) as GptSeoJob;
+        if (existingJob.status !== "CANCELLED") return existingJob;
+        this.db.prepare("UPDATE gpt_jobs SET dedup=dedup || ':cancelled:' || id WHERE id=?").run(String(existing.id));
+      }
       const olderJobs = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(execution.storeId, execution.source, execution.sourceIdentity);
       for (const row of olderJobs) {
         const olderJob = json(row.payload) as GptSeoJob;
@@ -95,29 +99,35 @@ export class CustomGptQueue {
       ? sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "")
       : sourceIdentity;
     const row = this.db.prepare(`
-      SELECT payload FROM gpt_jobs
-      WHERE store_id=?
-        AND json_extract(payload,'$.source')=?
-        AND json_extract(payload,'$.sourceIdentity')=?
-        AND status != 'CANCELLED'
-      ORDER BY created_at DESC, id DESC
+      SELECT gpt_jobs.payload,gpt_sync.status AS sync_status FROM gpt_jobs
+      LEFT JOIN gpt_sync ON gpt_sync.job_id=gpt_jobs.id
+      WHERE gpt_jobs.store_id=?
+        AND json_extract(gpt_jobs.payload,'$.source')=?
+        AND json_extract(gpt_jobs.payload,'$.sourceIdentity')=?
+        AND (gpt_jobs.status != 'CANCELLED' OR json_extract(gpt_jobs.payload,'$.cancellationReason')='OPERATOR_QUEUE_CLEAR')
+      ORDER BY gpt_jobs.created_at DESC, gpt_jobs.id DESC
       LIMIT 1
     `).get(storeId, source, normalizedIdentity);
-    return row ? json(row.payload) as GptSeoJob : null;
+    if (!row) return null;
+    const job = json(row.payload) as GptSeoJob;
+    const syncStatus = String(row.sync_status ?? "");
+    return ["SYNCING", "UNKNOWN", "SYNCED", "ROLLED_BACK"].includes(syncStatus)
+      ? { ...job, shopifySyncStatus: syncStatus as GptSeoJob["shopifySyncStatus"] }
+      : job;
   }
   list(storeId: string, status?: GptJobStatus, offset = 0, provider?: ExternalSeoProvider): readonly GptSeoJob[] {
     const rows = provider
       ? status
-        ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, provider, status, offset)
-        : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, provider, offset)
+        ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status=? AND status!='CANCELLED' ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, provider, status, offset)
+        : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, provider, offset)
       : status
-        ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, status, offset)
-        : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, offset);
+        ? this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status=? AND status!='CANCELLED' ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, status, offset)
+        : this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' ORDER BY created_at,id LIMIT 50 OFFSET ?").all(storeId, offset);
     return rows.map(row => json(row.payload) as GptSeoJob);
   }
   listFiltered(storeId: string, filters: QueueListFilters, offset = 0): readonly GptSeoJob[] {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?"];
+    const conditions = ["store_id=?", "status!='CANCELLED'"];
     const parameters: Array<string | number> = [storeId];
     if (filters.provider) {
       conditions.push("provider=?");
@@ -133,7 +143,7 @@ export class CustomGptQueue {
   }
   countFiltered(storeId: string, filters: QueueListFilters): number {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?"];
+    const conditions = ["store_id=?", "status!='CANCELLED'"];
     const parameters: string[] = [storeId];
     if (filters.provider) {
       conditions.push("provider=?");
@@ -148,8 +158,8 @@ export class CustomGptQueue {
   }
   counts(storeId: string, provider?: ExternalSeoProvider): Readonly<Record<string, number>> {
     const rows = provider
-      ? this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? GROUP BY status").all(storeId, provider)
-      : this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? GROUP BY status").all(storeId);
+      ? this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' GROUP BY status").all(storeId, provider)
+      : this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' GROUP BY status").all(storeId);
     return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
   }
   private write(job: GptSeoJob): void {
@@ -312,6 +322,34 @@ export class CustomGptQueue {
       }
       this.write({ ...job, status: "CANCELLED" });
       this.audit(storeId, jobId, "REVIEW_CANCELLED");
+    });
+  }
+  clearQueue(storeId: string): ClearQueueResult {
+    return this.transaction(() => {
+      const rows = this.db.prepare("SELECT id,payload,batch_id FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' ORDER BY created_at,id").all(storeId);
+      let cleared = 0;
+      let preservedActive = 0;
+      let preservedSynced = 0;
+      for (const row of rows) {
+        const jobId = String(row.id);
+        const job = json(row.payload) as GptSeoJob;
+        const hasSync = Boolean(this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status!='ROLLED_BACK'").get(jobId));
+        if (hasSync) {
+          preservedSynced += 1;
+          continue;
+        }
+        const hasActiveBatch = row.batch_id !== null && Boolean(this.db.prepare("SELECT 1 FROM gpt_batches WHERE id=? AND active=1 AND expires_at>?").get(String(row.batch_id), this.now()));
+        const hasActiveFinalizer = job.status === "VALIDATING" && Number(job.finalizerUntil ?? 0) > this.now();
+        if (hasActiveBatch || hasActiveFinalizer) {
+          preservedActive += 1;
+          continue;
+        }
+        this.write({ ...job, status: "CANCELLED", cancellationReason: "OPERATOR_QUEUE_CLEAR", error: "Removed from Queue by operator" });
+        this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL,dedup=dedup || ':cleared:' || id WHERE id=?").run(jobId);
+        this.audit(storeId, jobId, "QUEUE_CLEARED");
+        cleared += 1;
+      }
+      return { cleared, preservedActive, preservedSynced };
     });
   }
   pendingFinalization(): readonly GptSeoJob[] {

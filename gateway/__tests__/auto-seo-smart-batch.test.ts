@@ -364,6 +364,52 @@ test("eligibility marks matching queue and pending review revisions active", () 
   }, queue);
 
   assert.deepEqual(response.items.map((item) => item.state), ["active", "active"]);
+
+  queue.clearQueue("capozen");
+  const afterClear = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [{ productId: "queue-product", updatedAt: "2026-10-01T00:00:00Z" }],
+  }, queue);
+  assert.deepEqual(afterClear.items[0], {
+    productId: "queue-product",
+    state: "retry",
+    reason: "QUEUE_CLEARED",
+  });
+  db.close();
+});
+
+test("eligibility marks a confirmed Shopify sync as current SEO", () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+  insertBackup(db, {
+    backupId: "synced-base",
+    productId: "synced-product",
+    status: "SENT",
+    updatedAt: "2026-10-01T00:00:00Z",
+    inputHash: "synced-hash",
+  });
+  const job = queue.enqueue(createTestEnqueue({
+    storeId: "capozen",
+    sourceIdentity: "synced-product",
+    productId: "synced-product",
+    input: { images: [], niche: "Rug" },
+    original: { updatedAt: "2026-10-01T00:00:00Z" },
+  }));
+  db.prepare("INSERT INTO gpt_sync(job_id,token,status) VALUES (?,?,?)").run(job.id, "sync-token", "SYNCED");
+
+  const response = getAutoSeoEligibility(db, {
+    storeId: "capozen",
+    products: [{ productId: "synced-product", updatedAt: "2026-10-01T00:00:00Z" }],
+  }, queue);
+
+  assert.deepEqual(response.items[0], {
+    productId: "synced-product",
+    jobId: job.id,
+    state: "current",
+    reason: "SHOPIFY_SYNCED",
+  });
+  assert.deepEqual(queue.clearQueue("capozen"), { cleared: 0, preservedActive: 0, preservedSynced: 1 });
   db.close();
 });
 

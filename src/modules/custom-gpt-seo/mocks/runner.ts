@@ -46,6 +46,7 @@ export function createMockCustomGptClient(): CustomGptClient {
     agentRuns: async () => ({ runs: [], total: 0, nextOffset: null }),
     createAgentToken: async () => ({ token: "mock-not-a-credential", tokenId: "mock-token", expiresAt: 0 }),
     revokeAgentToken: async () => ({ revoked: true }),
+    deleteAgentToken: async () => ({ deleted: true }),
     stores: async () => [
       { storeId: "capozen", shopDomain: "capozen.myshopify.com" },
       { storeId: "chillgen", shopDomain: "bbjttb-n9.myshopify.com" },
@@ -59,6 +60,6 @@ export function createMockCustomGptClient(): CustomGptClient {
     enqueue: async () => structuredClone(mockJobs[0]),
     beginSync: async () => ({ token: "mock-sync" }), finishSync: async () => ({}),
     transfer: async () => ({}),
-    retry: async () => ({}), requeue: async (_storeId, jobIds) => ({ requeued: jobIds.length }), cancelReview: async () => ({ cancelled: true }), release: async () => ({}), reviewState: async () => ({}), saveReviewState: async () => ({}), saveReviewStates: async (_storeId, reviews) => ({ saved: reviews.length }),
+    retry: async () => ({}), requeue: async (_storeId, jobIds) => ({ requeued: jobIds.length }), cancelReview: async () => ({ cancelled: true }), clearQueue: async () => ({ cleared: mockJobs.length, preservedActive: 0, preservedSynced: 0 }), release: async () => ({}), reviewState: async () => ({}), saveReviewState: async () => ({}), saveReviewStates: async (_storeId, reviews) => ({ saved: reviews.length }),
   };
 }

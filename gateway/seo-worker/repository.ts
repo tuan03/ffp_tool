@@ -31,10 +31,10 @@ export class SeoWorkerRepository {
   async listAccess(storeId: string, offset: number): Promise<AgentAccessPage> {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new SeoWorkerError("INVALID_OFFSET");
     return this.database.transaction(async sql => {
-      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE store_id=$1 OR store_ids @> jsonb_build_array($1::text)", [storeId])).rows[0].total);
+      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE deleted_at IS NULL AND (store_id=$1 OR store_ids @> jsonb_build_array($1::text))", [storeId])).rows[0].total);
       const rows = (await sql.query(`SELECT t.id,t.store_id,t.store_ids,t.worker_id,t.created_by,t.expires_at,t.revoked_at,t.last_used_at,
         (SELECT w.job_id FROM seo_worker_jobs w WHERE w.token_id=t.id AND w.lease_id IS NOT NULL LIMIT 1) AS job_id
-        FROM seo_worker_tokens t WHERE t.store_id=$1 OR t.store_ids @> jsonb_build_array($1::text) ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
+        FROM seo_worker_tokens t WHERE t.deleted_at IS NULL AND (t.store_id=$1 OR t.store_ids @> jsonb_build_array($1::text)) ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
       const mode = (await sql.query("SELECT enabled FROM seo_worker_stores WHERE store_id=$1", [storeId])).rows[0];
       return { total, nextOffset: offset + rows.length < total ? offset + rows.length : null, claimsEnabled: mode?.enabled === true,
         tokens: rows.map(row => ({ id: String(row.id), workerId: String(row.worker_id), createdBy: String(row.created_by),
@@ -528,6 +528,15 @@ export class SeoWorkerRepository {
       for (const row of (await sql.query("SELECT * FROM seo_worker_jobs WHERE token_id=$1 AND lease_id IS NOT NULL FOR UPDATE", [tokenId])).rows) await this.endLease(sql, row, "TOKEN_REVOKED", true);
       await sql.query("UPDATE seo_worker_runs SET state='PARTIAL',stop_reason='TOKEN_REVOKED',updated_at=$2 WHERE state='RUNNING' AND session_id IN (SELECT id FROM seo_worker_sessions WHERE token_id=$1)", [tokenId, this.now()]);
       await sql.query("UPDATE seo_worker_sessions SET active=false WHERE token_id=$1", [tokenId]);
+    });
+  }
+
+  async deleteRevokedToken(storeId: string, tokenId: string): Promise<void> {
+    await this.database.transaction(async sql => {
+      const token = (await sql.query(`UPDATE seo_worker_tokens SET deleted_at=$3
+        WHERE id=$1 AND deleted_at IS NULL AND revoked_at IS NOT NULL
+        AND (store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id`, [tokenId, storeId, this.now()])).rows[0];
+      if (!token) throw new SeoWorkerError("REVOKED_TOKEN_NOT_FOUND");
     });
   }
 

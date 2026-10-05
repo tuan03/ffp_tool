@@ -249,8 +249,30 @@ test("cancelling a ready review preserves its result and checkpoints", () => {
     assert.deepEqual(cancelled.result, { title: "Final SEO title" });
     assert.deepEqual(cancelled.checkpoints.submission, { title: "SEO title" });
     assert.equal(queue.list("capozen", "REVIEW_READY").length, 0);
-    assert.equal(queue.counts("capozen").CANCELLED, 1);
+    assert.equal(queue.counts("capozen").CANCELLED, undefined);
     assert.throws(() => queue.cancelReview("capozen", job.id), /ready review/i);
+  } finally { db.close(); }
+});
+
+test("clearing a store queue hides safe jobs, preserves active and synced jobs, and permits re-enqueue", () => {
+  const { queue, db } = setup();
+  try {
+    const settings = queue.configure("capozen", { provider: "custom_gpt", batchSize: 1 });
+    const active = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "active", input: { ...source, title: "Active" }, original: {}, settings });
+    queue.claim("capozen", "active-claim", "custom_gpt", "custom_gpt");
+    const pending = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "pending", input: source, original: {}, settings });
+    const synced = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "synced", input: { ...source, title: "Synced" }, original: {}, settings });
+    const otherStore = queue.enqueue({ storeId: "other", source: "auto_seo", sourceIdentity: "other", input: source, original: {}, settings });
+    db.prepare("INSERT INTO gpt_sync(job_id,token,status) VALUES (?,?,?)").run(synced.id, "sync-token", "SYNCED");
+
+    assert.deepEqual(queue.clearQueue("capozen"), { cleared: 1, preservedActive: 1, preservedSynced: 1 });
+    assert.equal(queue.get("capozen", pending.id).status, "CANCELLED");
+    assert.deepEqual(new Set(queue.list("capozen").map(job => job.id)), new Set([active.id, synced.id]));
+    assert.equal(queue.list("other")[0]?.id, otherStore.id);
+
+    const replacement = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "pending", input: source, original: {}, settings });
+    assert.notEqual(replacement.id, pending.id);
+    assert.equal(replacement.status, "PENDING");
   } finally { db.close(); }
 });
 

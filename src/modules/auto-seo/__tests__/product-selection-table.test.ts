@@ -220,7 +220,7 @@ test("AutoSeoToolbar: renders smart batch sizes, counts, and next-batch action",
   }
   assert.ok(html.includes("Chọn 50 sản phẩm tiếp theo"));
   assert.ok(html.includes("Cần SEO: 82"));
-  assert.ok(html.includes("Đã cập nhật: 30"));
+  assert.ok(html.includes("Đã SEO: 30"));
   assert.ok(html.includes("Đang xử lý: 8"));
 });
 
@@ -245,11 +245,11 @@ test("ProductSelectionTable: filters needs-SEO products and renders localized el
     eligibilityFilter: "all",
   });
   assert.ok(html.includes("Chưa SEO"));
-  assert.ok(html.includes("Đã cập nhật"));
+  assert.ok(html.includes("Đã SEO"));
   assert.ok(html.includes("Thử lại"));
 });
 
-test("ProductSelectionTable & filterAutoSeoProducts: filters by active (Đang xử lý) and current (Đã cập nhật)", () => {
+test("ProductSelectionTable & filterAutoSeoProducts: filters by active (Đang xử lý) and current (Đã SEO)", () => {
   const eligibilityItems: readonly AutoSeoEligibilityItem[] = [
     { productId: mockProducts[0]!.id, state: "never_processed", reason: "NO_HISTORY" },
     { productId: mockProducts[1]!.id, state: "active", reason: "ACTIVE_DISPATCH" },
@@ -283,7 +283,7 @@ test("ProductSelectionTable & filterAutoSeoProducts: filters by active (Đang x�
   });
   assert.ok(html.includes("⚡ Cần SEO (1)"));
   assert.ok(html.includes("🟣 Đang xử lý (1)"));
-  assert.ok(html.includes("🟢 Đã cập nhật (1)"));
+  assert.ok(html.includes("🟢 Đã SEO (1)"));
   assert.ok(html.includes("Tất cả (3)"));
 });
 
@@ -308,7 +308,7 @@ test("AutoSeoToolbar: renders interactive eligibility badges with correct counts
 
   const html = renderToStaticMarkup(React.createElement(() => toolbar));
   assert.ok(html.includes("Cần SEO: 17"));
-  assert.ok(html.includes("Đã cập nhật: 20"));
+  assert.ok(html.includes("Đã SEO: 20"));
   assert.ok(html.includes("Đang xử lý: 15"));
   assert.ok(html.includes("Đang lọc: Đang xử lý"));
 });
@@ -956,6 +956,34 @@ test("AutoSeoToolbar: enables Run Auto SEO and clear action only when items are 
   assert.ok(posHtml.includes("Run Auto SEO (2)"));
   assert.ok(posHtml.includes("✕ Bỏ chọn"));
   assert.ok(posHtml.includes("Đã chọn:"));
+});
+
+test("AutoSeoToolbar: enables SEO lại only for selected synced products", () => {
+  const disabledHtml = renderToStaticMarkup(React.createElement(AutoSeoToolbar, {
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 2,
+    selectedCount: 1,
+    reSeoCount: 0,
+    onLoadProducts: () => undefined,
+    onRunAutoSeo: () => undefined,
+    onReSeo: () => undefined,
+  }));
+  assert.match(disabledHtml, /SEO lại/);
+  assert.match(disabledHtml, /<button type="button" disabled="" title="Tạo bản SEO mới/);
+
+  const enabledHtml = renderToStaticMarkup(React.createElement(AutoSeoToolbar, {
+    isLoadingProducts: false,
+    isRunningAutoSeo: false,
+    totalProductsCount: 2,
+    selectedCount: 1,
+    reSeoCount: 1,
+    onLoadProducts: () => undefined,
+    onRunAutoSeo: () => undefined,
+    onReSeo: () => undefined,
+  }));
+  assert.match(enabledHtml, /SEO lại \(1\)/);
+  assert.match(enabledHtml, /<button type="button" title="Tạo bản SEO mới/);
 });
 
 test("filterAutoSeoProducts: matches status case-insensitively ('active' matches 'ACTIVE')", () => {

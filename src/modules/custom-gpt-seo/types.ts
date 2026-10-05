@@ -146,6 +146,8 @@ export interface GptSeoJob extends GptSeoEnqueue {
   readonly inputHash: string;
   readonly settings: GptSeoSettings;
   readonly status: GptJobStatus;
+  readonly cancellationReason?: "OPERATOR_QUEUE_CLEAR";
+  readonly shopifySyncStatus?: "SYNCING" | "UNKNOWN" | "SYNCED" | "ROLLED_BACK" | "FAILED";
   readonly checkpoints: Partial<Record<GptStage, unknown>>;
   readonly result?: unknown;
   readonly error?: string;
@@ -163,6 +165,11 @@ export interface GptSeoBatch {
   readonly leaseToken: string;
   readonly expiresAt: number;
   readonly jobs: readonly { readonly id: string; readonly title: string; readonly status: GptJobStatus }[];
+}
+export interface ClearQueueResult {
+  readonly cleared: number;
+  readonly preservedActive: number;
+  readonly preservedSynced: number;
 }
 export interface GptLeaseMutation {
   readonly batchId: string;

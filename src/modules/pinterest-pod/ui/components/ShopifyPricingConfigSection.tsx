@@ -2331,7 +2331,7 @@ export function ShopifyPricingConfigSection({
             type="checkbox"
             onChange={(event) => updateSetting("applyJeminisePreset", event.target.checked)}
           />
-          Thay variants bằng preset Jeminise 47 variants
+          Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
         </label>
         <label className="grid gap-1 text-sm text-slate-300">
           Xử lý ảnh
