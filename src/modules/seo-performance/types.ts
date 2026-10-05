@@ -1,6 +1,64 @@
 export type PageKind = "product" | "collection" | "blog" | "page" | "home" | "other";
 export interface SearchMetrics { readonly clicks: number; readonly impressions: number; readonly ctr: number; readonly position: number }
-export interface PerformanceMapping { readonly storeId: string; readonly property: string; readonly origin: string; readonly lastSync: string | null }
+export type PerformanceDataSource = "gsc" | "ga4";
+export type PerformanceIntegrationStatus = "CONNECTED" | "MISSING_PERMISSION" | "RECONNECT_REQUIRED" | "DISCONNECTED" | "NOT_CONFIGURED";
+export interface Ga4PropertyMetadata {
+  /** Numeric Google Analytics property ID represented as a string to avoid precision loss. */
+  readonly propertyId: string;
+  readonly streamId: string | null;
+  readonly hostnameScope: string;
+  readonly timeZone: string;
+  readonly currencyCode: string;
+}
+export interface PerformanceStoreIntegrationMapping {
+  readonly storeId: string;
+  readonly mappingRevision: number;
+  readonly origin: string;
+  readonly gscProperty: string | null;
+  readonly ga4Property: Ga4PropertyMetadata | null;
+  readonly gscConnectionId: string | null;
+  readonly ga4ConnectionId: string | null;
+}
+export interface PerformanceIntegrationFreshness {
+  readonly dataThrough: string | null;
+  readonly fetchedAt: string | null;
+  readonly lastSuccessfulSync: string | null;
+  readonly stale: boolean;
+  readonly staleReason: string | null;
+}
+interface PerformanceIntegrationSummaryBase {
+  readonly source: PerformanceDataSource;
+  readonly status: PerformanceIntegrationStatus;
+  readonly connectionId: string | null;
+  readonly mappingRevision: number | null;
+  readonly origin: string | null;
+  readonly freshness: PerformanceIntegrationFreshness;
+  readonly quality: readonly string[];
+}
+export interface GscIntegrationSummary extends PerformanceIntegrationSummaryBase {
+  readonly source: "gsc";
+  readonly property: string | null;
+}
+export interface Ga4IntegrationSummary extends PerformanceIntegrationSummaryBase {
+  readonly source: "ga4";
+  readonly property: Ga4PropertyMetadata | null;
+}
+export type PerformanceIntegrationSummary = GscIntegrationSummary | Ga4IntegrationSummary;
+export interface PerformanceMapping {
+  readonly storeId: string;
+  readonly property: string;
+  readonly origin: string;
+  readonly lastSync: string | null;
+  /** Additive fields used by the versioned integration contract. */
+  readonly mappingRevision?: number;
+  readonly gscConnectionId?: string | null;
+  readonly ga4ConnectionId?: string | null;
+  readonly ga4PropertyId?: string | null;
+  readonly ga4StreamId?: string | null;
+  readonly hostnameScope?: string | null;
+  readonly timeZone?: string | null;
+  readonly currencyCode?: string | null;
+}
 export interface AuditFinding { readonly code: string; readonly status: "needs_changes" | "unknown"; readonly message: string }
 export interface PageAudit {
   readonly url: string; readonly status: number; readonly title: string; readonly description: string;
@@ -35,6 +93,7 @@ export interface PerformanceOverview {
   readonly enabled: boolean; readonly configured: boolean; readonly connected: boolean; readonly reconnectRequired: boolean;
   readonly mapping: PerformanceMapping | null; readonly current: SearchMetrics | null; readonly previous: SearchMetrics | null;
   readonly startDate: string; readonly endDate: string; readonly jobs: readonly PerformanceJob[];
+  readonly integrations?: readonly PerformanceIntegrationSummary[];
   readonly notice: string;
 }
 export interface PerformanceFilters { readonly offset?: number; readonly kind?: PageKind; readonly search?: string; readonly startDate?: string; readonly endDate?: string }
