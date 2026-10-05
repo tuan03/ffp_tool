@@ -16,6 +16,7 @@ import { adsGuardedWritesService, type WritePreviewRequest, type WriteApproval }
 import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStatus, AdsExperiment, CreativeBrief, StoreAdsProfile } from "./types";
 import { localAiRunner } from "./local-ai-runner";
 import { loadStoreAdsProfile, saveStoreAdsProfile, validateStoreAdsProfile } from "./store-profile";
+import { mcpUserManager } from "./mcp-users";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = statusCode;
@@ -290,10 +291,61 @@ export async function handleAdsIntelligenceHttpRequest(
         description: "FFP Ads Intelligence MCP Server exposing performance, creative gaps, brief studio, and experiment ledger tools for Codex & AI agents.",
         endpoints: {
           mcpStreamableHttp: "/mcp/ads",
+          installerScript: "/mcp/ads/install.ps1",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
         toolsCount: 37,
       });
+      return true;
+    }
+
+    // --- MCP Multi-User & Audit Endpoints ---
+    if (pathname === "/api/ads-intelligence/mcp/users" && req.method === "GET") {
+      sendJson(res, 200, { users: mcpUserManager.listUsers() });
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/mcp/users" && req.method === "POST") {
+      const body = await readJsonBody<{
+        name?: string;
+        allowedStores?: string[];
+        role?: "admin" | "media_buyer" | "viewer";
+      }>(req);
+      if (!body.name || !body.name.trim()) {
+        sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Tên người dùng không được để trống" } });
+        return true;
+      }
+      const newUser = mcpUserManager.createUser(body.name, body.allowedStores || ["*"], body.role || "media_buyer");
+      sendJson(res, 201, { success: true, user: newUser });
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/mcp/users/revoke" && req.method === "POST") {
+      const body = await readJsonBody<{ id: string }>(req);
+      if (!body.id) {
+        sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Missing user id" } });
+        return true;
+      }
+      const ok = mcpUserManager.revokeUser(body.id);
+      sendJson(res, 200, { success: ok });
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/mcp/users" && req.method === "DELETE") {
+      const id = parsedUrl.searchParams.get("id");
+      if (!id) {
+        sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Missing user id parameter" } });
+        return true;
+      }
+      const ok = mcpUserManager.deleteUser(id);
+      sendJson(res, 200, { success: ok });
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/mcp/audit" && req.method === "GET") {
+      const limitParam = parsedUrl.searchParams.get("limit");
+      const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100;
+      sendJson(res, 200, { auditLogs: mcpUserManager.getAuditLogs(limit) });
       return true;
     }
 

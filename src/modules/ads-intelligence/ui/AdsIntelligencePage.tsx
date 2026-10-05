@@ -485,7 +485,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
         onExecute={handleExecuteGuardedWrite}
       />
 
-      {showMcpModal && <McpModal onClose={() => setShowMcpModal(false)} />}
+      {showMcpModal && <McpModal client={client} stores={stores} onClose={() => setShowMcpModal(false)} />}
 
       {showProfileModal && (
         <StoreProfileModal

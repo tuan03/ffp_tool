@@ -60,10 +60,15 @@ Follow these operational guidelines strictly:
 5. ANTI-PLAGIARISM: Never copy competitor angles verbatim. Every brief generated from competitor references must specify distinct creative differences.
 6. NO UNGUARDED MUTATIONS: These tools provide intelligence, analysis, brief generation, and experiment registration. They never directly mutate live ad budgets on Meta without human approval.`;
 
+import { mcpUserManager } from "./mcp-users";
+
 export interface AdsMcpServerOptions {
   readonly service?: AdsIntelligenceService;
   readonly defaultStoreId?: string;
   readonly callerId?: string;
+  readonly userToken?: string;
+  readonly userName?: string;
+  readonly allowedStores?: readonly string[];
 }
 
 /**
@@ -72,62 +77,100 @@ export interface AdsMcpServerOptions {
 export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer {
   const service = options.service ?? getAdsIntelligenceService();
   const defaultStore = options.defaultStoreId ?? "chillgen";
+  const userToken = options.userToken || "direct";
+  const userName = options.userName || "Direct Caller";
+  const allowedStores = options.allowedStores || ["*"];
 
   const server = new McpServer(
     { name: "ffp-ads-intelligence", version: "1.0.0" },
     { instructions: ADS_MCP_SERVER_INSTRUCTIONS },
   );
 
-  server.registerTool("ads_list_stores", { description: "List Shopify connections from Gateway without secrets. Meta and GA4 require separate verified mappings.", inputSchema: {}, annotations: READ_ONLY }, async () => {
-    try { return jsonResult({ stores: await listAdsGatewayStores() }); }
+  function interceptToolHandler<T>(
+    toolName: string,
+    handler: (args: T) => Promise<CallToolResult>,
+  ): (args: T) => Promise<CallToolResult> {
+    return async (args: T) => {
+      // Extract storeId if present in args
+      const rawStore = (args as any)?.storeId ?? (args as any)?.research?.storeId ?? (args as any)?.targetStore;
+      const storeId = typeof rawStore === "string" && rawStore.trim() ? rawStore.trim() : undefined;
+
+      // Check RBAC if storeId is targeted and user has restricted store access
+      if (storeId && allowedStores && !allowedStores.includes("*") && !allowedStores.includes(storeId)) {
+        const errMsg = `RBAC_PERMISSION_DENIED: User '${userName}' is not authorized to access store '${storeId}'. Allowed stores: [${allowedStores.join(", ")}]`;
+        mcpUserManager.recordUsage(userToken, toolName, storeId, false, errMsg);
+        return errorResult(errMsg);
+      }
+
+      try {
+        process.stderr.write(`[FFP-MCP] 🛠️ [${userName}] Executing: ${toolName} (store: ${storeId || defaultStore})\n`);
+        const result = await handler(args);
+        const isErr = Boolean(result.isError);
+        const errText = isErr ? (result.content?.[0] as any)?.text : undefined;
+        mcpUserManager.recordUsage(userToken, toolName, storeId || defaultStore, !isErr, errText);
+        return result;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        mcpUserManager.recordUsage(userToken, toolName, storeId || defaultStore, false, errMsg);
+        throw err;
+      }
+    };
+  }
+
+  server.registerTool("ads_list_stores", { description: "List Shopify connections from Gateway without secrets. Meta and GA4 require separate verified mappings.", inputSchema: {}, annotations: READ_ONLY }, interceptToolHandler("ads_list_stores", async () => {
+    try {
+      const allStores = await listAdsGatewayStores();
+      const filtered = allowedStores.includes("*") ? allStores : allStores.filter(s => allowedStores.includes(s.storeId));
+      return jsonResult({ stores: filtered });
+    }
     catch { return errorResult("ADS_GATEWAY_NOT_CONFIGURED"); }
-  });
-  server.registerTool("ads_get_shopify_summary", { description: "Read eligible Shopify order totals over the last 30 complete UTC days through the selected Gateway connection and proxy.", inputSchema: { storeId: z.string().min(1) }, annotations: READ_ONLY }, async ({ storeId }) => {
+  }));
+  server.registerTool("ads_get_shopify_summary", { description: "Read eligible Shopify order totals over the last 30 complete UTC days through the selected Gateway connection and proxy.", inputSchema: { storeId: z.string().min(1) }, annotations: READ_ONLY }, interceptToolHandler("ads_get_shopify_summary", async ({ storeId }) => {
     try { return jsonResult({ storeId, summary: await new ShopifyOrdersClient().getOrderSummary(storeId) }); }
     catch { return errorResult("SHOPIFY_SOURCE_UNAVAILABLE: check store registration, access and proxy in Gateway"); }
-  });
+  }));
 
   server.registerTool("ads_publish_competitor_research", {
     description: "Save verified competitor research to the selected store dashboard. Does not change ad watchlists, campaigns or budgets. Requires explicit storeId and matching Gateway shopDomain. Returns the persisted report.",
     inputSchema: { research: competitorResearchSchema }, annotations: { ...SAFE_WRITE, idempotentHint: true },
-  }, async ({ research }) => {
+  }, interceptToolHandler("ads_publish_competitor_research", async ({ research }) => {
     try { return jsonResult({ research: await publishCompetitorResearch(research) }); }
     catch { return errorResult("RESEARCH_PUBLISH_FAILED: check store mapping, schema and observation date"); }
-  });
+  }));
   server.registerTool("ads_get_competitor_research", {
     description: "Read the persisted product-matched competitor shortlist, separate from advertisement availability.",
     inputSchema: { storeId: z.string().min(1) }, annotations: READ_ONLY,
-  }, async ({ storeId }) => {
+  }, interceptToolHandler("ads_get_competitor_research", async ({ storeId }) => {
     try { return jsonResult({ research: await readCompetitorResearch(storeId) }); }
     catch { return errorResult("RESEARCH_READ_FAILED: check store registration and mapping"); }
-  });
+  }));
 
   server.registerTool("ads_discover_advertisers", {
     description: "Search the configured provider for advertiser Page IDs. Results are leads: verify page alias against the brand official website before collecting ads. One provider request; stop on quota errors.",
     inputSchema: { storeId: z.string().min(1), query: z.string().min(2).max(100) }, annotations: { ...READ_ONLY, openWorldHint: true },
-  }, async ({ storeId, query }) => {
+  }, interceptToolHandler("ads_discover_advertisers", async ({ storeId, query }) => {
     try {
       await readCompetitorResearch(storeId);
       return jsonResult({ storeId, advertisers: await service.discoverCompetitorAdvertisers(query) });
     } catch (error) { return errorResult(error instanceof Error ? error.message : "COMPETITOR_DISCOVERY_FAILED"); }
-  });
+  }));
   server.registerTool("ads_fetch_competitor_page", {
     description: "Fetch a page of real ads for an explicitly verified advertiser, independently of the old watchlist. Returns media URLs, IDs and pagination cursor. Caller must verify brand and product before publishing. One provider request, no watchlist changes.",
     inputSchema: { storeId: z.string().min(1), pageId: z.string().regex(/^\d+$/), country: z.string().regex(/^(ALL|[A-Z]{2})$/).default("US"), activeStatus: z.enum(["ACTIVE", "ALL", "INACTIVE"]).default("ACTIVE"), cursor: z.string().max(50000).optional() }, annotations: { ...READ_ONLY, openWorldHint: true },
-  }, async ({ storeId, pageId, country, cursor, activeStatus }) => {
+  }, interceptToolHandler("ads_fetch_competitor_page", async ({ storeId, pageId, country, cursor, activeStatus }) => {
     try {
       await readCompetitorResearch(storeId);
       return jsonResult({ storeId, ...await service.fetchCompetitorPage(pageId, { country, cursor, activeStatus }) });
     } catch (error) { return errorResult(error instanceof Error ? error.message : "COMPETITOR_FETCH_FAILED"); }
-  });
+  }));
 
   server.registerTool("ads_search_live_library", {
     description: "Search the live provider ad library by brand/product keywords, not the existing store watchlist. Treat returned ads as leads; verify advertiser, destination domain and product before publishing. One provider request with optional pagination.",
     inputSchema: { storeId: z.string().min(1), query: z.string().min(2).max(200), country: z.string().regex(/^(ALL|[A-Z]{2})$/).default("US"), activeStatus: z.enum(["ACTIVE", "ALL", "INACTIVE"]).default("ACTIVE"), cursor: z.string().max(50000).optional() }, annotations: { ...READ_ONLY, openWorldHint: true },
-  }, async ({ storeId, query, country, cursor, activeStatus }) => {
+  }, interceptToolHandler("ads_search_live_library", async ({ storeId, query, country, cursor, activeStatus }) => {
     try { await readCompetitorResearch(storeId); return jsonResult({ storeId, ...await service.searchLiveCompetitorAds(query, { country, cursor, activeStatus }) }); }
     catch (error) { return errorResult(error instanceof Error ? error.message : "COMPETITOR_SEARCH_FAILED"); }
-  });
+  }));
 
   // Helper to register tool under primary name and optional alias
   function registerAdsTool<T extends z.ZodRawShape>(
@@ -138,10 +181,7 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     annotations: ToolAnnotations,
     handler: (args: z.infer<z.ZodObject<T>>) => Promise<CallToolResult>,
   ) {
-    const loggedHandler = async (args: z.infer<z.ZodObject<T>>) => {
-      process.stderr.write(`[FFP-MCP] 🛠️ Executing tool: ${primaryName} (args: ${JSON.stringify(args)})\n`);
-      return handler(args);
-    };
+    const loggedHandler = interceptToolHandler(primaryName, handler);
     server.registerTool(primaryName, { description, inputSchema, annotations }, loggedHandler as any);
     server.registerTool(aliasName, { description: `(Alias of ${primaryName}) ${description}`, inputSchema, annotations }, loggedHandler as any);
   }

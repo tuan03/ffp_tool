@@ -433,3 +433,115 @@ test("Gateway HTTP handler serves /api/ads-intelligence/openapi.json and /mcp/in
   assert.equal(parsedMcp.server, "ffp-ads-intelligence");
   assert.equal(parsedMcp.toolsCount, 37);
 });
+
+test("McpUserManager manages users, verifies tokens, and records audit logs", async () => {
+  const { McpUserManager } = await import("../ads-intelligence/mcp-users");
+  const mgr = new McpUserManager();
+
+  const user = mgr.createUser("Test Media Buyer", ["chillgen", "preaureum_real"]);
+  assert.ok(user.id.startsWith("usr_"));
+  assert.ok(user.token.startsWith("ffp_pat_"));
+  assert.equal(user.name, "Test Media Buyer");
+  assert.deepEqual(user.allowedStores, ["chillgen", "preaureum_real"]);
+  assert.equal(user.status, "ACTIVE");
+
+  const found = mgr.findUserByToken(user.token);
+  assert.ok(found);
+  assert.equal(found?.id, user.id);
+
+  // Record audit
+  mgr.recordUsage(user.token, "ads_get_store_overview", "chillgen", true);
+  const logs = mgr.getAuditLogs(10);
+  assert.ok(logs.length > 0);
+  assert.equal(logs[0].userName, "Test Media Buyer");
+  assert.equal(logs[0].toolName, "ads_get_store_overview");
+  assert.equal(logs[0].storeId, "chillgen");
+  assert.equal(logs[0].success, true);
+
+  // Cleanup test user
+  mgr.deleteUser(user.id);
+});
+
+test("Ads MCP Server enforces store RBAC for restricted users", async () => {
+  const service = getAdsIntelligenceService();
+  const server = createAdsMcpServer({
+    service,
+    defaultStoreId: "chillgen",
+    userName: "Restricted Buyer",
+    userToken: "ffp_pat_restricted_123",
+    allowedStores: ["chillgen"], // only allowed for chillgen
+  });
+
+  const client = new Client({ name: "rbac-test-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+
+  try {
+    // 1. Calling tool for chillgen should succeed
+    const allowedCall = await client.callTool({
+      name: "ads_get_store_overview",
+      arguments: { storeId: "chillgen" },
+    });
+    assert.equal(allowedCall.isError, undefined);
+
+    // 2. Calling tool for forbidden store 'jeminise-real' should return RBAC error
+    const forbiddenCall = await client.callTool({
+      name: "ads_get_store_overview",
+      arguments: { storeId: "jeminise-real" },
+    });
+    assert.equal(forbiddenCall.isError, true);
+    assert.match(((forbiddenCall as any).content[0]).text, /RBAC_PERMISSION_DENIED/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("HTTP Handler serves /mcp/ads/install.ps1 and /api/ads-intelligence/mcp/users endpoints", async () => {
+  // Test /mcp/ads/install.ps1
+  const mcpHandler = createAdsMcpHandler();
+  let ps1Body = "";
+  let ps1Status = 0;
+  const scriptReq = {
+    method: "GET",
+    url: "/mcp/ads/install.ps1?token=ffp_pat_test_123",
+    headers: { host: "ffp.b6-team.site" },
+  } as unknown as http.IncomingMessage;
+  const scriptRes = {
+    set statusCode(code: number) { ps1Status = code; },
+    get statusCode() { return ps1Status; },
+    setHeader() {},
+    end(chunk?: string) { if (chunk) ps1Body += chunk; },
+  } as unknown as http.ServerResponse;
+
+  await mcpHandler(scriptReq, scriptRes);
+  assert.equal(ps1Status, 200);
+  assert.match(ps1Body, /FFP Ads Intelligence MCP Server - 1-Click Setup/);
+  assert.match(ps1Body, /ffp_pat_test_123/);
+
+  // Test GET /api/ads-intelligence/mcp/users
+  let usersStatus = 0;
+  let usersBody = "";
+  const usersReq = {
+    method: "GET",
+    url: "/api/ads-intelligence/mcp/users",
+    headers: {},
+  } as unknown as http.IncomingMessage;
+  const usersRes = {
+    set statusCode(code: number) { usersStatus = code; },
+    get statusCode() { return usersStatus; },
+    setHeader() {},
+    end(chunk?: string) { if (chunk) usersBody += chunk; },
+  } as unknown as http.ServerResponse;
+
+  const usersHandled = await handleAdsIntelligenceHttpRequest(usersReq, usersRes);
+  assert.equal(usersHandled, true);
+  assert.equal(usersStatus, 200);
+  const parsedUsers = JSON.parse(usersBody);
+  assert.ok(Array.isArray(parsedUsers.users));
+});
+

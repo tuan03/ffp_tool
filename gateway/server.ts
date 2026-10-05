@@ -303,7 +303,7 @@ export function startGatewayServer(
       }
     }
 
-    if (url === "/mcp/ads" || url === "/mcp/ads-intelligence" || url.startsWith("/mcp/ads?") || url.startsWith("/mcp/ads-intelligence?")) {
+    if (url.startsWith("/mcp/ads") || url.startsWith("/mcp/ads-intelligence")) {
       await handleAdsMcpHttpRequest(req, res);
       return;
     }

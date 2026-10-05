@@ -101,6 +101,15 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
     saveStoreProfile: (storeId, payload) => request(`profile?${storeQuery(storeId)}`, jsonRequest("POST", payload)),
     testMetaConnection: accountId => request("profile/test-connection", jsonRequest("POST", { accountId })),
     testGa4Connection: propertyId => request("profile/test-ga4", jsonRequest("POST", { propertyId })),
+    listMcpUsers: () => request("mcp/users"),
+    createMcpUser: (payload: { name: string; allowedStores: string[]; role?: string }) =>
+      request("mcp/users", jsonRequest("POST", payload)),
+    revokeMcpUser: (id: string) =>
+      request("mcp/users/revoke", jsonRequest("POST", { id })),
+    deleteMcpUser: (id: string) =>
+      request(`mcp/users?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
+    getMcpAuditLogs: (limit = 100) =>
+      request(`mcp/audit?limit=${limit}`),
     async proposeGuardedWrite() {
       throw new Error("Thực thi quảng cáo chưa khả dụng. Hãy xác minh và thao tác trực tiếp trong Meta Ads Manager.");
     },
