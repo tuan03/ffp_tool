@@ -1,5 +1,34 @@
+import { useState } from "react";
+
 import type { BenchmarkProductItem } from "../../types";
 import { formatPercent, formatPositionChange, formatPp, getStatusBadge } from "../presentation";
+
+function ProductThumbnail({ url, title }: { readonly url?: string | null; readonly title: string }): React.JSX.Element {
+  const [hasError, setHasError] = useState(false);
+
+  if (!url || hasError) {
+    return (
+      <div
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-700/80 bg-gradient-to-br from-slate-800 to-slate-900 text-slate-400 shadow-inner"
+        title={title}
+      >
+        <svg className="h-5 w-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+        </svg>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={url}
+      alt={title}
+      onError={() => setHasError(true)}
+      className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-700 shadow-sm"
+      loading="lazy"
+    />
+  );
+}
 
 interface BenchmarkTableProps {
   readonly items: readonly BenchmarkProductItem[];
@@ -130,18 +159,7 @@ export function BenchmarkTable({
                     {/* 1. Product (Sticky Left) */}
                     <td className="sticky left-0 z-10 bg-slate-900 px-4 py-3 group-hover:bg-slate-850">
                       <div className="flex items-center gap-3">
-                        {item.thumbnailUrl ? (
-                          <img
-                            src={item.thumbnailUrl}
-                            alt=""
-                            className="h-10 w-10 shrink-0 rounded object-cover border border-slate-700"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-800 text-xs text-slate-500">
-                            No img
-                          </div>
-                        )}
+                        <ProductThumbnail url={item.thumbnailUrl} title={item.title} />
                         <div className="min-w-0">
                           <button
                             type="button"
