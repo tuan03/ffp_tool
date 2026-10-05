@@ -238,6 +238,16 @@ export async function handleAdsIntelligenceHttpRequest(
       }
     }
 
+    if (pathname === "/api/ads-intelligence/meta/adaccounts" && req.method === "GET") {
+      try {
+        const accounts = await adsIntelligenceService.listMetaAccounts();
+        sendJson(res, 200, { success: true, accounts });
+      } catch (err: any) {
+        sendJson(res, 500, { success: false, error: err.message || "Không thể lấy danh sách tài khoản Meta." });
+      }
+      return true;
+    }
+
     if (pathname === "/api/ads-intelligence/profile/test-connection" && req.method === "POST") {
       const body = await readJsonBody<{ accountId: string }>(req);
       const rawAccount = body.accountId || "";

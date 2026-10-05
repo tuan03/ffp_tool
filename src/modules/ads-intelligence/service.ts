@@ -101,6 +101,7 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
     saveStoreProfile: (storeId, payload) => request(`profile?${storeQuery(storeId)}`, jsonRequest("POST", payload)),
     testMetaConnection: accountId => request("profile/test-connection", jsonRequest("POST", { accountId })),
     testGa4Connection: propertyId => request("profile/test-ga4", jsonRequest("POST", { propertyId })),
+    listMetaAdAccounts: () => request("meta/adaccounts"),
     listMcpUsers: () => request("mcp/users"),
     createMcpUser: (payload: { name: string; allowedStores: string[]; role?: string }) =>
       request("mcp/users", jsonRequest("POST", payload)),

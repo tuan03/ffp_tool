@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import type { AdsIntelligenceClient } from "../../types";
+import type { AdsIntelligenceClient, MetaAdAccountInfo } from "../../types";
 
 export interface StoreProfileModalProps {
   readonly storeId: string;
@@ -33,6 +33,11 @@ export function StoreProfileModal({
     error?: string;
   } | null>(null);
 
+  // Meta Available Accounts State
+  const [availableAccounts, setAvailableAccounts] = useState<readonly MetaAdAccountInfo[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [manualMetaMode, setManualMetaMode] = useState(false);
+
   // GA4 Test State
   const [testingGa4, setTestingGa4] = useState(false);
   const [ga4TestResult, setGa4TestResult] = useState<{
@@ -55,6 +60,48 @@ export function StoreProfileModal({
 
   // JSON Raw Field
   const [rawJson, setRawJson] = useState("");
+
+  // Load available Meta accounts on mount
+  useEffect(() => {
+    let active = true;
+    if (!client.listMetaAdAccounts) return;
+    setLoadingAccounts(true);
+    client
+      .listMetaAdAccounts()
+      .then((res) => {
+        if (!active) return;
+        if (res.success && res.accounts && res.accounts.length > 0) {
+          setAvailableAccounts(res.accounts);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoadingAccounts(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  // Auto-match account if metaAccountId is not yet set
+  useEffect(() => {
+    if (!availableAccounts.length || metaAccountId) return;
+    const cleanStore = storeId.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const cleanDomain = (shopDomain || "").toLowerCase().replace(/\.myshopify\.com$/, "").replace(/[^a-z0-9]/g, "");
+
+    const matched = availableAccounts.find((acc) => {
+      const accName = acc.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return (cleanStore && accName.includes(cleanStore)) || (cleanDomain && accName.includes(cleanDomain));
+    });
+
+    if (matched) {
+      setMetaAccountId(matched.id);
+      if (matched.timezone_name) {
+        setAccountTimezone(matched.timezone_name);
+      }
+    }
+  }, [availableAccounts, metaAccountId, storeId, shopDomain]);
 
   // Load existing profile on open if available
   useEffect(() => {
@@ -249,31 +296,95 @@ export function StoreProfileModal({
                 <span className="font-bold text-cyan-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
                   <span>📘</span> 1. Tài khoản Meta Ads
                 </span>
-                <span className="text-[10px] text-slate-500">Tự động kết nối qua Meta Graph API</span>
+                <div className="flex items-center gap-2">
+                  {availableAccounts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManualMetaMode(!manualMetaMode)}
+                      className="text-[10px] text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                    >
+                      {manualMetaMode ? "📋 Chọn từ danh sách App" : "✏️ Nhập thủ công"}
+                    </button>
+                  )}
+                  <span className="text-[10px] text-slate-500">Tự động kết nối qua Meta Graph API</span>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="font-semibold text-slate-200 flex items-center justify-between">
-                  <span>Meta Ad Account ID <span className="text-rose-400">*</span></span>
-                  <span className="text-[10px] text-slate-400 font-normal">Dãy số hoặc act_xxxxxxxxxxxxxxx</span>
+                  <span>Meta Ad Account <span className="text-rose-400">*</span></span>
+                  <span className="text-[10px] text-slate-400 font-normal">
+                    {manualMetaMode || availableAccounts.length === 0
+                      ? "Dãy số hoặc act_xxxxxxxxxxxxxxx"
+                      : "Tự động phát hiện từ Meta App"}
+                  </span>
                 </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={metaAccountId}
-                    onChange={(e) => setMetaAccountId(e.target.value)}
-                    placeholder="Ví dụ: act_1569725310249145 hoặc 1569725310249145"
-                    className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleTestMeta}
-                    disabled={testingMeta || !metaAccountId.trim()}
-                    className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
-                  >
-                    {testingMeta ? "Đang test…" : "⚡ Test Meta"}
-                  </button>
-                </div>
+
+                {manualMetaMode || (availableAccounts.length === 0 && !loadingAccounts) ? (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={metaAccountId}
+                      onChange={(e) => setMetaAccountId(e.target.value)}
+                      placeholder="Ví dụ: act_1569725310249145 hoặc 1569725310249145"
+                      className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestMeta}
+                      disabled={testingMeta || !metaAccountId.trim()}
+                      className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      {testingMeta ? "Đang test…" : "⚡ Test Meta"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="flex gap-2">
+                      <select
+                        value={metaAccountId}
+                        disabled={loadingAccounts}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setMetaAccountId(val);
+                          const acc = availableAccounts.find((a) => a.id === val || `act_${a.id}` === val);
+                          if (acc?.timezone_name) {
+                            setAccountTimezone(acc.timezone_name);
+                          }
+                          setMetaTestResult(null);
+                        }}
+                        className="flex-1 rounded-lg border border-cyan-800/80 bg-slate-900 px-3 py-2 text-cyan-200 font-medium text-xs focus:outline-none focus:border-cyan-500 cursor-pointer"
+                      >
+                        <option value="">-- Chọn tài khoản quảng cáo Meta --</option>
+                        {metaAccountId && !availableAccounts.some((a) => a.id === metaAccountId || `act_${a.id}` === metaAccountId) && (
+                          <option value={metaAccountId}>{metaAccountId} (Tài khoản hiện tại)</option>
+                        )}
+                        {availableAccounts.map((acc) => {
+                          const isMatch =
+                            storeId &&
+                            (acc.name.toLowerCase().includes(storeId.toLowerCase()) ||
+                              storeId.toLowerCase().includes(acc.name.toLowerCase()));
+                          return (
+                            <option key={acc.id} value={acc.id}>
+                              {isMatch ? "⭐ " : ""}{acc.name} ({acc.id.startsWith("act_") ? acc.id : `act_${acc.id}`} · {acc.currency} · {acc.timezone_name})
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleTestMeta}
+                        disabled={testingMeta || !metaAccountId.trim()}
+                        className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        {testingMeta ? "Đang test…" : "⚡ Test"}
+                      </button>
+                    </div>
+                    {loadingAccounts && (
+                      <p className="text-[10px] text-cyan-400 animate-pulse">Đang nạp danh sách Ad Accounts từ Meta App…</p>
+                    )}
+                  </div>
+                )}
 
                 {metaTestResult && (
                   <div
@@ -379,9 +490,12 @@ export function StoreProfileModal({
 
             {/* SECTION 3: ECONOMICS & RULES */}
             <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
-              <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px] border-b border-slate-800/80 pb-2">
-                <span>🎯</span> 3. Mục tiêu Kinh tế & Quyết định AI (Economics)
-              </span>
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                  <span>🎯</span> 3. Mục tiêu Kinh tế & Quyết định AI (Economics)
+                </span>
+                <span className="text-[10px] text-slate-400">Đã điền sẵn chuẩn ngành POD / Dropship</span>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
@@ -394,7 +508,7 @@ export function StoreProfileModal({
                     placeholder="22.0"
                     className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
                   />
-                  <p className="text-[10px] text-slate-400">Chi phí tối đa chấp nhận để có 1 đơn hàng</p>
+                  <p className="text-[10px] text-slate-400">Tiền ads tối đa cho 1 đơn (Mặc định: $22)</p>
                 </div>
 
                 <div className="space-y-1">
@@ -407,7 +521,7 @@ export function StoreProfileModal({
                     placeholder="2.2"
                     className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
                   />
-                  <p className="text-[10px] text-slate-400">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ</p>
+                  <p className="text-[10px] text-slate-400">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ (Mặc định: 2.2x)</p>
                 </div>
               </div>
 
