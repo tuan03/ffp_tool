@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
@@ -183,10 +183,37 @@ class CoordinatorStore(CoordinatorObservability):
         session.add(JobEvent(job_id=job_id, event_type=event_type, payload=payload))
 
     @staticmethod
+    def _job_execution_state(session, job_id: str, control: CrawlJobControl | None = None) -> str:
+        control = control or session.get(CrawlJobControl, job_id)
+        if control is None or control.state not in {"pausing", "paused"}:
+            return "active"
+        if control.state == "paused":
+            return "paused"
+        active_tasks = int(session.scalar(select(func.count(CrawlTask.id)).where(
+            CrawlTask.job_id == job_id,
+            CrawlTask.status.in_(("leased", "running")),
+        )) or 0)
+        return "pausing" if active_tasks else "paused"
+
+    @staticmethod
     def _refresh_job(session, job_id: str) -> None:
         job = session.get(CrawlJob, job_id)
         if job is None:
             return
+        control = session.get(CrawlJobControl, job_id)
+        if control is not None and control.state == "pausing":
+            active_tasks = int(session.scalar(select(func.count(CrawlTask.id)).where(
+                CrawlTask.job_id == job_id,
+                CrawlTask.status.in_(("leased", "running")),
+            )) or 0)
+            if active_tasks == 0:
+                control.state = "paused"
+                control.updated_at = utc_now()
+                CoordinatorStore._event(session, job_id, "job_paused", {"remainingTasks": int(session.scalar(
+                    select(func.count(CrawlTask.id)).where(
+                        CrawlTask.job_id == job_id, CrawlTask.status == "queued",
+                    )
+                ) or 0)})
         statuses = Counter(session.scalars(select(CrawlTask.status).where(CrawlTask.job_id == job_id)).all())
         total = sum(statuses.values())
         if job.status == "cancelled":
@@ -268,6 +295,11 @@ class CoordinatorStore(CoordinatorObservability):
             job.started_at = job.started_at or utc_now()
         else:
             job.status = "queued"
+        if control is not None and control.state in {"pausing", "paused"} and job.status in {
+            "completed", "partial", "failed", "cancelled", "review_pending", "ready_for_review",
+        }:
+            control.state = "active"
+            control.updated_at = utc_now()
 
     def create_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         raw_urls = payload.get("urls")
@@ -888,7 +920,10 @@ class CoordinatorStore(CoordinatorObservability):
                 select(CrawlTask.id)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
-                .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
+                .where(
+                    CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]),
+                    or_(CrawlJobControl.job_id.is_(None), CrawlJobControl.state == "active"),
+                )
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
             ).all()
             pending_channels: set[str] = set()
@@ -896,7 +931,14 @@ class CoordinatorStore(CoordinatorObservability):
                 pending_task = session.get(CrawlTask, pending_task_id)
                 if pending_task is None:
                     continue
-                pending_job = session.get(CrawlJob, pending_task.job_id)
+                pending_job = session.scalar(select(CrawlJob).where(
+                    CrawlJob.id == pending_task.job_id,
+                ).with_for_update(read=True, key_share=True))
+                control = session.scalar(select(CrawlJobControl).where(
+                    CrawlJobControl.job_id == pending_task.job_id,
+                ).with_for_update(read=True, key_share=True))
+                if control is not None and control.state != "active":
+                    continue
                 pending_settings = dict(pending_job.settings if pending_job else {})
                 if (pending_settings.get("allowedAgentGroup") or pending_settings.get("allowed_agent_group")) \
                         and str(pending_settings.get("allowedAgentGroup") or pending_settings.get("allowed_agent_group")) != client.agent_group:
@@ -3218,6 +3260,49 @@ class CoordinatorStore(CoordinatorObservability):
             job = session.get(CrawlJob, job_id)
             return self._job_snapshot(session, job) if job else None
 
+    def pause_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            job = session.scalar(select(CrawlJob).where(CrawlJob.id == job_id).with_for_update())
+            if job is None:
+                return None
+            if job.status not in {"queued", "running"}:
+                raise ValueError("Only a queued or running job can be paused.")
+            control = session.scalar(select(CrawlJobControl).where(
+                CrawlJobControl.job_id == job_id,
+            ).with_for_update())
+            if control is None:
+                control = CrawlJobControl(job_id=job_id, state="active")
+                session.add(control)
+                session.flush()
+            if control.state == "active":
+                control.state = "pausing"
+                control.updated_at = utc_now()
+                self._event(session, job_id, "job_pause_requested", {})
+            elif control.state not in {"pausing", "paused"}:
+                raise ValueError("A job being cancelled cannot be paused.")
+            self._refresh_job(session, job_id)
+            return self._job_snapshot(session, job)
+
+    def resume_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.sessions.begin() as session:
+            job = session.scalar(select(CrawlJob).where(CrawlJob.id == job_id).with_for_update())
+            if job is None:
+                return None
+            if job.status not in {"queued", "running"}:
+                raise ValueError("Only a queued or running job can be resumed.")
+            control = session.scalar(select(CrawlJobControl).where(
+                CrawlJobControl.job_id == job_id,
+            ).with_for_update())
+            if control is None or control.state == "active":
+                return self._job_snapshot(session, job)
+            if control.state not in {"pausing", "paused"}:
+                raise ValueError("A job being cancelled cannot be resumed.")
+            control.state = "active"
+            control.updated_at = utc_now()
+            self._event(session, job_id, "job_resumed", {})
+            self._refresh_job(session, job_id)
+            return self._job_snapshot(session, job)
+
     def job_summary(self, job_id: str) -> dict[str, Any] | None:
         with self.sessions() as session:
             job = session.get(CrawlJob, job_id)
@@ -3296,6 +3381,7 @@ class CoordinatorStore(CoordinatorObservability):
             message = f"Đã xử lý {completed}/{job.accepted_inputs} link."
         return {
             "id": job.id, "status": job.status,
+            "executionState": CoordinatorStore._job_execution_state(session, job.id),
             "completed": completed, "total": job.accepted_inputs,
             "currentAsin": current_asin, "errors": errors,
             "progress": {
@@ -3825,6 +3911,7 @@ class CoordinatorStore(CoordinatorObservability):
             })
         snapshot = {
             "id": job.id, "externalRequestId": job.external_request_id, "status": job.status,
+            "executionState": CoordinatorStore._job_execution_state(session, job.id, control),
             "settings": job.settings, "settingsFingerprint": settings_fingerprint(job.settings),
             "inputs": [task.source for task in tasks],
             "requestedInputs": job.requested_inputs, "acceptedInputs": job.accepted_inputs,

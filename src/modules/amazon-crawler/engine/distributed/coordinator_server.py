@@ -550,6 +550,28 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return result
 
+    @app.post("/api/v1/crawl-jobs/{job_id}/pause")
+    def pause_job(job_id: str) -> dict[str, Any]:
+        try:
+            snapshot = store.pause_job(job_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return snapshot
+
+    @app.post("/api/v1/crawl-jobs/{job_id}/resume")
+    async def resume_job(job_id: str) -> dict[str, Any]:
+        try:
+            snapshot = store.resume_job(job_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        if snapshot["executionState"] == "active":
+            await manager.broadcast({"type": "work_available"})
+        return snapshot
+
     @app.post("/api/v1/review-jobs", status_code=202)
     def create_review_job(payload: dict[str, Any]) -> dict[str, Any]:
         try:
