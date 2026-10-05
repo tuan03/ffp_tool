@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
-import { handleAdsIntelligenceHttpRequest, handleAdsMcpHttpRequest } from "./ads-intelligence";
+import { configureAdsGateway, handleAdsIntelligenceHttpRequest, handleAdsMcpHttpRequest } from "./ads-intelligence";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -144,6 +144,7 @@ export function startGatewayServer(
   const tokenProvider = new CompositeTokenProvider();
   const throttleManager = new InMemoryThrottleManager();
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
+  configureAdsGateway({ storeRegistry, graphqlClient });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
   configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
@@ -181,10 +182,6 @@ export function startGatewayServer(
       await getCustomGptRuntime().mcpHandler(req, res);
       return;
     }
-    if (url === "/mcp/ads" || url === "/mcp/ads-intelligence" || url.startsWith("/mcp/ads?") || url.startsWith("/mcp/ads-intelligence?")) {
-      await handleAdsMcpHttpRequest(req, res);
-      return;
-    }
     if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
       return;
@@ -192,10 +189,6 @@ export function startGatewayServer(
     if (url.startsWith("/api/seo-performance/")) {
       await handlePerformanceHttp(req, res, { service: getPerformanceService(), authToken, hasStore: storeId => storeRegistry.hasStore(storeId) });
       return;
-    }
-    if (url.startsWith("/api/ads-intelligence/")) {
-      const handled = await handleAdsIntelligenceHttpRequest(req, res);
-      if (handled) return;
     }
     if (url.startsWith("/api/review-images/")) {
       await handleReviewImageHttpRequest(req, res, {
@@ -231,7 +224,7 @@ export function startGatewayServer(
     const isStoreGet = url === "/api/stores/get" || url.startsWith("/api/stores/get?");
     const isProxyCheck = url === "/api/proxy/check" || url.startsWith("/api/proxy/check?");
 
-    if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
+    if (url.startsWith("/mcp/ads") || url.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
       try {
         const freshEnv = loadLocalEnv();
         const freshStores = loadBootstrappedStores({
@@ -254,6 +247,21 @@ export function startGatewayServer(
       } catch {
         // non-fatal env sync in gateway server
       }
+    }
+
+    if (url === "/mcp/ads" || url === "/mcp/ads-intelligence" || url.startsWith("/mcp/ads?") || url.startsWith("/mcp/ads-intelligence?")) {
+      await handleAdsMcpHttpRequest(req, res);
+      return;
+    }
+
+    if (url.startsWith("/api/ads-intelligence/")) {
+      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { code: "ADS_GATEWAY_UNAUTHORIZED", message: "Gateway authentication required" } }));
+        return;
+      }
+      const handled = await handleAdsIntelligenceHttpRequest(req, res);
+      if (handled) return;
     }
 
     if (isShopify) {

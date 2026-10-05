@@ -4,9 +4,10 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { BetaAnalyticsDataClient } from "@google-analytics/data";
+import { BetaAnalyticsDataClient, protos } from "@google-analytics/data";
 
 import type {
+  Ga4MetaPaidSummary,
   GA4AcquisitionRow,
   GA4EventVolumeRow,
   GA4LandingPageRow,
@@ -15,7 +16,14 @@ import type {
   GA4ReportRecipe,
 } from "./types";
 
+type ReportRequest = protos.google.analytics.data.v1beta.IRunReportRequest;
+type ReportResponse = protos.google.analytics.data.v1beta.IRunReportResponse;
+interface ReportClient {
+  runReport(request: ReportRequest): Promise<readonly [ReportResponse, ...unknown[]]>;
+}
+
 export interface Ga4OverviewResult {
+  readonly metaPaid?: Ga4MetaPaidSummary;
   readonly sessions: number;
   readonly ecommercePurchases: number;
   readonly purchaseRevenue: number;
@@ -43,11 +51,12 @@ export interface Ga4ReportResult {
 }
 
 export interface Ga4ClientOptions {
+  readonly reportClient?: ReportClient;
   readonly credentialsPath?: string;
 }
 
 export class Ga4Client {
-  private client: BetaAnalyticsDataClient | null = null;
+  private client: ReportClient | null = null;
   private readonly credentialsPath: string;
 
   constructor(options: Ga4ClientOptions = {}) {
@@ -56,7 +65,9 @@ export class Ga4Client {
       process.env.GA4_CREDENTIALS_PATH ??
       path.resolve(process.cwd(), "credentials/ga4-service-account.json");
 
-    if (fs.existsSync(this.credentialsPath)) {
+    if (options.reportClient) {
+      this.client = options.reportClient;
+    } else if (fs.existsSync(this.credentialsPath)) {
       this.client = new BetaAnalyticsDataClient({
         keyFilename: this.credentialsPath,
       });
@@ -98,7 +109,34 @@ export class Ga4Client {
       ecommercePurchases,
       purchaseRevenue,
       currency,
+      metaPaid: await this.getMetaPaidOverview(propertyId, startDate, endDate),
     };
+  }
+
+  private async getMetaPaidOverview(propertyId: string, startDate: string, endDate: string): Promise<Ga4MetaPaidSummary> {
+    const scope = "Meta source + GA4 Paid Social; session acquisition, not ad-level attribution";
+    const unavailable: Ga4MetaPaidSummary = { status: "ERROR", sessions: null, ecommercePurchases: null, purchaseRevenue: null, unverifiedMetaSessions: null, timezone: null, currency: null, scope, warnings: ["GA4_META_PAID_REPORT_UNAVAILABLE"] };
+    if (!this.client) return unavailable;
+    const source = { filter: { fieldName: "sessionSource", inListFilter: { values: ["facebook", "fb", "instagram", "ig", "meta", "facebook.com", "www.facebook.com", "m.facebook.com", "l.facebook.com", "lm.facebook.com", "instagram.com", "l.instagram.com"], caseSensitive: false } } };
+    const paid = { filter: { fieldName: "sessionDefaultChannelGroup", stringFilter: { matchType: "EXACT" as const, value: "Paid Social", caseSensitive: false } } };
+    const base: ReportRequest = { property: `properties/${propertyId.replace(/^properties\//, "")}`, dateRanges: [{ startDate, endDate }], metrics: [{name:"sessions"}, {name:"ecommercePurchases"}, {name:"purchaseRevenue"}] };
+    try {
+      const [paidReport] = await this.client.runReport({ ...base, dimensionFilter: { andGroup: { expressions: [source, paid] } } });
+      const [unverifiedReport] = await this.client.runReport({ ...base, metrics: [{name:"sessions"}], dimensionFilter: { andGroup: { expressions: [source, { notExpression: paid }] } } });
+      const warnings: string[] = [];
+      for (const report of [paidReport, unverifiedReport]) {
+        if (report.metadata?.subjectToThresholding) warnings.push("GA4_THRESHOLDING");
+        if (report.metadata?.dataLossFromOtherRow) warnings.push("GA4_DATA_LOSS_FROM_OTHER_ROW");
+        if (report.metadata?.samplingMetadatas?.length) warnings.push("GA4_SAMPLED");
+      }
+      const metric = (report: ReportResponse, index: number): number => {
+        if (!report.rows?.length) return 0;
+        const raw = report.rows[0]?.metricValues?.[index]?.value;
+        if (raw === undefined || raw === null || raw === "" || !Number.isFinite(Number(raw))) throw new Error("GA4_INVALID_METRIC");
+        return Number(raw);
+      };
+      return { status: "AVAILABLE", sessions: metric(paidReport, 0), ecommercePurchases: metric(paidReport, 1), purchaseRevenue: metric(paidReport, 2), unverifiedMetaSessions: metric(unverifiedReport, 0), timezone: paidReport.metadata?.timeZone ?? null, currency: paidReport.metadata?.currencyCode ?? null, scope, warnings: [...new Set(warnings)] };
+    } catch { return unavailable; }
   }
 
   async getReport(

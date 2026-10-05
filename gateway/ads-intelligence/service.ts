@@ -1,3 +1,4 @@
+import { assertAdsStoreDomain } from "./gateway-connection";
 /**
  * FFP Ads Intelligence — Service Orchestrator
  * Connects Live Meta Graph API, GA4 Data API, and Cost Guard Cache.
@@ -15,7 +16,7 @@ import {
 } from "./meta-client";
 import { Ga4Client, type Ga4ReportResult } from "./ga4-client";
 import { websiteMetrics } from "./conversions";
-import { loadStoreAdsProfile } from "./store-profile";
+import { listAvailableStoreProfileIds, loadStoreAdsProfile } from "./store-profile";
 import { ShopifyOrdersClient } from "./shopify-client";
 import { decisionEngine } from "./decision-engine";
 import { aiStrategicAnalyst } from "./ai-analyst";
@@ -100,9 +101,9 @@ function ensureEnvLoaded(): void {
 }
 
 export class AdsIntelligenceService {
-  private getMetaClient(): MetaClient | null {
+  private getMetaClient(storeId?: string): MetaClient | null {
     ensureEnvLoaded();
-    const token = process.env.META_ACCESS_TOKEN?.trim();
+    const token = process.env[storeId ? loadStoreAdsProfile(storeId).meta.secretRef || "META_ACCESS_TOKEN" : "META_ACCESS_TOKEN"]?.trim();
     if (!token) return null;
     const proxyUrl = process.env.META_PROXY_URL?.trim();
     return new MetaClient({
@@ -112,9 +113,9 @@ export class AdsIntelligenceService {
     });
   }
 
-  private getGa4Client(): Ga4Client {
+  private getGa4Client(storeId?: string): Ga4Client {
     ensureEnvLoaded();
-    return new Ga4Client();
+    return new Ga4Client({ credentialsPath: storeId ? loadStoreAdsProfile(storeId).ga4.credentialRef ?? undefined : undefined });
   }
 
   private getShopifyClient(): ShopifyOrdersClient {
@@ -122,6 +123,7 @@ export class AdsIntelligenceService {
   }
 
   async getStoreSummary(storeId = "chillgen", forceRefresh = false): Promise<AdsStoreSummary> {
+    await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:summary`;
     if (!forceRefresh) {
       const cached = adsIntelligenceCache.get<AdsStoreSummary>(cacheKey);
@@ -130,101 +132,26 @@ export class AdsIntelligenceService {
       }
     }
 
-    const meta = this.getMetaClient();
+    const meta = this.getMetaClient(storeId);
     const profile = loadStoreAdsProfile(storeId);
-    const accountId = profile.meta.accountIds[0] || "act_1010295448281555";
+    const accountId = profile.meta.accountIds[0] || "";
 
-    let account = {
-      id: accountId,
-      name: profile.storeId === "chillgen" ? "Chillgen Store" : profile.storeId === "wrydeco" ? "Wrydeco Store" : "Jeminise Jewelry",
-      currency: profile.reportingCurrency || "USD",
-      timezone_name: profile.meta.accountTimezone || "America/Los_Angeles",
-    };
-    let insights: readonly MetaInsightRaw[] = [];
-
-    if (meta) {
-      try {
-        const [accRes, insRes] = await Promise.all([
-          meta.getAccount(accountId),
-          meta.getAccountInsights(accountId, "maximum"),
-        ]);
-        account = accRes;
-        insights = insRes;
-      } catch (networkError) {
-        console.warn(`[AdsIntelligenceService] Live Meta API call failed for ${storeId} (${networkError instanceof Error ? networkError.message : String(networkError)}), using calibrated fallback summary.`);
-      }
-    }
-
-    const rawInsight: MetaInsightRaw = insights[0] ?? (
-      storeId === "chillgen"
-        ? {
-            spend: "528.60",
-            impressions: "24850",
-            clicks: "940",
-            cpc: "0.64",
-            cpm: "21.27",
-            ctr: "3.78",
-            date_start: "2026-09-26",
-            date_stop: "2026-10-02",
-            actions: [
-              { action_type: "link_click", value: "820" },
-              { action_type: "landing_page_view", value: "710" },
-              { action_type: "add_to_cart", value: "68" },
-              { action_type: "initiate_checkout", value: "42" },
-              { action_type: "purchase", value: "29" },
-            ],
-            action_values: [
-              { action_type: "purchase", value: "1845.00" },
-            ],
-          }
-        : storeId === "wrydeco"
-        ? {
-            spend: "412.30",
-            impressions: "19800",
-            clicks: "720",
-            cpc: "0.65",
-            cpm: "20.82",
-            ctr: "3.64",
-            date_start: "2026-09-26",
-            date_stop: "2026-10-02",
-            actions: [
-              { action_type: "link_click", value: "630" },
-              { action_type: "landing_page_view", value: "540" },
-              { action_type: "add_to_cart", value: "48" },
-              { action_type: "initiate_checkout", value: "31" },
-              { action_type: "purchase", value: "21" },
-            ],
-            action_values: [
-              { action_type: "purchase", value: "1420.00" },
-            ],
-          }
-        : {
-            spend: "389.50",
-            impressions: "18200",
-            clicks: "690",
-            cpc: "0.66",
-            cpm: "21.40",
-            ctr: "3.79",
-            date_start: "2026-09-26",
-            date_stop: "2026-10-02",
-            actions: [
-              { action_type: "link_click", value: "590" },
-              { action_type: "landing_page_view", value: "510" },
-              { action_type: "add_to_cart", value: "44" },
-              { action_type: "initiate_checkout", value: "28" },
-              { action_type: "purchase", value: "19" },
-            ],
-            action_values: [
-              { action_type: "purchase", value: "1330.00" },
-            ],
-          }
-    );
+    if (!meta || !accountId) throw new Error("META_NOT_CONFIGURED");
+    const [account, insights] = await Promise.all([
+      meta.getAccount(accountId),
+      meta.getAccountInsights(accountId, "maximum"),
+    ]);
+    if (account.currency !== profile.reportingCurrency) throw new Error("ADS_CURRENCY_MISMATCH");
+    const rawInsight = insights[0];
+    if (!rawInsight) throw new Error("META_NO_INSIGHTS_FOR_PERIOD");
+    if (!rawInsight.date_start || !rawInsight.date_stop) throw new Error("META_REPORT_PERIOD_MISSING");
 
     const rawActionsRecord: Record<string, unknown> = {
       actions: rawInsight.actions ?? [],
       action_values: rawInsight.action_values ?? [],
     };
     const wm = websiteMetrics(rawActionsRecord, rawInsight.spend);
+    if (wm.metrics.purchase === null || wm.metrics.purchase_value === null) throw new Error("META_WEBSITE_CONVERSIONS_UNRESOLVED");
 
     const linkClickAction = rawInsight.actions?.find((a) => a.action_type === "link_click");
     const linkClicks = linkClickAction ? linkClickAction.value : "0";
@@ -241,7 +168,7 @@ export class AdsIntelligenceService {
       accountName: account.name,
       currency: account.currency,
       timezone: account.timezone_name,
-      periodStart: rawInsight.date_start ?? "2026-07-16",
+      periodStart: rawInsight.date_start,
       periodEnd: periodStop,
       maturity: isProvisional ? "PROVISIONAL" : "FINALIZED",
       spend: rawInsight.spend,
@@ -259,6 +186,8 @@ export class AdsIntelligenceService {
       cpa: wm.metrics.cpa,
       roas: wm.metrics.roas,
       warnings: [
+        ...(profile.ga4.propertyId && listAvailableStoreProfileIds().filter(id => loadStoreAdsProfile(id).ga4.propertyId === profile.ga4.propertyId && loadStoreAdsProfile(id).shopify.shopDomain !== profile.shopify.shopDomain).length > 0
+          ? ["GA4 property được cấu hình cho nhiều store. Phiên truy cập là tổng property, chưa được phân tách theo store."] : []),
         ...(isProvisional
           ? ["Dữ liệu trong vòng 7 ngày gần nhất được gắn nhãn PROVISIONAL do độ trễ ghi nhận chuyển đổi."]
           : []),
@@ -272,142 +201,8 @@ export class AdsIntelligenceService {
     return summary;
   }
 
-  private getCalibratedCampaignHierarchy(storeId: string): readonly AdsHierarchyCampaign[] {
-    return [
-    {
-      id: "120252593555340601",
-      name: `${storeId}_prospecting_us_sales_v1`,
-      status: "ACTIVE",
-      effectiveStatus: "ACTIVE",
-      objective: "OUTCOME_SALES",
-      budgetType: "CAMPAIGN",
-      dailyBudget: "50.00",
-      spend: "345.20",
-      purchases: "18",
-      purchaseValue: "1180.00",
-      cpa: "19.18",
-      roas: "3.42",
-      adsets: [
-        {
-          id: "120252593555360601",
-          name: "adset_broad_interest_home_wellness",
-          status: "ACTIVE",
-          effectiveStatus: "ACTIVE",
-          dailyBudget: null,
-          optimizationGoal: "OFFSITE_CONVERSIONS",
-          spend: "262.70",
-          purchases: "13",
-          cpa: "20.21",
-          roas: "3.31",
-          ads: [
-            {
-              id: "120252593555350601",
-              name: "ad_video_unboxing_sleep_quality",
-              status: "ACTIVE",
-              effectiveStatus: "ACTIVE",
-              spend: "162.20",
-              impressions: "9200",
-              linkClicks: "320",
-              linkCtr: "3.48%",
-              purchases: "10",
-              purchaseValue: "680.00",
-              cpa: "16.22",
-              roas: "4.19",
-            },
-            {
-              id: "120252593555350602",
-              name: "ad_image_lifestyle_weighted_cozy",
-              status: "ACTIVE",
-              effectiveStatus: "ACTIVE",
-              spend: "100.50",
-              impressions: "7450",
-              linkClicks: "90",
-              linkCtr: "1.21%",
-              purchases: "3",
-              purchaseValue: "190.00",
-              cpa: "33.50",
-              roas: "1.89",
-            },
-          ],
-        },
-        {
-          id: "120252593555360602",
-          name: "adset_lookalike_purchasers_1pct",
-          status: "ACTIVE",
-          effectiveStatus: "ACTIVE",
-          dailyBudget: null,
-          optimizationGoal: "OFFSITE_CONVERSIONS",
-          spend: "82.50",
-          purchases: "5",
-          cpa: "16.50",
-          roas: "3.76",
-          ads: [
-            {
-              id: "120252593555350603",
-              name: "ad_carousel_colors_cozy_aesthetic",
-              status: "ACTIVE",
-              effectiveStatus: "ACTIVE",
-              spend: "82.50",
-              impressions: "4200",
-              linkClicks: "170",
-              linkCtr: "4.05%",
-              purchases: "5",
-              purchaseValue: "310.00",
-              cpa: "16.50",
-              roas: "3.76",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: "120252593555340602",
-      name: `${storeId}_retargeting_cart_abandoners_v1`,
-      status: "ACTIVE",
-      effectiveStatus: "ACTIVE",
-      objective: "OUTCOME_SALES",
-      budgetType: "CAMPAIGN",
-      dailyBudget: "25.00",
-      spend: "138.40",
-      purchases: "10",
-      purchaseValue: "620.00",
-      cpa: "13.84",
-      roas: "4.48",
-      adsets: [
-        {
-          id: "120252593555360603",
-          name: "adset_retargeting_viewed_content_7d",
-          status: "ACTIVE",
-          effectiveStatus: "ACTIVE",
-          dailyBudget: null,
-          optimizationGoal: "OFFSITE_CONVERSIONS",
-          spend: "138.40",
-          purchases: "10",
-          cpa: "13.84",
-          roas: "4.48",
-          ads: [
-            {
-              id: "120252593555350604",
-              name: "ad_social_proof_testimonial_ugc",
-              status: "ACTIVE",
-              effectiveStatus: "ACTIVE",
-              spend: "138.40",
-              impressions: "6200",
-              linkClicks: "210",
-              linkCtr: "3.39%",
-              purchases: "10",
-              purchaseValue: "620.00",
-              cpa: "13.84",
-              roas: "4.48",
-            },
-          ],
-        },
-      ],
-    },
-  ];
-}
-
   async getCampaignHierarchy(storeId = "chillgen", forceRefresh = false): Promise<readonly AdsHierarchyCampaign[]> {
+    await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:hierarchy`;
     if (!forceRefresh) {
       const cached = adsIntelligenceCache.get<readonly AdsHierarchyCampaign[]>(cacheKey);
@@ -416,9 +211,9 @@ export class AdsIntelligenceService {
       }
     }
 
-    const meta = this.getMetaClient();
+    const meta = this.getMetaClient(storeId);
     const profile = loadStoreAdsProfile(storeId);
-    const accountId = profile.meta.accountIds[0] || "act_1010295448281555";
+    const accountId = profile.meta.accountIds[0] || "";
 
     let campaignsRaw: readonly MetaCampaignRaw[] = [];
     let adsetsRaw: readonly MetaAdSetRaw[] = [];
@@ -427,8 +222,8 @@ export class AdsIntelligenceService {
     let adsetInsights: readonly MetaInsightRaw[] = [];
     let adInsights: readonly MetaInsightRaw[] = [];
 
-    if (meta) {
-      try {
+    if (!meta || !accountId) throw new Error("META_NOT_CONFIGURED");
+    {
         const [cR, asR, aR, cI, asI, aI] = await Promise.all([
           meta.getCampaigns(accountId),
           meta.getAdSets(accountId),
@@ -443,15 +238,6 @@ export class AdsIntelligenceService {
         campInsights = cI;
         adsetInsights = asI;
         adInsights = aI;
-      } catch (networkError) {
-        console.warn(`[AdsIntelligenceService] Live Meta API hierarchy call failed for ${storeId} (${networkError instanceof Error ? networkError.message : String(networkError)}), using calibrated fallback hierarchy.`);
-      }
-    }
-
-    if (campaignsRaw.length === 0) {
-      const fallbackHierarchy = this.getCalibratedCampaignHierarchy(storeId);
-      adsIntelligenceCache.set(cacheKey, fallbackHierarchy);
-      return fallbackHierarchy;
     }
 
     const campInsightMap = new Map(campInsights.map((i) => [i.campaign_id, i]));
@@ -547,6 +333,7 @@ export class AdsIntelligenceService {
   }
 
   async getDataHealth(storeId = "chillgen", forceRefresh = false): Promise<AdsDataHealth> {
+    await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:health`;
     if (!forceRefresh) {
       const cached = adsIntelligenceCache.get<AdsDataHealth>(cacheKey);
@@ -644,6 +431,7 @@ export class AdsIntelligenceService {
   }
 
   async getReconciliationReport(storeId = "chillgen", forceRefresh = false): Promise<AdsReconciliationReport> {
+    await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:reconciliation`;
     if (!forceRefresh) {
       const cached = adsIntelligenceCache.get<AdsReconciliationReport>(cacheKey);
@@ -652,19 +440,23 @@ export class AdsIntelligenceService {
       }
     }
 
-    const [summary, health, shopifyData] = await Promise.all([
-      this.getStoreSummary(storeId, forceRefresh),
-      this.getDataHealth(storeId, forceRefresh),
-      this.getShopifyClient().getOrderSummary(storeId),
+    const summary = await this.getStoreSummary(storeId, forceRefresh);
+    const profile = loadStoreAdsProfile(storeId);
+    if (!profile.ga4.propertyId) throw new Error("GA4_PROPERTY_NOT_CONFIGURED");
+    if (listAvailableStoreProfileIds().filter(id => loadStoreAdsProfile(id).ga4.propertyId === profile.ga4.propertyId && loadStoreAdsProfile(id).shopify.shopDomain !== profile.shopify.shopDomain).length > 0) {
+      throw new Error("GA4_SHARED_PROPERTY_SCOPE_UNVERIFIED");
+    }
+    const [shopifyData, ga4Report] = await Promise.all([
+      this.getShopifyClient().getOrderSummary(storeId, { since: summary.periodStart, until: summary.periodEnd, timezone: summary.timezone }),
+      this.getGa4Client(storeId).getOverview(loadStoreAdsProfile(storeId).ga4.propertyId || "", summary.periodStart, summary.periodEnd),
     ]);
-
-    const isGa4Connected = health.ga4Connection.status === "CONNECTED";
-    const ga4Sessions = isGa4Connected ? (health.ga4Connection.liveSessionsLast30d ?? 0) : null;
+    if (shopifyData.currency !== summary.currency || ga4Report.currency !== summary.currency) {
+      throw new Error("ADS_CURRENCY_MISMATCH");
+    }
+    const ga4Sessions = ga4Report.sessions;
     const metaLinkClicks = Number(summary.linkClicks) || 0;
-    const dropPct =
-      isGa4Connected && metaLinkClicks > 0 && ga4Sessions !== null
-        ? Math.max(0, ((metaLinkClicks - ga4Sessions) / metaLinkClicks) * 100).toFixed(1) + "%"
-        : null;
+    // All-source GA4 sessions and Meta clicks are not a matched cohort.
+    const dropPct = "N/A";
 
     const metaPurchases = Number(summary.purchases) || 0;
     const metaPurchaseVal = Number(summary.purchaseValue) || 0;
@@ -676,38 +468,11 @@ export class AdsIntelligenceService {
     const purchaseDiscrepancy = metaPurchases - shopifyData.totalOrders;
     const revenueDiscrepancy = (metaPurchaseVal - shopifyNetSales).toFixed(2);
 
-    const notes: string[] = [];
-    if (isGa4Connected && metaLinkClicks > 0 && ga4Sessions !== null && dropPct !== null) {
-      notes.push(
-        `Độ rơi rụng từ Click quảng cáo sang Phiên GA4 là ${dropPct} (Mức thông thường ngành E-commerce: 15% - 25%).`
-      );
-    } else if (health.ga4Connection.status === "NOT_CONFIGURED") {
-      notes.push(
-        "Chưa liên kết GA4 Property cho store này. Đối soát phễu tập trung đối chiếu giữa Meta Ads và Shopify Settlement."
-      );
-    }
-    if (purchaseDiscrepancy !== 0) {
-      if (purchaseDiscrepancy < 0) {
-        notes.push(
-          `Shopify thực tế ghi nhận ${shopifyData.totalOrders} đơn, nhiều hơn Meta pixel (${metaPurchases} đơn). Khoảng ${Math.abs(purchaseDiscrepancy)} đơn đến từ Direct, Organic SEO hoặc người dùng bật chặn tracking trên iOS.`
-        );
-      } else {
-        notes.push(
-          `Meta pixel gán công ${metaPurchases} đơn, cao hơn ${shopifyData.totalOrders} đơn thực tế trên Shopify. Meta có thể đang over-attribute (gán công view-through 1 ngày).`
-        );
-      }
-    } else {
-      notes.push(`Số lượng đơn hàng Meta gán công khớp chính xác với đơn hàng trên Shopify (${shopifyData.totalOrders} đơn).`);
-    }
-
-    if (mer !== null) {
-      const merNum = Number(mer);
-      if (merNum >= 2.5) {
-        notes.push(`Chỉ số hiệu quả tiếp thị tổng thể (MER: ${mer}×) vượt ngưỡng hòa vốn (2.50×). Cửa hàng đang sinh lời ròng.`);
-      } else {
-        notes.push(`Chỉ số hiệu quả tiếp thị tổng thể (MER: ${mer}×) đang dưới ngưỡng hòa vốn (2.50×). Cần tối ưu lại chi phí quảng cáo hoặc giá trị trung bình đơn (AOV).`);
-      }
-    }
+    const notes = [
+      "Meta là chuyển đổi được nền tảng phân bổ; Shopify là đơn đủ điều kiện trong kỳ. Chênh lệch không xác định được nguồn đơn hay lỗi tracking.",
+      "GA4 Meta trả phí được lọc riêng theo nguồn Meta và Paid Social. Tổng phiên mọi nguồn được giữ riêng; chưa đối chiếu campaign/ad ID và múi giờ nên không tính tỷ lệ rơi rụng.",
+      "Giá trị đơn Shopify / chi tiêu Meta chỉ là tỷ số pha trộn, không phải MER mọi kênh hoặc lợi nhuận.",
+    ];
 
     const report: AdsReconciliationReport = {
       storeId,
@@ -723,10 +488,11 @@ export class AdsIntelligenceService {
         roas: summary.roas,
       },
       ga4: {
-        status: health.ga4Connection.status,
+        status: "CONNECTED",
         sessions: ga4Sessions,
-        ecommercePurchases: 0,
-        purchaseRevenue: 0,
+        metaPaid: ga4Report.metaPaid,
+        ecommercePurchases: ga4Report.ecommercePurchases,
+        purchaseRevenue: ga4Report.purchaseRevenue,
         clickToSessionDropPct: dropPct,
       },
       shopify: {
@@ -743,7 +509,7 @@ export class AdsIntelligenceService {
       gaps: {
         purchaseDiscrepancy,
         revenueDiscrepancy,
-        clickDropPct: dropPct ?? "N/A",
+        clickDropPct: dropPct,
         notes,
       },
       fromCache: false,
@@ -853,7 +619,8 @@ export class AdsIntelligenceService {
     const profile = loadStoreAdsProfile(storeId);
     const watchlist = profile.competitors?.watchlist && profile.competitors.watchlist.length > 0
       ? profile.competitors.watchlist
-      : ["100064829182341", "100083124589211", "100091284751029"];
+      : [];
+    if (!watchlist.length) throw new Error("COMPETITOR_WATCHLIST_NOT_CONFIGURED");
 
     const client = new DefaultCompetitorClient();
     const pageResults = await Promise.all(

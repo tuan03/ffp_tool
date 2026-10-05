@@ -1,3 +1,5 @@
+import { listAdsGatewayStores } from "./gateway-connection";
+import { ShopifyOrdersClient } from "./shopify-client";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import * as z from "zod/v4";
@@ -74,6 +76,15 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     { name: "ffp-ads-intelligence", version: "1.0.0" },
     { instructions: ADS_MCP_SERVER_INSTRUCTIONS },
   );
+
+  server.registerTool("ads_list_stores", { description: "List Shopify connections from Gateway without secrets. Meta and GA4 require separate verified mappings.", inputSchema: {}, annotations: READ_ONLY }, async () => {
+    try { return jsonResult({ stores: await listAdsGatewayStores() }); }
+    catch { return errorResult("ADS_GATEWAY_NOT_CONFIGURED"); }
+  });
+  server.registerTool("ads_get_shopify_summary", { description: "Read eligible Shopify order totals over the last 30 complete UTC days through the selected Gateway connection and proxy.", inputSchema: { storeId: z.string().min(1) }, annotations: READ_ONLY }, async ({ storeId }) => {
+    try { return jsonResult({ storeId, summary: await new ShopifyOrdersClient().getOrderSummary(storeId) }); }
+    catch { return errorResult("SHOPIFY_SOURCE_UNAVAILABLE: check store registration, access and proxy in Gateway"); }
+  });
 
   // Helper to register tool under primary name and optional alias
   function registerAdsTool<T extends z.ZodRawShape>(

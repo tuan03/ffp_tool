@@ -1,309 +1,91 @@
 import type { AdsIntelligenceClient } from "./types";
-import {
-  mockAiStrategicReport,
-  mockCampaignHierarchy,
-  mockChillgenSummary,
-  mockCompetitorAds,
-  mockDataHealth,
-  mockDecisionCards,
-  mockReconciliationReport,
-} from "./mocks/data";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/ads-intelligence/${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(45_000),
+    });
+  } catch {
+    throw new Error("Không kết nối được nguồn dữ liệu. Kiểm tra backend và cấu hình của store.");
+  }
+  if (!response.ok) {
+    let code = "ADS_SOURCE_UNAVAILABLE";
+    try {
+      const payload: unknown = await response.json();
+      if (typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "object" && payload.error !== null && "code" in payload.error && typeof payload.error.code === "string" && /^[A-Z0-9_]+$/.test(payload.error.code)) code = payload.error.code;
+    } catch { /* A proxy may return a non-JSON error. */ }
+    const messages: Readonly<Record<string, string>> = {
+      ADS_PROFILE_NOT_CONFIGURED: "Store đã có Shopify trong Gateway; chưa cấu hình riêng Meta/GA4 cho Ads Intelligence.",
+      ADS_STORE_MAPPING_MISMATCH: "Domain trong Ads profile khác kết nối Gateway. Cần xác minh mapping Meta/GA4 cho shop đang chọn.",
+      ADS_STORE_NOT_REGISTERED: "Store không còn trong Gateway. Hãy tải lại danh sách cửa hàng.",
+      ADS_GATEWAY_NOT_CONFIGURED: "Gateway chưa khởi tạo kết nối Ads Intelligence.",
+      SHOPIFY_HISTORY_ACCESS_REQUIRED: "Ứng dụng Shopify chưa có read_all_orders để đọc đủ lịch sử. Không dùng tổng thiếu dữ liệu.",
+      SHOPIFY_AUTH_FAILED: "Gateway không xác thực được Shopify. Kiểm tra kết nối của store tại Gateway.",
+      SHOPIFY_PERMISSION_DENIED: "Ứng dụng Shopify chưa có quyền đọc dữ liệu cần thiết.",
+      ADS_SOURCE_UNAVAILABLE: "Nguồn chưa được cấu hình hoặc chưa đọc được dữ liệu. Shopify vẫn được tải riêng từ Gateway.",
+      META_NOT_CONFIGURED: "Chưa cấu hình token Meta hoặc tài khoản cho store.",
+      META_NO_INSIGHTS_FOR_PERIOD: "Meta không trả dữ liệu trong kỳ báo cáo; không thay bằng số mẫu.",
+      META_WEBSITE_CONVERSIONS_UNRESOLVED: "Chưa xác minh được số chuyển đổi website của Meta.",
+      SHOPIFY_STORE_TOKEN_NOT_CONFIGURED: "Thiếu SHOPIFY_ACCESS_TOKEN_<STORE> trong môi trường backend.",
+      GA4_SHARED_PROPERTY_SCOPE_UNVERIFIED: "GA4 property đang dùng cho nhiều store. Cần xác nhận property hoặc bộ lọc riêng trước khi đối soát.",
+      GA4_PROPERTY_NOT_CONFIGURED: "Chưa cấu hình GA4 property cho store.",
+      COMPETITOR_NOT_CONFIGURED: "Chưa cấu hình nguồn đối thủ thật. Không hiển thị quảng cáo mẫu.",
+      COMPETITOR_WATCHLIST_NOT_CONFIGURED: "Chưa cấu hình danh sách đối thủ cho store.",
+      COMPETITOR_SOURCE_UNAVAILABLE: "Chưa lấy được quảng cáo từ nhà cung cấp. Kiểm tra API key và quyền truy cập.",
+      ADS_CURRENCY_MISMATCH: "Các nguồn khác tiền tệ; chưa thể đối soát.",
+    };
+    const message = messages[code] ?? (code.endsWith("_CODE_190") ? "Meta từ chối token. Kiểm tra thời hạn và quyền truy cập." : "Kiểm tra cấu hình và quyền truy cập của store.");
+    throw new Error(`${message} (${code}, HTTP ${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function jsonRequest(method: string, payload: unknown): RequestInit {
+  return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+}
 
 export function createAdsIntelligenceClient(): AdsIntelligenceClient {
+  const storeQuery = (storeId = "chillgen") => `storeId=${encodeURIComponent(storeId)}`;
   return {
-    async getStoreSummary(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/summary?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back gracefully to initialized store profile
-      }
-      return { ...mockChillgenSummary, storeId };
+    dataMode: "live",
+    getStores: () => request("stores"),
+    getShopifySummary: storeId => request(`shopify?${storeQuery(storeId)}`),
+    getStoreSummary: store => request(`summary?${storeQuery(store)}`),
+    getCampaignHierarchy: store => request(`campaigns?${storeQuery(store)}`),
+    getDataHealth: store => request(`health?${storeQuery(store)}`),
+    async getCompetitorAds(store) {
+      const report = await this.getCompetitorIntelligence?.(store);
+      return (report?.ads ?? []).map(ad => ({ pageName: ad.pageName, archiveId: ad.archiveAdId, caption: ad.copy, headline: ad.headline ?? "", cta: ad.cta ?? "", mediaType: ad.mediaType, thumbnailUrl: ad.thumbnailUrl ?? "", inspectionLevel: "THUMBNAIL_ONLY", firstSeen: ad.startDate ?? "", status: ad.status }));
     },
-
-    async getCampaignHierarchy(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/campaigns?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back to initialized hierarchy
+    getReconciliationReport: store => request(`reconciliation?${storeQuery(store)}`),
+    getDecisionCards: store => request(`decisions?${storeQuery(store)}`),
+    getAiStrategicReport: (store, refresh = false) => request(`ai-analyze?${storeQuery(store)}&refresh=${refresh}`, { method: "POST" }),
+    syncNow: store => request(`sync?${storeQuery(store)}`, { method: "POST" }),
+    getCompetitorIntelligence(store, refresh = false, filters) {
+      const params = new URLSearchParams({ storeId: store ?? "chillgen", refresh: String(refresh) });
+      for (const [key, value] of Object.entries(filters ?? {})) {
+        if (value && value !== "ALL") params.set(key, value);
       }
-      return mockCampaignHierarchy;
+      return request(`competitors?${params}`);
     },
-
-    async getDataHealth(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/health?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back to initialized health state
-      }
-      return mockDataHealth;
+    getBriefs: store => request(`briefs?${storeQuery(store)}`),
+    generateBrief: (storeId, payload) => request("briefs/generate", jsonRequest("POST", { storeId, ...payload })),
+    async getBriefMarkdown(briefId) {
+      const response = await fetch(`/api/ads-intelligence/briefs/${encodeURIComponent(briefId)}/markdown`, { signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) throw new Error("Không tải được brief.");
+      return response.text();
     },
-
-    async getCompetitorAds(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/competitors?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back to initialized competitor watchlist
-      }
-      return mockCompetitorAds;
+    updateBriefStatus: (briefId, status, notes) => request(`briefs/${encodeURIComponent(briefId)}/status`, jsonRequest("PUT", { status, notes })),
+    getExperiments: store => request(`experiments?${storeQuery(store)}`),
+    createExperiment: (storeId, payload) => request("experiments", jsonRequest("POST", { storeId, ...payload })),
+    updateExperimentOutcome: (id, payload) => request(`experiments/${encodeURIComponent(id)}/outcome`, jsonRequest("PUT", payload)),
+    async proposeGuardedWrite() {
+      throw new Error("Thực thi quảng cáo chưa khả dụng. Hãy xác minh và thao tác trực tiếp trong Meta Ads Manager.");
     },
-
-    async getReconciliationReport(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/reconciliation?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back to initialized reconciliation data
-      }
-      return { ...mockReconciliationReport, storeId };
-    },
-
-    async getDecisionCards(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/decisions?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back to initialized mock decisions
-      }
-      return mockDecisionCards.map((c) => ({ ...c, storeId }));
-    },
-
-    async getAiStrategicReport(storeId = "chillgen", forceRefresh = false) {
-      try {
-        const url = `/api/ads-intelligence/ai-analyze?storeId=${encodeURIComponent(storeId)}${forceRefresh ? "&refresh=true" : ""}`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back to initialized mock report
-      }
-      return { ...mockAiStrategicReport, storeId };
-    },
-
-    async syncNow(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/sync?storeId=${encodeURIComponent(storeId)}`, {
-          method: "POST",
-        });
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back gracefully
-      }
-      return {
-        success: true,
-        refreshedAt: new Date().toISOString(),
-        message: "Đã làm mới dữ liệu từ bộ nhớ đệm",
-      };
-    },
-
-    async getCompetitorIntelligence(storeId = "chillgen", forceRefresh = false, filters?: { pageId?: string; format?: string; hookType?: string }) {
-      try {
-        const params = new URLSearchParams({ storeId });
-        if (forceRefresh) params.set("refresh", "true");
-        if (filters?.pageId && filters.pageId !== "ALL") params.set("pageId", filters.pageId);
-        if (filters?.format && filters.format !== "ALL") params.set("format", filters.format);
-        if (filters?.hookType && filters.hookType !== "ALL") params.set("hookType", filters.hookType);
-        const res = await fetch(`/api/ads-intelligence/competitors?${params.toString()}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back gracefully
-      }
-      return {
-        storeId,
-        watchlist: [
-          { pageId: "100064829182341", pageName: "Tuft & Loom Co.", adCount: 6, activeAdCount: 6 },
-          { pageId: "100083124589211", pageName: "LuminaCraft Studio", adCount: 6, activeAdCount: 6 },
-          { pageId: "100091284751029", pageName: "EverGifts Custom", adCount: 6, activeAdCount: 6 },
-        ],
-        totalAds: 18,
-        activeAds: 18,
-        provider: "Calibrated Facebook Ad Library Benchmark",
-        syncCostEstimatedUsd: 0.0054,
-        monthlyCostCapUsd: 65.0,
-        transparencyDisclaimer: "Dữ liệu công khai từ Facebook Ad Library. Doanh thu và ROAS của đối thủ là không xác định.",
-        ads: [],
-        creativeGaps: [],
-        topWinningHooks: [],
-        formatDistribution: [],
-      };
-    },
-
-    async getBriefs(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/briefs?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back gracefully
-      }
-      return [];
-    },
-
-    async generateBrief(storeId: string, payload: { source: "decision" | "gap" | "custom"; sourceId?: string; brief?: any }) {
-      const res = await fetch(`/api/ads-intelligence/briefs/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId, ...payload }),
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to generate brief: ${res.statusText}`);
-      }
-      return await res.json();
-    },
-
-    async getBriefMarkdown(briefId: string) {
-      const res = await fetch(`/api/ads-intelligence/briefs/${encodeURIComponent(briefId)}/markdown`);
-      if (!res.ok) {
-        throw new Error(`Failed to get brief markdown: ${res.statusText}`);
-      }
-      return await res.text();
-    },
-
-    async updateBriefStatus(briefId: string, status: any, notes?: string) {
-      const res = await fetch(`/api/ads-intelligence/briefs/${encodeURIComponent(briefId)}/status`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, notes }),
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to update brief status: ${res.statusText}`);
-      }
-      return await res.json();
-    },
-
-    async getExperiments(storeId = "chillgen") {
-      try {
-        const res = await fetch(`/api/ads-intelligence/experiments?storeId=${encodeURIComponent(storeId)}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch {
-        // Fall back gracefully
-      }
-      return [];
-    },
-
-    async createExperiment(storeId: string, payload: { briefId?: string; experiment?: any; customOptions?: any }) {
-      const res = await fetch(`/api/ads-intelligence/experiments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId, ...payload }),
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to create experiment: ${res.statusText}`);
-      }
-      return await res.json();
-    },
-
-    async updateExperimentOutcome(experimentId: string, payload: any) {
-      const res = await fetch(`/api/ads-intelligence/experiments/${encodeURIComponent(experimentId)}/outcome`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to update experiment outcome: ${res.statusText}`);
-      }
-      return await res.json();
-    },
-
-    async proposeGuardedWrite(storeId: string, decisionIdOrEntityId: string) {
-      try {
-        const res = await fetch(`/api/ads-intelligence/writes/preview`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            storeId,
-            entityId: decisionIdOrEntityId,
-            action: decisionIdOrEntityId.includes("scale") ? "ADJUST_BUDGET" : "PAUSE",
-            budgetChangePct: 20,
-            reason: "Đề xuất từ AI Decision Engine",
-          }),
-        });
-        if (res.ok) {
-          const preview = await res.json();
-          return {
-            proposalId: preview.previewId,
-            action: preview.action,
-            targetType: preview.targetEntity.type,
-            targetId: preview.targetEntity.id,
-            targetName: preview.targetEntity.name,
-            currentBudget: preview.currentBudget,
-            proposedBudget: preview.proposedBudget,
-            reason: preview.reason,
-            previewHash: preview.previewHash,
-          };
-        }
-      } catch {
-        // Fall back gracefully
-      }
-      return {
-        proposalId: `preview-${Date.now()}`,
-        action: "PAUSE",
-        targetType: "ad",
-        targetId: decisionIdOrEntityId,
-        targetName: `Quảng cáo ${decisionIdOrEntityId}`,
-        reason: "Tắt quảng cáo do chi tiêu vượt 2x CPA mục tiêu mà không có chuyển đổi.",
-      };
-    },
-
-    async executeGuardedWrite(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }) {
-      try {
-        // 1. Approve
-        await fetch(`/api/ads-intelligence/writes/approve`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            previewId: proposalId,
-            previewHash: "preview-hash-token",
-            approvedBy: options?.operatorConfirmText || "Operator",
-          }),
-        });
-        // 2. Execute
-        const execRes = await fetch(`/api/ads-intelligence/writes/execute`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            previewId: proposalId,
-            liveEntityState: { status: "ACTIVE" },
-          }),
-        });
-        if (execRes.ok) {
-          return await execRes.json();
-        }
-      } catch {
-        // Fall back
-      }
-      return {
-        success: true,
-        message: "Đã thực thi Guarded Write an toàn và ghi nhận vào sổ nhật ký kiểm toán.",
-        auditLogId: `audit-${Date.now().toString(36)}`,
-      };
+    async executeGuardedWrite() {
+      throw new Error("Chưa có kết nối thực thi Meta được xác minh; không có quảng cáo nào được thay đổi.");
     },
   };
 }
-

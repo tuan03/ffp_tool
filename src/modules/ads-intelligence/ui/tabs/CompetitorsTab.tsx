@@ -12,7 +12,9 @@ export function CompetitorsTab({
 }: CompetitorsTabProps): React.JSX.Element {
   const [formatFilter, setFormatFilter] = useState<string>("ALL");
 
-  const ads = competitorReport?.ads || [];
+  if (!competitorReport) return <p role="status" className="p-4 text-slate-400">Chưa có dữ liệu đối thủ xác minh. Kiểm tra nguồn kết nối; không dùng quảng cáo mẫu thay thế.</p>;
+
+  const ads = competitorReport.ads;
   const filteredAds = ads.filter((ad) => {
     if (formatFilter === "ALL") return true;
     return ad.mediaType === formatFilter;
@@ -34,7 +36,7 @@ export function CompetitorsTab({
             </p>
           </div>
           <div className="text-xs text-slate-400 font-mono">
-            Provider: <strong className="text-cyan-300">{competitorReport?.provider || "ScrapeCreators"}</strong> • Chi phí: $0.0658 / 210 ads
+            Provider: <strong className="text-cyan-300">{competitorReport.provider}</strong>
           </div>
         </div>
 
@@ -55,7 +57,7 @@ export function CompetitorsTab({
 
           <div className="flex items-center gap-1.5">
             <span className="text-slate-400 text-xs">Tổng số ads:</span>
-            <span className="font-mono font-bold text-emerald-400">{competitorReport?.activeAds || 210} đang chạy</span>
+            <span className="font-mono font-bold text-emerald-400">{competitorReport.activeAds} đang chạy</span>
           </div>
         </div>
       </div>
@@ -87,7 +89,7 @@ export function CompetitorsTab({
       {/* 3. Visual Ad Card Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredAds.map((ad) => {
-          const isWinningAd = ad.daysActive >= 30;
+          const isLongObservedAd = ad.daysActive >= 30;
 
           return (
             <div
@@ -117,10 +119,10 @@ export function CompetitorsTab({
                     <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase bg-slate-950/80 text-cyan-300 border border-slate-700">
                       {ad.mediaType}
                     </span>
-                    {isWinningAd && (
+                    {isLongObservedAd && (
                       <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-950/90 text-amber-300 border border-amber-800 flex items-center gap-1">
                         <span>🔥</span>
-                        <span>{ad.daysActive} ngày (Winning Ad)</span>
+                        <span>{ad.daysActive} ngày (thời gian theo nguồn)</span>
                       </span>
                     )}
                   </div>
@@ -182,7 +184,7 @@ export function CompetitorsTab({
               <span>💡</span> Khoảng trống Creative (Creative Angle Gaps)
             </h3>
             <p className="text-xs text-slate-400">
-              Các góc tiếp cận mà đối thủ đang thắng lớn nhưng gian hàng của bạn chưa khai thác
+              Các góc tiếp cận để nghiên cứu và thử nghiệm; chưa biết hiệu quả kinh doanh của đối thủ
             </p>
           </div>
 

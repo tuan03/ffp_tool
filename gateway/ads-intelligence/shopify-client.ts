@@ -1,9 +1,5 @@
-/**
- * FFP Ads Intelligence — Shopify Orders & Commerce Ingest Client
- * Pulls actual orders, refunds, and calculates Net Sales and MER.
- */
-import { fetch as undiciFetch } from "undici";
-import { loadStoreAdsProfile } from "./store-profile";
+import { z } from "zod";
+import { getAdsGateway, getAdsGatewayStore } from "./gateway-connection";
 
 export interface ShopifyOrderSummary {
   readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
@@ -14,146 +10,79 @@ export interface ShopifyOrderSummary {
   readonly averageOrderValue: string;
   readonly currency: string;
   readonly source: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
 }
+const money = z.object({ shopMoney: z.object({ amount: z.string().regex(/^\d+(\.\d+)?$/), currencyCode: z.string() }) });
+const responseSchema = z.object({
+  shop: z.object({ currencyCode: z.string() }),
+  orders: z.object({
+    pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+    edges: z.array(z.object({ node: z.object({
+      id: z.string(), createdAt: z.string(), test: z.boolean(), cancelledAt: z.string().nullable(), displayFinancialStatus: z.string(),
+      totalPriceSet: money, totalRefundedSet: money,
+    }) })),
+  }),
+});
+const query = `query AdsStoreOrders($cursor: String, $filter: String!) {
+  shop { currencyCode }
+  orders(first: 100, after: $cursor, query: $filter, sortKey: CREATED_AT) {
+    pageInfo { hasNextPage endCursor }
+    edges { node { id createdAt test cancelledAt displayFinancialStatus
+      totalPriceSet { shopMoney { amount currencyCode } }
+      totalRefundedSet { shopMoney { amount currencyCode } }
+    } }
+  }
+}`;
 
 export class ShopifyOrdersClient {
-  async getOrderSummary(storeId = "chillgen"): Promise<ShopifyOrderSummary> {
-    const profile = loadStoreAdsProfile(storeId);
-    const domain = profile.shopify.shopDomain;
-
-    const envTokenKey = `SHOPIFY_ACCESS_TOKEN_${storeId.toUpperCase().replace(/-/g, "_")}`;
-    const token = process.env[envTokenKey] || process.env.SHOPIFY_ACCESS_TOKEN;
-
-    if (token) {
-      try {
-        const query = `
-          query {
-            orders(first: 50, sortKey: CREATED_AT, reverse: true) {
-              edges {
-                node {
-                  id
-                  name
-                  createdAt
-                  totalPriceSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  totalRefundedSet {
-                    shopMoney {
-                      amount
-                    }
-                  }
-                  displayFinancialStatus
-                }
-              }
-            }
-          }
-        `;
-
-        const res = await undiciFetch(`https://${domain}/admin/api/${profile.shopify.apiVersion}/graphql.json`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Shopify-Access-Token": token,
-          },
-          body: JSON.stringify({ query }),
-        });
-
-        if (res.ok) {
-          const json = (await res.json()) as {
-            data?: {
-              orders?: {
-                edges?: readonly {
-                  node: {
-                    totalPriceSet?: { shopMoney?: { amount: string; currencyCode: string } };
-                    totalRefundedSet?: { shopMoney?: { amount: string } };
-                    displayFinancialStatus?: string;
-                  };
-                }[];
-              };
-            };
-          };
-
-          const edges = json.data?.orders?.edges ?? [];
-          let gross = 0;
-          let refunds = 0;
-          let paidOrdersCount = 0;
-          let currency = "USD";
-
-          for (const edge of edges) {
-            const node = edge.node;
-            const amount = Number(node.totalPriceSet?.shopMoney?.amount ?? 0);
-            const refAmount = Number(node.totalRefundedSet?.shopMoney?.amount ?? 0);
-            currency = node.totalPriceSet?.shopMoney?.currencyCode ?? currency;
-
-            if (node.displayFinancialStatus === "PAID" || node.displayFinancialStatus === "PARTIALLY_REFUNDED") {
-              paidOrdersCount++;
-              gross += amount;
-              refunds += refAmount;
-            }
-          }
-
-          const net = Math.max(0, gross - refunds);
-          const aov = paidOrdersCount > 0 ? (net / paidOrdersCount).toFixed(2) : "0.00";
-
-          return {
-            status: "CONNECTED",
-            totalOrders: paidOrdersCount,
-            grossSales: gross.toFixed(2),
-            totalRefunds: refunds.toFixed(2),
-            netSales: net.toFixed(2),
-            averageOrderValue: aov,
-            currency,
-            source: `Live Shopify Admin GraphQL (${domain})`,
-          };
-        }
-      } catch (err) {
-        console.warn(`[ShopifyOrdersClient] Failed to fetch live orders for ${storeId}:`, err);
+  async getOrderSummary(storeId: string, period?: { since: string; until: string; timezone?: string }): Promise<ShopifyOrderSummary> {
+    const { graphqlClient } = getAdsGateway();
+    const store = await getAdsGatewayStore(storeId);
+    const end = new Date(); end.setUTCHours(0, 0, 0, 0);
+    let historyStart: string | undefined;
+    if (!period || Date.parse(period.since) < end.getTime() - 60 * 86400000) {
+      const accessPayload: unknown = await graphqlClient.query(store,
+        "query AdsHistoryAccess { currentAppInstallation { accessScopes { handle } } shop { createdAt } }", {}, {isWrite:false});
+      const access = z.object({ currentAppInstallation: z.object({ accessScopes: z.array(z.object({handle:z.string()})) }), shop: z.object({createdAt:z.string().datetime()}) }).parse(accessPayload);
+      historyStart = access.shop.createdAt.slice(0, 10);
+      const requestedStart = period?.since ?? historyStart;
+      if (Date.parse(requestedStart) < end.getTime() - 60 * 86400000 && !access.currentAppInstallation.accessScopes.some(scope => scope.handle === "read_all_orders")) {
+        throw new Error("SHOPIFY_HISTORY_ACCESS_REQUIRED");
       }
     }
-
-    // Default calibrated settlement ledger based on verified store metrics
-    // Chillgen: 9 actual store orders, $520.40 net revenue
-    // Jeminise: 0 settled store orders, $0.00 net revenue
-    // Wrydeco: 182 actual store orders, $14,210.00 net revenue
-    if (storeId === "wrydeco") {
-      return {
-        status: "CONNECTED",
-        totalOrders: 182,
-        grossSales: "14850.00",
-        totalRefunds: "640.00",
-        netSales: "14210.00",
-        averageOrderValue: "78.08",
-        currency: "USD",
-        source: `Settled Shopify Ledger (${domain})`,
-      };
+    const periodStart = period?.since ?? historyStart ?? end.toISOString().slice(0, 10);
+    const periodEnd = period?.until ?? end.toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd) throw new Error("SHOPIFY_REPORT_PERIOD_INVALID");
+    const timezone = period?.timezone ?? "UTC";
+    const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+    const upperBound = new Date(Date.parse(periodEnd) + 2 * 86400000).toISOString();
+    const filter = `created_at:>=${new Date(Date.parse(periodStart) - 86400000).toISOString()} created_at:<${upperBound}`;
+    let cursor: string | null = null;
+    let gross = 0; let refunds = 0; let count = 0;
+    const seenCursors = new Set<string>(); const seenOrders = new Set<string>();
+    for (let page = 0; page < 100; page++) {
+      const payload: unknown = await graphqlClient.query(store, query, { cursor, filter }, { isWrite: false });
+      const response = responseSchema.parse(payload);
+      const currency = response.shop.currencyCode;
+      for (const { node } of response.orders.edges) {
+        if (seenOrders.has(node.id)) continue;
+        seenOrders.add(node.id);
+        const date = localDate.format(new Date(node.createdAt));
+        if (date < periodStart || date > periodEnd || node.test || node.cancelledAt || !["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(node.displayFinancialStatus)) continue;
+        if (node.totalPriceSet.shopMoney.currencyCode !== currency || node.totalRefundedSet.shopMoney.currencyCode !== currency) throw new Error("SHOPIFY_CURRENCY_MISMATCH");
+        gross += Number(node.totalPriceSet.shopMoney.amount); refunds += Number(node.totalRefundedSet.shopMoney.amount); count++;
+      }
+      if (!response.orders.pageInfo.hasNextPage) {
+        const net = gross - refunds;
+        return { status: "CONNECTED", totalOrders: count, grossSales: gross.toFixed(2), totalRefunds: refunds.toFixed(2), netSales: net.toFixed(2), averageOrderValue: count ? (net / count).toFixed(2) : "0.00", currency, periodStart, periodEnd,
+          source: `Gateway Shopify (${store.shopDomain}); ${periodStart}–${periodEnd} ${timezone}; paid/refunded orders, excluding test/cancelled; totals include tax/shipping, less current refunds. Not Shopify Analytics Net Sales.`,
+        };
+      }
+      cursor = response.orders.pageInfo.endCursor;
+      if (!cursor || seenCursors.has(cursor)) throw new Error("SHOPIFY_PAGINATION_INCOMPLETE");
+      seenCursors.add(cursor);
     }
-
-    if (storeId === "jeminise" || storeId === "jemine") {
-      return {
-        status: "CONNECTED",
-        totalOrders: 1,
-        grossSales: "109.90",
-        totalRefunds: "0.00",
-        netSales: "109.90",
-        averageOrderValue: "109.90",
-        currency: "USD",
-        source: `Settled Shopify Ledger (${domain})`,
-      };
-    }
-
-    // Chillgen store
-    return {
-      status: "CONNECTED",
-      totalOrders: 10,
-      grossSales: "568.50",
-      totalRefunds: "35.00",
-      netSales: "533.50",
-      averageOrderValue: "53.35",
-      currency: "USD",
-      source: `Settled Shopify Ledger (${domain})`,
-    };
+    throw new Error("SHOPIFY_PAGINATION_INCOMPLETE");
   }
 }

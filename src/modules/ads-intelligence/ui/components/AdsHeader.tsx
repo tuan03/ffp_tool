@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import type { AdsStoreSummary } from "../../types";
+import type { AdsGatewayStore, AdsStoreSummary } from "../../types";
 
 export interface AdsHeaderProps {
+  readonly stores: readonly AdsGatewayStore[];
   readonly currentStoreId: string;
   readonly onStoreChange: (newStoreId: string) => void;
   readonly summary: AdsStoreSummary | null;
@@ -12,6 +13,7 @@ export interface AdsHeaderProps {
 }
 
 export function AdsHeader({
+  stores,
   currentStoreId,
   onStoreChange,
   summary,
@@ -38,7 +40,7 @@ export function AdsHeader({
 
             {/* Compact Maturity Pill with Hover Tooltip */}
             <div className="relative inline-block">
-              {summary?.maturity === "PROVISIONAL" ? (
+              {!summary ? <span className="text-xs text-slate-400">Chưa xác định kỳ báo cáo</span> : summary.maturity === "PROVISIONAL" ? (
                 <button
                   type="button"
                   onMouseEnter={() => setShowMaturityTooltip(true)}
@@ -51,7 +53,7 @@ export function AdsHeader({
                 </button>
               ) : (
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-800/70 font-medium">
-                  ✓ Dữ liệu chuẩn (Finalized)
+                  Kỳ báo cáo đã qua 7 ngày
                 </span>
               )}
 
@@ -79,11 +81,11 @@ export function AdsHeader({
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px]">
           <span
             className={`inline-block h-2 w-2 rounded-full ${
-              summary?.fromCache ? "bg-amber-400" : "bg-emerald-400 animate-pulse"
+              !summary ? "bg-slate-500" : summary.fromCache ? "bg-amber-400" : "bg-emerald-400"
             }`}
           />
           <span className="text-slate-300 font-medium">
-            {summary?.fromCache ? "Cache 15m" : "Live API"}
+            {!summary ? "Chưa có dữ liệu Meta" : summary.fromCache ? "Dữ liệu đã lưu tạm" : "Meta API"}
           </span>
           {summary?.cachedAt && (
             <span className="text-slate-500 font-mono text-[10px]">
@@ -102,9 +104,7 @@ export function AdsHeader({
           aria-label="Chọn cửa hàng"
           className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-cyan-300 font-medium focus:outline-none focus:border-cyan-500 cursor-pointer shadow-sm"
         >
-          <option value="chillgen">Chillgen Store (USD)</option>
-          <option value="jeminise">Jeminise (USD)</option>
-          <option value="wrydeco">Wrydeco (USD)</option>
+          {stores.map(store => <option key={store.storeId} value={store.storeId}>{store.storeId} · {store.shopDomain}{store.hasProxy ? " · Proxy" : ""}</option>)}
         </select>
 
         {/* MCP & Codex Button */}

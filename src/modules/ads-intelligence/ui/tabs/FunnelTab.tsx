@@ -1,6 +1,8 @@
 import React from "react";
 import type { AdsReconciliationReport, AdsStoreSummary } from "../../types";
 
+import { describeReconciliation } from "../reconciliation-analysis";
+
 export interface FunnelTabProps {
   readonly reconciliation: AdsReconciliationReport | null;
   readonly summary: AdsStoreSummary | null;
@@ -8,223 +10,82 @@ export interface FunnelTabProps {
 
 export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JSX.Element {
   const meta = reconciliation?.meta;
-  const ga4 = reconciliation?.ga4;
   const shopify = reconciliation?.shopify;
-  const gaps = reconciliation?.gaps;
-
-  // Extract funnel numbers
-  const linkClicks = Number(summary?.linkClicks || meta?.linkClicks || 970);
-  const isGa4Available = ga4?.status === "CONNECTED" && ga4?.sessions !== null && ga4?.sessions !== undefined;
-  const ga4Sessions = isGa4Available ? ga4.sessions : null;
-  const viewContent = Number(summary?.lpv || 420);
-  const atc = Number(summary?.atc || 28);
-  const checkout = Number(summary?.checkout || 15);
-  const shopifyPurchases = shopify?.totalOrders ?? 10;
-
-  // Calculate drop rates
-  const dropClickToSession = isGa4Available && linkClicks > 0 && ga4Sessions !== null
-    ? (((linkClicks - ga4Sessions) / linkClicks) * 100).toFixed(1)
-    : null;
-  const dropSessionToVc = isGa4Available && ga4Sessions !== null && ga4Sessions > 0
-    ? (((ga4Sessions - viewContent) / ga4Sessions) * 100).toFixed(1)
-    : null;
-  const dropVcToAtc = viewContent > 0 ? (((viewContent - atc) / viewContent) * 100).toFixed(1) : "0.0";
-  const dropAtcToCheckout = atc > 0 ? (((atc - checkout) / atc) * 100).toFixed(1) : "0.0";
-  const dropCheckoutToPurchase = checkout > 0 ? (((checkout - shopifyPurchases) / checkout) * 100).toFixed(1) : "0.0";
+  const paid = reconciliation?.ga4.metaPaid;
+  const hasPaid = paid?.status === "AVAILABLE";
+  const missing = "Chưa có dữ liệu";
+  const money = (value: string | number | null | undefined, currency = summary?.currency): string =>
+    value === null || value === undefined ? missing : `${currency ?? ""} ${value}`;
+  const clicks = meta?.linkClicks ?? summary?.linkClicks;
+  const purchases = meta?.purchases ?? summary?.purchases;
+  const cpa = meta?.cpa ?? summary?.cpa;
+  const steps = [
+    { label: "1. Link Clicks", value: clicks, source: "Meta Ads", color: "border-blue-900/60 bg-blue-950/20 text-blue-300" },
+    { label: "2. Sessions", value: hasPaid ? paid.sessions : null, source: "GA4 · Meta trả phí", color: "border-cyan-900/60 bg-cyan-950/20 text-cyan-300" },
+    { label: "3. Landing Page Views", value: summary?.lpv, source: "Meta · lượt xem trang đích", color: "border-slate-800 bg-slate-900/80 text-slate-300" },
+    { label: "4. Add To Cart", value: summary?.atc, source: "Meta · thêm giỏ hàng", color: "border-indigo-900/60 bg-indigo-950/20 text-indigo-300" },
+    { label: "5. Checkouts", value: summary?.checkout, source: "Meta · bắt đầu thanh toán", color: "border-purple-900/60 bg-purple-950/20 text-purple-300" },
+    { label: "6. Purchases", value: shopify?.totalOrders, source: "Shopify · đơn đủ điều kiện", color: "border-emerald-900/70 bg-emerald-950/30 text-emerald-300" },
+  ];
+  const analysis = describeReconciliation(reconciliation, summary);
+  const rows = [
+    ["Chi phí Quảng cáo", money(meta?.spend ?? summary?.spend), "Không áp dụng", "Không áp dụng", analysis.spend],
+    ["Lưu lượng truy cập", clicks == null ? missing : `${clicks} Link Clicks`, hasPaid ? `${paid.sessions} Sessions` : missing, "Chưa thu thập", analysis.traffic],
+    ["Số đơn chuyển đổi", purchases ?? missing, hasPaid ? paid.ecommercePurchases ?? missing : missing, shopify?.totalOrders ?? missing,
+      analysis.orders],
+    ["Doanh thu ghi nhận", money(meta?.purchaseValue ?? summary?.purchaseValue), hasPaid ? money(paid.purchaseRevenue, paid.currency ?? undefined) : missing, money(shopify?.netSales), analysis.revenue],
+    ["Hoàn tiền", "Chưa thu thập", "Chưa thu thập", money(shopify?.totalRefunds), analysis.refunds],
+    ["Chi phí trên đơn (CPA)", cpa != null ? money(cpa) : purchases != null && Number(purchases) === 0 ? "Không tính được (0 purchases)" : missing, "Chưa đối soát chi phí",
+      shopify?.blendedCpa != null ? `${money(shopify.blendedCpa)} Blended` : shopify?.totalOrders === 0 ? "Không tính được (0 đơn)" : missing,
+      analysis.cpa],
+    ["Tỷ số giá trị / chi tiêu", (meta?.roas ?? summary?.roas) == null ? missing : `${meta?.roas ?? summary?.roas}× ROAS`, "Chưa đối soát chi phí", shopify?.mer == null ? missing : `${shopify.mer}× Shopify / Meta`, analysis.ratio],
+  ];
 
   return (
     <div className="space-y-6">
-      {/* 1. Horizontal Visual Funnel Flow */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-4 shadow-lg">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              <span>🔄</span> Dòng chảy Phễu Chuyển đổi (Conversion Funnel Flow)
-            </h3>
-            <p className="text-xs text-slate-400">
-              Đối soát từng bước từ Click Meta ➔ Traffic GA4 ➔ Đơn hàng thực tế Shopify
-            </p>
+            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2"><span>🔄</span> Dòng chảy Phễu Chuyển đổi (Conversion Funnel Flow)</h3>
+            <p className="text-xs text-slate-400">Các chỉ số theo nguồn; chưa phải phễu tuần tự của cùng một nhóm người dùng.</p>
           </div>
-          <span className="text-xs text-cyan-300 font-mono">
-            Tỉ lệ hoàn tất tổng thể: {linkClicks > 0 ? ((shopifyPurchases / linkClicks) * 100).toFixed(2) : 0}%
-          </span>
         </div>
-
-        {/* Funnel Steps Container */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 pt-2">
-          {/* Step 1: Link Clicks */}
-          <div className="rounded-xl border border-blue-900/60 bg-blue-950/20 p-3 space-y-1.5">
-            <span className="text-[10px] font-bold text-blue-300 uppercase">1. Link Clicks</span>
-            <div className="text-xl font-bold text-slate-100 font-mono">{linkClicks}</div>
-            <div className="text-[10px] text-slate-400">Nguồn: Meta Ads</div>
-          </div>
-
-          {/* Step 2: GA4 Sessions */}
-          <div className="rounded-xl border border-cyan-900/60 bg-cyan-950/20 p-3 space-y-1.5 relative">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-cyan-300 uppercase">2. Sessions</span>
-              {dropClickToSession !== null ? (
-                <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-rose-950 text-rose-300 border border-rose-800">
-                  -{dropClickToSession}%
-                </span>
-              ) : (
-                <span className="text-[9px] px-1.5 py-0.2 rounded font-bold bg-slate-800 text-slate-400">
-                  Chưa liên kết
-                </span>
-              )}
-            </div>
-            <div className="text-xl font-bold text-slate-100 font-mono">
-              {ga4Sessions !== null ? ga4Sessions : "—"}
-            </div>
-            <div className="text-[10px] text-slate-400">
-              {ga4Sessions !== null ? "Nguồn: GA4 Data API" : "Chưa có Property ID"}
-            </div>
-          </div>
-
-          {/* Step 3: View Content */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">3. View Content</span>
-              {dropSessionToVc !== null ? (
-                <span className="text-[9px] text-slate-400 font-mono">-{dropSessionToVc}%</span>
-              ) : (
-                <span className="text-[9px] text-slate-500 font-mono">—</span>
-              )}
-            </div>
-            <div className="text-xl font-bold text-slate-200 font-mono">{viewContent}</div>
-            <div className="text-[10px] text-slate-500">Xem trang sản phẩm</div>
-          </div>
-
-          {/* Step 4: Add To Cart */}
-          <div className="rounded-xl border border-indigo-900/60 bg-indigo-950/20 p-3 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-indigo-300 uppercase">4. Add To Cart</span>
-              <span className="text-[9px] text-slate-400 font-mono">-{dropVcToAtc}%</span>
-            </div>
-            <div className="text-xl font-bold text-indigo-200 font-mono">{atc}</div>
-            <div className="text-[10px] text-slate-400">Thêm giỏ hàng</div>
-          </div>
-
-          {/* Step 5: Checkout */}
-          <div className="rounded-xl border border-purple-900/60 bg-purple-950/20 p-3 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-purple-300 uppercase">5. Checkouts</span>
-              <span className="text-[9px] text-slate-400 font-mono">-{dropAtcToCheckout}%</span>
-            </div>
-            <div className="text-xl font-bold text-purple-200 font-mono">{checkout}</div>
-            <div className="text-[10px] text-slate-400">Bắt đầu thanh toán</div>
-          </div>
-
-          {/* Step 6: Shopify Purchases */}
-          <div className="rounded-xl border border-emerald-900/70 bg-emerald-950/30 p-3 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-emerald-300 uppercase">6. Purchases</span>
-              <span className="text-[9px] text-emerald-400 font-bold font-mono">
-                {checkout > 0 ? `${((shopifyPurchases / checkout) * 100).toFixed(0)}% CR` : "—"}
-              </span>
-            </div>
-            <div className="text-xl font-bold text-emerald-400 font-mono">{shopifyPurchases}</div>
-            <div className="text-[10px] text-emerald-500/80 font-medium">Đơn thực Shopify</div>
-          </div>
+          {steps.map(step => <div key={step.label} className={`rounded-xl border p-3 space-y-1.5 ${step.color}`}>
+            <span className="text-[10px] font-bold uppercase">{step.label}</span>
+            <div className="text-xl font-bold font-mono">{step.value ?? missing}</div>
+            <div className="text-[10px] text-slate-400">{step.source}</div>
+          </div>)}
         </div>
-
-        {/* Funnel Alert if Click Drop is High */}
-        {isGa4Available && dropClickToSession !== null && Number(dropClickToSession) > 25 ? (
-          <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/60 text-xs text-amber-200 flex items-start gap-2.5">
-            <span className="text-base leading-none">⚠️</span>
-            <div>
-              <strong>Cảnh báo rơi rụng lưu lượng ({dropClickToSession}%):</strong> Khoảng cách lớn giữa Link Clicks Meta ({linkClicks}) và GA4 Sessions ({ga4Sessions}). Khuyến nghị kiểm tra tốc độ tải trang trên di động hoặc độ trễ khởi tạo Pixel/GTM.
-            </div>
-          </div>
-        ) : !isGa4Available ? (
-          <div className="p-3 rounded-xl bg-slate-800/40 border border-slate-700/60 text-xs text-slate-300 flex items-start gap-2.5">
-            <span className="text-base leading-none">ℹ️</span>
-            <div>
-              <strong>GA4 chưa liên kết cho store này:</strong> Hệ thống đối soát trực tiếp giữa Meta Ads và Shopify Settlement (đơn hàng, doanh thu thực tế, MER, Blended CPA). Khi bạn có GA4 Property riêng, hãy cập nhật cấu hình để kích hoạt thêm tầng đối soát rơi rụng link-click.
-            </div>
-          </div>
-        ) : null}
+        <div className="p-3 rounded-xl bg-slate-800/40 border border-slate-700/60 text-xs text-slate-300">
+          Múi giờ Meta: {summary?.timezone ?? missing}; GA4: {paid?.timezone ?? missing}. Không tính tỷ lệ hoàn tất hoặc rơi rụng xuyên nguồn khi chưa khớp phạm vi.
+        </div>
       </div>
-
-      {/* 2. 3-Way Reconciliation Comparison Matrix */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-4 shadow-lg">
         <div>
-          <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-            <span>⚖️</span> Ma trận Đối soát 3 bên (Meta vs GA4 vs Shopify)
-          </h3>
-          <p className="text-xs text-slate-400">
-            So sánh độc lập số liệu giữa các nền tảng để phát hiện thất thoát dữ liệu và tính toán chỉ số tài chính thực tế
-          </p>
+          <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2"><span>⚖️</span> Ma trận Đối soát 3 bên (Meta vs GA4 vs Shopify)</h3>
+          <p className="text-xs text-slate-400">Kỳ {reconciliation?.periodStart ?? summary?.periodStart ?? "—"} → {reconciliation?.periodEnd ?? summary?.periodEnd ?? "—"}. Mỗi nguồn có cách ghi nhận chuyển đổi riêng.</p>
         </div>
-
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-mono border-b border-slate-800">
-              <tr>
-                <th className="py-2.5 px-4">Chỉ số đối soát</th>
-                <th className="py-2.5 px-4">Meta Graph API v26.0</th>
-                <th className="py-2.5 px-4">Google Analytics 4</th>
-                <th className="py-2.5 px-4">Shopify Store (Chân lý)</th>
-                <th className="py-2.5 px-4">Độ chênh lệch & Phân tích</th>
-              </tr>
+              <tr>{["Chỉ số đối soát", "Meta Ads", "Google Analytics 4 · Meta trả phí", "Shopify Store", "Độ chênh lệch & Phân tích"].map(label => <th scope="col" key={label} className="py-2.5 px-4">{label}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-slate-800 font-mono text-xs">
-              <tr className="hover:bg-slate-850/40">
-                <td className="py-3 px-4 font-sans font-semibold text-slate-300">Chi phí Quảng cáo</td>
-                <td className="py-3 px-4 text-slate-100 font-bold">${summary?.spend || meta?.spend || "108.97"}</td>
-                <td className="py-3 px-4 text-slate-500">—</td>
-                <td className="py-3 px-4 text-slate-500">—</td>
-                <td className="py-3 px-4 text-slate-400 font-sans">Chi tiêu thực tế ghi nhận từ Meta</td>
-              </tr>
-              <tr className="hover:bg-slate-850/40">
-                <td className="py-3 px-4 font-sans font-semibold text-slate-300">Lưu lượng truy cập</td>
-                <td className="py-3 px-4 text-slate-200">{linkClicks} Link Clicks</td>
-                <td className="py-3 px-4 text-cyan-300 font-bold">
-                  {isGa4Available ? `${ga4Sessions} Sessions` : "Chưa liên kết"}
-                </td>
-                <td className="py-3 px-4 text-slate-500">—</td>
-                <td className="py-3 px-4 font-sans">
-                  {isGa4Available && ga4Sessions !== null ? (
-                    <span className="text-amber-300">Lệch {linkClicks - ga4Sessions} clicks (-{gaps?.clickDropPct || "0.0%"})</span>
-                  ) : (
-                    <span className="text-slate-400">Đang chờ liên kết GA4 để đối soát link click</span>
-                  )}
-                </td>
-              </tr>
-              <tr className="hover:bg-slate-850/40">
-                <td className="py-3 px-4 font-sans font-semibold text-slate-300">Số đơn chuyển đổi</td>
-                <td className="py-3 px-4 text-blue-300">{summary?.purchases || meta?.purchases || 2} Pixel Purchases</td>
-                <td className="py-3 px-4 text-cyan-300">
-                  {isGa4Available ? `${ga4?.ecommercePurchases ?? 0} GA4 Purchases` : "Chưa liên kết"}
-                </td>
-                <td className="py-3 px-4 text-emerald-400 font-bold">{shopify?.totalOrders ?? 10} Orders Thực</td>
-                <td className="py-3 px-4 text-emerald-300 font-sans">
-                  Lệch +{gaps?.purchaseDiscrepancy ?? 8} đơn so với Pixel (Attribution lag)
-                </td>
-              </tr>
-              <tr className="hover:bg-slate-850/40">
-                <td className="py-3 px-4 font-sans font-semibold text-slate-300">Doanh thu ghi nhận</td>
-                <td className="py-3 px-4 text-slate-200">${summary?.purchaseValue || meta?.purchaseValue || "106.70"}</td>
-                <td className="py-3 px-4 text-slate-200">
-                  {isGa4Available ? `$${ga4?.purchaseRevenue || "0.00"}` : "Chưa liên kết"}
-                </td>
-                <td className="py-3 px-4 text-emerald-400 font-bold">${shopify?.netSales || "533.50"}</td>
-                <td className="py-3 px-4 text-slate-300 font-sans">
-                  MER thực tế = <strong>{shopify?.mer || "4.90"}×</strong> (Lãi ròng)
-                </td>
-              </tr>
-              <tr className="hover:bg-slate-850/40">
-                <td className="py-3 px-4 font-sans font-semibold text-slate-300">Chi phí trên đơn (CPA)</td>
-                <td className="py-3 px-4 text-cyan-300">${summary?.cpa || meta?.cpa || "54.49"}</td>
-                <td className="py-3 px-4 text-slate-500">—</td>
-                <td className="py-3 px-4 text-indigo-300 font-bold">${shopify?.blendedCpa || "10.90"} Blended</td>
-                <td className="py-3 px-4 text-emerald-300 font-sans">
-                  Blended CPA thấp hơn Meta CPA nhờ chuyển đổi tự nhiên
-                </td>
-              </tr>
+              {rows.map(([label, metaValue, ga4Value, shopifyValue, analysis]) => <tr key={label} className="hover:bg-slate-800/40">
+                <th scope="row" className="py-3 px-4 font-sans font-semibold text-slate-300">{label}</th>
+                <td className="py-3 px-4 text-blue-300">{metaValue}</td>
+                <td className="py-3 px-4 text-cyan-300">{ga4Value}</td>
+                <td className="py-3 px-4 text-emerald-300">{shopifyValue}</td>
+                <td className="py-3 px-4 font-sans text-slate-300">{analysis}</td>
+              </tr>)}
             </tbody>
           </table>
         </div>
+        <p className="text-xs text-slate-400">GA4 mọi nguồn: {reconciliation?.ga4.sessions ?? missing} sessions. Nguồn Meta chưa xác minh trả phí: {paid?.unverifiedMetaSessions ?? missing} sessions (giữ riêng).</p>
+        {paid?.warnings.map(warning => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
+        {shopify && <p className="text-xs text-slate-400">Shopify: {shopify.source}</p>}
+        <ul className="list-disc space-y-1 pl-4 text-xs text-slate-400">{reconciliation?.gaps.notes.map(note => <li key={note}>{note}</li>)}</ul>
       </div>
     </div>
   );

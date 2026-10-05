@@ -517,6 +517,7 @@ export interface AdsReconciliationReport {
     readonly ecommercePurchases: number;
     readonly purchaseRevenue: number;
     readonly clickToSessionDropPct: string | null;
+    readonly metaPaid?: Ga4MetaPaidSummary;
   };
   readonly shopify: {
     readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
@@ -815,3 +816,15 @@ export interface AdsExperiment {
 }
 
 
+
+export interface Ga4MetaPaidSummary {
+  readonly status: "AVAILABLE" | "ERROR";
+  readonly sessions: number | null;
+  readonly ecommercePurchases: number | null;
+  readonly purchaseRevenue: number | null;
+  readonly unverifiedMetaSessions: number | null;
+  readonly timezone: string | null;
+  readonly currency: string | null;
+  readonly warnings: readonly string[];
+  readonly scope: string;
+}

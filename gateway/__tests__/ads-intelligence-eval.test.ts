@@ -1,3 +1,4 @@
+import "./ads-test-sources";
 /**
  * FFP Ads Intelligence — Comprehensive Automated QA & Evaluation Suite (Step 19 · FFP-ADS-019)
  *

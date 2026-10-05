@@ -1,3 +1,20 @@
+export interface AdsGatewayStore {
+  readonly storeId: string;
+  readonly shopDomain: string;
+  readonly hasProxy: boolean;
+}
+export interface AdsShopifySummary {
+  readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
+  readonly totalOrders: number;
+  readonly grossSales: string;
+  readonly totalRefunds: string;
+  readonly netSales: string;
+  readonly averageOrderValue: string;
+  readonly currency: string;
+  readonly source: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+}
 export interface AdsStoreSummary {
   readonly storeId: string;
   readonly accountId: string;
@@ -129,6 +146,7 @@ export interface AdsReconciliationReport {
     readonly ecommercePurchases: number;
     readonly purchaseRevenue: number;
     readonly clickToSessionDropPct: string | null;
+    readonly metaPaid?: Ga4MetaPaidSummary;
   };
   readonly shopify: {
     readonly status: "CONNECTED" | "NOT_CONFIGURED" | "ESTIMATED";
@@ -499,6 +517,9 @@ export interface GuardedWriteExecutionResult {
 export type ExperimentOutcomeVerdict = "WIN" | "LOSS" | "INCONCLUSIVE";
 
 export interface AdsIntelligenceClient {
+  readonly dataMode?: "mock" | "live";
+  getStores?(): Promise<readonly AdsGatewayStore[]>;
+  getShopifySummary?(storeId: string): Promise<AdsShopifySummary>;
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
   getDataHealth(storeId?: string): Promise<AdsDataHealth>;
@@ -521,3 +542,15 @@ export interface AdsIntelligenceClient {
 
 
 
+
+export interface Ga4MetaPaidSummary {
+  readonly status: "AVAILABLE" | "ERROR";
+  readonly sessions: number | null;
+  readonly ecommercePurchases: number | null;
+  readonly purchaseRevenue: number | null;
+  readonly unverifiedMetaSessions: number | null;
+  readonly timezone: string | null;
+  readonly currency: string | null;
+  readonly warnings: readonly string[];
+  readonly scope: string;
+}

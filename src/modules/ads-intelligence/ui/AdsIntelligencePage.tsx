@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type {
+  AdsGatewayStore,
+  AdsShopifySummary,
   AdsIntelligenceClient,
   AdsStoreSummary,
   AdsHierarchyCampaign,
@@ -39,9 +41,37 @@ import { SystemHealthTab } from "./tabs/SystemHealthTab";
 export type AdsTabId = "decisions" | "hierarchy" | "funnel" | "competitors" | "experiments" | "health";
 
 export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligenceClient }): React.JSX.Element {
-  const [params, setParams] = useSearchParams();
-  const currentStoreId = params.get("storeId") || readActiveStoreId(typeof window !== "undefined" ? window.localStorage : undefined) || "chillgen";
+  const [params] = useSearchParams();
+  const [stores, setStores] = useState<readonly AdsGatewayStore[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const available = client.getStores ? await client.getStores() : [];
+        if (active) { setStores(available); setError(null); }
+      } catch { if (active) setError("Không tải được danh sách store từ Gateway. Kiểm tra kết nối Gateway."); }
+      finally { if (active) setLoaded(true); }
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 30000);
+    return () => { active = false; window.removeEventListener("focus", refresh); window.clearInterval(timer); };
+  }, [client]);
+  if (error) return <p role="alert" className="p-6 text-amber-300">{error}</p>;
+  if (!loaded) return <p role="status" className="p-6">Đang đọc danh sách store từ Gateway…</p>;
+  if (!stores.length) return <p className="p-6">Chưa có store trong Gateway. Thêm kết nối Shopify tại màn hình quản lý Store.</p>;
+  const requested = params.get("storeId") || readActiveStoreId(typeof window !== "undefined" ? window.localStorage : undefined);
+  const selected = stores.find(store => store.storeId === requested) ?? stores[0];
+  if (!selected) return <p>Chưa chọn store.</p>;
+  return <AdsIntelligenceStorePage key={selected.storeId + selected.shopDomain} client={client} currentStoreId={selected.storeId} stores={stores} />;
+}
 
+function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly client: AdsIntelligenceClient; readonly currentStoreId: string; readonly stores: readonly AdsGatewayStore[] }): React.JSX.Element {
+  const [, setParams] = useSearchParams();
+  const generation = useRef(0);
+  const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<AdsTabId>("decisions");
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -49,6 +79,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [actionNotification, setActionNotification] = useState<string | null>(null);
 
   // Core Data States
+  const [shopifySummary, setShopifySummary] = useState<AdsShopifySummary | null>(null);
   const [summary, setSummary] = useState<AdsStoreSummary | null>(null);
   const [campaigns, setCampaigns] = useState<readonly AdsHierarchyCampaign[]>([]);
   const [health, setHealth] = useState<AdsDataHealth | null>(null);
@@ -77,37 +108,38 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
   // Fetch all store data
   const loadData = async (storeId: string) => {
+    const requestId = ++generation.current;
     setLoading(true);
-    try {
-      const [sum, camp, hlth, recon, decs, ai, compRep, brfs, exps] = await Promise.all([
-        client.getStoreSummary(storeId),
-        client.getCampaignHierarchy(storeId),
-        client.getDataHealth(storeId),
-        client.getReconciliationReport ? client.getReconciliationReport(storeId) : Promise.resolve(null),
-        client.getDecisionCards ? client.getDecisionCards(storeId) : Promise.resolve([]),
-        client.getAiStrategicReport ? client.getAiStrategicReport(storeId) : Promise.resolve(null),
-        client.getCompetitorIntelligence ? client.getCompetitorIntelligence(storeId) : Promise.resolve(null),
-        client.getBriefs ? client.getBriefs(storeId) : Promise.resolve([]),
-        client.getExperiments ? client.getExperiments(storeId) : Promise.resolve([]),
-      ]);
-      setSummary(sum);
-      setCampaigns(camp);
-      setHealth(hlth);
-      setReconciliation(recon);
-      setDecisions(decs || []);
-      setAiReport(ai);
-      setCompetitorReport(compRep);
-      setBriefs(brfs || []);
-      setExperiments(exps || []);
-    } catch {
-      // Fallback handlers handled in client
-    } finally {
-      setLoading(false);
+    setSourceErrors({});
+    setShopifySummary(null);
+    setSummary(null); setCampaigns([]); setHealth(null); setReconciliation(null);
+    setDecisions([]); setAiReport(null); setCompetitorReport(null); setBriefs([]); setExperiments([]);
+    async function loadSource<T>(name: string, task: () => Promise<T>, update: (value: T) => void): Promise<void> {
+      try {
+        const value = await task();
+        if (generation.current === requestId) update(value);
+      } catch (error) {
+        if (generation.current === requestId) setSourceErrors(previous => ({ ...previous, [name]: error instanceof Error ? error.message : "Không lấy được dữ liệu." }));
+      }
     }
+    await Promise.all([
+      loadSource("Shopify", () => client.getShopifySummary ? client.getShopifySummary(storeId) : Promise.resolve(null), setShopifySummary),
+      loadSource("Meta", () => client.getStoreSummary(storeId), setSummary),
+      loadSource("Chiến dịch", () => client.getCampaignHierarchy(storeId), setCampaigns),
+      loadSource("Kết nối", () => client.getDataHealth(storeId), setHealth),
+      loadSource("Đối soát", () => client.getReconciliationReport ? client.getReconciliationReport(storeId) : Promise.resolve(null), setReconciliation),
+      loadSource("Quyết định", () => client.getDecisionCards ? client.getDecisionCards(storeId) : Promise.resolve([]), setDecisions),
+      loadSource("AI", () => client.getAiStrategicReport ? client.getAiStrategicReport(storeId) : Promise.resolve(null), setAiReport),
+      loadSource("Đối thủ", () => client.getCompetitorIntelligence ? client.getCompetitorIntelligence(storeId) : Promise.resolve(null), setCompetitorReport),
+      loadSource("Briefs", () => client.getBriefs ? client.getBriefs(storeId) : Promise.resolve([]), setBriefs),
+      loadSource("Thử nghiệm", () => client.getExperiments ? client.getExperiments(storeId) : Promise.resolve([]), setExperiments),
+    ]);
+    if (generation.current === requestId) setLoading(false);
   };
 
   useEffect(() => {
     void loadData(currentStoreId);
+    return () => { generation.current++; };
   }, [currentStoreId]);
 
   // Actions
@@ -119,6 +151,9 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
         const res = await client.syncNow(currentStoreId);
         setSyncMessage(res.message || "Đã đồng bộ dữ liệu mới nhất!");
       }
+      await loadData(currentStoreId);
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : "Đồng bộ thất bại.");
       await loadData(currentStoreId);
     } finally {
       setSyncing(false);
@@ -133,6 +168,8 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       const res = await client.getAiStrategicReport(currentStoreId, true);
       setAiReport(res);
       setActionNotification("✨ Đã cập nhật Báo cáo Chiến lược AI mới nhất!");
+    } catch {
+      setActionNotification("Không thể phân tích AI: cần dữ liệu đã xác minh từ các nguồn.");
     } finally {
       setAiAnalyzing(false);
     }
@@ -238,29 +275,16 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
     setSavingOutcome(true);
     try {
       const updated = await client.updateExperimentOutcome(outcomeExperiment.id, {
-        status: "COMPLETED",
-        results: {
-          controlSpend: outcomeExperiment.limits.budgetCapUsd / 2,
-          variantSpend: outcomeExperiment.limits.budgetCapUsd / 2,
-          controlOutcomes: 5,
-          variantOutcomes: 8,
-          controlMetricValue: 50.0,
-          variantMetricValue: 35.0,
-          deltaPercent: deltaPct,
-          confidence: "HIGH",
-          confoundersNoted: [],
-          reviewer: "Media Buyer",
-        },
         learning: {
           verdict,
           conclusion: learningNotes,
           scope: "CREATIVE_HOOK",
-          nextRecommendedTest: "Scale winning creative to evergreen campaigns",
+          nextRecommendedTest: "Cần xác minh số liệu trước khi đề xuất thử nghiệm tiếp theo.",
         },
       });
       setExperiments((prev) => prev.map((e) => (e.id === outcomeExperiment.id ? updated : e)));
       setOutcomeExperiment(null);
-      setActionNotification(`🏆 Đã ghi nhận kết quả ${verdict} cho thử nghiệm!`);
+      setActionNotification(`Đã lưu nhận xét ${verdict}; chưa ghi nhận số liệu đo lường.`);
     } finally {
       setSavingOutcome(false);
     }
@@ -268,8 +292,10 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
 
   return (
     <div className="flex-1 bg-slate-950 p-4 sm:p-6 lg:p-8 text-slate-100 max-w-7xl mx-auto w-full space-y-5">
+      {client.dataMode === "mock" && <p role="status" className="rounded border border-amber-600 p-3 text-amber-200">Chế độ dữ liệu mẫu — không phải số liệu kinh doanh thực.</p>}
       {/* 1. Header Command Bar */}
       <AdsHeader
+        stores={stores}
         currentStoreId={currentStoreId}
         onStoreChange={handleStoreChange}
         summary={summary}
@@ -295,17 +321,29 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
         </div>
       )}
 
+      {Object.keys(sourceErrors).length > 0 && (
+        <div role="alert" className="rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-200">
+          <p>Store {currentStoreId}: một số nguồn chưa có dữ liệu xác minh. Không dùng dữ liệu mẫu thay thế.</p>
+          <ul className="mt-2 space-y-1">{Object.entries(sourceErrors).map(([source, message]) => <li key={source}>{source}: {message}</li>)}</ul>
+        </div>
+      )}
+      {loading && <p role="status" className="text-xs text-slate-400">Đang tải từng nguồn dữ liệu…</p>}
+      {summary && <p className="text-xs text-slate-400">Kỳ Meta: {summary.periodStart} → {summary.periodEnd} · {summary.timezone} · {summary.currency}</p>}
+      {summary?.warnings.map(warning => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
+      {reconciliation && <p className="text-xs text-slate-400">{reconciliation.shopify.source}</p>}
       {/* 2. Unified Executive KPI Ribbon (3 Clusters) */}
-      <ExecutiveKpiRibbon summary={summary} reconciliation={reconciliation} />
+      {!reconciliation && shopifySummary && <p className="text-xs text-slate-400">Shopify độc lập (chưa đối soát): {shopifySummary.source}</p>}
+      {(reconciliation?.shopify.totalOrders ?? shopifySummary?.totalOrders) === 0 && <p className="text-xs text-amber-300">Không có đơn Shopify đủ điều kiện trong kỳ đang hiển thị. Số 0 không có nghĩa store chưa từng có đơn.</p>}
+      <ExecutiveKpiRibbon summary={summary} reconciliation={reconciliation} shopifySummary={shopifySummary} />
 
       {/* 3. Streamlined Tabs Navigation */}
       <div className="flex border-b border-slate-800 gap-2 overflow-x-auto whitespace-nowrap">
         {[
-          { id: "decisions", label: "🎯 Quyết định & AI", badge: decisions.length },
-          { id: "hierarchy", label: "📊 Chiến dịch & Ads", badge: campaigns.length },
+          { id: "decisions", label: "🎯 Gợi ý theo quy tắc & AI", badge: loading || sourceErrors["Quyết định"] ? null : decisions.length },
+          { id: "hierarchy", label: "📊 Chiến dịch & Ads", badge: loading || sourceErrors["Chiến dịch"] ? null : campaigns.length },
           { id: "funnel", label: "🔄 Phễu & Đối soát", badge: null },
-          { id: "competitors", label: "🕵️ Spy Đối thủ", badge: competitorReport?.activeAds || null },
-          { id: "experiments", label: "🧪 Briefs & Thử nghiệm", badge: briefs.length },
+          { id: "competitors", label: "🕵️ Spy Đối thủ", badge: competitorReport?.activeAds ?? null },
+          { id: "experiments", label: "🧪 Briefs & Thử nghiệm", badge: loading || sourceErrors["Briefs"] ? null : briefs.length },
           { id: "health", label: "🛡️ Kết nối & Hệ thống", badge: null },
         ].map((tab) => (
           <button
@@ -329,12 +367,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       </div>
 
       {/* 4. Active Tab Content Rendering */}
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 space-y-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
-          <div className="text-xs text-slate-400 font-medium">Đang tải dữ liệu Ads Intelligence...</div>
-        </div>
-      ) : (
+      {
         <div>
           {activeTab === "decisions" && (
             <DecisionsTab
@@ -343,7 +376,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
               aiAnalyzing={aiAnalyzing}
               onRunAiAnalysis={handleAiAnalyze}
               onSelectCard={(card) => setSelectedDrawerCard(card)}
-              onTriggerGuardedWrite={handleTriggerGuardedWrite}
+              onTriggerGuardedWrite={undefined}
               onCreateBrief={handleCreateBriefFromDecision}
             />
           )}
@@ -366,15 +399,15 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
               onApproveBrief={handleApproveBrief}
               onCreateExperiment={handleCreateExperimentFromBrief}
               onCopyMarkdown={handleCopyBriefMarkdown}
-              onOpenOutcomeModal={(exp) => setOutcomeExperiment(exp)}
+              onOpenOutcomeModal={() => setActionNotification("Nhập kết quả đo lường chưa khả dụng; hệ thống không tự điền số thử nghiệm.")}
             />
           )}
 
           {activeTab === "health" && (
-            <SystemHealthTab health={health} summary={summary} onSync={handleSync} />
+            <SystemHealthTab health={health} shopifySummary={shopifySummary} onSync={() => { void loadData(currentStoreId); }} />
           )}
         </div>
-      )}
+      }
 
       {/* 5. Modals & Slide-over Drawer */}
       <DecisionDrawer

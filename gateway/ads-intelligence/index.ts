@@ -23,3 +23,5 @@ export * from "./mcp-handler";
 export * from "./openapi-spec";
 export * from "./http-handler";
 export * from "./guarded-writes";
+
+export { configureAdsGateway } from "./gateway-connection";

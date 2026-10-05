@@ -1,3 +1,5 @@
+import { listAdsGatewayStores } from "./gateway-connection";
+import { ShopifyOrdersClient } from "./shopify-client";
 /**
  * FFP Ads Intelligence — Gateway HTTP Request Handler
  * Handles `/api/ads-intelligence/*` endpoints for React client and MCP tools.
@@ -66,6 +68,14 @@ export async function handleAdsIntelligenceHttpRequest(
   const forceRefresh = parsedUrl.searchParams.get("refresh") === "true";
 
   try {
+    if (pathname === "/api/ads-intelligence/stores" && req.method === "GET") {
+      sendJson(res, 200, await listAdsGatewayStores());
+      return true;
+    }
+    if (pathname === "/api/ads-intelligence/shopify" && req.method === "GET") {
+      sendJson(res, 200, await new ShopifyOrdersClient().getOrderSummary(storeId));
+      return true;
+    }
     if ((pathname === "/api/ads-intelligence/openapi.json" || pathname === "/api/ads-intelligence/openapi") && req.method === "GET") {
       const host = req.headers.host || "localhost:3001";
       const protocol = req.headers["x-forwarded-proto"] || "http";
@@ -86,7 +96,7 @@ export async function handleAdsIntelligenceHttpRequest(
           mcpStreamableHttp: "/mcp/ads",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 30,
+        toolsCount: 32,
       });
       return true;
     }
@@ -426,10 +436,10 @@ export async function handleAdsIntelligenceHttpRequest(
     });
     return true;
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal Server Error";
-    console.error("[Ads Intelligence] Request handler error:", error);
-    sendJson(res, 500, {
-      error: { code: "ADS_INTELLIGENCE_ERROR", message },
+    const rawCode = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : error instanceof Error ? error.message : "ADS_SOURCE_UNAVAILABLE";
+    const code = rawCode.startsWith("Không tìm thấy file cấu hình Store Ads Profile") ? "ADS_PROFILE_NOT_CONFIGURED" : /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "ADS_SOURCE_UNAVAILABLE";
+    sendJson(res, 503, {
+      error: { code, message: "Không lấy được dữ liệu nguồn của store. Kiểm tra kết nối và quyền truy cập." },
     });
     return true;
   }

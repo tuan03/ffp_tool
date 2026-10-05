@@ -592,7 +592,7 @@ export class DefaultCompetitorClient implements CompetitorClient {
     if (this.scrapeCreatorsKey && this.scrapeCreatorsKey.trim().length > 0) {
       try {
         const liveResult = await this.fetchScrapeCreators(pageId, options, cursor);
-        if (liveResult && liveResult.ads.length > 0) {
+        if (liveResult) {
           return liveResult;
         }
       } catch (error) {
@@ -604,7 +604,7 @@ export class DefaultCompetitorClient implements CompetitorClient {
     if (this.searchApiKey && this.searchApiKey.trim().length > 0) {
       try {
         const searchApiResult = await this.fetchSearchApi(pageId, options, cursor);
-        if (searchApiResult && searchApiResult.ads.length > 0) {
+        if (searchApiResult) {
           return searchApiResult;
         }
       } catch (error) {
@@ -612,18 +612,9 @@ export class DefaultCompetitorClient implements CompetitorClient {
       }
     }
 
-    // 3. Resilient Calibrated Fallback (Benchmark Data)
-    const ads = generateCalibratedAdsForPage(pageId, limit);
-    const pageName = PAGE_REGISTRY[pageId]?.name ?? `Competitor ${pageId}`;
-
-    return {
-      pageId,
-      pageName,
-      ads,
-      totalHarvested: ads.length,
-      provider: "calibrated_benchmark",
-      usageCostEstimatedUsd: 0.0003 * ads.length,
-    };
+    throw new Error(this.scrapeCreatorsKey?.trim() || this.searchApiKey?.trim()
+      ? "COMPETITOR_SOURCE_UNAVAILABLE"
+      : "COMPETITOR_NOT_CONFIGURED");
   }
 
   async getAdDetails(archiveAdId: string): Promise<CompetitorAd | null> {

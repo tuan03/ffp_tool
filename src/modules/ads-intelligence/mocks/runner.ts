@@ -3,6 +3,8 @@ import { mockCampaignHierarchy, mockChillgenSummary, mockCompetitorAds, mockData
 
 export function createMockAdsIntelligenceClient(): AdsIntelligenceClient {
   return {
+    dataMode: "mock",
+    async getStores() { return [{ storeId: "chillgen", shopDomain: "demo.myshopify.com", hasProxy: false }]; },
     async getStoreSummary(storeId = "chillgen") {
       return { ...mockChillgenSummary, storeId };
     },
