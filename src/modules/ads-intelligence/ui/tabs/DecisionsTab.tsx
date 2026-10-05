@@ -3,10 +3,10 @@ import type { DecisionCard, AiStrategicReport, LocalAiRunnerInfo } from "../../t
 
 export interface DecisionsTabProps {
   readonly decisions: readonly DecisionCard[];
-  readonly aiReport: AiStrategicReport | null;
-  readonly aiAnalyzing: boolean;
+  readonly aiReport?: AiStrategicReport | null;
+  readonly aiAnalyzing?: boolean;
   readonly localAiRunners?: readonly LocalAiRunnerInfo[];
-  readonly onRunAiAnalysis: (runner?: "codex" | "agy", model?: string) => void;
+  readonly onRunAiAnalysis?: (runner?: "codex" | "agy", model?: string) => void;
   readonly onSelectCard: (card: DecisionCard) => void;
   readonly onTriggerGuardedWrite?: (card: DecisionCard) => void;
   readonly onCreateBrief?: (decisionId: string) => void;
@@ -14,10 +14,6 @@ export interface DecisionsTabProps {
 
 export function DecisionsTab({
   decisions,
-  aiReport,
-  aiAnalyzing,
-  localAiRunners,
-  onRunAiAnalysis,
   onSelectCard,
   onTriggerGuardedWrite,
   onCreateBrief,
@@ -41,107 +37,8 @@ export function DecisionsTab({
   const countWait = decisions.filter((c) => c.decision === "WAIT").length;
 
   return (
-    <div className="space-y-5">
-      {/* 1. AI Strategic Executive Report Card */}
-      <div className="rounded-2xl border border-indigo-900/50 bg-gradient-to-br from-indigo-950/30 via-slate-900 to-slate-900 p-4 sm:p-5 space-y-3.5 shadow-lg">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-900/40 pb-3">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 text-lg">
-              ✨
-            </span>
-            <div>
-              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                Chẩn đoán Sức khỏe &amp; Quyết định Tăng trưởng
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-950 text-cyan-300 border border-indigo-800 font-mono">
-                  Financial Heuristics
-                </span>
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                Phân tích đối soát Meta Ads, Shopify &amp; GA4 bằng bộ quy tắc tài chính Senior Media Buyer (0đ phí AI)
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => onRunAiAnalysis()}
-            disabled={aiAnalyzing}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 bg-indigo-950/60 text-indigo-200 hover:bg-indigo-900/60 text-xs font-semibold transition cursor-pointer self-start sm:self-auto"
-          >
-            <span className={aiAnalyzing ? "inline-block animate-spin" : ""}>⚡</span>
-            <span>
-              {aiAnalyzing
-                ? "Đang tính toán lại..."
-                : "⚡ Cập nhật chẩn đoán"}
-            </span>
-          </button>
-        </div>
-
-        {/* Financial Heuristics Info Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 p-3 rounded-xl border border-indigo-900/30 text-xs">
-          <div className="flex items-center gap-2 text-slate-300">
-            <span className="text-emerald-400 font-bold">● Heuristics Engine:</span>
-            <span>Tự động đối soát chi tiêu thực, doanh thu ròng, MER và ngưỡng hòa vốn</span>
-          </div>
-
-          <div className="flex items-center gap-2 text-slate-400 text-[11px]">
-            <span>Độ sâu phân tích:</span>
-            <span className="px-2 py-0.5 rounded bg-indigo-950/80 text-cyan-300 font-mono font-bold border border-indigo-800">
-              CPA • ROAS • MER • GA4 Drop
-            </span>
-          </div>
-        </div>
-
-        {aiReport ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Trạng thái tổng quan
-              </span>
-              <div className="flex items-center gap-2">
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-bold border ${
-                    aiReport.executiveSummary.overallHealth === "HEALTHY"
-                      ? "bg-emerald-950 text-emerald-300 border-emerald-800"
-                      : aiReport.executiveSummary.overallHealth === "CRITICAL"
-                      ? "bg-rose-950 text-rose-300 border-rose-800"
-                      : "bg-amber-950 text-amber-300 border-amber-800"
-                  }`}
-                >
-                  {aiReport.executiveSummary.overallHealth}
-                </span>
-                <span className="text-xs text-slate-300">
-                  {aiReport.executiveSummary.totalDecisionsCount} khuyến nghị hành động
-                </span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Đánh giá MER (Hiệu quả chi phí)
-              </span>
-              <div className="text-xs font-semibold text-cyan-300">
-                {aiReport.executiveSummary.merVerdict}
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Chẩn đoán Lợi nhuận
-              </span>
-              <div className="text-xs text-slate-200">
-                {aiReport.executiveSummary.profitLossDiagnosis}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="text-xs text-slate-400 py-2 flex items-center justify-between">
-            <span>Chưa có bản chẩn đoán AI gần đây cho store này. Bấm nút <strong>"Chạy phân tích AI ngay"</strong> để bắt đầu.</span>
-          </div>
-        )}
-      </div>
-
-      {/* 2. Quick Filter Pills */}
+    <div className="space-y-4">
+      {/* 1. Quick Filter Pills */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div className="flex flex-wrap items-center gap-2">
           {[
