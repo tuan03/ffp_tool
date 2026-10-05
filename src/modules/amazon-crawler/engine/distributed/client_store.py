@@ -479,7 +479,7 @@ class ClientStore:
         except (TypeError, ValueError):
             raise ValueError("Invalid command sequence.") from None
         if not command_id or command_type not in {
-            "PAUSE", "RESUME", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
+            "PAUSE", "RESUME", "RELOAD_CONFIG", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
             "RESTART_WORKERS", "RESTART_AGENT",
         }:
             raise ValueError("Unsupported or malformed server command.")
@@ -560,6 +560,33 @@ class ClientStore:
         with self._connection() as connection:
             row = connection.execute("SELECT status FROM agent_commands WHERE command_id=?", (command_id,)).fetchone()
         return str(row["status"]) if row else None
+
+    def agent_runtime_config(self) -> tuple[int, dict[str, Any] | None]:
+        with self._connection() as connection:
+            rows = dict(connection.execute(
+                "SELECT key,value FROM agent_state WHERE key IN ('agent_runtime_config_version','agent_runtime_config')"
+            ).fetchall())
+        try:
+            version = max(0, int(rows.get("agent_runtime_config_version", "0")))
+            value = json.loads(rows["agent_runtime_config"]) if "agent_runtime_config" in rows else None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise ValueError("Stored agent runtime configuration is corrupt.") from None
+        if value is not None and not isinstance(value, dict):
+            raise ValueError("Stored agent runtime configuration is corrupt.")
+        return version, value
+
+    def save_agent_runtime_config(self, version: int, config: dict[str, Any]) -> None:
+        if version < 1:
+            raise ValueError("Agent config version must be positive.")
+        encoded = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = int(self._read_agent_state(connection, "agent_runtime_config_version", 0))
+            if version < current:
+                raise ValueError("Agent config version cannot move backwards.")
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('agent_runtime_config',?)", (encoded,))
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('agent_runtime_config_version',?)", (str(version),))
+            connection.commit()
 
     def server_command_history(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connection() as connection:

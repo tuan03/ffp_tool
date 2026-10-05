@@ -75,6 +75,31 @@ class AgentCommandLedgerTests(unittest.TestCase):
             self.assertEqual(agent.desired_execution_state, "RUNNING")
             self.assertEqual(agent.applied_execution_state, "RUNNING")
 
+    def test_reload_config_versions_are_idempotent_and_last_known_good_only_moves_on_ack(self) -> None:
+        from engine.distributed.agent_runtime_config import AgentRuntimeConfig
+
+        config = AgentRuntimeConfig.from_payload({"maxConcurrentInputs": 3}).to_payload()
+        command = self.ledger.submit_config("agent-1", uuid.uuid4().hex, 300, AgentRuntimeConfig.from_payload(config))
+        replay = self.ledger.submit_config("agent-1", command["requestId"], 300, AgentRuntimeConfig.from_payload(config))
+        self.assertEqual(command["commandId"], replay["commandId"])
+        self.assertEqual(command["payload"]["configVersion"], 1)
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, "agent-1")
+            self.assertEqual(agent.desired_config_version, 1)
+            self.assertEqual(agent.applied_config_version, 0)
+            self.assertEqual(agent.applied_agent_config, {})
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1, "status": status})
+        with self.assertRaises(Exception):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
+                "status": "SUCCESS", "result": {"appliedConfigVersion": 2}})
+        self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
+            "status": "SUCCESS", "result": {"appliedConfigVersion": 1}})
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, "agent-1")
+            self.assertEqual(agent.applied_config_version, 1)
+            self.assertEqual(agent.applied_agent_config, config)
+
 
 class AgentCommandInboxTests(unittest.TestCase):
     def test_receipt_state_and_sequence_survive_restart_and_duplicates_are_safe(self) -> None:
@@ -104,6 +129,24 @@ class AgentCommandInboxTests(unittest.TestCase):
             self.assertEqual(receipt, {"decision": "gap", "expectedSequence": 1})
             self.assertEqual(store.last_processed_command_sequence(), 0)
 
+    def test_agent_runtime_config_and_version_persist_atomically(self) -> None:
+        from engine.distributed.agent_runtime_config import AgentRuntimeConfig
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "agent.sqlite3"
+            store = ClientStore(path)
+            config = AgentRuntimeConfig.from_payload({"maxConcurrentInputs": 5}).to_payload()
+            store.save_agent_runtime_config(3, config)
+            restarted = ClientStore(path)
+            self.assertEqual(restarted.agent_runtime_config(), (3, {
+                "maxConcurrentInputs": 5, "heartbeatIntervalSeconds": 10,
+                "clientOfflineAfterSeconds": 30, "leaseSeconds": 60,
+                "limits": {"productThreads": 4, "variantThreads": 8, "urllibThreads": 12,
+                    "browserProfiles": 4, "browserTabs": 2, "headless": False},
+            }))
+            with self.assertRaises(ValueError):
+                restarted.save_agent_runtime_config(2, config)
+
     def test_operator_pause_does_not_clear_local_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ClientStore(Path(directory) / "agent.sqlite3")
@@ -113,6 +156,38 @@ class AgentCommandInboxTests(unittest.TestCase):
 
 
 class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reload_config_applies_and_persists_only_valid_increasing_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="fixture", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=root / "agent"))
+            config = {"maxConcurrentInputs": 3, "heartbeatIntervalSeconds": 10,
+                "clientOfflineAfterSeconds": 30, "leaseSeconds": 60,
+                "limits": {"productThreads": 4, "variantThreads": 8, "urllibThreads": 12,
+                    "browserProfiles": 4, "browserTabs": 2, "headless": False}}
+            command = {"commandId": "config-1", "sequence": 1, "type": "RELOAD_CONFIG",
+                "payload": {"configVersion": 1, "config": config}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1})
+            self.assertEqual(agent._agent_config_version, 1)
+            self.assertEqual(agent._agent_runtime_config.maxConcurrentInputs, 3)
+            self.assertEqual(agent._available_slots(), 0)
+            self.assertEqual(ClientStore(root / "agent" / "agent.sqlite3").agent_runtime_config()[0], 1)
+            self.assertEqual(agent.store.server_command_status("config-1"), "SUCCESS")
+            update = agent.outbound_queue.get_nowait()
+            self.assertEqual(update["status"], "ACKED")
+            self.assertEqual(agent.outbound_queue.get_nowait()["status"], "RUNNING")
+            success = agent.outbound_queue.get_nowait()
+            self.assertEqual(success["result"], {"appliedConfigVersion": 1})
+
+            invalid = {**command, "commandId": "config-2", "sequence": 2,
+                "payload": {"configVersion": 2, "config": {**config, "leaseSeconds": 40}}}
+            await agent._process_command_batch({"commands": [invalid], "latestCommandSequence": 2})
+            self.assertEqual(agent._agent_config_version, 1)
+            self.assertEqual(agent._agent_runtime_config.maxConcurrentInputs, 3)
+            self.assertEqual(agent.store.server_command_status("config-2"), "FAILED")
+
     async def test_restart_workers_resets_only_worker_health_after_idle_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -543,6 +618,68 @@ class AgentCommandWebSocketTests(unittest.TestCase):
             self.assertEqual(history.json()["commands"][0]["status"], "SUCCESS")
             self.assertEqual(len(history.json()["commands"][0]["events"]), 5)
             self.assertEqual(client.get("/api/v1/clients", auth=auth).json()[0]["appliedExecutionState"], "PAUSED")
+
+    def test_reload_config_is_validated_persisted_and_acknowledged_by_version(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'config.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"), agent_environment="test")
+            client = stack.enter_context(TestClient(app))
+            auth = ("operator", "fixture")
+            key_response = client.post("/api/v1/agent-keys", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "name": "config fixture", "maxWorkers": 1,
+                "crawlers": ["amazon"], "environment": "test",
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+            })
+            key = key_response.json()["key"]
+            agent_id = client.post("/api/v1/worker/register", headers={"Authorization": "Bearer " + key},
+                json={"requestId": uuid.uuid4().hex, "displayName": "config fixture"}).json()["agentId"]
+            invalid = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "RELOAD_CONFIG",
+                "config": {"heartbeatIntervalSeconds": 20, "clientOfflineAfterSeconds": 30, "leaseSeconds": 60},
+            })
+            self.assertEqual(invalid.status_code, 422, invalid.text)
+            self.assertEqual(app.state.store.list_clients()[0]["desiredConfigVersion"], 0)
+
+            config = {"maxConcurrentInputs": 3, "heartbeatIntervalSeconds": 10,
+                "clientOfflineAfterSeconds": 30, "leaseSeconds": 90,
+                "limits": {"productThreads": 4, "variantThreads": 8, "urllibThreads": 12,
+                    "browserProfiles": 4, "browserTabs": 2, "headless": False}}
+            response = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "RELOAD_CONFIG", "config": config,
+            })
+            self.assertEqual(response.status_code, 202, response.text)
+            command = response.json()
+            self.assertEqual(command["payload"]["configVersion"], 1)
+
+            with client.websocket_connect("/api/v1/worker/connect", headers={"Authorization": "Bearer " + key}) as socket:
+                socket.send_json({"type": "hello", "protocolVersion": "5", "authProtocol": 1,
+                    "clientId": agent_id, "displayName": "config fixture", "maxConcurrentInputs": 1,
+                    "availableSlots": 1, "lastProcessedCommandSequence": 0,
+                    "capabilities": {"mediaGalleryV2": True, "amazon": True}})
+                acknowledgement = socket.receive_json()
+                self.assertEqual(acknowledgement["heartbeatIntervalSeconds"], 10)
+                self.assertEqual(acknowledgement["leaseSeconds"], 60)
+                self.assertEqual(acknowledgement["desiredConfigVersion"], 1)
+                self.assertEqual(acknowledgement["appliedConfigVersion"], 0)
+                self.assertEqual(acknowledgement["commands"][0]["commandId"], command["commandId"])
+                for status in ("ACKED", "RUNNING", "SUCCESS"):
+                    socket.send_json({"type": "command_update", "commandId": command["commandId"],
+                        "sequence": 1, "status": status,
+                        **({"result": {"appliedConfigVersion": 1}} if status == "SUCCESS" else {})})
+                self.assertEqual(socket.receive_json()["type"], "command_batch")
+
+            state = app.state.store.list_clients()[0]
+            self.assertEqual(state["desiredConfigVersion"], 1)
+            self.assertEqual(state["appliedConfigVersion"], 1)
+            self.assertEqual(state["appliedAgentConfig"], config)
+            history = client.get(f"/api/v1/clients/{agent_id}/commands", auth=auth).json()["commands"]
+            self.assertEqual(history[0]["status"], "SUCCESS")
 
 
 if __name__ == "__main__":

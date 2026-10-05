@@ -195,7 +195,7 @@ UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhấ
 
 | Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
 | --- | --- | --- | --- | --- | --- | --- |
-| [ ] | 39 | Config version và RELOAD_CONFIG giữ last-good | 7–8, 39 (config) | 38; E5.1 | Validate/ACK/rollback, timeout relationships | Đổi config test hợp lệ và không hợp lệ |
+| [x] | 39 | Config version và RELOAD_CONFIG giữ last-good | 7–8, 39 (config) | 38; E5.1 | Local Python suite + isolated PostgreSQL ACK/LKG audit pass twice; typecheck/build pass | Operator UI chưa được chạy thủ công với agent thật; xem [báo cáo Task 39](audits/distributed-crawler/task-39-versioned-agent-config.md) |
 | [ ] | 40 | DRAIN báo đúng khi hết running | 6, 8–9 (drain) | 39; E5.2 | Timeout không purge, outbox policy | Drain agent test, xem DRAINING/DRAINED |
 | [ ] | 41 | RUN_SELF_TEST không tạo tác động nghiệp vụ thật | 8, 41 (self-test) | 40; E5.2 | PASS/DEGRADED/FAIL, auth/disk/worker/serialize | Chạy self-test, đọc từng nguyên nhân |
 | [ ] | 42 | Rà nhánh updater và chốt phần tái sử dụng | 40, 54 (audit updater) | 41; E0.3/E5.3, owner xác nhận | Diff/compatibility/topology, không tự merge | Duyệt reuse/gap và scope tích hợp |
@@ -284,7 +284,7 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Nội dung | Trạng thái |
 | --- | --- |
 | Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 14–19: source/local checks; G2 còn phần nghiệm thu và tương thích runtime |
+| Task đang chạy | Task 40: DRAIN và an toàn outbox; Task 39 đã qua code QA, chờ trải nghiệm UI với agent thật |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -300,7 +300,9 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 13 | Đã cho chuyển tiếp qua hội thoại |
 | Task 14–18 | Source và test local đã bổ sung; xem báo cáo batch, chưa tick nghiệm thu |
 | Task 19 | Local Docker Compose/Nginx/PostgreSQL and public HTTPS readiness pass; public crawler-agent auth and production cutover remain pending |
-| Task 20–53 | Chưa làm |
+| Task 20–38 | Đã qua các cổng ghi ở checklist; Task 38 có ngoại lệ ngưỡng 5 agent so với spec 20 |
+| Task 39 | Đã qua code QA local và PostgreSQL schema cô lập; chưa chạy UI thủ công với agent thật |
+| Task 40–53 | Chưa làm |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -13,7 +13,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from ..observability import safe_fields
 from .coordinator_models import ClientRecord, CrawlJob, CrawlProductItem, CrawlTask, CrawlTelemetryEvent, TaskAttempt
-from .protocol import CLIENT_OFFLINE_SECONDS, utc_iso, utc_now
+from .protocol import utc_iso, utc_now
+from .agent_runtime_config import AgentRuntimeConfig
 
 EVENT_TYPES = {"family_started", "family_completed", "family_cache", "http_attempt", "browser_attempt",
                "page_fetch", "page_fetch_started", "playwright_fallback", "stage_completed", "checkpoint", "cache_read", "cache_write", "child_failed", "parser_failure"}
@@ -181,7 +182,12 @@ class CoordinatorObservability:
                 pipeline_query = pipeline_query.where(CrawlProductItem.job_id == job_id)
             crawl_counts = dict(session.execute(crawl_query).all())
             pipeline_counts = dict(session.execute(pipeline_query).all())
-            clients = session.scalars(select(ClientRecord).where(ClientRecord.status != "offline", ClientRecord.last_seen_at >= now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)).limit(100)).all()
+            clients = session.scalars(select(ClientRecord).where(ClientRecord.status != "offline").limit(100)).all()
+            clients = [client for client in clients if (
+                client.last_seen_at.replace(tzinfo=timezone.utc) if client.last_seen_at.tzinfo is None else client.last_seen_at
+            ) >= now - timedelta(
+                seconds=AgentRuntimeConfig.from_payload(client.applied_agent_config or {}).clientOfflineAfterSeconds,
+            )]
             agents = [{"agentId": client.id, "displayName": client.display_name, **dict(client.capabilities.get("observability") or {})} for client in clients]
             durations = sum(int(duration or 0) for name, _, _, duration in grouped if name == "family_completed")
             family_attempts = count("family_completed")

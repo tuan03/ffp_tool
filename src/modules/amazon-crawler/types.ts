@@ -713,10 +713,43 @@ export interface AmazonCrawlerClientSummary {
   appliedExecutionState?: "RUNNING" | "PAUSED";
   commandSequence?: number;
   lastProcessedCommandSequence?: number;
+  desiredConfigVersion?: number;
+  appliedConfigVersion?: number;
+  desiredAgentConfig?: AmazonCrawlerAgentRuntimeConfig;
   observability?: {
     workerHealth?: AmazonCrawlerWorkerHealth;
   };
 }
+
+export interface AmazonCrawlerAgentRuntimeConfig {
+  maxConcurrentInputs: number;
+  heartbeatIntervalSeconds: number;
+  clientOfflineAfterSeconds: number;
+  leaseSeconds: number;
+  limits: {
+    productThreads: number;
+    variantThreads: number;
+    urllibThreads: number;
+    browserProfiles: number;
+    browserTabs: number;
+    headless: boolean;
+  };
+}
+
+export const DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG: AmazonCrawlerAgentRuntimeConfig = {
+  maxConcurrentInputs: 4,
+  heartbeatIntervalSeconds: 10,
+  clientOfflineAfterSeconds: 30,
+  leaseSeconds: 60,
+  limits: {
+    productThreads: 4,
+    variantThreads: 8,
+    urllibThreads: 12,
+    browserProfiles: 4,
+    browserTabs: 2,
+    headless: false,
+  },
+};
 
 export interface AmazonCrawlerAgentCommandEvent {
   status: string;
@@ -727,7 +760,7 @@ export interface AmazonCrawlerAgentCommandEvent {
 export interface AmazonCrawlerAgentCommandSummary {
   commandId: string;
   sequence: number;
-  type: "PAUSE" | "RESUME" | "PURGE_PENDING_TASKS" | "PURGE_ALL_LOCAL_TASKS" | "RESTART_WORKERS" | "RESTART_AGENT";
+  type: "PAUSE" | "RESUME" | "RELOAD_CONFIG" | "DRAIN" | "RUN_SELF_TEST" | "UPDATE_AGENT" | "ROLLBACK_AGENT" | "PURGE_PENDING_TASKS" | "PURGE_ALL_LOCAL_TASKS" | "RESTART_WORKERS" | "RESTART_AGENT";
   status: string;
   createdAt: string | null;
   error: string | null;
@@ -741,6 +774,7 @@ export interface AmazonCrawlerCommandController {
   previewPurgeAllLocal(agentId: string): Promise<AmazonCrawlerPendingPurgePreview>;
   purgeAllLocal(agentId: string, expectedPendingCount: number, reason: string): Promise<void>;
   restart(agentId: string, type: "RESTART_WORKERS" | "RESTART_AGENT", reason: string): Promise<void>;
+  reloadConfig(agentId: string, config: AmazonCrawlerAgentRuntimeConfig): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 

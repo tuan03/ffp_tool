@@ -29,12 +29,13 @@ from ..observability import redact, safe_fields, write_log
 from ..runtime_resources import sample_resources
 from . import AGENT_VERSION
 from .client_config import AgentConfig
+from .agent_runtime_config import AgentRuntimeConfig
 from .client_dashboard_state import DashboardState
 from .client_store import ClientStore
 from .client_storage_pressure import storage_pressure
 from .worker_health import WorkerHealth
 from .client_restart import launch_replacement_agent
-from .protocol import HEARTBEAT_INTERVAL_SECONDS, hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
+from .protocol import hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
 StatusCallback = Callable[[dict[str, Any]], None]
@@ -100,6 +101,11 @@ class DistributedCrawlerAgent:
         self._restart_attempted: set[str] = set()
         self._boot_id = uuid.uuid4().hex
         self.store = ClientStore(config.data_directory / "agent.sqlite3")
+        self._agent_config_version, stored_agent_config = self.store.agent_runtime_config()
+        self._agent_runtime_config = AgentRuntimeConfig.from_payload(stored_agent_config or {
+            "maxConcurrentInputs": config.max_concurrent_inputs,
+            "limits": config.limits.apply({}),
+        })
         self.client_id = self.store.client_id()
         self._agent_key: str | None = None
         self._is_connected = False
@@ -163,7 +169,18 @@ class DistributedCrawlerAgent:
                 **status, "dropped": status["dropped"] + self._telemetry_losses}
 
     def _worker_health_snapshot(self) -> dict[str, Any]:
-        return self.worker_health.snapshot(self.config.max_concurrent_inputs)
+        return self.worker_health.snapshot(self._agent_runtime_config.maxConcurrentInputs)
+
+    def _agent_limits(self):
+        values = self._agent_runtime_config.limits
+        return type(self.config.limits)(
+            product_threads=values.productThreads,
+            variant_threads=values.variantThreads,
+            urllib_threads=values.urllibThreads,
+            browser_profiles=values.browserProfiles,
+            browser_tabs=values.browserTabs,
+            headless=values.headless,
+        )
 
     def _record_worker_failure(self, event: dict[str, Any]) -> None:
         reason = str(event.get("reason") or "worker_failure")
@@ -210,11 +227,12 @@ class DistributedCrawlerAgent:
             "agentVersion": AGENT_VERSION,
             "serverUrl": redact(self.config.server_url),
             "startedAt": self._started_at,
-            "maxConcurrentInputs": self.config.max_concurrent_inputs,
+            "maxConcurrentInputs": self._agent_runtime_config.maxConcurrentInputs,
             "runningTasks": len(self.executing_task_ids & self.active.keys()),
             "queuedTasks": len(self.active.keys() - self.executing_task_ids),
             "pendingCancellations": pending_cancellations,
-            "limits": self.config.limits.apply({}),
+            "limits": self._agent_limits().apply({}),
+            "agentConfigVersion": self._agent_config_version,
             "dashboard": dashboard,
             "captchaDetected": bool(dashboard.get("hasUnattributedCaptcha")),
             "dashboardUnavailable": self._dashboard_unavailable,
@@ -515,6 +533,8 @@ class DistributedCrawlerAgent:
                     "sequence": sequence, "status": status}
                 if status == "SUCCESS":
                     update["appliedExecutionState"] = self._remote_execution_state
+                    if str(command.get("type") or "") == "RELOAD_CONFIG":
+                        update["result"] = {"appliedConfigVersion": self._agent_config_version}
                 await self.outbound_queue.put(update)
                 continue
             if receipt["decision"] == "expired":
@@ -527,6 +547,32 @@ class DistributedCrawlerAgent:
             payload = command.get("payload")
             command_type = str(command.get("type") or "")
             desired_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
+            if command_type == "RELOAD_CONFIG":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                try:
+                    config_version = int(payload.get("configVersion")) if isinstance(payload, dict) else 0
+                    runtime_config = AgentRuntimeConfig.from_payload(payload.get("config") if isinstance(payload, dict) else None)
+                    if config_version < 1 or config_version < self._agent_config_version:
+                        raise ValueError("Configuration version is invalid or older than the applied version.")
+                    if config_version == self._agent_config_version and runtime_config != self._agent_runtime_config:
+                        raise ValueError("Configuration version was reused with different values.")
+                    if config_version > self._agent_config_version:
+                        await asyncio.to_thread(self.store.save_agent_runtime_config, config_version, runtime_config.to_payload())
+                        self._agent_runtime_config = runtime_config
+                        self._agent_config_version = config_version
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "SUCCESS",
+                        "result": {"appliedConfigVersion": self._agent_config_version}})
+                    self._publish_status()
+                except (TypeError, ValueError, OSError, sqlite3.Error) as error:
+                    safe_error = redact(error)
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, safe_error)
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "FAILED", "error": safe_error})
+                continue
             if command_type == "RESTART_AGENT":
                 if receipt["decision"] == "resume" and self.restart_command_id == command_id:
                     await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
@@ -699,8 +745,9 @@ class DistributedCrawlerAgent:
                         client_id=self.client_id,
                         display_name=self.config.display_name,
                         available_slots=self._available_slots(),
-                        max_concurrent_inputs=self.config.max_concurrent_inputs,
-                        limits=self.config.limits,
+                        max_concurrent_inputs=self._agent_runtime_config.maxConcurrentInputs,
+                        limits=self._agent_limits(),
+                        agent_config_version=self._agent_config_version,
                         local_tasks=self.store.local_tasks(),
                         cancel_intents=[] if self._agent_key else self.store.cancel_intents(),
                         cache_generation=self.store.cache_generation(),
@@ -1047,7 +1094,7 @@ class DistributedCrawlerAgent:
                 "capabilities": self._agent_capabilities(),
                 "observability": self._telemetry_snapshot(),
             })
-            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+            await asyncio.sleep(self._agent_runtime_config.heartbeatIntervalSeconds)
 
     async def _telemetry_loop(self) -> None:
         while True:
@@ -1192,7 +1239,7 @@ class DistributedCrawlerAgent:
             try:
                 review_data = crawl_reviews_with_agent(
                     str(assignment["source"]), root=self.project_root,
-                    settings=self.config.limits.apply(dict(assignment.get("settings") or {})),
+                    settings=self._agent_limits().apply(dict(assignment.get("settings") or {})),
                     proxy_config_path=self.config.proxy_config_path,
                     progress=progress, cancel_event=task_cancel_event,
                 )
@@ -1250,7 +1297,7 @@ class DistributedCrawlerAgent:
 
     def _run_batch_group(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         first = batch[0]
-        effective_settings = self.config.limits.apply(dict(first.get("settings") or {}))
+        effective_settings = self._agent_limits().apply(dict(first.get("settings") or {}))
         settings = CrawlSettings.from_api(effective_settings)
         actual_settings = settings.api_dict()
         assignments_by_source = {str(assignment["url"]): assignment for assignment in batch}

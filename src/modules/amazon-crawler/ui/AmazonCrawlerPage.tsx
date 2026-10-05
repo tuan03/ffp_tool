@@ -10,6 +10,7 @@ import {
   type AmazonAsinChecker,
   type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
+  type AmazonCrawlerAgentRuntimeConfig,
   type AmazonCrawlerClientsLoader,
   type AmazonCrawlerCommandController,
   type AmazonCrawlerAdmissionGate,
@@ -30,6 +31,7 @@ import {
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
 } from "../types";
+import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG } from "../types";
 import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
@@ -247,6 +249,7 @@ export function AmazonCrawlerPage({
   const [commandHistories, setCommandHistories] = useState<Record<string, readonly AmazonCrawlerAgentCommandSummary[]>>({});
   const [commandHistoryErrors, setCommandHistoryErrors] = useState<Record<string, boolean>>({});
   const [commandBusyClientId, setCommandBusyClientId] = useState<string | null>(null);
+  const [agentConfigDrafts, setAgentConfigDrafts] = useState<Record<string, AmazonCrawlerAgentRuntimeConfig>>({});
   const [commandError, setCommandError] = useState<string | null>(null);
   const [purgeTaskScopes, setPurgeTaskScopes] = useState<Record<string, string>>({});
   const [purgeReasons, setPurgeReasons] = useState<Record<string, string>>({});
@@ -480,6 +483,30 @@ export function AmazonCrawlerPage({
     } finally {
       setCommandBusyClientId(null);
     }
+  }
+
+  async function handleAgentConfigReload(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.reloadConfig(client.id, config);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không cập nhật được cấu hình agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  function updateAgentConfig(clientId: string, update: (config: AmazonCrawlerAgentRuntimeConfig) => AmazonCrawlerAgentRuntimeConfig): void {
+    setAgentConfigDrafts((current) => {
+      const config = current[clientId] ?? clients.find((client) => client.id === clientId)?.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+      return { ...current, [clientId]: update(config) };
+    });
   }
 
   async function handleAgentRestart(client: AmazonCrawlerClientSummary,
@@ -1562,6 +1589,24 @@ export function AmazonCrawlerPage({
                 ) : null}
                 {client.leasedTasks === client.activeTasks ? null : <p className="mt-1 text-xs text-amber-300">{client.leasedTasks} lease trên server đang chờ đồng bộ</p>}
                 {amazonCrawlerCommands ? <div className="mt-3 border-t border-slate-700 pt-3">
+                  <details className="mb-3 rounded border border-slate-700 p-2">
+                    <summary className="cursor-pointer text-xs text-slate-300">Cấu hình agent · desired v{client.desiredConfigVersion ?? 0} / applied v{client.appliedConfigVersion ?? 0}</summary>
+                    {(() => {
+                      const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+                      return <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                        {(["maxConcurrentInputs", "heartbeatIntervalSeconds", "clientOfflineAfterSeconds", "leaseSeconds"] as const).map((field) => <label key={field} className="text-slate-400">
+                          {field}<input type="number" min={1} value={config[field]} onChange={(event) => updateAgentConfig(client.id, (current) => ({ ...current, [field]: Number(event.target.value) }))}
+                            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200" />
+                        </label>)}
+                        <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected}
+                          onClick={() => void handleAgentConfigReload(client)}
+                          className="col-span-2 rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:opacity-50">
+                          {commandBusyClientId === client.id ? "Đang áp dụng…" : "Lưu và áp dụng cấu hình"}
+                        </button>
+                        <p className="col-span-2 text-slate-500">Server kiểm tra ràng buộc heartbeat/offline/lease. Config không chứa proxy secret hoặc đường dẫn local.</p>
+                      </div>;
+                    })()}
+                  </details>
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng" : "đang chạy"}
                       {client.appliedExecutionState !== client.desiredExecutionState ? " · đang đồng bộ" : ""}</span>

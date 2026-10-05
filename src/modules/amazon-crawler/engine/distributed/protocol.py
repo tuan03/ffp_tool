@@ -130,6 +130,7 @@ def hello_message(
     desired_execution_state: str = "RUNNING",
     applied_execution_state: str = "RUNNING",
     executing_task_ids: list[str] | None = None,
+    agent_config_version: int = 0,
 ) -> dict[str, Any]:
     return {
         "type": "hello",
@@ -137,6 +138,7 @@ def hello_message(
         "agentVersion": AGENT_VERSION,
         "crawlerVersion": AGENT_VERSION,
         "parserVersion": AGENT_VERSION,
+        "agentConfigVersion": max(0, int(agent_config_version)),
         "clientId": client_id,
         "displayName": display_name,
         "availableSlots": max(0, available_slots),

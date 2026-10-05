@@ -7,6 +7,7 @@ import type {
   AmazonCrawlerDeadLetterPage,
   AmazonCrawlerTaskAttempt,
   AmazonCrawlerAgentRelease,
+  AmazonCrawlerAgentRuntimeConfig,
   AmazonCrawlerAgentReleaseLoader,
   AmazonCrawlerCacheClearer,
   AmazonCrawlerCacheClearResult,
@@ -36,7 +37,7 @@ import type {
   ImageProcessingProfile,
   ImageProcessingProfileManager,
 } from "./types";
-import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
+import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG, DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
 import { readCrawlerMetrics, readCrawlerTrace } from "./observability-response";
 
 interface JobCreatedResponse {
@@ -420,6 +421,9 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
       appliedExecutionState: client.appliedExecutionState === "PAUSED" ? "PAUSED" : "RUNNING",
       commandSequence: typeof client.commandSequence === "number" ? client.commandSequence : 0,
       lastProcessedCommandSequence: typeof client.lastProcessedCommandSequence === "number" ? client.lastProcessedCommandSequence : 0,
+      desiredConfigVersion: typeof client.desiredConfigVersion === "number" ? client.desiredConfigVersion : 0,
+      appliedConfigVersion: typeof client.appliedConfigVersion === "number" ? client.appliedConfigVersion : 0,
+      desiredAgentConfig: readAgentRuntimeConfig(client.desiredAgentConfig),
       observability: isRecord(client.observability) && isRecord(client.observability.workerHealth)
         ? {
           workerHealth: {
@@ -434,6 +438,19 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
         : undefined,
     };
   });
+}
+
+function readAgentRuntimeConfig(value: unknown): AmazonCrawlerAgentRuntimeConfig {
+  if (!isRecord(value) || !isRecord(value.limits)) return DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+  const limits = value.limits;
+  const numbers = [value.maxConcurrentInputs, value.heartbeatIntervalSeconds, value.clientOfflineAfterSeconds,
+    value.leaseSeconds, limits.productThreads, limits.variantThreads, limits.urllibThreads,
+    limits.browserProfiles, limits.browserTabs];
+  if (!numbers.every((candidate) => typeof candidate === "number" && Number.isSafeInteger(candidate))) {
+    return DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+  }
+  if (typeof limits.headless !== "boolean") return DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+  return value as unknown as AmazonCrawlerAgentRuntimeConfig;
 }
 
 export function createAmazonCrawlerCommandController({
@@ -504,6 +521,13 @@ export function createAmazonCrawlerCommandController({
       });
       await readJson(response);
     },
+    async reloadConfig(agentId, config) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "RELOAD_CONFIG", config }),
+      });
+      await readJson(response);
+    },
     async history(agentId) {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
       const payload: unknown = await readJson(response);
@@ -514,6 +538,11 @@ export function createAmazonCrawlerCommandController({
         commandId: typeof entry.commandId === "string" ? entry.commandId : "",
         sequence: typeof entry.sequence === "number" ? entry.sequence : 0,
         type: entry.type === "PAUSE" ? "PAUSE" as const
+          : entry.type === "RELOAD_CONFIG" ? "RELOAD_CONFIG" as const
+          : entry.type === "DRAIN" ? "DRAIN" as const
+          : entry.type === "RUN_SELF_TEST" ? "RUN_SELF_TEST" as const
+          : entry.type === "UPDATE_AGENT" ? "UPDATE_AGENT" as const
+          : entry.type === "ROLLBACK_AGENT" ? "ROLLBACK_AGENT" as const
           : entry.type === "PURGE_PENDING_TASKS" ? "PURGE_PENDING_TASKS" as const
           : entry.type === "PURGE_ALL_LOCAL_TASKS" ? "PURGE_ALL_LOCAL_TASKS" as const
           : entry.type === "RESTART_WORKERS" ? "RESTART_WORKERS" as const

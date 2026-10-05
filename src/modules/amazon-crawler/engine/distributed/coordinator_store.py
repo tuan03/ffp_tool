@@ -40,7 +40,8 @@ from .coordinator_models import (
     UploadReceipt,
     CrawlTelemetryEvent,
 )
-from .protocol import CLIENT_OFFLINE_SECONDS, LEASE_SECONDS, payload_checksum, settings_fingerprint, utc_iso, utc_now
+from .protocol import payload_checksum, settings_fingerprint, utc_iso, utc_now
+from .agent_runtime_config import AgentRuntimeConfig
 from .protocol import product_source_key as _source_key
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
@@ -628,9 +629,11 @@ class CoordinatorStore(CoordinatorObservability):
 
     def _task_lease_duration(self, session, task: CrawlTask) -> int:
         job = session.get(CrawlJob, task.job_id) if task.job_id else None
+        client = session.get(ClientRecord, task.assigned_client_id) if task.assigned_client_id else None
+        config = AgentRuntimeConfig.from_payload(client.applied_agent_config or {}) if client else AgentRuntimeConfig()
         if job and (job.settings or {}).get("channel") == "pinterest":
-            return max(LEASE_SECONDS, 300)
-        return LEASE_SECONDS
+            return max(config.leaseSeconds, 300)
+        return config.leaseSeconds
 
     def _renew_lease(self, session, task: CrawlTask, now: datetime) -> datetime:
         deadline = self._task_deadline(session, task)
@@ -908,7 +911,9 @@ class CoordinatorStore(CoordinatorObservability):
                     if (
                         resume_client is not None
                         and resume_client.status in {"online", "busy", "waiting_captcha"}
-                        and _as_utc(resume_client.last_seen_at) >= now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)
+                        and _as_utc(resume_client.last_seen_at) >= now - timedelta(seconds=(
+                            AgentRuntimeConfig.from_payload(resume_client.applied_agent_config or {}).clientOfflineAfterSeconds
+                        ))
                     ):
                         continue
                 lease_id = _id()
@@ -2297,14 +2302,14 @@ class CoordinatorStore(CoordinatorObservability):
     def reap_expired(self) -> dict[str, int]:
         now = utc_now()
         self._expire_jobs(now)
-        offline_before = now - timedelta(seconds=CLIENT_OFFLINE_SECONDS)
         offline = 0
         requeued = 0
         with self.sessions.begin() as session:
             job_ids: set[str] = set()
             clients = session.scalars(select(ClientRecord).where(ClientRecord.status != "offline")).all()
             for client in clients:
-                if _as_utc(client.last_seen_at) < offline_before:
+                offline_seconds = AgentRuntimeConfig.from_payload(client.applied_agent_config or {}).clientOfflineAfterSeconds
+                if _as_utc(client.last_seen_at) < now - timedelta(seconds=offline_seconds):
                     client.status = "offline"
                     offline += 1
                     for cleanup in session.scalars(select(JobStopClientCleanup).where(
@@ -3251,6 +3256,21 @@ class CoordinatorStore(CoordinatorObservability):
             ).all())
             return [self._client_snapshot(client, active_tasks=int(active_counts.get(client.id, 0))) for client in clients]
 
+    def applied_agent_runtime_config(self, client_id: str) -> dict[str, Any]:
+        with self.sessions() as session:
+            client = session.get(ClientRecord, client_id)
+            if client is None:
+                return AgentRuntimeConfig().to_payload()
+            return AgentRuntimeConfig.from_payload(client.applied_agent_config or {}).to_payload()
+
+    def agent_runtime_config_versions(self, client_id: str) -> dict[str, int]:
+        with self.sessions() as session:
+            client = session.get(ClientRecord, client_id)
+            if client is None:
+                return {"desiredConfigVersion": 0, "appliedConfigVersion": 0}
+            return {"desiredConfigVersion": client.desired_config_version,
+                    "appliedConfigVersion": client.applied_config_version}
+
     def forget_client(self, client_id: str) -> str:
         """Remove an offline Agent registration while preserving historical task records."""
         with self.sessions() as session:
@@ -3525,6 +3545,10 @@ class CoordinatorStore(CoordinatorObservability):
             "appliedExecutionState": client.applied_execution_state,
             "commandSequence": client.command_sequence,
             "lastProcessedCommandSequence": client.last_processed_command_sequence,
+            "desiredConfigVersion": client.desired_config_version,
+            "appliedConfigVersion": client.applied_config_version,
+            "desiredAgentConfig": dict(client.desired_agent_config or {}),
+            "appliedAgentConfig": dict(client.applied_agent_config or {}),
             "globalAdmissionGateRevision": client.global_admission_gate_revision,
             "globalAdmissionGateState": client.global_admission_gate_state,
             "activeTasks": active_tasks,

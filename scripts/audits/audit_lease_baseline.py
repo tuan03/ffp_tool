@@ -159,6 +159,7 @@ def main() -> None:
     modes.add_argument("--agent-keys", action="store_true", help="Task 13: one-time key creation and metadata on PostgreSQL")
     modes.add_argument("--identity", action="store_true", help="Task 14: authenticated idempotent registration")
     modes.add_argument("--proxy-auth", action="store_true", help="Tasks 14-19 local gate, including an isolated temporary Nginx container")
+    modes.add_argument("--agent-config", action="store_true", help="Task 39 versioned agent config and PostgreSQL ACK persistence")
     arguments = parser.parse_args()
     expectation = arguments.expect
     url = local_test_url()
@@ -183,7 +184,14 @@ def main() -> None:
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
                 migrate_coordinator(engine)
-                if arguments.operator_auth or arguments.agent_keys or arguments.identity or arguments.proxy_auth:
+                if arguments.agent_config:
+                    from engine.tests.test_agent_runtime_config import PostgreSqlAgentRuntimeConfigTests
+                    class PostgreSqlAgentConfigTests(PostgreSqlAgentRuntimeConfigTests):
+                        external_engine = engine
+                    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSqlAgentConfigTests))
+                    require(result.wasSuccessful() and not result.skipped, "PostgreSQL agent-config checks failed or skipped")
+                    print(f"RUN {run_number}: agent config tests={result.testsRun}, failures=0, skipped=0")
+                elif arguments.operator_auth or arguments.agent_keys or arguments.identity or arguments.proxy_auth:
                     from engine.tests.test_operator_authorization import OperatorAuthorizationTests
                     from engine.tests.test_agent_keys import AgentKeyTests
                     from engine.tests.test_agent_identity import AgentIdentityTests
@@ -224,7 +232,9 @@ def main() -> None:
                     print(f"RUN {run_number}: own test schema removed and absence verified")
     finally:
         admin.dispose()
-    if arguments.proxy_auth:
+    if arguments.agent_config:
+        print("PASS: versioned agent config ACK and last-known-good verified twice in isolated PostgreSQL schemas.")
+    elif arguments.proxy_auth:
         print("PASS: local PostgreSQL and real Nginx auth gate twice; public HTTPS acceptance still pending.")
     elif arguments.identity:
         print("PASS: authenticated enrollment verified twice; no production cutover.")

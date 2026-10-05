@@ -12,11 +12,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .coordinator_models import Base, ClientRecord
+from .agent_runtime_config import AgentRuntimeConfig
 from .protocol import utc_now
 
 
 JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
-COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
                     "RESTART_WORKERS": 5, "RESTART_AGENT": 6}
 TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
 ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
@@ -26,13 +27,14 @@ class AgentCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requestId: uuid.UUID
-    type: Literal["PAUSE", "RESUME", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
+    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
     expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
     taskIds: list[str] = Field(default_factory=list, max_length=500)
     includeRunning: bool = Field(default=False, strict=True)
     expectedPendingCount: int | None = Field(default=None, strict=True, ge=1, le=500)
     confirmation: str | None = Field(default=None, min_length=1, max_length=80)
     reason: str | None = Field(default=None, min_length=10, max_length=500)
+    config: dict[str, Any] | None = None
     dryRun: bool = False
 
 
@@ -144,6 +146,38 @@ class AgentCommandLedger:
             session.flush()
             return self._snapshot(session, command)
 
+    def submit_config(self, agent_id: str, request_id: str, expires_in_seconds: int,
+                      config: AgentRuntimeConfig) -> dict[str, Any]:
+        normalized = config.to_payload()
+        with self.sessions.begin() as session:
+            existing = session.scalar(select(AgentCommand).where(
+                AgentCommand.agent_id == agent_id, AgentCommand.request_id == request_id,
+            ))
+            if existing is not None:
+                expected = existing.payload.get("config") if existing.command_type == "RELOAD_CONFIG" else None
+                if expected != normalized:
+                    raise HTTPException(409, detail="Command requestId was reused with a different configuration.")
+                return self._snapshot(session, existing)
+            agent = session.get(ClientRecord, agent_id, with_for_update=True)
+            if agent is None:
+                raise HTTPException(404, detail="Crawler agent was not found.")
+            version = agent.desired_config_version + 1
+            now = utc_now()
+            command = AgentCommand(
+                id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
+                sequence=agent.command_sequence + 1, command_type="RELOAD_CONFIG",
+                payload={"configVersion": version, "config": normalized},
+                priority=COMMAND_PRIORITY["RELOAD_CONFIG"], status="PENDING",
+                created_at=now, expires_at=now + timedelta(seconds=expires_in_seconds),
+            )
+            agent.desired_agent_config = normalized
+            agent.desired_config_version = version
+            agent.command_sequence = command.sequence
+            session.add(command)
+            self._event(session, command, "PENDING", {"source": "operator", "configVersion": version}, now)
+            session.flush()
+            return self._snapshot(session, command)
+
     def request_snapshot(self, agent_id: str, request_id: str) -> dict[str, Any] | None:
         with self.sessions() as session:
             command = session.scalar(select(AgentCommand).where(
@@ -230,6 +264,17 @@ class AgentCommandLedger:
                 return self._snapshot(session, command)
             if status == "EXPIRED" and not _expired(command.expires_at, now):
                 raise HTTPException(409, detail="Agent cannot expire a command before its deadline.")
+            if status == "SUCCESS" and command.command_type == "RELOAD_CONFIG":
+                result = update.get("result")
+                expected_version = int(command.payload.get("configVersion") or 0)
+                try:
+                    applied_version = int(result.get("appliedConfigVersion")) if isinstance(result, dict) else 0
+                except (TypeError, ValueError):
+                    applied_version = 0
+                if expected_version <= 0 or applied_version != expected_version:
+                    raise HTTPException(409, detail="Agent config acknowledgement does not match the requested version.")
+                agent.applied_agent_config = dict(command.payload.get("config") or {})
+                agent.applied_config_version = expected_version
             if status in {"ACKED", "RUNNING", "SUCCESS", "FAILED"} and _expired(command.expires_at, now):
                 self._finish(session, agent, command, "EXPIRED", "Command expired before execution.", now)
                 return self._snapshot(session, command)
@@ -248,6 +293,7 @@ class AgentCommandLedger:
             detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
             result = update.get("result") if command.command_type in {
                 "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
+                "RELOAD_CONFIG",
             } else None
             event_detail = {"error": detail} if detail else {}
             if isinstance(result, dict):
@@ -258,6 +304,8 @@ class AgentCommandLedger:
                         "purgedCount": _bounded_count(result.get("purgedCount")),
                         "afterCount": _bounded_count(result.get("afterCount")),
                     } if command.command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"} else {
+                        **({"appliedConfigVersion": _bounded_count(result.get("appliedConfigVersion"))}
+                           if command.command_type == "RELOAD_CONFIG" else {}),
                         "bootId": str(result.get("bootId") or "")[:64],
                         "identityRetained": bool(result.get("identityRetained")),
                         "pendingOutboxCount": _bounded_count(result.get("pendingOutboxCount")),

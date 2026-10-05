@@ -26,6 +26,8 @@ class CoordinatorMigrationTests(unittest.TestCase):
                 column["name"] for column in inspect(engine).get_columns("task_attempts")
             }))
             self.assertIn("archived_task_attempts", inspect(engine).get_table_names())
+            config_columns = {column["name"] for column in inspect(engine).get_columns("crawler_clients")}
+            self.assertTrue({"desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"}.issubset(config_columns))
             self.assertIn("crawler_dlq_actions", inspect(engine).get_table_names())
             indexes = {
                 index["name"]
@@ -38,6 +40,25 @@ class CoordinatorMigrationTests(unittest.TestCase):
                     select(GlobalAdmissionGate.state).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
                 ).scalar_one()
             self.assertEqual(state, "OPEN")
+        finally:
+            engine.dispose()
+
+    def test_versioned_agent_config_migration_can_upgrade_an_existing_version_11_database(self):
+        engine = create_engine("sqlite:///:memory:")
+        try:
+            migrate_coordinator(engine)
+            with engine.begin() as connection:
+                connection.execute(MIGRATIONS.delete().where(MIGRATIONS.c.version == 12))
+                for column in ("desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"):
+                    connection.exec_driver_sql(f"ALTER TABLE crawler_clients DROP COLUMN {column}")
+            migrate_coordinator(engine)
+            migrate_coordinator(engine)
+            with engine.connect() as connection:
+                versions = set(connection.scalars(select(MIGRATIONS.c.version)))
+            self.assertIn(12, versions)
+            self.assertTrue({"desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"}.issubset({
+                column["name"] for column in inspect(engine).get_columns("crawler_clients")
+            }))
         finally:
             engine.dispose()
 

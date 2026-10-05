@@ -33,8 +33,9 @@ from .agent_keys import install_agent_key_routes
 from .agent_identity import AgentSecurity, install_enrollment_routes
 from .agent_key_lifecycle import install_key_lifecycle_routes
 from .agent_command_ledger import AgentCommandLedger, AgentCommandRequest
+from .agent_runtime_config import AgentRuntimeConfig
 from .global_admission_gate import GlobalAdmissionGateRequest
-from .protocol import HEARTBEAT_INTERVAL_SECONDS, LEASE_SECONDS, payload_checksum, require_message, utc_iso
+from .protocol import payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
 
@@ -873,6 +874,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if security is None:
             raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
         command_payload_value: dict[str, Any] | None = None
+        if payload.type == "RELOAD_CONFIG":
+            try:
+                runtime_config = AgentRuntimeConfig.from_payload(payload.config)
+            except (TypeError, ValueError) as error:
+                raise HTTPException(status_code=422, detail=f"Invalid agent configuration: {error}") from error
+            command = await asyncio.to_thread(
+                command_ledger.submit_config, client_id, payload.requestId.hex,
+                payload.expiresInSeconds, runtime_config,
+            )
+            await dispatch_next_agent_command(client_id)
+            return command
         if payload.type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
             is_purge_all = payload.type == "PURGE_ALL_LOCAL_TASKS"
             if is_purge_all and payload.includeRunning:
@@ -1724,6 +1736,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     if command is None:
                         continue
                 replay_commands.append(command)
+            applied_agent_config = await asyncio.to_thread(store.applied_agent_runtime_config, client_id)
+            client_config_state = await asyncio.to_thread(store.agent_runtime_config_versions, client_id)
             available_slots = max(0, int(hello.get("availableSlots") or 0)) if is_cache_ready else 0
             await manager.update_runtime(
                 client_id,
@@ -1734,7 +1748,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             )
             await websocket.send_json({
                 "type": "hello_ack", "protocolVersion": PROTOCOL_VERSION,
-                "heartbeatIntervalSeconds": HEARTBEAT_INTERVAL_SECONDS, "leaseSeconds": LEASE_SECONDS,
+                "heartbeatIntervalSeconds": applied_agent_config["heartbeatIntervalSeconds"],
+                "clientOfflineAfterSeconds": applied_agent_config["clientOfflineAfterSeconds"],
+                "leaseSeconds": applied_agent_config["leaseSeconds"],
+                "desiredConfigVersion": client_config_state.get("desiredConfigVersion", 0),
+                "appliedConfigVersion": client_config_state.get("appliedConfigVersion", 0),
                 **reconciliation,
                 "acknowledgedCancelIntents": acknowledged_intents,
                 "requiredCacheGeneration": required_cache_generation,

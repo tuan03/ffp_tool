@@ -7,6 +7,7 @@ import {
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerCommandController,
+  DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG,
   createAmazonCrawlerAdmissionGateController,
   createAmazonCrawlerJobController,
   createAmazonCrawlerJobLoader,
@@ -323,6 +324,24 @@ test("operator command controller submits idempotency ID and reads ordered timel
   assert.equal(requests[0]?.method, "POST");
   assert.match(requests[0]?.body ?? "", /"requestId":"[0-9a-f-]{36}"/);
   assert.equal(history[0]?.events[0]?.status, "ACKED");
+});
+
+test("agent config reload sends the validated configuration through the operator command endpoint", async () => {
+  let requestUrl = "";
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "config-command" }, 202);
+    },
+  });
+  await controller.reloadConfig("agent-1", DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG);
+  assert.equal(requestUrl, "https://coordinator.test/api/v1/clients/agent-1/commands");
+  assert.equal(typeof requestBody, "object");
+  assert.deepEqual((requestBody as { config?: unknown }).config, DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG);
+  assert.equal((requestBody as { type?: unknown }).type, "RELOAD_CONFIG");
 });
 
 test("pending purge controller previews and sends exact scoped confirmation", async () => {

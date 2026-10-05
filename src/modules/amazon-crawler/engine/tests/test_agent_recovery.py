@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from engine.distributed.client_agent import DistributedCrawlerAgent
 from engine.distributed.client_config import AgentConfig
+from engine.distributed.agent_runtime_config import AgentRuntimeConfig
 from engine.distributed.protocol import AgentLimits, payload_checksum
 
 
@@ -47,6 +48,10 @@ class AgentRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def test_worker_crash_storm_reduces_admission_without_touching_outbox(self):
         self.agent.store.spool_result(task_id="task-a", lease_id="lease-a", checksum="checksum-a", payload={"value": 1})
         self.agent.config = replace(self.agent.config, max_concurrent_inputs=8)
+        self.agent._agent_runtime_config = AgentRuntimeConfig.from_payload({
+            "maxConcurrentInputs": 8,
+            "limits": self.agent.config.limits.apply({}),
+        })
         self.agent._is_connected = True
         self.agent._recovery_complete = True
         self.agent._command_recovery_complete = True
