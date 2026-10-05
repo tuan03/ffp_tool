@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  DEFAULT_SEO_PIPELINE_VERSION,
-  createGeminiSeoProviderFactory,
   protectSeoProviderRuntime,
   SeoProviderCircuitBreaker,
   SeoProviderRegistry,
@@ -13,25 +11,13 @@ import type { SeoProviderCircuitRecord } from "../internal/persistence/repositor
 import type { SeoProviderCircuitStore, SeoProviderRuntime } from "../internal/providers";
 import { computeProductInputHash, computeSeoResultCacheKey, InMemorySeoCheckpointStore } from "../internal/checkpoint";
 import { runSeoContent } from "../service";
+import { JEMINISE_BEDDING_PROFILE } from "../service";
 import type { SeoContentInput } from "../types";
 
 const baseInput: SeoContentInput = {
-  storeId: "store-a",
-  siteDomain: "store-a.example",
-  productId: "product-1",
-  url: "https://store-a.example/products/rug",
-  handle: "rug",
-  title: "Pattern Rug",
-  description: "A patterned area rug.",
   niche: "home decor",
-  images: [{ id: "hero", url: "https://cdn.example/rug.jpg", alt: "Pattern rug" }],
-  existingPrimaryKeyword: "pattern rug",
-  existingKeywords: ["area rug", "pattern rug"],
-  sourceVersion: "revision-1",
-  shopifyUpdatedAt: "2026-09-30T00:00:00.000Z",
-  providerId: "gemini",
-  pipelineVersion: DEFAULT_SEO_PIPELINE_VERSION,
-  variants: [{ title: "Blue", sku: "BLUE", privateSupplierPayload: "must-not-cross-provider-boundary" }],
+  images: [{ id: "hero", url: "https://cdn.example/rug.jpg", contentFingerprint: "rug-v1" }],
+  storeProfile: JEMINISE_BEDDING_PROFILE,
 };
 
 class AtomicMemoryCircuitStore implements SeoProviderCircuitStore {
@@ -77,49 +63,41 @@ class AtomicMemoryCircuitStore implements SeoProviderCircuitStore {
   }
 }
 
-test("provider input replaces raw variants with a bounded summary", () => {
-  const prepared = prepareSeoProviderInput(baseInput);
+test("provider input projects only the exact V2 semantic contract", () => {
+  const inputWithLegacyMetadata = {
+    ...baseInput,
+    title: "must-not-cross-provider-boundary",
+    variants: [{ privateSupplierPayload: "must-not-cross-provider-boundary" }],
+  };
+  const prepared = prepareSeoProviderInput(inputWithLegacyMetadata);
 
-  assert.equal("variants" in prepared, false);
-  assert.equal(prepared.variantSummary?.variantCount, 1);
-  assert.equal(prepared.variantSummary?.sampleVariants[0]?.title, "Blue");
-  assert.equal(JSON.stringify(prepared).includes("privateSupplierPayload"), false);
-  assert.equal(prepared.providerId, "gemini");
-  assert.equal(prepared.pipelineVersion, DEFAULT_SEO_PIPELINE_VERSION);
+  assert.deepEqual(Object.keys(prepared).sort(), ["images", "niche", "storeProfile"]);
+  assert.deepEqual(Object.keys(prepared.images[0] ?? {}).sort(), ["contentFingerprint", "id", "url"]);
+  assert.equal(JSON.stringify(prepared).includes("must-not-cross-provider-boundary"), false);
 });
 
-test("checkpoint hash covers stale-result dimensions but never hashes raw variant payload", () => {
+test("checkpoint hash covers V2 semantic dimensions and ignores legacy metadata", () => {
   const baselineHash = computeProductInputHash(baseInput);
   const prepared = prepareSeoProviderInput(baseInput);
+  const inputWithLegacyMetadata = {
+    ...baseInput,
+    title: "ignored legacy title",
+    variants: [{ unrelatedRawPayload: { secret: true } }],
+  };
 
   assert.equal(baselineHash, computeProductInputHash(prepared));
   assert.equal(
     baselineHash,
-    computeProductInputHash({
-      ...baseInput,
-      variants: [{ title: "Blue", sku: "BLUE", unrelatedRawPayload: { secret: true } }],
-    }),
+    computeProductInputHash(inputWithLegacyMetadata),
     "raw transport-only variant fields must not affect the cache identity",
   );
 
   const changedInputs: readonly SeoContentInput[] = [
-    { ...baseInput, siteDomain: "other.example" },
-    { ...baseInput, productId: "product-2" },
-    { ...baseInput, sourceVersion: "revision-2" },
-    { ...baseInput, shopifyUpdatedAt: "2026-10-01T00:00:00.000Z" },
-    { ...baseInput, providerId: "future-provider" },
-    { ...baseInput, pipelineVersion: "seo-b1-b6-v2" },
-    { ...baseInput, existingKeywords: ["different keyword"] },
-    { ...baseInput, images: [{ ...baseInput.images[0], alt: "Different visual fingerprint" }] },
-    {
-      ...baseInput,
-      variants: undefined,
-      variantSummary: {
-        variantCount: 2,
-        optionNames: ["Color"],
-        sampleVariants: [{ title: "Blue" }, { title: "Red" }],
-      },
-    },
+    { ...baseInput, niche: "wall decor" },
+    { ...baseInput, images: [{ ...baseInput.images[0], id: "secondary" }] },
+    { ...baseInput, images: [{ ...baseInput.images[0], url: "https://cdn.example/rug-v2.jpg" }] },
+    { ...baseInput, images: [{ ...baseInput.images[0], contentFingerprint: "rug-v2" }] },
+    { ...baseInput, storeProfile: { ...baseInput.storeProfile, profileVersion: "2" } },
   ];
 
   for (const changedInput of changedInputs) {
@@ -272,7 +250,7 @@ test("provider circuit records a primary Gemini failure while preserving success
 
   const protectedRuntime = protectSeoProviderRuntime(runtime, breaker);
   const analysis = await protectedRuntime.imageAnalyzer.analyze({
-    images: [], title: "Rug", description: "Rug", niche: "decor",
+    images: [{ id: "hero", url: "https://example.com/rug.jpg" }], niche: "decor",
   });
   assert.equal(analysis.physicalProductIdentity, "rug");
   assert.equal(store.record?.state, "open");
@@ -280,40 +258,43 @@ test("provider circuit records a primary Gemini failure while preserving success
   assert.match(String(store.record?.lastError?.message), /Gemini unavailable/);
 });
 
-test("unreadable B1 images fall back without opening the Gemini provider circuit", async () => {
-  const previousProject = process.env.GOOGLE_CLOUD_PROJECT;
-  process.env.GOOGLE_CLOUD_PROJECT = "fixture-project";
-  try {
-    const store = new AtomicMemoryCircuitStore();
-    const runtime = createGeminiSeoProviderFactory().create({
-      imageMode: "full",
-      requestOptions: {},
-      onFallback: () => undefined,
-    });
-    const protectedRuntime = protectSeoProviderRuntime(runtime, new SeoProviderCircuitBreaker(store));
-    const analysis = await protectedRuntime.imageAnalyzer.analyze({
-      images: [], title: "Pattern rug", description: "", niche: "home decor",
-    });
-    assert.equal(analysis.physicalProductIdentity, "area rug");
-    assert.equal(store.record, undefined);
-  } finally {
-    if (previousProject === undefined) delete process.env.GOOGLE_CLOUD_PROJECT;
-    else process.env.GOOGLE_CLOUD_PROJECT = previousProject;
-  }
-});
-
 test("simple runner uses the same checkpointed session path as the detailed runner", async () => {
   const checkpointStore = new InMemorySeoCheckpointStore();
-  const input: SeoContentInput = {
-    ...baseInput,
-    storeId: undefined,
-    images: [],
-    title: "Checkpoint Path Rug",
-    description: "A simple rug used to verify checkpoint persistence.",
-    handle: "checkpoint-path-rug",
-  };
+  const input: SeoContentInput = baseInput;
+  const providerRegistry = new SeoProviderRegistry().register({
+    providerId: "gemini",
+    create: () => ({
+      providerId: "gemini",
+      model: "test-model",
+      imageAnalyzer: {
+        analyze: async () => ({
+          typography: { visibleTexts: [], styleSummary: "none" },
+          visualEntities: "patterned textile surface",
+          sceneContext: "bedroom",
+          physicalProductIdentity: "area rug",
+          identityCandidates: ["area rug"],
+          confidence: 0.95,
+        }),
+      },
+      shoppingContextAnalyzer: {
+        analyze: async () => ({ targetAudience: [], suitableOccasions: [], useCases: [], buyerIntentKeywords: [] }),
+      },
+      keywordConflictAnalyzer: {
+        analyze: async () => ({ approvedKeywords: [], discardedKeywords: [], conflictReasons: {}, corpusRevision: 0 }),
+      },
+      contentGenerator: {
+        generate: async () => ({
+          productTitle: "Pattern Area Rug",
+          intro: "A patterned area rug for home decor.",
+          bullets: [], guidance: [], closing: "Complete the room.",
+          productSeoTitle: "Pattern Area Rug",
+          productSeoDescription: "Patterned area rug for home decor.",
+        }),
+      },
+    }),
+  });
 
-  await runSeoContent(input, { dependencies: { checkpointStore } });
+  await runSeoContent(input, { dependencies: { checkpointStore, providerRegistry } });
 
   const providerInput = prepareSeoProviderInput(input);
   const checkpoint = await checkpointStore.get(computeProductInputHash(providerInput));

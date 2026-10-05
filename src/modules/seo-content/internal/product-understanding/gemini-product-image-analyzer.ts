@@ -7,7 +7,7 @@ import {
   parseGeminiProductImageAnalysis,
 } from "./gemini-analysis-schema";
 import { prepareProductImagePayload } from "./product-image-payload";
-import type { GeminiContentGenerator } from "./gemini-content-generator";
+import { type GeminiContentGenerator, GeminiGeneratorError } from "./gemini-content-generator";
 import {
   type AsyncSemaphore,
 } from "./async-semaphore";
