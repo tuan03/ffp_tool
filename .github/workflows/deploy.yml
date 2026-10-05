@@ -100,7 +100,7 @@ jobs:
               grep -E '^[[:space:]]*(export[[:space:]]+)?(POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|AUTO_SEO_DATABASE_URL|DATABASE_URL)[[:space:]]*=' .env > "$EXISTING_DATABASE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(SEO_PERFORMANCE_ENABLED|GSC_CLIENT_ID|GSC_CLIENT_SECRET|GSC_REDIRECT_URI|GSC_TOKEN_ENCRYPTION_KEY)[[:space:]]*=' .env > "$EXISTING_SEARCH_CONSOLE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(REVIEW_IMAGE_BRIDGE_TOKEN|REVIEW_IMAGE_EXTENSION_TOKEN|SHOPIFY_PIPELINE_TOKEN)[[:space:]]*=' .env > "$EXISTING_SERVICE_TOKEN_ENV_FILE" || true
-              grep -E '^[[:space:]]*(export[[:space:]]+)?(META_ACCESS_TOKEN|META_PROXY_URL)[[:space:]]*=' .env > "$EXISTING_ADS_ENV_FILE" || true
+              grep -E '^[[:space:]]*(export[[:space:]]+)?(META_ACCESS_TOKEN|META_PROXY_URL|SCRAPE_CREATORS_API_KEY|SCRAPECREATORS_API_KEY|SEARCHAPI_API_KEY|SEARCH_API_KEY|APIFY_TOKEN)[[:space:]]*=' .env > "$EXISTING_ADS_ENV_FILE" || true
             fi
 
             if [ -n "$ENV_B64" ]; then
