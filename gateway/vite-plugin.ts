@@ -131,7 +131,9 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
 
         const isKnownApi = isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck || isSeoPerformance;
 
-        if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
+        const isOauthCallback = req.url && req.url.startsWith("/api/seo-performance/oauth/callback");
+
+        if (authToken && ((isKnownApi && isSameOriginRequest(req.headers)) || isOauthCallback)) {
           if (!req.headers["x-gateway-key"]) {
             req.headers["x-gateway-key"] = authToken;
           }

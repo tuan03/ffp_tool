@@ -112,6 +112,9 @@ export default defineConfig({
             const rawKey = req.headers["x-gateway-key"];
             if (rawKey && typeof rawKey === "string") {
               proxyReq.setHeader("x-gateway-key", rawKey);
+            } else if (req.url && req.url.startsWith("/api/seo-performance/oauth/callback")) {
+              const devKey = process.env.GATEWAY_AUTH_TOKEN || "dev-secret-token-capozen";
+              proxyReq.setHeader("x-gateway-key", devKey);
             }
           });
         },
