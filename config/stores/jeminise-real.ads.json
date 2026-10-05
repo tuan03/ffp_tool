@@ -26,10 +26,7 @@
     "primaryProvider": "scrapecreators",
     "backupProvider": "searchapi",
     "monthlyCostCapUsd": 65.0,
-    "watchlist": [
-      "100064829182341",
-      "100083124589211"
-    ]
+    "watchlist": []
   },
   "business": {
     "costProfileRef": "jeminise-bedding-standard-v1",

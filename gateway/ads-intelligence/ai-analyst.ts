@@ -66,7 +66,7 @@ ${JSON.stringify(
   null,
   2
 )}`
-      : "COMPETITOR GAPS: No external watchlist configured.";
+      : "COMPETITOR GAPS: No competitor research published yet. Run spy-competitors to harvest market angles.";
 
     const prompt = `You are a Senior Performance Media Buyer and E-commerce Growth Director managing 8-figure DTC brands.
 Analyze the following advertising data, quantitative decision cards, and competitor angle gaps for store "${profile.storeId}".

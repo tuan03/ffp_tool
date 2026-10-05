@@ -49,16 +49,20 @@ export function CompetitorsTab({
         {/* Watchlist Chips & Distribution */}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-slate-400 font-medium">Page trong kết quả:</span>
-            {competitorReport?.watchlist.map((w) => (
-              <span
-                key={w.pageId}
-                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 font-semibold"
-              >
-                {w.pageName}{" "}
-                <span className="text-cyan-400 font-mono text-[11px]">({w.activeAdCount} active)</span>
-              </span>
-            ))}
+            <span className="text-slate-400 font-medium">Page đối thủ phát hiện:</span>
+            {competitorReport?.watchlist && competitorReport.watchlist.length > 0 ? (
+              competitorReport.watchlist.map((w) => (
+                <span
+                  key={w.pageId}
+                  className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 font-semibold"
+                >
+                  {w.pageName}{" "}
+                  <span className="text-cyan-400 font-mono text-[11px]">({w.activeAdCount} active)</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-slate-500 italic">Chưa phát hiện (Hãy bấm &quot;Spy đối thủ&quot;)</span>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -95,7 +99,20 @@ export function CompetitorsTab({
       </div>
 
       {!competitorReport && <p role="status" className="rounded-lg border border-amber-900 p-4 text-sm text-amber-200">Chưa tải được nguồn quảng cáo. Kiểm tra kết nối; danh sách nghiên cứu bên dưới vẫn được tải riêng.</p>}
-      {competitorReport && filteredAds.length === 0 && <p role="status" className="rounded-lg border border-slate-700 p-4 text-sm text-slate-400">{ads.length === 0 ? "Nguồn quảng cáo chưa trả mẫu nào cho watchlist hiện tại. Danh sách thương hiệu đã nghiên cứu bên dưới chưa đồng nghĩa với việc đã lấy quảng cáo của họ." : "Không có quảng cáo thuộc định dạng đang chọn. Hãy chọn Tất cả định dạng."}</p>}
+      {competitorReport && filteredAds.length === 0 && (
+        <div role="status" className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 p-6 text-center space-y-2">
+          <p className="text-sm font-medium text-slate-300">
+            {ads.length === 0
+              ? "Chưa có dữ liệu quảng cáo đối thủ cho store này."
+              : "Không có quảng cáo thuộc định dạng đang chọn. Hãy chọn Tất cả định dạng."}
+          </p>
+          {ads.length === 0 && (
+            <p className="text-xs text-slate-400 max-w-lg mx-auto">
+              Bấm nút <strong className="text-cyan-400">&quot;Spy đối thủ&quot;</strong> ở phía trên để AI tự động cào sản phẩm từ store, quét Facebook Ad Library tìm đối thủ cùng niche và trích xuất creative gaps.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* 3. Visual Ad Card Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

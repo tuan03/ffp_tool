@@ -12,9 +12,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     let code = "ADS_SOURCE_UNAVAILABLE";
+    let customMessage: string | null = null;
     try {
-      const payload: unknown = await response.json();
-      if (typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "object" && payload.error !== null && "code" in payload.error && typeof payload.error.code === "string" && /^[A-Z0-9_]+$/.test(payload.error.code)) code = payload.error.code;
+      const payload: any = await response.json();
+      if (typeof payload === "object" && payload !== null) {
+        if (typeof payload.error === "string") {
+          customMessage = payload.error;
+        } else if (typeof payload.error === "object" && payload.error !== null) {
+          if (typeof payload.error.code === "string" && /^[A-Z0-9_]+$/.test(payload.error.code)) {
+            code = payload.error.code;
+          }
+          if (typeof payload.error.message === "string") {
+            customMessage = payload.error.message;
+          }
+        }
+      }
     } catch { /* A proxy may return a non-JSON error. */ }
     const messages: Readonly<Record<string, string>> = {
       SPY_ALREADY_RUNNING: "Store này đang có một lượt Spy chạy. Hãy xem tiến độ hoặc dừng lượt hiện tại.",
@@ -41,7 +53,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       COMPETITOR_SOURCE_UNAVAILABLE: "Chưa lấy được quảng cáo từ nhà cung cấp. Kiểm tra API key và quyền truy cập.",
       ADS_CURRENCY_MISMATCH: "Các nguồn khác tiền tệ; chưa thể đối soát.",
     };
-    const message = messages[code] ?? (code.endsWith("_CODE_190") ? "Meta từ chối token. Kiểm tra thời hạn và quyền truy cập." : "Kiểm tra cấu hình và quyền truy cập của store.");
+    const message = customMessage || messages[code] || (code.endsWith("_CODE_190") ? "Meta từ chối token. Kiểm tra thời hạn và quyền truy cập." : "Kiểm tra cấu hình và quyền truy cập của store.");
     throw new Error(`${message} (${code}, HTTP ${response.status})`);
   }
   return response.json() as Promise<T>;

@@ -710,7 +710,23 @@ export class AdsIntelligenceService {
     const watchlist = profile.competitors?.watchlist && profile.competitors.watchlist.length > 0
       ? profile.competitors.watchlist
       : [];
-    if (!watchlist.length) throw new Error("COMPETITOR_WATCHLIST_NOT_CONFIGURED");
+    if (!watchlist.length) {
+      return {
+        storeId,
+        watchlist: [],
+        totalAds: 0,
+        activeAds: 0,
+        provider: "AI Spy Runner",
+        syncCostEstimatedUsd: 0,
+        monthlyCostCapUsd: profile.competitors?.monthlyCostCapUsd ?? 50,
+        transparencyDisclaimer: "Chưa có báo cáo nghiên cứu đối thủ. Hãy bấm 'Spy đối thủ' để AI tự động tìm kiếm đối thủ trong niche của bạn.",
+        ads: [],
+        creativeGaps: [],
+        topWinningHooks: [],
+        formatDistribution: [],
+        fromCache: false,
+      };
+    }
 
     const client = new DefaultCompetitorClient();
     const pageResults = await Promise.all(
