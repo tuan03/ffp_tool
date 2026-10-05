@@ -34,6 +34,7 @@ import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
+import { getCrawlerClientPresence } from "./client-presence";
 
 import {
   abortCrawlerJob,
@@ -96,6 +97,8 @@ const COMMON_PRODUCT_TYPES = [
 ];
 
 const AGENT_RELEASE_FALLBACK_URL = "https://github.com/tuan03/ffp_tool/releases/latest";
+const CLIENTS_PER_PAGE = 25;
+const JOBS_PER_PAGE = 10;
 
 function formatDownloadSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
@@ -242,6 +245,7 @@ export function AmazonCrawlerPage({
   const [hydrateMessage, setHydrateMessage] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
   const [commandHistories, setCommandHistories] = useState<Record<string, readonly AmazonCrawlerAgentCommandSummary[]>>({});
+  const [commandHistoryErrors, setCommandHistoryErrors] = useState<Record<string, boolean>>({});
   const [commandBusyClientId, setCommandBusyClientId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [purgeTaskScopes, setPurgeTaskScopes] = useState<Record<string, string>>({});
@@ -253,10 +257,17 @@ export function AmazonCrawlerPage({
   const [isChangingAdmissionGate, setIsChangingAdmissionGate] = useState(false);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [isClientSnapshotStale, setIsClientSnapshotStale] = useState(false);
+  const [lastClientRefreshAt, setLastClientRefreshAt] = useState<number | null>(null);
+  const [clientPage, setClientPage] = useState(0);
   const [agentRelease, setAgentRelease] = useState<AmazonCrawlerAgentRelease | null>(null);
   const [agentReleaseError, setAgentReleaseError] = useState<string | null>(null);
   const [isLoadingAgentRelease, setIsLoadingAgentRelease] = useState(true);
   const [jobs, setJobs] = useState<readonly AmazonCrawlerJobSnapshot[]>([]);
+  const [hasLoadedJobs, setHasLoadedJobs] = useState(false);
+  const [isJobSnapshotStale, setIsJobSnapshotStale] = useState(false);
+  const [lastJobRefreshAt, setLastJobRefreshAt] = useState<number | null>(null);
+  const [jobPage, setJobPage] = useState(0);
   const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
   const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
   const [controlledJobId, setControlledJobId] = useState<string | null>(null);
@@ -356,11 +367,17 @@ export function AmazonCrawlerPage({
   const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
   const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
-  const outdatedClients = agentRelease === null
+  const outdatedClients = agentRelease === null || isClientSnapshotStale
     ? []
     : connectedClients.filter(
       (client) => getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated",
     );
+  const clientPageCount = Math.max(1, Math.ceil(clients.length / CLIENTS_PER_PAGE));
+  const visibleClientPage = Math.min(clientPage, clientPageCount - 1);
+  const visibleClients = clients.slice(visibleClientPage * CLIENTS_PER_PAGE, (visibleClientPage + 1) * CLIENTS_PER_PAGE);
+  const jobPageCount = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE));
+  const visibleJobPage = Math.min(jobPage, jobPageCount - 1);
+  const visibleJobs = jobs.slice(visibleJobPage * JOBS_PER_PAGE, (visibleJobPage + 1) * JOBS_PER_PAGE);
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const coordinatorActiveJob = jobs.find((job) =>
     ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status)
@@ -402,17 +419,12 @@ export function AmazonCrawlerPage({
         const nextClients = await loadAmazonCrawlerClients();
         if (!isMounted) return;
         setClients(nextClients);
-        if (amazonCrawlerCommands) {
-          const histories = await Promise.all(nextClients.map(async (client) => {
-            try { return [client.id, await amazonCrawlerCommands.history(client.id)] as const; }
-            catch { return [client.id, []] as const; }
-          }));
-          if (isMounted) setCommandHistories(Object.fromEntries(histories));
-        }
+        setIsClientSnapshotStale(false);
+        setLastClientRefreshAt(Date.now());
         setClientError(null);
       } catch (caught: unknown) {
         if (!isMounted) return;
-        setClients([]);
+        setIsClientSnapshotStale(true);
         setClientError(caught instanceof Error ? caught.message : "Không tải được danh sách client.");
       } finally {
         if (isMounted) setIsLoadingClients(false);
@@ -450,14 +462,19 @@ export function AmazonCrawlerPage({
   }
 
   async function handleAgentExecutionCommand(client: AmazonCrawlerClientSummary): Promise<void> {
-    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     const type = client.desiredExecutionState === "PAUSED" ? "RESUME" : "PAUSE";
     setCommandBusyClientId(client.id);
     setCommandError(null);
     try {
       await amazonCrawlerCommands.submit(client.id, type);
-      const history = await amazonCrawlerCommands.history(client.id);
-      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      try {
+        const history = await amazonCrawlerCommands.history(client.id);
+        setCommandHistories((current) => ({ ...current, [client.id]: history }));
+        setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+      } catch {
+        setCommandHistoryErrors((current) => ({ ...current, [client.id]: true }));
+      }
     } catch (error: unknown) {
       setCommandError(error instanceof Error ? error.message : "Không gửi được lệnh đến agent.");
     } finally {
@@ -467,7 +484,7 @@ export function AmazonCrawlerPage({
 
   async function handleAgentRestart(client: AmazonCrawlerClientSummary,
                                     type: "RESTART_WORKERS" | "RESTART_AGENT"): Promise<void> {
-    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     const reason = (purgeReasons[client.id] ?? "").trim();
     if (!client.isConnected || client.appliedExecutionState !== "PAUSED" || reason.length < 10) return;
     const label = type === "RESTART_AGENT" ? "toàn bộ agent" : "worker crawler";
@@ -476,8 +493,13 @@ export function AmazonCrawlerPage({
     setCommandError(null);
     try {
       await amazonCrawlerCommands.restart(client.id, type, reason);
-      const history = await amazonCrawlerCommands.history(client.id);
-      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      try {
+        const history = await amazonCrawlerCommands.history(client.id);
+        setCommandHistories((current) => ({ ...current, [client.id]: history }));
+        setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+      } catch {
+        setCommandHistoryErrors((current) => ({ ...current, [client.id]: true }));
+      }
     } catch (error: unknown) {
       setCommandError(error instanceof Error ? error.message : `Không gửi được lệnh restart ${label}.`);
     } finally {
@@ -486,7 +508,7 @@ export function AmazonCrawlerPage({
   }
 
   async function handlePendingPurgePreview(client: AmazonCrawlerClientSummary): Promise<void> {
-    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     const taskIds = (purgeTaskScopes[client.id] ?? "").split(/[\s,;]+/).filter(Boolean);
     setCommandBusyClientId(client.id);
     setCommandError(null);
@@ -501,7 +523,7 @@ export function AmazonCrawlerPage({
   }
 
   async function handlePurgeAllLocalPreview(client: AmazonCrawlerClientSummary): Promise<void> {
-    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     setCommandBusyClientId(client.id);
     setCommandError(null);
     try {
@@ -515,7 +537,7 @@ export function AmazonCrawlerPage({
   }
 
   async function handlePendingPurge(client: AmazonCrawlerClientSummary): Promise<void> {
-    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     const preview = purgePreviews[client.id];
     const reason = (purgeReasons[client.id] ?? "").trim();
     if (!preview || preview.ineligibleCount !== 0 || preview.pendingCount < 1 || reason.length < 10) return;
@@ -526,7 +548,9 @@ export function AmazonCrawlerPage({
     try {
       if (isPurgeAll) await amazonCrawlerCommands.purgeAllLocal(client.id, preview.pendingCount, reason);
       else await amazonCrawlerCommands.purgePending(client.id, preview.eligibleTaskIds, preview.pendingCount, reason);
-      const history = await amazonCrawlerCommands.history(client.id);
+      let history: readonly AmazonCrawlerAgentCommandSummary[] | null = null;
+      try { history = await amazonCrawlerCommands.history(client.id); }
+      catch { setCommandHistoryErrors((current) => ({ ...current, [client.id]: true })); }
       setPurgePreviews((current) => {
         const next = { ...current };
         delete next[client.id];
@@ -534,7 +558,10 @@ export function AmazonCrawlerPage({
       });
       setPurgeTaskScopes((current) => ({ ...current, [client.id]: "" }));
       setPurgeReasons((current) => ({ ...current, [client.id]: "" }));
-      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      if (history) {
+        setCommandHistories((current) => ({ ...current, [client.id]: history }));
+        setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+      }
     } catch (error: unknown) {
       setCommandError(error instanceof Error ? error.message : "Không purge được assignment pending.");
     } finally {
@@ -563,20 +590,28 @@ export function AmazonCrawlerPage({
   }, [loadAmazonCrawlerAgentRelease]);
 
   useEffect(() => {
-    if (!amazonCrawlerCommands || clients.length === 0) return;
+    if (!amazonCrawlerCommands || clients.length === 0 || isClientSnapshotStale) return;
     let isActive = true;
     const refreshCommandHistory = async (): Promise<void> => {
       const histories = await Promise.all(clients.map(async (client) => {
         try {
-          return [client.id, await amazonCrawlerCommands.history(client.id)] as const;
+          return { clientId: client.id, history: await amazonCrawlerCommands.history(client.id), failed: false } as const;
         } catch {
-          return null;
+          return { clientId: client.id, history: null, failed: true } as const;
         }
       }));
       if (!isActive) return;
       setCommandHistories((current) => {
         const next = { ...current };
-        for (const entry of histories) if (entry) next[entry[0]] = entry[1];
+        for (const entry of histories) if (entry.history) next[entry.clientId] = entry.history;
+        return next;
+      });
+      setCommandHistoryErrors((current) => {
+        const next = { ...current };
+        for (const entry of histories) {
+          if (entry.failed) next[entry.clientId] = true;
+          else delete next[entry.clientId];
+        }
         return next;
       });
     };
@@ -586,7 +621,7 @@ export function AmazonCrawlerPage({
       isActive = false;
       window.clearInterval(interval);
     };
-  }, [amazonCrawlerCommands, clients]);
+  }, [amazonCrawlerCommands, clients, isClientSnapshotStale]);
 
   // 1. Fetch recent jobs list from coordinator
   useEffect(() => {
@@ -687,7 +722,7 @@ export function AmazonCrawlerPage({
     let isMounted = true;
     async function refreshJobs(): Promise<void> {
       try {
-        let nextJobs = await jobController.list(25);
+        let nextJobs = await jobController.list(100);
         if (activeJobId && !nextJobs.some((job) => job.jobId === activeJobId)) {
           try {
             const activeJob = await jobController.get(activeJobId);
@@ -701,9 +736,16 @@ export function AmazonCrawlerPage({
             setJobControlMessage("Job không còn trên coordinator; trạng thái chạy trên giao diện đã được đồng bộ lại.");
           }
         }
-        if (isMounted) setJobs(nextJobs);
+        if (isMounted) {
+          setJobs(nextJobs);
+          setIsJobSnapshotStale(false);
+          setLastJobRefreshAt(Date.now());
+          setHasLoadedJobs(true);
+        }
       } catch (caught: unknown) {
         if (isMounted) {
+          setIsJobSnapshotStale(true);
+          setHasLoadedJobs(true);
           setJobControlTone("error");
           setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được danh sách job.");
         }
@@ -1405,7 +1447,9 @@ export function AmazonCrawlerPage({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
-              {connectedClients.length} đang kết nối
+              {isClientSnapshotStale
+                ? `${connectedClients.length} kết nối lần cuối · trạng thái hiện chưa xác minh`
+                : `${connectedClients.length} đang kết nối`}
             </span>
             <a
               className="inline-flex items-center rounded-lg bg-cyan-400 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300"
@@ -1446,7 +1490,8 @@ export function AmazonCrawlerPage({
           </div>
         ) : null}
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
-        {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
+        {clientError ? <p className="mt-3 text-sm text-rose-300" role="alert">{clientError}</p> : null}
+        {lastClientRefreshAt !== null ? <p className="mt-1 text-[11px] text-slate-500">Lần cập nhật danh sách agent: {new Date(lastClientRefreshAt).toLocaleTimeString()}{isClientSnapshotStale ? " · dữ liệu hiển thị là snapshot cũ; thao tác agent tạm khóa" : ""}</p> : null}
         {amazonCrawlerAdmissionGate ? (
           <div className={`mt-4 rounded-lg border p-3 ${admissionGate?.state === "STOPPED" ? "border-rose-700 bg-rose-950/40" : "border-slate-700 bg-slate-900/70"}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1481,11 +1526,15 @@ export function AmazonCrawlerPage({
         {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có crawler agent đã đăng ký. Hãy mở FFP Amazon Crawler Agent.</p> : null}
         {clients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {clients.map((client) => (
+            {visibleClients.map((client) => (
               <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
-                  <span className={`text-xs font-semibold ${!client.isConnected || client.status === "offline" ? "text-rose-300" : client.status === "waiting_captcha" || client.status === "degraded" ? "text-amber-300" : "text-emerald-300"}`}>{client.isConnected ? client.status : "offline"}</span>
+                  {(() => {
+                    const presence = getCrawlerClientPresence(client.isConnected, client.status, isClientSnapshotStale);
+                    const toneClass = presence.tone === "offline" ? "text-rose-300" : presence.tone === "warning" ? "text-amber-300" : presence.tone === "unknown" ? "text-slate-400" : "text-emerald-300";
+                    return <span className={`text-xs font-semibold ${toneClass}`}>{presence.label}</span>;
+                  })()}
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
                   <span>Agent v{client.agentVersion}</span>
@@ -1516,7 +1565,7 @@ export function AmazonCrawlerPage({
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng" : "đang chạy"}
                       {client.appliedExecutionState !== client.desiredExecutionState ? " · đang đồng bộ" : ""}</span>
-                    <button type="button" disabled={commandBusyClientId !== null}
+                    <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale}
                       onClick={() => void handleAgentExecutionCommand(client)}
                       className="rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50">
                       {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" ? "Tiếp tục" : "Tạm dừng"}
@@ -1544,13 +1593,13 @@ export function AmazonCrawlerPage({
                       className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
                       placeholder="Ít nhất 10 ký tự" />
                     <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" disabled={commandBusyClientId !== null || !client.isConnected || client.appliedExecutionState !== "PAUSED"
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
                         className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
                         Restart workers
                       </button>
-                      <button type="button" disabled={commandBusyClientId !== null || !client.isConnected || client.appliedExecutionState !== "PAUSED"
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_AGENT")}
                         className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
@@ -1559,12 +1608,12 @@ export function AmazonCrawlerPage({
                       <span className="text-[10px] text-slate-500">Cần online + PAUSED, không task chạy và lý do audit ≥10 ký tự.</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button type="button" disabled={commandBusyClientId !== null || client.appliedExecutionState !== "PAUSED"}
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.appliedExecutionState !== "PAUSED"}
                         onClick={() => void handlePendingPurgePreview(client)}
                         className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
                         {commandBusyClientId === client.id ? "Đang kiểm tra…" : "Kiểm tra phạm vi"}
                       </button>
-                      <button type="button" disabled={commandBusyClientId !== null || client.appliedExecutionState !== "PAUSED"}
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.appliedExecutionState !== "PAUSED"}
                         onClick={() => void handlePurgeAllLocalPreview(client)}
                         className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
                         Preview purge-all
@@ -1574,7 +1623,7 @@ export function AmazonCrawlerPage({
                         {purgePreviews[client.id].pendingCount} pending · {purgePreviews[client.id].ineligibleCount} không hợp lệ
                       </span> : null}
                       {purgePreviews[client.id]?.pendingCount && purgePreviews[client.id]?.ineligibleCount === 0 ?
-                        <button type="button" disabled={commandBusyClientId !== null || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || (purgeReasons[client.id] ?? "").trim().length < 10}
                           onClick={() => void handlePendingPurge(client)}
                         className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
                           {purgePreviews[client.id].scope === "all-local" ? "Purge all local" : "Purge pending"}
@@ -1600,11 +1649,17 @@ export function AmazonCrawlerPage({
                       {command.error ? <p className="text-rose-300">{command.error}</p> : null}
                     </div>;
                   })}
+                  {commandHistoryErrors[client.id] ? <p role="status" className="mt-2 text-[11px] text-amber-300">Không tải được trạng thái lệnh mới; lịch sử bên dưới có thể đã cũ.</p> : null}
                 </div> : null}
               </article>
             ))}
           </div>
         ) : null}
+        {clients.length > CLIENTS_PER_PAGE ? <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">
+          <button type="button" disabled={visibleClientPage === 0} onClick={() => setClientPage(visibleClientPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent trước</button>
+          <span>{visibleClientPage * CLIENTS_PER_PAGE + 1}–{Math.min((visibleClientPage + 1) * CLIENTS_PER_PAGE, clients.length)} / {clients.length}</span>
+          <button type="button" disabled={visibleClientPage + 1 >= clientPageCount} onClick={() => setClientPage(visibleClientPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent tiếp</button>
+        </div> : null}
       </section>
 
       <CrawlerObservability controller={amazonCrawlerJobs}
@@ -2279,11 +2334,14 @@ export function AmazonCrawlerPage({
               <h2 className="font-semibold text-slate-100">Job đang chạy và gần đây</h2>
               <p className="text-xs text-slate-400">Hủy job sẽ dừng crawler và dọn dữ liệu tạm của job. Cache sản phẩm hợp lệ và sản phẩm đã ghi lên Shopify được giữ nguyên.</p>
             </div>
-            <span className="text-xs text-slate-500">Tự làm mới mỗi 3 giây</span>
+            <div className="text-right text-xs text-slate-500">
+              <p>Tự làm mới mỗi 3 giây · phân trang 10 job, tải 100 job gần nhất</p>
+              {lastJobRefreshAt !== null ? <p>{isJobSnapshotStale ? "Snapshot cũ; trạng thái hiện chưa xác minh" : "Cập nhật"} lúc {new Date(lastJobRefreshAt).toLocaleTimeString()}</p> : null}
+            </div>
           </div>
-          {jobs.length === 0 ? <p className="text-sm text-slate-400">Chưa có job trên coordinator.</p> : (
+          {jobs.length === 0 ? <p className="text-sm text-slate-400">{!hasLoadedJobs ? "Đang tải danh sách job…" : isJobSnapshotStale ? "Chưa thể xác minh danh sách job do lỗi kết nối." : "Chưa có job trên coordinator."}</p> : (
             <div className="grid gap-2">
-              {jobs.slice(0, 10).map((job) => {
+              {visibleJobs.map((job) => {
                 const isActiveJob = ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status);
                 const cancellationMessage = describeJobCancellation(job);
                 return (
@@ -2302,7 +2360,7 @@ export function AmazonCrawlerPage({
                             <button
                               className="rounded border border-rose-800 px-2 py-0.5 text-rose-300 disabled:opacity-50"
                               type="button"
-                              disabled={controlledTaskId !== null || controlledJobId !== null || job.status === "cancelling"}
+                              disabled={isJobSnapshotStale || controlledTaskId !== null || controlledJobId !== null || job.status === "cancelling"}
                               onClick={() => void handleCancelTask(job.jobId, task.taskId, task.asin)}
                             >
                               {controlledTaskId === task.taskId ? "Đang hủy..." : "Hủy task"}
@@ -2336,13 +2394,13 @@ export function AmazonCrawlerPage({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {isActiveJob && job.status !== "cancelling" ? (
-                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
+                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
                       ) : job.status === "cancelling" ? (
                         <button
                           className="rounded border border-amber-600 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-300 hover:border-rose-500 hover:bg-rose-950/60 hover:text-rose-200 transition-colors"
                           type="button"
                           title="Bấm để buộc dừng ngay lập tức (Force Stop)"
-                          disabled={controlledJobId === job.jobId}
+                          disabled={isJobSnapshotStale || controlledJobId === job.jobId}
                           onClick={() => void handleStopJob(job.jobId)}
                         >
                           {controlledJobId === job.jobId ? "Đang dừng..." : "Buộc dừng ngay ✕"}
@@ -2366,11 +2424,11 @@ export function AmazonCrawlerPage({
                         </button>
                       ) : ["completed", "partial", "cancelled"].includes(job.status) ? (
                         <>
-                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
-                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
+                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
+                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
                         </>
                       ) : job.status === "cancelling" ? (
-                        <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)} title="Hủy bỏ và xóa job">Delete</button>
+                        <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)} title="Hủy bỏ và xóa job">Delete</button>
                       ) : null}
                     </div>
                   </div>
@@ -2378,6 +2436,11 @@ export function AmazonCrawlerPage({
               })}
             </div>
           )}
+          {jobs.length > JOBS_PER_PAGE ? <div className="flex items-center justify-end gap-3 text-xs text-slate-400">
+            <button type="button" disabled={visibleJobPage === 0} onClick={() => setJobPage(visibleJobPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job trước</button>
+            <span>{visibleJobPage * JOBS_PER_PAGE + 1}–{Math.min((visibleJobPage + 1) * JOBS_PER_PAGE, jobs.length)} / {jobs.length}</span>
+            <button type="button" disabled={visibleJobPage + 1 >= jobPageCount} onClick={() => setJobPage(visibleJobPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job tiếp</button>
+          </div> : null}
           {shouldShowStandaloneJobControlMessage(jobControlTone, jobControlMessage) ? (
             <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : "text-rose-300"}`}>
               {jobControlMessage}
@@ -2387,7 +2450,7 @@ export function AmazonCrawlerPage({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
+        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
         <button
           className={`rounded-lg border px-5 py-2 font-semibold transition-colors ${
             isCancellationPending

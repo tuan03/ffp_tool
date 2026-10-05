@@ -7,6 +7,12 @@ import { MemoryRouter } from "react-router-dom";
 import { amazonCrawlerMockAgentRelease, amazonCrawlerMockOutput } from "../mocks/data";
 import { AmazonCrawlerPage } from "../ui/AmazonCrawlerPage";
 import { clearCrawlerSession, hydrateCrawlerSessionFromJob } from "../ui/crawler-session";
+import { getCrawlerClientPresence } from "../ui/client-presence";
+
+test("stale coordinator snapshots show unknown presence instead of a false online or stopped state", () => {
+  assert.deepEqual(getCrawlerClientPresence(true, "online", true), { label: "chưa xác minh", tone: "unknown" });
+  assert.deepEqual(getCrawlerClientPresence(false, "offline", false), { label: "offline", tone: "offline" });
+});
 
 test("crawler page shows SEO complete after restoring a job awaiting review", () => {
   clearCrawlerSession();

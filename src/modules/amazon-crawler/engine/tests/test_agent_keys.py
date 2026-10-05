@@ -20,6 +20,29 @@ from engine.distributed.coordinator_migrations import MIGRATIONS, migrate_coordi
 
 
 class AgentKeyTests(unittest.TestCase):
+    def test_list_keys_supports_offset_pagination_and_total_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("engine.distributed.coordinator_server.find_project_root", return_value=root):
+                app = create_coordinator_app(database_url=f"sqlite:///{(root / 'pages.db').as_posix()}",
+                    operator_credentials=OperatorCredentials("operator", "fixture-password"))
+            with TestClient(app) as client:
+                auth = ("operator", "fixture-password")
+                for index in range(3):
+                    created = client.post("/api/v1/agent-keys", auth=auth, json={
+                        "requestId": uuid.uuid4().hex, "name": f"fixture-{index}", "maxWorkers": 2,
+                        "crawlers": ["amazon"], "environment": "test",
+                        "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+                    })
+                    self.assertEqual(created.status_code, 201, created.text)
+                first = client.get("/api/v1/agent-keys?limit=2&offset=0", auth=auth).json()
+                second = client.get("/api/v1/agent-keys?limit=2&offset=2", auth=auth).json()
+                self.assertEqual(first["total"], 3)
+                self.assertEqual(second["total"], 3)
+                self.assertEqual(len(first["keys"]), 2)
+                self.assertEqual(len(second["keys"]), 1)
+                self.assertFalse({key["id"] for key in first["keys"]} & {key["id"] for key in second["keys"]})
+
     def test_create_once_list_metadata_and_reject_unauthorized(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

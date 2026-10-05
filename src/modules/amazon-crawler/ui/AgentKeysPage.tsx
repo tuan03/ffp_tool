@@ -11,12 +11,16 @@ export function AgentKeysPage() {
   const [environment, setEnvironment] = useState("test");
   const [allowPinterest, setAllowPinterest] = useState(false);
   const [keys, setKeys] = useState<AgentKeySummary[]>([]);
+  const [keyTotal, setKeyTotal] = useState(0);
+  const [keyOffset, setKeyOffset] = useState(0);
+  const [isKeySnapshotStale, setIsKeySnapshotStale] = useState(false);
+  const keyPageSize = 50;
   const [rawKey, setRawKey] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
 
-  async function handleAction(action: "list" | "create" | "rotate" | "revoke", keyId?: string, rebind = false) {
+  async function handleAction(action: "list" | "create" | "rotate" | "revoke", keyId?: string, rebind = false, nextOffset = keyOffset) {
     if (window.location.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)) {
       setError("Chỉ dùng quản lý key qua HTTPS hoặc localhost.");
       return;
@@ -31,6 +35,7 @@ export function AgentKeysPage() {
     try {
       const previous = keys.find((key) => key.id === keyId);
       const response = await requestAgentKeyManagement({ username, password, action, keyId,
+        ...(action === "list" ? { limit: keyPageSize, offset: nextOffset } : {}),
         payload: { requestId: crypto.randomUUID(), name: previous?.name ?? (name.trim() || "Crawler agent"),
           maxWorkers: previous?.maxWorkers ?? maxWorkers,
           crawlers: previous?.crawlers ?? (allowPinterest ? ["amazon", "pinterest"] : ["amazon"]),
@@ -38,9 +43,10 @@ export function AgentKeysPage() {
           expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(), ...(action === "rotate" ? { rebind } : {}) },
       });
       if (response.key) setRawKey(response.key);
-      if (action === "list") { setKeys(response.keys); setHasLoaded(true); }
+      if (action === "list") { setKeys(response.keys); setKeyTotal(response.total); setKeyOffset(nextOffset); setHasLoaded(true); setIsKeySnapshotStale(false); }
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : "Không thể quản lý key.");
+      if (action === "list" && hasLoaded) setIsKeySnapshotStale(true);
     } finally { setIsBusy(false); }
   }
 
@@ -55,21 +61,27 @@ export function AgentKeysPage() {
     <label className="flex flex-col gap-1">Số worker tối đa<input type="number" min={1} max={16} className={inputClass} value={maxWorkers} onChange={(event) => setMaxWorkers(Number(event.target.value))} /></label>
     <label className="flex flex-col gap-1">Môi trường<select className={inputClass} value={environment} onChange={(event) => setEnvironment(event.target.value)}><option value="test">Test</option><option value="production">Production</option></select></label>
     <label><input type="checkbox" checked={allowPinterest} onChange={(event) => setAllowPinterest(event.target.checked)} /> Cho phép Pinterest (ngoài Amazon)</label>
-    <div className="flex gap-4"><button type="button" disabled={isBusy} onClick={() => void handleAction("list")}>Tải danh sách</button>
+    <div className="flex gap-4"><button type="button" disabled={isBusy} onClick={() => void handleAction("list", undefined, false, 0)}>Tải danh sách</button>
       <button type="button" disabled={isBusy} onClick={() => void handleAction("create")}>Tạo key</button>
-      <button type="button" onClick={() => { setPassword(""); setRawKey(""); setKeys([]); setHasLoaded(false); }}>Xóa thông tin khỏi trang</button></div>
+      <button type="button" onClick={() => { setPassword(""); setRawKey(""); setKeys([]); setKeyTotal(0); setKeyOffset(0); setHasLoaded(false); setIsKeySnapshotStale(false); }}>Xóa thông tin khỏi trang</button></div>
     {isBusy && <p role="status">Đang xử lý…</p>}
     {error && <p role="alert" className="text-red-400">{error}</p>}
+    {isKeySnapshotStale ? <p role="status" className="text-amber-300">Danh sách key bên dưới là snapshot cũ; thao tác rotate/rebind/revoke đã khóa cho đến khi tải lại thành công.</p> : null}
     {rawKey && <section className="flex flex-col gap-2 rounded border border-amber-500 p-4"><p>Key chỉ hiển thị một lần. Lưu riêng an toàn, không đưa vào Git/chat.</p>
       <label>Agent Key<input readOnly autoComplete="off" className={`${inputClass} w-full`} value={rawKey} /></label>
       <button type="button" onClick={() => setRawKey("")}>Đã lưu, đóng key</button></section>}
     {hasLoaded && keys.length === 0 && <p>Chưa có key.</p>}
     <ul className="flex flex-col gap-3">{keys.map((key) => <li key={key.id} className="rounded border border-slate-600 p-3">
       <p>{key.name} — {key.status} — {key.agentId ?? "Chưa đăng ký"}</p>
-      <div className="flex gap-4"><button type="button" disabled={isBusy} onClick={() => void handleAction("rotate", key.id)}>Rotate</button>
-        <button type="button" disabled={isBusy} onClick={() => void handleAction("rotate", key.id, true)}>Rebind</button>
-        <button type="button" disabled={isBusy} onClick={() => void handleAction("revoke", key.id)}>Revoke</button></div>
+      <div className="flex gap-4"><button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("rotate", key.id)}>Rotate</button>
+        <button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("rotate", key.id, true)}>Rebind</button>
+        <button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("revoke", key.id)}>Revoke</button></div>
     </li>)}</ul>
-    <p>Danh sách hiển thị tối đa 50 key đầu. Tải lại sau thao tác để xem trạng thái mới.</p>
+    {hasLoaded && keyTotal > keyPageSize ? <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
+      <button type="button" disabled={isBusy || keyOffset === 0} onClick={() => void handleAction("list", undefined, false, Math.max(0, keyOffset - keyPageSize))}>Trước</button>
+      <span>{keyOffset + 1}–{Math.min(keyOffset + keys.length, keyTotal)} / {keyTotal}</span>
+      <button type="button" disabled={isBusy || keyOffset + keys.length >= keyTotal} onClick={() => void handleAction("list", undefined, false, keyOffset + keyPageSize)}>Sau</button>
+    </div> : null}
+    <p>Danh sách phân trang, tối đa 50 key mỗi lượt. Tải lại sau thao tác để xem trạng thái mới.</p>
   </main>;
 }

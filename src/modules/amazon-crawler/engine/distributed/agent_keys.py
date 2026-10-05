@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import DateTime, Integer, String, select
+from sqlalchemy import DateTime, Integer, String, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -93,4 +93,5 @@ def install_agent_key_routes(app, sessions, operator_username: str) -> None:
     def list_keys(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
         with sessions() as session:
             keys = session.scalars(select(AgentKey).order_by(AgentKey.created_at, AgentKey.id).offset(offset).limit(limit))
-            return JSONResponse({"keys": [key_metadata(key) for key in keys]}, headers={"Cache-Control": "no-store"})
+            total = int(session.scalar(select(func.count(AgentKey.id))) or 0)
+            return JSONResponse({"keys": [key_metadata(key) for key in keys], "total": total}, headers={"Cache-Control": "no-store"})

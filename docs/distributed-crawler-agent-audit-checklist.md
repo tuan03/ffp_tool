@@ -179,11 +179,13 @@ Tasks 25–27 đã được triển khai gộp trên `cua_pro` local; quyết đ
 | [x] | 33 | Taxonomy lỗi và retry budget thống nhất | 36–37 (errors/retry) | 32; E4.1 | Permanent/transient, Retry-After, restart giữ budget | Code QA pass; PostgreSQL persistence test pass |
 | [x] | 34 | Attempt history/version và retention đúng | 44–45, 48 (attempt history) | 33; D9; E4.1 | Không ghi đè lịch sử, cleanup không mất evidence cần giữ | Seven-day cleanup tested; active attempts retained |
 | [x] | 35 | DLQ có requeue/delete được phân quyền | 38, 48 (DLQ) | 34; E4.1 | Hết budget vào DLQ, requeue không duplicate; delete có audit | PostgreSQL persistence/idempotency test pass |
-| [ ] | 36 | Dashboard thống nhất states/commands/backlog | 3, 6–7, 21–22, 47–48 (UI/heartbeat) | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Duyệt màn agent/job/key/command hiện có |
+| [x] | 36 | Dashboard thống nhất states/commands/backlog | 3, 6–7, 21–22, 47–48 (UI/heartbeat) | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Code QA tự động pass; xem báo cáo Task 36 |
 | [ ] | 37 | Regression consumers chung và runtime | 49, 56 (regression; thêm ràng buộc FFP) | 36; G3/G4 | Amazon Reviews/Pinterest/Review Studio/pipeline/internal routes; đúng ba container | Smoke các màn/flow liên quan trên test instance |
 | [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Xem báo cáo + demo, phân biệt giả và máy thật |
 
-Tasks 33–35 đã pass code QA và được người dùng cho phép tiếp tục sau khi chạy PostgreSQL isolated; policy D9 là xóa terminal attempt sau 7 ngày và archive sau 7 ngày kể từ lúc archive. Task 36 là bước tiếp theo.
+Tasks 33–35 đã pass code QA và được người dùng cho phép tiếp tục sau khi chạy PostgreSQL isolated; policy D9 là xóa terminal attempt sau 7 ngày và archive sau 7 ngày kể từ lúc archive. Task 36 đã hoàn tất; tiếp theo là Task 37.
+
+Task 36 đã pass code QA local ngày 2026-10-05; xem [báo cáo Task 36](audits/distributed-crawler/task-36-dashboard-observability.md). UI giữ snapshot cuối và đánh dấu chưa xác minh khi request lỗi, khóa các thao tác có thể thay đổi state trên snapshot cũ, hiển thị lỗi tải lịch sử lệnh, phân trang agent/job/agent keys và hiển thị loading/empty/error cùng lần cập nhật gần nhất. Endpoint agent-key list trả total count để phân trang server-side. Không restart agent/container, không push/deploy.
 
 UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhất và lấp khoảng thiếu, không dồn toàn bộ khả năng quan sát tới cuối. Nếu thiếu máy/tài nguyên cho Task 38, ghi CHỜ ĐIỀU KIỆN; không dùng test nhỏ để tự tick MVP.
 

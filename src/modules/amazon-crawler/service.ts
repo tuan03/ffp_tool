@@ -102,14 +102,19 @@ export async function requestAgentKeyManagement(options: {
   password: string;
   action: "list" | "create" | "rotate" | "revoke";
   keyId?: string;
+  limit?: number;
+  offset?: number;
   payload?: Readonly<Record<string, unknown>>;
   fetchImplementation?: typeof fetch;
-}): Promise<{ keys: AgentKeySummary[]; key?: string }> {
+}): Promise<{ keys: AgentKeySummary[]; total: number; key?: string }> {
   const suffix = options.action === "rotate" || options.action === "revoke"
     ? `/${encodeURIComponent(options.keyId ?? "")}/${options.action}` : "";
+  const query = options.action === "list"
+    ? `?limit=${Math.max(1, Math.min(100, options.limit ?? 50))}&offset=${Math.max(0, options.offset ?? 0)}`
+    : "";
   const encoded = btoa(Array.from(new TextEncoder().encode(`${options.username}:${options.password}`),
     (byte) => String.fromCharCode(byte)).join(""));
-  const response = await (options.fetchImplementation ?? fetch)(`/api/v1/agent-keys${suffix}`, {
+  const response = await (options.fetchImplementation ?? fetch)(`/api/v1/agent-keys${suffix}${query}`, {
     method: options.action === "list" ? "GET" : "POST",
     headers: { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" },
     cache: "no-store",
@@ -133,7 +138,8 @@ export async function requestAgentKeyManagement(options: {
         maxWorkers: key.maxWorkers, environment: key.environment, crawlers: key.crawlers.filter((crawler: unknown): crawler is string => typeof crawler === "string") });
     }
   }
-  return { keys, ...(typeof payload.key === "string" ? { key: payload.key } : {}) };
+  return { keys, total: typeof payload.total === "number" && Number.isSafeInteger(payload.total) && payload.total >= 0 ? payload.total : keys.length,
+    ...(typeof payload.key === "string" ? { key: payload.key } : {}) };
 }
 function readCacheClearResult(value: unknown): AmazonCrawlerCacheClearResult {
   if (!isRecord(value) || typeof value.removedFiles !== "number" || typeof value.removedBytes !== "number") {
