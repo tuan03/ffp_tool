@@ -198,7 +198,9 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(supervisor, /\[program:pinterest-pod\]/);
   assert.match(supervisor, /server\/server\.py/);
   assert.match(supervisor, /\[program:pipeline-worker\]/);
-  assert.match(pipelineWorker, /exec sleep infinity/);
+  assert.match(pipelineWorker, /exec node --import tsx scripts\/shopify-pipeline-worker\.ts/);
+  assert.doesNotMatch(pipelineWorker, /exec sleep infinity/);
+  assert.match(serverDocker, /pgrep -f '\[s\]hopify-pipeline-worker\.ts'/);
 
   assert.match(dockerIgnore, /^\*\*\/\.env$/m);
   assert.match(dockerIgnore, /^\*\*\/\.pinterest_oauth_tokens\.json$/m);
@@ -223,6 +225,7 @@ test("server and client deployment assets are properly configured", async () => 
 
   assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
   assert.match(compose, /PINTEREST_COORDINATOR_URL:\s*http:\/\/127\.0\.0\.1:8766/);
+  assert.match(compose, /START_PIPELINE_WORKER:\s*"true"/);
   assert.match(compose, /PINTEREST_RUNTIME_ROOT:\s*\/app\/\.runtime\/pinterest-pod/);
   assert.match(compose, /PINTEREST_APP_ID:\s*\$\{PINTEREST_APP_ID:-\}/);
   assert.match(compose, /PINTEREST_APP_SECRET:\s*\$\{PINTEREST_APP_SECRET:-\}/);

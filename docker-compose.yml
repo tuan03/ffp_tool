@@ -70,7 +70,9 @@ services:
       REVIEW_IMAGE_RUNTIME_ROOT: /app/.runtime/review-image
       REVIEW_IMAGE_OUTPUT_DIR: /app/.runtime/review-image/outputs
       REVIEW_IMAGE_DURABLE_UPLOADS: "true"
-      START_PIPELINE_WORKER: ${START_PIPELINE_WORKER:-true}
+      # The production topology requires the Pipeline Worker in this container.
+      # Keep this explicit so a stale deployment environment cannot disable it.
+      START_PIPELINE_WORKER: "true"
       SHOPIFY_GATEWAY_URL: http://127.0.0.1:3001/api/shopify
       SHOPIFY_PIPELINE_COORDINATOR_URL: http://127.0.0.1:8766
       PINTEREST_POD_HOST: 0.0.0.0
