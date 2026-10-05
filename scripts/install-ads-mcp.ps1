@@ -31,7 +31,7 @@ if ($agyCmd) {
   Write-Host "⚡ Phát hiện Antigravity CLI. Đang đăng ký MCP server..." -ForegroundColor Yellow
   try {
     & agy mcp remove ads-intelligence 2>$null
-    & agy mcp add ads-intelligence --url $mcpEndpoint --header "Authorization: Bearer $Token"
+    & agy mcp add --header "Authorization: Bearer $Token" ads-intelligence $mcpEndpoint
     Write-Host "✅ Antigravity CLI đã cấu hình thành công!" -ForegroundColor Green
   } catch {
     Write-Host "⚠️ Không thể tự động thêm vào agy: $_" -ForegroundColor Yellow

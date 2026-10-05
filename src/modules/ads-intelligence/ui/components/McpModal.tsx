@@ -124,7 +124,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
 
   const currentToken = selectedUserToken || "<CHƯA_CHỌN_TOKEN>";
   const installCommand = `irm "${baseUrl}/mcp/ads/install.ps1?token=${currentToken}" | iex`;
-  const agyManualCommand = `agy mcp add ads-intelligence --url "${baseUrl}/mcp/ads" --header "Authorization: Bearer ${currentToken}"`;
+  const agyManualCommand = `agy mcp add --header "Authorization: Bearer ${currentToken}" ads-intelligence "${baseUrl}/mcp/ads"`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">

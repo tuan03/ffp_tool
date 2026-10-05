@@ -73,7 +73,7 @@ if ($agyCmd) {
   Write-Host "⚡ Phát hiện Antigravity CLI. Đang đăng ký MCP server..." -ForegroundColor Yellow
   try {
     & agy mcp remove ads-intelligence 2>$null
-    & agy mcp add ads-intelligence --url $mcpEndpoint --header "Authorization: Bearer $Token"
+    & agy mcp add --header "Authorization: Bearer $Token" ads-intelligence $mcpEndpoint
     Write-Host "✅ Antigravity CLI đã cấu hình thành công!" -ForegroundColor Green
   } catch {
     Write-Host "⚠️ Không thể tự động thêm vào agy: $_" -ForegroundColor Yellow
@@ -135,7 +135,8 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
     // Serve 1-Click Installer script for PowerShell if requested
     if (req.method === "GET" && parsedUrl.pathname.endsWith("/install.ps1")) {
       const host = req.headers.host || "ffp.b6-team.site";
-      const proto = (req.headers["x-forwarded-proto"] as string) || "https";
+      const isLocal = host.startsWith("localhost") || host.startsWith("127.0.0.1");
+      const proto = isLocal ? "http" : "https";
       const baseUrl = `${proto}://${host}`;
       const queryToken = parsedUrl.searchParams.get("token") || "";
       const script = generateInstallerScript(baseUrl, queryToken);
