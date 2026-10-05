@@ -60,7 +60,7 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
                 and path.startswith("/api/v1/pinterest-assets/") and request.method in {"POST", "PUT"}):
             # The asset handler authenticates the agent and fences its current lease.
             return await call_next(request)
-        if path in {"/api/v1/health", "/api/v1/ready", "/api/v1/agent-release"} or path.startswith(("/api/v1/worker/", "/api/v1/internal/")):
+        if path in {"/api/v1/health", "/api/v1/ready", "/api/v1/agent-release", "/api/v1/operator/security"} or path.startswith(("/api/v1/worker/", "/api/v1/internal/")):
             # These have distinct worker/pipeline contracts, not operator rights.
             return await call_next(request)
         operator_authenticated = credentials.accepts(request.headers.get("authorization", ""))

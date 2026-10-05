@@ -23,6 +23,17 @@ PIPELINE = "pipeline-fixture-credential-123456"
 
 
 class ReviewOperatorBoundaryTests(unittest.TestCase):
+    def test_coordinator_composition_reads_server_operator_credentials_without_fallback(self):
+        composition = importlib.import_module("scripts.coordinator_app")
+        self.assertIsNone(composition.operator_credentials_from_environment({}))
+        with self.assertRaises(ValueError):
+            composition.operator_credentials_from_environment({"FFP_OPERATOR_USERNAME": "operator"})
+        credentials = composition.operator_credentials_from_environment({
+            "FFP_OPERATOR_USERNAME": "operator", "FFP_OPERATOR_PASSWORD": "fixture-password",
+        })
+        self.assertTrue(credentials.accepts("Basic " + base64.b64encode(b"operator:fixture-password").decode()))
+        self.assertNotIn("fixture-password", repr(credentials))
+
     def test_bridge_is_scoped_audited_and_does_not_replace_operator_or_pipeline(self):
         with tempfile.TemporaryDirectory() as temporary:
             engine = create_engine("sqlite:///" + str(Path(temporary) / "test.sqlite3"), connect_args={"check_same_thread": False})

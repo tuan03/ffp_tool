@@ -115,7 +115,8 @@ export function AmazonCrawlerDeadLetterPanel({ controller }: AmazonCrawlerDeadLe
 
       {error ? <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p> : null}
       {message ? <p role="status" className="mt-3 text-sm text-emerald-300">{message}</p> : null}
-      {items.length === 0 ? <p className="mt-4 text-sm text-slate-400">{busy ? "Đang tải…" : "Không có task trong DLQ."}</p> : (
+      {items.length === 0 && !error ? <p className="mt-4 text-sm text-slate-400">{busy ? "Đang tải…" : "Không có task trong DLQ."}</p> : null}
+      {items.length > 0 && (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[800px] text-left text-xs">
             <thead className="text-slate-400"><tr><th className="p-2">Chọn</th><th className="p-2">ASIN / lỗi</th><th className="p-2">Retry</th><th className="p-2">Job / task</th><th className="p-2">Lịch sử</th></tr></thead>

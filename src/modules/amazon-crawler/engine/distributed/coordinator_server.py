@@ -386,6 +386,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         install_operator_authorization(app, sessions, operator_credentials)
         install_key_lifecycle_routes(app, sessions, operator_credentials.username)
         install_agent_key_routes(app, sessions, operator_credentials.username)
+
+        @app.get("/api/v1/operator/security")
+        def operator_security_contract() -> dict[str, int | bool]:
+            return {"authRequired": True, "authProtocol": 1}
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
         "" if os.environ.get("NODE_ENV") == "production" else "http://localhost:5173,http://127.0.0.1:5173",
