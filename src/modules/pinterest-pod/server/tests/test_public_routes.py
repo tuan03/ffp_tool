@@ -93,6 +93,47 @@ class PinterestPublicRouteTests(unittest.TestCase):
                     self.assertEqual(response.headers.get_content_type(), "image/png")
                     self.assertEqual(response.read(), b"png-data")
 
+    def test_operator_session_guards_jobs_assets_and_logout(self) -> None:
+        with patch.dict("os.environ", {"PINTEREST_OPERATOR_USERNAME": "fixture", "PINTEREST_OPERATOR_PASSWORD": "secret"}), \
+             patch.object(server, "check_pinterest_coordinator_ready", return_value=True), \
+             patch.object(server, "create_pod_job", return_value={"jobId": "fixture"}) as create:
+            self.assertEqual(self.request_json("/api/pinterest-pod/jobs", {"niche": "rug"})[0], 401)
+            self.assertEqual(self.request_json("/api/pinterest-pod/assets/fixture/image.png")[0], 401)
+            create.assert_not_called()
+            self.assertEqual(self.request_json("/api/pinterest-pod/operator-session", {"username": "fixture", "password": "wrong"})[0], 401)
+            request = urllib.request.Request(self.base_url + "/api/pinterest-pod/operator-session",
+                data=json.dumps({"username": "fixture", "password": "secret"}).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request) as response:
+                cookie = response.headers["Set-Cookie"]
+                self.assertIn("HttpOnly", cookie)
+                self.assertIn("SameSite=Strict", cookie)
+                cookie = cookie.split(";", 1)[0]
+            def post(path, origin=None):
+                headers = {"Cookie": cookie, "Content-Type": "application/json"}
+                if origin:
+                    headers["Origin"] = origin
+                request = urllib.request.Request(self.base_url + path, data=b"{}", headers=headers)
+                try:
+                    with urllib.request.urlopen(request) as response:
+                        return response.status
+                except urllib.error.HTTPError as error:
+                    return error.code
+            self.assertEqual(post("/api/pinterest-pod/jobs", "https://evil.invalid"), 403)
+            create.assert_not_called()
+            self.assertEqual(post("/api/pinterest-pod/jobs", self.base_url), 201)
+            self.assertEqual(post("/api/pinterest-pod/operator-session/logout"), 200)
+            self.assertEqual(post("/api/pinterest-pod/jobs"), 401)
+
+    def test_secure_oauth_callback_requires_valid_state_without_operator_cookie(self) -> None:
+        with patch.dict("os.environ", {"PINTEREST_OPERATOR_USERNAME": "fixture", "PINTEREST_OPERATOR_PASSWORD": "secret"}), \
+             patch.object(server, "validate_pinterest_oauth_state", return_value=False), \
+             patch.object(server, "exchange_pinterest_oauth_code") as exchange:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(self.base_url + "/api/pinterest-pod/oauth/callback?code=fixture&state=invalid")
+            self.assertEqual(caught.exception.code, 400)
+            exchange.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,14 +31,16 @@ function mockDiagnostics(): AmazonCrawlerProduct["diagnostics"] {
 
 function createJeminiseMockVariants(): AmazonFinalVariant[] {
   const pillowValues = [
-    ["I don't need pillowcases", "P0"], ["1 Pillowcase (20\" x 30\")", "P1"],
-    ["2 Pillowcases (20\" x 30\")", "P2"], ["2 Pillowcases + 1 Add Sheet", "P2S"],
+    ["No Pillowcases", "P0"],
+    ["1 Pillowcase (20\" x 30\")", "P1"],
+    ["2 Pillowcases (20\" x 30\")", "P2"],
+    ["2 Pillowcases + 1 Sheet", "P2S"],
     ["4 Pillowcases (20\" x 30\")", "P4"],
   ] as const;
   const types = [
-    { name: "Duvet cover", code: "DV", pillows: { P0: 0, P1: 10, P2: 20 }, sizes: [["US Twin (68\" x 88\")", "TW", 34.9], ["US Full (78\" x 88\")", "FU", 44.9], ["US Queen (88\" x 88\")", "QU", 49.9], ["US King (104\" x 88\")", "KI", 59.9]] as const },
+    { name: "Duvet Cover", code: "DV", pillows: { P0: 0, P1: 10, P2: 20 }, sizes: [["US Twin (68\" x 88\")", "TW", 34.9], ["US Full (78\" x 88\")", "FU", 44.9], ["US Queen (88\" x 88\")", "QU", 49.9], ["US King (104\" x 88\")", "KI", 59.9]] as const },
     { name: "Quilt", code: "QT", pillows: { P0: 0, P1: 10, P2: 20 }, sizes: [["Throw (60\" x 70\")", "TH", 46.9], ["Twin (68\" x 86\")", "TW", 61.9], ["Full (80\" x 90\")", "FU", 71.9], ["Queen (90\" x 90\")", "QU", 81.9], ["King (102\" x 91\")", "KI", 91.9]] as const },
-    { name: "Comforter", code: "CF", pillows: { P0: 0, P1: 10, P2: 15, P2S: 45, P4: 25 }, sizes: [["Twin (173 x 218 cm)", "TW", 64.9], ["Full (200 x 230 cm)", "FU", 79.9], ["Queen (228 x 228 cm)", "QU", 94.9], ["King (228 x 264 cm)", "KI", 109.9]] as const },
+    { name: "Comforter", code: "CF", pillows: { P0: 0, P1: 10, P2: 15, P2S: 45, P4: 25 }, sizes: [["Twin (68\" x 86\")", "TW", 64.9], ["Full (79\" x 90\")", "FU", 79.9], ["Queen (90\" x 90\")", "QU", 94.9], ["King (90\" x 104\")", "KI", 109.9]] as const },
   ] as const;
   const variants: AmazonFinalVariant[] = [];
   for (const beddingType of types) {
@@ -51,12 +53,52 @@ function createJeminiseMockVariants(): AmazonFinalVariant[] {
           id: `jeminise_bedding_v2:${beddingType.code}:${sizeCode}:${pillowCode}`,
           sku: `AMZ-MOCK-${beddingType.code}-${sizeCode}-${pillowCode}`,
           sourceAsin: null,
-          options: { "Choose type": beddingType.name, "Choose size": sizeName, "PILLOWCASES (Purchase SEPARATELY)": pillowName },
+          options: { "Bedding Type": beddingType.name, "Size": sizeName, "Set Options": pillowName },
           price: { raw: `$${amount.toFixed(2)}`, amount, currency: "USD" },
           surcharge: null,
           metadata: { preset: "jeminise_bedding_v2" },
         });
       }
+    }
+  }
+  return variants;
+}
+
+export function createJeminiseBlanketMockVariants(): AmazonFinalVariant[] {
+  const materials = [
+    {
+      name: "Fleece",
+      code: "FL",
+      sizes: [
+        ['40" x 30"', "4030", 24.9],
+        ['50" x 40"', "5040", 34.9],
+        ['60" x 50"', "6050", 44.9],
+        ['80" x 60"', "8060", 54.9],
+      ] as const,
+    },
+    {
+      name: "Sherpa",
+      code: "SH",
+      sizes: [
+        ['40" x 30"', "4030", 39.9],
+        ['50" x 40"', "5040", 44.9],
+        ['60" x 50"', "6050", 54.9],
+        ['80" x 60"', "8060", 69.9],
+      ] as const,
+    },
+  ] as const;
+  const variants: AmazonFinalVariant[] = [];
+  for (const material of materials) {
+    for (const [sizeName, sizeCode, price] of material.sizes) {
+      variants.push({
+        id: `jeminise_blanket_v1:${material.code}:${sizeCode}`,
+        sku: `AMZ-MOCK-BL-${material.code}-${sizeCode}`,
+        sourceAsin: null,
+        options: { "Material": material.name, "Size": sizeName },
+        price: { raw: `$${price.toFixed(2)}`, amount: price, currency: "USD" },
+        surcharge: null,
+        metadata: { preset: "jeminise_blanket_v1" },
+      });
     }
   }
   return variants;

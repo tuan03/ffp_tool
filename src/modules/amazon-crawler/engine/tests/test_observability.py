@@ -12,11 +12,12 @@ from engine.observability import emit_event, observe_attempt, redact, register_r
 from engine.crawler_core import AmazonCrawler, CrawlSettings
 from engine.tests.test_core import FakeBrowser, StaticFetcher, ParentFamilyCrawler, PRODUCT_HTML, cache_family
 from engine.crawler_core import normalize_amazon_input
-from engine.distributed.coordinator_models import Base, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.client_store import ClientStore
 from engine.tests.test_distributed import client_hello
 from engine.distributed.protocol import utc_now
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 from engine.distributed.coordinator_models import CrawlTelemetryEvent, JobEvent
 from sqlalchemy import event as sql_event, select
 
@@ -125,7 +126,7 @@ class CoordinatorTelemetryTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         root = Path(self.directory.name)
         self.engine = create_database_engine(f"sqlite:///{(root / 'coordinator.sqlite3').as_posix()}")
-        Base.metadata.create_all(self.engine)
+        create_coordinator_test_schema(self.engine)
         self.store = CoordinatorStore(create_session_factory(self.engine))
         self.job = self.store.create_job({"urls": ["B012345678", "B012345679"]})
         self.store.register_client(client_hello(slots=1))
@@ -155,6 +156,11 @@ class CoordinatorTelemetryTests(unittest.TestCase):
         self.assertEqual(metrics["rates"]["captcha"], 0.5)
         self.assertEqual(metrics["averageCrawlDurationMs"], 1200)
         self.assertEqual(metrics["queue"]["crawl"], 1)
+        self.assertEqual(metrics["scheduler"]["totalCapacity"], 1)
+        self.assertEqual(metrics["scheduler"]["activeTasks"], 1)
+        self.assertEqual(metrics["scheduler"]["overCapacityAgents"], 0)
+        self.assertEqual(metrics["agents"][0]["agentGroup"], "default")
+        self.assertEqual(metrics["agents"][0]["availableCapacity"], 0)
         trace = self.store.crawl_trace(self.job["id"], self.lease["requestId"], limit=2)
         self.assertEqual(len(trace["events"]), 2)
         self.assertIsNotNone(trace["nextCursor"])

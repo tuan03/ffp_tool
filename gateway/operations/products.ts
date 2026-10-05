@@ -72,6 +72,10 @@ const PRODUCTS_LIST_QUERY = `
             id
             value
           }
+          seoVersionMetafield: metafield(namespace: "custom", key: "seo_version") {
+            value
+            type
+          }
           createdAt
           updatedAt
         }
@@ -134,6 +138,10 @@ const PRODUCTS_GET_QUERY = `
       metafield(namespace: "custom", key: "amazon_customizer") {
         id
         value
+      }
+      seoVersionMetafield: metafield(namespace: "custom", key: "seo_version") {
+        value
+        type
       }
       createdAt
       updatedAt
@@ -217,6 +225,10 @@ export interface RawProductNode {
   } | null;
   readonly seo?: { readonly title?: string | null; readonly description?: string | null } | null;
   readonly metafield?: { readonly id?: string | null; readonly value?: string | null } | null;
+  readonly seoVersionMetafield?: {
+    readonly value?: string | null;
+    readonly type?: string | null;
+  } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly variants?: {
@@ -296,6 +308,14 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
   const hasMoreVariants = node.variants?.pageInfo?.hasNextPage !== undefined
     ? Boolean(node.variants.pageInfo.hasNextPage)
     : undefined;
+  const rawSeoVersion = node.seoVersionMetafield?.value;
+  const seoVersion =
+    node.seoVersionMetafield?.type === "number_integer" &&
+    typeof rawSeoVersion === "string" &&
+    /^\d+$/.test(rawSeoVersion) &&
+    Number.isSafeInteger(Number(rawSeoVersion))
+      ? Number(rawSeoVersion)
+      : undefined;
 
   return {
     id: node.id,
@@ -330,6 +350,7 @@ export function mapProductNode(node: RawProductNode): ProductSummary {
     ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
     ...(hasMoreImages !== undefined ? { hasMoreImages } : {}),
     hasCustomizer: Boolean(node.metafield?.value && node.metafield.value.trim().length > 0),
+    ...(seoVersion !== undefined ? { seoVersion } : {}),
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };

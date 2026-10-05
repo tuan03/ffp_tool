@@ -159,9 +159,9 @@ test("2. stores.list: throws AUTO_SEO_STORE_INFO_UNAVAILABLE when no valid store
   );
 });
 
-test("3. products.list: loads single-page product catalog and maps to UI shape", async () => {
+test("3. products.list: loads single-page product catalog and maps SEO version to UI shape", async () => {
   const calls: ShopifyApiInput[] = [];
-  const prod = createMockProduct();
+  const prod = createMockProduct({ seoVersion: 3 });
 
   const runner = createTestRunner(async (input) => {
     calls.push(input);
@@ -216,6 +216,7 @@ test("3. products.list: loads single-page product catalog and maps to UI shape",
   assert.equal(products[0]?.seo?.title, "Test SEO Title");
   assert.equal(products[0]?.createdAt, prod.createdAt);
   assert.equal(products[0]?.updatedAt, prod.updatedAt);
+  assert.equal(products[0]?.seoVersion, 3);
 });
 
 test("4. products.list: paginates through multiple pages and dedupes product IDs", async () => {
@@ -1241,6 +1242,36 @@ test("27. getProductEligibility rejects malformed success payloads", async () =>
         return true;
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("28. createSeoRevision creates an instruction-free worker revision", async () => {
+  const runner = createTestRunner(async () => {
+    throw new Error("Module API runner must not be used for revisions");
+  });
+  const client = createAutoSeoModuleApiClient(runner);
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedBody = "";
+  let capturedHeaders: HeadersInit | undefined;
+  globalThis.fetch = async (input, init) => {
+    capturedUrl = String(input);
+    capturedBody = typeof init?.body === "string" ? init.body : "";
+    capturedHeaders = init?.headers;
+    return new Response(JSON.stringify({ jobId: "revision-job", previousJobId: "synced-job" }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const receipt = await client.createSeoRevision?.("jeminise-real", "synced-job", "request-1");
+    assert.equal(capturedUrl, "/api/seo-agent/revisions?storeId=jeminise-real");
+    assert.deepEqual(JSON.parse(capturedBody), { jobId: "synced-job", requestId: "request-1" });
+    assert.equal((capturedHeaders as Record<string, string>)["x-ffp-agent"], "1");
+    assert.deepEqual(receipt, { jobId: "revision-job", previousJobId: "synced-job" });
   } finally {
     globalThis.fetch = originalFetch;
   }

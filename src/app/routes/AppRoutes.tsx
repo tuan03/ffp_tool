@@ -172,7 +172,7 @@ export function AppRoutes({
       }
     };
 
-    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl);
+    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl, environment !== "mock");
 
     const handleAutoSeoHandover = async (
       shopifyProducts: readonly ShopifyProductForAutoSeoUi[],
@@ -534,6 +534,7 @@ export function AppRoutes({
       imageProcessingProfiles,
       amazonCrawlerJobs,
       loadAmazonCrawlerJob,
+      environment === "mock" ? undefined : amazonCrawlerCoordinatorUrl,
     );
 
     return createBrowserRouter([

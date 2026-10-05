@@ -13,7 +13,7 @@ crawler = importlib.import_module("src.modules.amazon-crawler.engine.application
 review = importlib.import_module("src.modules.review-image.server")
 
 
-def create_app():
+def create_app(*, operator_credentials=None):
     database_url = os.environ.get("AMAZON_COORDINATOR_DATABASE_URL", "")
     if not database_url or make_url(database_url).get_backend_name() != "postgresql":
         raise ValueError("Unified Coordinator requires the shared PostgreSQL database")
@@ -22,7 +22,7 @@ def create_app():
     pipeline = os.environ.get("SHOPIFY_PIPELINE_TOKEN", "")
     if any(len(value) < 24 or value == "change-this-token" for value in (internal, extension, pipeline)):
         raise ValueError("Configure strong Review Studio internal/extension and pipeline tokens before startup")
-    app = crawler.create_coordinator_app(database_url=database_url)
+    app = crawler.create_coordinator_app(database_url=database_url, operator_credentials=operator_credentials)
     review_app = review.create_review_app(
         engine=create_engine(database_url, pool_pre_ping=True),
         runtime_root=Path(os.environ.get("REVIEW_IMAGE_RUNTIME_ROOT", "/app/.runtime/review-image")),
@@ -46,5 +46,6 @@ def create_app():
                 return JSONResponse(status_code=503, content={"detail": "Review Studio persistence unavailable"})
         return await call_next(request)
 
+    app.state.review_image_authorization = review_app.state.authorizes_operator_request
     app.mount("/", review_app)
     return app

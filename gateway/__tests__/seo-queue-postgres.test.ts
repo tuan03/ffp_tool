@@ -57,6 +57,11 @@ integrationTest("PostgreSQL queue fences concurrent claims, preserves checkpoint
     const finalizer = finalizers.flat()[0];
     assert.ok(finalizer);
     await queue.finish("test-store", first.id, { output: { aeo_quick_summary: "Test facts" } }, finalizer.finalizerToken);
+    const verification = new Pool({ connectionString: databaseUrl });
+    try {
+      const receipt = await verification.query(`SELECT delivered FROM "${schema}".gpt_deliveries WHERE job_id=$1`, [first.id]);
+      assert.equal(receipt.rows[0].delivered, 1);
+    } finally { await verification.end(); }
     await assert.rejects(queue.beginSync("test-store", first.id), /human approval/);
     await queue.saveReviewState("test-store", first.id, { reviewDecision: "approved", updatedAt: 1000 });
     const syncs = await Promise.allSettled([queue.beginSync("test-store", first.id), other.beginSync("test-store", first.id)]);
@@ -70,6 +75,41 @@ integrationTest("PostgreSQL queue fences concurrent claims, preserves checkpoint
     const cleanup = new Pool({ connectionString: databaseUrl });
     try { await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
     finally { await cleanup.end(); }
+  }
+});
+
+integrationTest("worker finalization commits a Review receipt and completes its run exactly once", async () => {
+  assert.ok(databaseUrl);
+  const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;
+  const queue = new PostgresCustomGptQueue({ databaseUrl, schema });
+  const pool = new Pool({ connectionString: databaseUrl });
+  try {
+    await queue.initialize();
+    await queue.configure("test-store", { provider: "codex_mcp", batchSize: 1 });
+    const job = await queue.enqueue({ storeId: "test-store", source: "auto_seo", sourceIdentity: "123",
+      input: { productId: "123", title: "Test blanket", description: "", handle: "test", niche: "blanket", images: [] }, original: {} });
+    await queue.workers.enableStore("test-store");
+    const { token } = await queue.workers.issueToken({ storeId: "test-store", workerId: "test", createdBy: "test" });
+    const { sessionId } = await queue.workers.register(token, "register");
+    const run = await queue.workers.startRun(token, sessionId, 1, "start");
+    const { lease } = await queue.workers.claim(token, sessionId, run.id, "claim");
+    assert.ok(lease);
+    await pool.query(`UPDATE "${schema}".gpt_jobs SET status='VALIDATING',
+      payload=(payload::jsonb || '{"status":"VALIDATING"}'::jsonb)::text WHERE id=$1`, [job.id]);
+    const [finalizer] = await queue.pendingFinalization();
+    const result = { output: { productTitle: "Test blanket draft" } };
+    await queue.finish("test-store", job.id, result, finalizer.finalizerToken);
+    await queue.finish("test-store", job.id, result, finalizer.finalizerToken);
+    await queue.workers.reconcileReviews();
+    await queue.workers.recover();
+    assert.equal((await queue.list("test-store", "REVIEW_READY", 0)).length, 1);
+    assert.equal((await queue.workers.runStatus(token, run.id)).successful, 1);
+    assert.equal((await queue.workers.runStatus(token, run.id)).state, "COMPLETED");
+    assert.equal((await queue.workers.claim(token, sessionId, run.id, "after-success")).stopReason, "TARGET_REACHED");
+  } finally {
+    await queue.close();
+    await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await pool.end();
   }
 });
 

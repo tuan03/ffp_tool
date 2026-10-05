@@ -21,16 +21,20 @@ from typing import Any
 
 from . import AGENT_VERSION
 from .client_agent import DistributedCrawlerAgent
+from .client_storage_pressure import storage_warning_text
 
 
 def format_status(status: dict[str, Any]) -> str:
     connection = str(status.get("connection") or "offline").replace("_", " ").title()
     if status.get("waitingCaptcha"):
         connection = "Waiting for CAPTCHA"
+    if (status.get("storage") or {}).get("blocked"):
+        connection = "Storage blocked"
     active = max(0, int(status.get("activeTasks") or 0))
     pending = max(0, int(status.get("pendingUploads") or 0))
     pending_label = "pending upload" if pending == 1 else "pending uploads"
-    return f"{connection} — {active} active — {pending} {pending_label}"
+    warning = storage_warning_text(status.get("storage"))
+    return f"{connection} — {active} active — {pending} {pending_label}" + (f" — {warning}" if warning else "")
 
 
 def should_notify_captcha(previous_waiting: bool, status: dict[str, Any]) -> bool:
@@ -219,15 +223,7 @@ class TrayApplication:
         if self._version_parts(latest) <= self._version_parts(AGENT_VERSION):
             self._notify(f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất. Không cần cập nhật.")
             return
-        if not self._lifecycle_is_safe():
-            return
-        if not self._confirm(f"Cập nhật Agent từ {AGENT_VERSION} lên {latest} và tự khởi động lại?"):
-            return
-        self._launch_lifecycle_script("update-agent.ps1", [
-            "-ServerUrl", self.agent.config.server_url,
-            "-InstallDirectory", str(self.agent.project_root),
-            "-AgentProcessId", str(os.getpid()),
-        ])
+        self._notify("Để cập nhật an toàn, hãy mở Crawler dashboard, DRAIN agent và chạy UPDATE_AGENT sau khi trạng thái đã DRAINED.")
 
     def _update_agent(self, _icon: Any, _item: Any) -> None:
         self._defer_menu_action(self._run_update_agent, name="ffp-agent-update-confirm")
@@ -389,6 +385,12 @@ class TrayApplication:
         self._stop_agent()
         icon.stop()
 
+    def _request_agent_restart_exit(self) -> None:
+        if self._window is not None:
+            self._actions.put("exit")
+        elif self._icon is not None:
+            self._icon.stop()
+
     def _show_window(self, _icon: Any, _item: Any) -> None:
         if self._window is not None:
             self._actions.put("show")
@@ -487,6 +489,7 @@ class TrayApplication:
             f"FFP Crawler Agent — {self.status_text}"[:127],
             menu,
         )
+        self.agent.on_restart_requested = self._request_agent_restart_exit
         self.agent.on_status = self.handle_status
         try:
             from .client_dashboard_window import AgentDashboardWindow

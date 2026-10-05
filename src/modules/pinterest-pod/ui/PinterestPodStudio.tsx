@@ -59,6 +59,7 @@ export function PinterestPodStudio({
   const [isAgentBrowserLoggedIn, setIsAgentBrowserLoggedIn] = useState(false);
   const [crawlerAgents, setCrawlerAgents] = useState<readonly CrawlerClientSummary[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
+  const [agentLoadError, setAgentLoadError] = useState<string | null>(null);
 
   async function handleForgetAgent(agent: CrawlerClientSummary): Promise<void> {
     if (!client.forgetCrawlerClient) return;
@@ -480,6 +481,7 @@ export function PinterestPodStudio({
         const clients = await client.getCrawlerClients();
         if (!isMountedRef.current) return;
         setCrawlerAgents(clients);
+        setAgentLoadError(null);
         setIsLoadingAgents(false);
         const compatibleAgents = clients.filter(
           (c) => c.isConnected && (!c.capabilities || c.capabilities.pinterest !== false),
@@ -498,6 +500,7 @@ export function PinterestPodStudio({
         }
       } catch {
         if (isMountedRef.current) {
+          setAgentLoadError("Không tải được danh sách agent. Kiểm tra phiên operator và kết nối Coordinator.");
           setIsLoadingAgents(false);
           setIsAgentConnected(false);
           setAgentName(undefined);
@@ -1076,6 +1079,7 @@ export function PinterestPodStudio({
         onOpenAgentInstall={() => setIsAgentInstallModalOpen(true)}
       />
 
+      {agentLoadError && <p role="alert" className="text-rose-300">{agentLoadError}</p>}
       <CrawlerAgentsPanel
         agents={crawlerAgents}
         isLoading={isLoadingAgents}

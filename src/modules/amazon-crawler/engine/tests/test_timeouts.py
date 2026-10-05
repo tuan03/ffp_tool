@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
+import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 from datetime import timedelta
@@ -15,11 +18,12 @@ from engine.playwright_pool import PlaywrightPool
 from engine.timeouts import CrawlTimeout, check_deadline, remaining_seconds, timeout_scope, transport_context
 from engine.cache import RawFamilyCache
 from engine.process_crawler import ProcessCrawler
-from engine.distributed.coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import CrawlTask, create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.protocol import utc_now
 from engine.bounded_http import BoundedHTTPConnection
 from engine.tests.test_core import FakeBrowser, ParentFamilyCrawler, PRODUCT_HTML
+from engine.tests.coordinator_test_support import create_coordinator_test_schema
 
 
 class HungCheckpointCrawler:
@@ -54,6 +58,22 @@ class ConcurrentStreamCrawler(HungCheckpointCrawler):
             list(executor.map(send_progress, range(32)))
         on_input_complete({"asin": "B012345678", "source": sources[0], "status": "completed", "products": [], "errors": []})
         return {"status": "completed", "products": [], "errors": []}
+
+
+class ExitedWorkerCrawler(HungCheckpointCrawler):
+    def run(self, **_kwargs):
+        os._exit(17)
+
+
+class CooperativeCancelCrawler(HungCheckpointCrawler):
+    def __init__(self, *, cancel_event, **kwargs):
+        super().__init__(**kwargs)
+        self.cancel_event = cancel_event
+
+    def run(self, **_kwargs):
+        while not self.cancel_event.wait(0.05):
+            pass
+        raise InterruptedError("cancelled cooperatively")
 
 
 class HungBatchCrawler(HungCheckpointCrawler):
@@ -174,6 +194,84 @@ class TimeoutTests(unittest.TestCase):
             self.assertTrue(output["errors"][0]["isRetryable"])
             self.assertIsNotNone(RawFamilyCache(Path(directory) / ".runtime" / "cache").load_checkpoint("B012345678:90001:us-v1"))
 
+    def test_worker_cancellation_reaches_child_before_force_termination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cancel_event = threading.Event()
+            crawler = ProcessCrawler(
+                root=Path(directory), settings=CrawlSettings(), cancel_event=cancel_event,
+                crawler_factory=CooperativeCancelCrawler,
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                running = executor.submit(crawler.run, job_id="cooperative-cancel", sources=["B012345678"], write_export=False)
+                deadline = time.monotonic() + 5
+                while crawler._process is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertIsNotNone(crawler._process)
+                cancel_event.set()
+                running.result(timeout=5)
+            self.assertFalse(crawler._process.is_alive())
+
+    def test_worker_force_stops_after_cancellation_grace_when_child_ignores_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch("engine.process_crawler.PROCESS_CANCEL_GRACE_SECONDS", 0.2):
+            cancel_event = threading.Event()
+            crawler = ProcessCrawler(
+                root=Path(directory), settings=CrawlSettings(), cancel_event=cancel_event,
+                crawler_factory=HungCheckpointCrawler,
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                running = executor.submit(crawler.run, job_id="forced-cancel", sources=["B012345678"], write_export=False)
+                deadline = time.monotonic() + 5
+                while crawler._process is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertIsNotNone(crawler._process)
+                cancel_event.set()
+                with self.assertRaises(InterruptedError):
+                    running.result(timeout=5)
+            self.assertFalse(crawler._process.is_alive())
+
+    def test_unexpected_worker_exit_is_reported_and_a_new_worker_can_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            failures = []
+            failed = ProcessCrawler(root=Path(directory), settings=CrawlSettings(),
+                                    crawler_factory=ExitedWorkerCrawler,
+                                    on_worker_failure=failures.append)
+            output = failed.run(job_id="worker-exit", sources=["B012345678"], write_export=False)
+            self.assertEqual(output["errors"][0]["code"], "CRAWLER_WORKER_EXITED")
+            self.assertEqual(failures, [{"reason": "worker_exited"}])
+            self.assertFalse(failed._process.is_alive())
+
+            healthy = ProcessCrawler(root=Path(directory), settings=CrawlSettings(),
+                                     crawler_factory=ConcurrentStreamCrawler,
+                                     on_worker_failure=failures.append)
+            recovered = healthy.run(job_id="worker-recovered", sources=["B012345678"], write_export=False)
+            self.assertEqual(recovered["status"], "completed")
+            self.assertEqual(failures, [{"reason": "worker_exited"}])
+
+    def test_windows_watchdog_targets_only_the_worker_process_tree(self) -> None:
+        class FakeProcess:
+            pid = 4567
+            alive = True
+
+            def is_alive(self):
+                return self.alive
+
+            def kill(self):
+                self.alive = False
+
+            def join(self, timeout=None):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = ProcessCrawler(root=Path(directory), settings=CrawlSettings())
+            crawler._process = FakeProcess()
+            with patch("engine.process_crawler.os.name", "nt"), \
+                    patch("engine.process_crawler.subprocess.CREATE_NO_WINDOW", 0, create=True), \
+                    patch("engine.process_crawler.subprocess.run") as run:
+                crawler.close()
+
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4567", "/T", "/F"])
+        self.assertNotIn("/IM", run.call_args.args[0])
+
     def test_worker_enforces_child_deadline_before_longer_family_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             crawler = ProcessCrawler(root=Path(directory), settings=CrawlSettings(child_timeout_seconds=0.2, asin_timeout_seconds=10), crawler_factory=HungChildCrawler)
@@ -238,7 +336,7 @@ class TimeoutTests(unittest.TestCase):
     def test_heartbeat_cannot_extend_asin_deadline_and_timeout_has_retry_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             engine = create_database_engine("sqlite:///" + (Path(directory) / "coordinator.sqlite3").as_posix())
-            Base.metadata.create_all(engine)
+            create_coordinator_test_schema(engine)
             sessions = create_session_factory(engine)
             store = CoordinatorStore(sessions)
             now = utc_now()
@@ -293,7 +391,7 @@ class CoordinatorTimeoutTests(unittest.TestCase):
     def test_job_deadline_survives_store_restart_and_does_not_retry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             engine = create_database_engine("sqlite:///" + (Path(directory) / "coordinator.sqlite3").as_posix())
-            Base.metadata.create_all(engine)
+            create_coordinator_test_schema(engine)
             sessions = create_session_factory(engine)
             store = CoordinatorStore(sessions)
             now = utc_now()

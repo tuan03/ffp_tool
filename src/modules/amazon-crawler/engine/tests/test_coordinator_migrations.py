@@ -2,7 +2,8 @@ import unittest
 
 from sqlalchemy import create_engine, inspect, select
 
-from engine.distributed.coordinator_migrations import MIGRATIONS, migrate_coordinator
+from engine.distributed.coordinator_migrations import MIGRATIONS, MIGRATION_VERSION, migrate_coordinator
+from engine.distributed.global_admission_gate import GlobalAdmissionGate, GLOBAL_ADMISSION_GATE_ID
 
 
 class CoordinatorMigrationTests(unittest.TestCase):
@@ -13,7 +14,51 @@ class CoordinatorMigrationTests(unittest.TestCase):
             migrate_coordinator(engine)
             self.assertIn("crawler_image_profiles", inspect(engine).get_table_names())
             with engine.connect() as connection:
-                self.assertEqual(list(connection.scalars(select(MIGRATIONS.c.version))), [1])
+                self.assertEqual(sorted(connection.scalars(select(MIGRATIONS.c.version))), list(range(1, MIGRATION_VERSION + 1)))
+            self.assertIn("crawler_upload_receipts", inspect(engine).get_table_names())
+            self.assertIn("global_admission_gate_revision", {
+                column["name"] for column in inspect(engine).get_columns("crawler_clients")
+            })
+            self.assertTrue({"next_retry_at", "max_retry", "requeue_count"}.issubset({
+                column["name"] for column in inspect(engine).get_columns("crawl_tasks")
+            }))
+            self.assertTrue({"error_code", "agent_version", "crawler_version", "parser_version", "duration_ms"}.issubset({
+                column["name"] for column in inspect(engine).get_columns("task_attempts")
+            }))
+            self.assertIn("archived_task_attempts", inspect(engine).get_table_names())
+            config_columns = {column["name"] for column in inspect(engine).get_columns("crawler_clients")}
+            self.assertTrue({"desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"}.issubset(config_columns))
+            self.assertIn("crawler_dlq_actions", inspect(engine).get_table_names())
+            indexes = {
+                index["name"]
+                for table in ("task_attempts", "archived_task_attempts")
+                for index in inspect(engine).get_indexes(table)
+            }
+            self.assertTrue({"ix_task_attempts_finished_at", "ix_archived_task_attempts_archived_at"}.issubset(indexes))
+            with engine.connect() as connection:
+                state = connection.execute(
+                    select(GlobalAdmissionGate.state).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
+                ).scalar_one()
+            self.assertEqual(state, "OPEN")
+        finally:
+            engine.dispose()
+
+    def test_versioned_agent_config_migration_can_upgrade_an_existing_version_11_database(self):
+        engine = create_engine("sqlite:///:memory:")
+        try:
+            migrate_coordinator(engine)
+            with engine.begin() as connection:
+                connection.execute(MIGRATIONS.delete().where(MIGRATIONS.c.version == 12))
+                for column in ("desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"):
+                    connection.exec_driver_sql(f"ALTER TABLE crawler_clients DROP COLUMN {column}")
+            migrate_coordinator(engine)
+            migrate_coordinator(engine)
+            with engine.connect() as connection:
+                versions = set(connection.scalars(select(MIGRATIONS.c.version)))
+            self.assertIn(12, versions)
+            self.assertTrue({"desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"}.issubset({
+                column["name"] for column in inspect(engine).get_columns("crawler_clients")
+            }))
         finally:
             engine.dispose()
 
@@ -22,7 +67,7 @@ class CoordinatorMigrationTests(unittest.TestCase):
         try:
             migrate_coordinator(engine)
             with engine.begin() as connection:
-                connection.execute(MIGRATIONS.insert().values(version=2))
+                connection.execute(MIGRATIONS.insert().values(version=MIGRATION_VERSION + 1))
             with self.assertRaisesRegex(RuntimeError, "newer server"):
                 migrate_coordinator(engine)
         finally:
