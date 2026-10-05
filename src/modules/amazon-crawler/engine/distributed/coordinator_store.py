@@ -170,6 +170,7 @@ class CoordinatorStore(CoordinatorObservability):
         self.sessions = session_factory
         self._product_claim_lock = Lock()
         self._job_creation_lock = Lock()
+        self._review_mutation_lock = Lock()
 
     @staticmethod
     def _event(session, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -1620,38 +1621,40 @@ class CoordinatorStore(CoordinatorObservability):
             return result
 
     def delete_all_product_reviews(self) -> dict[str, int]:
-        deleted = 0
-        skipped = 0
-        job_ids: set[str] = set()
-        with self.sessions.begin() as session:
-            items = session.scalars(
-                select(CrawlProductItem)
-                .where(CrawlProductItem.status != "deleted")
-                .with_for_update(skip_locked=True)
-            ).all()
-            for item in items:
-                pipeline_result = dict(item.shopify_result or {})
-                review = dict(pipeline_result.get("review") or {})
-                if not review:
-                    continue
-                if item.status not in {"waiting_review", "rejected", "completed", "failed"}:
-                    skipped += 1
-                    continue
-                review["deletedAt"] = utc_iso(utc_now())
-                review["version"] = int(review.get("version") or 1) + 1
-                pipeline_result["review"] = review
-                item.shopify_result = pipeline_result
-                item.status = "deleted"
-                item.completed_at = utc_now()
-                job_ids.add(item.job_id)
-                deleted += 1
-                self._event(session, item.job_id, "product_review_deleted", {"productItemId": item.id})
-            for job_id in job_ids:
-                self._refresh_job(session, job_id)
-        return {"deleted": deleted, "skipped": skipped}
+        with self._review_mutation_lock:
+            deleted = 0
+            skipped = 0
+            job_ids: set[str] = set()
+            with self.sessions.begin() as session:
+                items = session.scalars(
+                    select(CrawlProductItem)
+                    .where(CrawlProductItem.status != "deleted")
+                    .with_for_update(skip_locked=True)
+                ).all()
+                for item in items:
+                    pipeline_result = dict(item.shopify_result or {})
+                    review = dict(pipeline_result.get("review") or {})
+                    if not review:
+                        continue
+                    if item.status not in {"waiting_review", "rejected", "completed", "failed"}:
+                        skipped += 1
+                        continue
+                    review["deletedAt"] = utc_iso(utc_now())
+                    review["version"] = int(review.get("version") or 1) + 1
+                    pipeline_result["review"] = review
+                    item.shopify_result = pipeline_result
+                    item.status = "deleted"
+                    item.completed_at = utc_now()
+                    job_ids.add(item.job_id)
+                    deleted += 1
+                    self._event(session, item.job_id, "product_review_deleted", {"productItemId": item.id})
+                session.flush()
+                for job_id in job_ids:
+                    self._refresh_job(session, job_id)
+            return {"deleted": deleted, "skipped": skipped}
 
     def delete_product_review(self, item_id: str) -> dict[str, Any]:
-        with self.sessions.begin() as session:
+        with self._review_mutation_lock, self.sessions.begin() as session:
             item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
             if item is None or item.status == "deleted":
                 return {"deleted": False, "reason": "not_found"}
@@ -1668,6 +1671,7 @@ class CoordinatorStore(CoordinatorObservability):
             item.status = "deleted"
             item.completed_at = utc_now()
             self._event(session, item.job_id, "product_review_deleted", {"productItemId": item.id})
+            session.flush()
             self._refresh_job(session, item.job_id)
             return {"deleted": True}
 
@@ -3256,8 +3260,10 @@ class CoordinatorStore(CoordinatorObservability):
             request_id=request_id or _id(), actor=actor, reason=reason, job_id=None, error_code=None)
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        with self.sessions() as session:
+        with self.sessions.begin() as session:
             job = session.get(CrawlJob, job_id)
+            if job is not None and job.status == "review_pending":
+                self._refresh_job(session, job.id)
             return self._job_snapshot(session, job) if job else None
 
     def pause_job(self, job_id: str) -> dict[str, Any] | None:
@@ -3304,8 +3310,10 @@ class CoordinatorStore(CoordinatorObservability):
             return self._job_snapshot(session, job)
 
     def job_summary(self, job_id: str) -> dict[str, Any] | None:
-        with self.sessions() as session:
+        with self.sessions.begin() as session:
             job = session.get(CrawlJob, job_id)
+            if job is not None and job.status == "review_pending":
+                self._refresh_job(session, job.id)
             return self._job_summary(session, job) if job else None
 
     def job_metadata(self, job_id: str) -> dict[str, Any] | None:
@@ -3395,10 +3403,12 @@ class CoordinatorStore(CoordinatorObservability):
         }
 
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
-        with self.sessions() as session:
+        with self.sessions.begin() as session:
             jobs = session.scalars(select(CrawlJob).order_by(CrawlJob.created_at.desc()).limit(max(1, min(limit, 500)))).all()
             snapshots = []
             for job in jobs:
+                if job.status == "review_pending":
+                    self._refresh_job(session, job.id)
                 if job.status == "cancelling":
                     snapshots.append(self._job_snapshot(session, job, include_task_details=False))
                     continue

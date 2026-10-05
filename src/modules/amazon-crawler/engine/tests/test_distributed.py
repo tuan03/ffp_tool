@@ -1644,6 +1644,30 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["single-delete-1"])
         self.assertEqual(self.store.delete_product_review("single-delete-0"), {"deleted": False, "reason": "not_found"})
 
+        self.assertEqual(self.store.delete_product_review("single-delete-1"), {"deleted": True})
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "completed")
+
+    def test_listing_jobs_repairs_stale_review_pending_status_after_reviews_are_deleted(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            task.status = "completed"
+            session.add(CrawlProductItem(
+                id="stale-review-item", job_id=job["id"], task_id=task.id,
+                source_key="stale-review-source", product_id="stale-review-product",
+                client_id="client-a", lease_id="lease-a", checksum="stale-review-checksum",
+                raw_payload={}, normalized_payload={"media": []}, status="deleted",
+                shopify_result={"review": {"decision": "pending", "deletedAt": utc_iso(utc_now())}},
+            ))
+            persisted_job = session.get(CrawlJob, job["id"])
+            persisted_job.status = "review_pending"
+            session.flush()
+
+        listed = next(item for item in self.store.list_jobs() if item["id"] == job["id"])
+
+        self.assertEqual(listed["status"], "completed")
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "completed")
+
     def test_failed_review_stays_visible_and_can_retry_bulk_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01"]})
         with self.sessions.begin() as session:
