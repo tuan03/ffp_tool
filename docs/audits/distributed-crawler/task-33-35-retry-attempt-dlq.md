@@ -1,6 +1,6 @@
 # Tasks 33–35 — Retry, attempt history, and dead-letter queue
 
-**Implementation state:** source changes and local QA passed; checklist remains unaccepted until user review.
+**Implementation state:** source changes and QA passed after the user approved seven-day retention and code-based QA.
 **Branch:** `cua_pro`. No push, Docker rebuild, deployment, or agent restart was performed.
 
 ## Scope and mapping
@@ -13,28 +13,29 @@ This batch implements checklist Tasks 33–35 and contributes to the original sp
 
 ## Implemented behavior
 
-- Coordinator schema migration 10 persists `max_retry`, `next_retry_at`, requeue cycle count, attempt details, archived attempts, and DLQ action audit records.
+- Coordinator schema migrations 10–11 persist `max_retry`, `next_retry_at`, requeue cycle count, attempt details, archived attempts, DLQ action audit records, and indexes for bounded retention cleanup.
 - Failure classification maps stable categories/codes, redacts and bounds error metadata, applies capped exponential backoff with jitter, and honors parsed `Retry-After`. Permanent failures, exhausted budgets, and expired leases reach `dead_letter`; an expired lease is recorded as `LEASE_EXPIRED` and consumes the durable budget.
 - Reassignment creates a new attempt snapshot. Completion/failure records timestamps, elapsed duration, available crawler/parser versions, and result checksum without replacing prior attempts.
 - Job cleanup archives attempt snapshots before deleting job rows. DLQ delete is a soft-delete that preserves history. Legacy `retry-failed` endpoint now returns `410`; new DLQ operations require operator authentication, reason, expected-count confirmation, and an idempotency key.
 - Requeue starts a new operator retry cycle (resets the active failure counter, increments requeue count), retains all previous attempts/error evidence, and is protected against duplicate action replay. Existing `task_failed` observability is preserved; terminal tasks also emit `task_dead_lettered`.
 - Amazon Crawler UI provides paginated/filterable DLQ view, attempt history, selected/error-category retry, and confirmed soft-delete.
 
-## Retention decision / limitation
+## Retention policy
 
-No approved numeric retention window or storage budget was available for D9. Therefore this batch does **not** automatically delete attempt history or archived attempt evidence. This favors auditability but allows archive storage to grow. Choosing and implementing bounded retention/compaction remains an explicit follow-up decision; Task 34 must not be considered fully accepted until that policy is reviewed. Deleting a DLQ entry is not physical deletion.
+The user approved a **seven-day automatic retention window**. Coordinator maintenance runs cleanup every minute: finished `TaskAttempt` rows older than seven days and archived snapshots archived more than seven days ago are removed. Attempts without `finished_at` are retained, so in-progress work is never deleted. Job cleanup snapshots attempts before deleting job/task rows; archived snapshots then receive their own seven-day window. DLQ “Delete” remains a soft-delete and does not bypass the retention window.
 
 ## QA evidence
 
-Fresh local checks on 2026-10-05:
+Fresh checks on 2026-10-05:
 
-- `python -m unittest engine.tests.test_retry_dlq_history engine.tests.test_coordinator_migrations engine.tests.test_lease_mutations engine.tests.test_observability -v` — 32 passed.
-- `npm test` — exit 0; engine suite 531 passed/16 skipped, Review Image 34 passed, Pinterest 22 passed; tooling/web/Gateway stages also completed successfully. Opt-in skips are not counted as executed coverage.
+- `python -m unittest engine.tests.test_retry_dlq_history engine.tests.test_coordinator_migrations engine.tests.test_lease_mutations engine.tests.test_observability -v` — 32 passed before retention was added; focused post-retention/migration rerun — 8 passed.
+- `npm test` — exit 0; web 904 passed/7 skipped, Gateway 402 passed/53 skipped, engine 533 passed/17 skipped, Review Image 34 passed, Pinterest 22 passed; tooling stage also passed. Opt-in skips are not counted as executed coverage.
 - `npm run typecheck` — exit 0.
 - `npm run build` — exit 0. Existing Vite warnings about Node built-ins externalized for browser and large chunks remain; they are outside this batch.
 - `git diff --check` — exit 0 (Git only warned about normal LF-to-CRLF conversion on Windows).
+- PostgreSQL 17 local test database, each run in a uniquely named schema that the test drops in `finally`: `python -m unittest engine.tests.test_distributed_postgres -v` with `TEST_AMAZON_COORDINATOR_DATABASE_URL` set ephemerally — 3 passed, including migration, DLQ persistence/idempotency, and seven-day retention.
 
-The suite used local SQLite-backed unit/integration fixtures. The opt-in isolated PostgreSQL test was skipped because this run did not configure `TEST_AMAZON_COORDINATOR_DATABASE_URL`; PostgreSQL runtime compatibility therefore still needs that test gate before deployment.
+The full `npm test` run leaves PostgreSQL tests skipped when the opt-in URL is absent; the PostgreSQL suite was separately run against the local test database and passed. This is source-level/runtime-in-process evidence, not a Docker rebuild or VPS deployment acceptance.
 
 ## Not included
 

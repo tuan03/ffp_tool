@@ -162,6 +162,8 @@ def _shopify_sync_lock_key(store_id: str, source_key: str) -> int:
 
 
 class CoordinatorStore(CoordinatorObservability):
+    ATTEMPT_HISTORY_RETENTION_DAYS = 7
+
     def __init__(self, session_factory) -> None:
         self.sessions = session_factory
         self._product_claim_lock = Lock()
@@ -2134,6 +2136,12 @@ class CoordinatorStore(CoordinatorObservability):
                 session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id.in_(job_ids)))
                 session.execute(delete(CrawlProductItem).where(CrawlProductItem.job_id.in_(job_ids)))
                 if task_ids:
+                    for job_id in job_ids:
+                        attempts = session.scalars(select(TaskAttempt).join(CrawlTask).where(
+                            CrawlTask.job_id == job_id,
+                        )).all()
+                        for attempt in attempts:
+                            self._archive_task_attempt(session, attempt, job_id=job_id)
                     session.execute(delete(UploadReceipt).where(UploadReceipt.task_id.in_(task_ids)))
                     session.execute(delete(TaskResult).where(TaskResult.task_id.in_(task_ids)))
                     session.execute(delete(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids)))
@@ -2152,6 +2160,23 @@ class CoordinatorStore(CoordinatorObservability):
                 "jobs": len(job_ids),
                 "idempotencyOperations": int(operation_result.rowcount or 0),
                 "tombstones": int(tombstone_result.rowcount or 0),
+            }
+
+    def cleanup_attempt_history(self, *, now=None) -> dict[str, int]:
+        """Delete terminal attempt evidence after the approved seven-day window."""
+        current_time = now or utc_now()
+        cutoff = current_time - timedelta(days=self.ATTEMPT_HISTORY_RETENTION_DAYS)
+        with self.sessions.begin() as session:
+            live_attempts = session.execute(delete(TaskAttempt).where(
+                TaskAttempt.finished_at.is_not(None),
+                TaskAttempt.finished_at < cutoff,
+            ))
+            archived_attempts = session.execute(delete(ArchivedTaskAttempt).where(
+                ArchivedTaskAttempt.archived_at < cutoff,
+            ))
+            return {
+                "attempts": int(live_attempts.rowcount or 0),
+                "archivedAttempts": int(archived_attempts.rowcount or 0),
             }
 
     def fail_product_item(
@@ -2880,27 +2905,31 @@ class CoordinatorStore(CoordinatorObservability):
             return True
 
     @staticmethod
+    def _archive_task_attempt(session, attempt: TaskAttempt, *, job_id: str) -> None:
+        if session.get(ArchivedTaskAttempt, attempt.id) is not None:
+            return
+        session.add(ArchivedTaskAttempt(
+            id=attempt.id,
+            task_id=attempt.task_id,
+            job_id=job_id,
+            snapshot={
+                "clientId": attempt.client_id, "leaseId": attempt.lease_id,
+                "status": attempt.status, "error": attempt.error,
+                "errorCode": attempt.error_code, "errorMessage": attempt.error_message,
+                "agentVersion": attempt.agent_version, "crawlerVersion": attempt.crawler_version,
+                "parserVersion": attempt.parser_version, "leasedAt": utc_iso(attempt.leased_at),
+                "startedAt": utc_iso(attempt.started_at),
+                "finishedAt": utc_iso(attempt.finished_at) if attempt.finished_at else None,
+                "durationMs": attempt.duration_ms, "resultChecksum": attempt.result_checksum,
+            },
+        ))
+
+    @staticmethod
     def _purge_job_rows(session, job_id: str) -> None:
         task_ids = session.scalars(select(CrawlTask.id).where(CrawlTask.job_id == job_id)).all()
         if task_ids:
             for attempt in session.scalars(select(TaskAttempt).where(TaskAttempt.task_id.in_(task_ids))).all():
-                if session.get(ArchivedTaskAttempt, attempt.id) is not None:
-                    continue
-                session.add(ArchivedTaskAttempt(
-                    id=attempt.id,
-                    task_id=attempt.task_id,
-                    job_id=job_id,
-                    snapshot={
-                        "clientId": attempt.client_id, "leaseId": attempt.lease_id,
-                        "status": attempt.status, "error": attempt.error,
-                        "errorCode": attempt.error_code, "errorMessage": attempt.error_message,
-                        "agentVersion": attempt.agent_version, "crawlerVersion": attempt.crawler_version,
-                        "parserVersion": attempt.parser_version, "leasedAt": utc_iso(attempt.leased_at),
-                        "startedAt": utc_iso(attempt.started_at),
-                        "finishedAt": utc_iso(attempt.finished_at) if attempt.finished_at else None,
-                        "durationMs": attempt.duration_ms, "resultChecksum": attempt.result_checksum,
-                    },
-                ))
+                CoordinatorStore._archive_task_attempt(session, attempt, job_id=job_id)
         session.execute(delete(JobEvent).where(JobEvent.job_id == job_id))
         session.execute(delete(CrawlTelemetryEvent).where(CrawlTelemetryEvent.job_id == job_id))
         session.execute(delete(InvalidJobInput).where(InvalidJobInput.job_id == job_id))

@@ -347,6 +347,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         store.cleanup_history,
                         retention_minutes=history_retention_minutes,
                     )
+                    await asyncio.to_thread(store.cleanup_attempt_history)
                     protected_tokens = await asyncio.to_thread(store.review_image_tokens)
                     await asyncio.to_thread(image_service.clear_expired, protected_tokens)
                     next_cleanup_at = loop_time + 60

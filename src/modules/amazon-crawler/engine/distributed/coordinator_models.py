@@ -157,6 +157,7 @@ class CrawlTask(Base):
 
 class TaskAttempt(Base):
     __tablename__ = "task_attempts"
+    __table_args__ = (Index("ix_task_attempts_finished_at", "finished_at"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"), index=True)
@@ -181,6 +182,7 @@ class TaskAttempt(Base):
 class ArchivedTaskAttempt(Base):
     """Immutable attempt snapshot retained after an operator deletes a crawl job."""
     __tablename__ = "archived_task_attempts"
+    __table_args__ = (Index("ix_archived_task_attempts_archived_at", "archived_at"),)
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     task_id: Mapped[str] = mapped_column(String(40), index=True)
     job_id: Mapped[str] = mapped_column(String(40), index=True)

@@ -27,6 +27,12 @@ class CoordinatorMigrationTests(unittest.TestCase):
             }))
             self.assertIn("archived_task_attempts", inspect(engine).get_table_names())
             self.assertIn("crawler_dlq_actions", inspect(engine).get_table_names())
+            indexes = {
+                index["name"]
+                for table in ("task_attempts", "archived_task_attempts")
+                for index in inspect(engine).get_indexes(table)
+            }
+            self.assertTrue({"ix_task_attempts_finished_at", "ix_archived_task_attempts_archived_at"}.issubset(indexes))
             with engine.connect() as connection:
                 state = connection.execute(
                     select(GlobalAdmissionGate.state).where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from sqlalchemy import select
 from fastapi.testclient import TestClient
 
-from engine.distributed.coordinator_models import CrawlTask, TaskAttempt, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import ArchivedTaskAttempt, CrawlTask, CrawlJob, TaskAttempt, create_database_engine, create_session_factory
 from engine.distributed.coordinator_server import create_coordinator_app
 from engine.distributed.operator_authorization import OperatorAudit, OperatorCredentials
 from engine.distributed.coordinator_store import CoordinatorStore
@@ -139,6 +139,45 @@ class RetryDlqHistoryTests(unittest.TestCase):
         archived_attempts = self.store.list_task_attempts(task_id)
         self.assertEqual(len(archived_attempts), 1)
         self.assertTrue(archived_attempts[0]["archived"])
+
+    def test_seven_day_cleanup_removes_expired_terminal_attempts_and_archives_only(self) -> None:
+        now = utc_now()
+        self.store.register_client(client_hello(slots=3))
+        old_archived_job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        archived_task_id = self._fail_once(str(old_archived_job["id"]), {
+            "reason": "invalid_url", "retryable": False,
+        })
+        self.assertTrue(self.store.delete_job(str(old_archived_job["id"])))
+
+        old_live_job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        old_live_task_id = self._fail_once(str(old_live_job["id"]), {
+            "reason": "invalid_url", "retryable": False,
+        })
+        recent_job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        recent_task_id = self._fail_once(str(recent_job["id"]), {
+            "reason": "invalid_url", "retryable": False,
+        })
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        active_lease = self.store.lease_tasks("client-a", 1)[0]
+
+        with self.sessions.begin() as session:
+            archived = session.scalar(select(ArchivedTaskAttempt).where(ArchivedTaskAttempt.task_id == archived_task_id))
+            archived.archived_at = now - timedelta(days=8)
+            old_live_attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.task_id == old_live_task_id))
+            old_live_attempt.finished_at = now - timedelta(days=8)
+            recent_attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.task_id == recent_task_id))
+            recent_attempt.finished_at = now - timedelta(days=6)
+
+        cleaned = self.store.cleanup_attempt_history(now=now)
+
+        self.assertEqual(cleaned, {"attempts": 1, "archivedAttempts": 1})
+        self.assertIsNone(self.store.list_task_attempts(archived_task_id))
+        self.assertEqual(self.store.list_task_attempts(old_live_task_id), [])
+        self.assertEqual(len(self.store.list_task_attempts(recent_task_id)), 1)
+        with self.sessions() as session:
+            active_attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.task_id == active_lease["taskId"]))
+            self.assertIsNotNone(active_attempt)
+            self.assertIsNone(active_attempt.finished_at)
 
 
 class DeadLetterOperatorRouteTests(unittest.TestCase):

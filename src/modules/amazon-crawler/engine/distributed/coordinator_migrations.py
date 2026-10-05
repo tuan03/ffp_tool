@@ -2,7 +2,7 @@
 
 from sqlalchemy import Column, Index, Integer, MetaData, Table, inspect, select, text
 
-from .coordinator_models import ArchivedTaskAttempt, Base, CrawlTask, CrawlerDlqAction, UploadReceipt
+from .coordinator_models import ArchivedTaskAttempt, Base, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
@@ -11,7 +11,7 @@ from .agent_command_ledger import AgentCommand, AgentCommandEvent
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from . import image_profile_repository  # Register profile tables before creating metadata.
 
-MIGRATION_VERSION = 10
+MIGRATION_VERSION = 11
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -119,3 +119,13 @@ def migrate_coordinator(engine) -> None:
             ArchivedTaskAttempt.__table__.create(connection, checkfirst=True)
             CrawlerDlqAction.__table__.create(connection, checkfirst=True)
             connection.execute(MIGRATIONS.insert().values(version=10))
+            versions.add(10)
+        if 11 not in versions:
+            for table_name, index_name, column in (
+                ("task_attempts", "ix_task_attempts_finished_at", TaskAttempt.finished_at),
+                ("archived_task_attempts", "ix_archived_task_attempts_archived_at", ArchivedTaskAttempt.archived_at),
+            ):
+                existing_indexes = {index["name"] for index in inspect(connection).get_indexes(table_name)}
+                if index_name not in existing_indexes:
+                    Index(index_name, column).create(connection)
+            connection.execute(MIGRATIONS.insert().values(version=11))
