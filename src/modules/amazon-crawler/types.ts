@@ -11,6 +11,8 @@ export type AmazonCrawlerJobStatus =
   | "failed"
   | "cancelled";
 
+export type AmazonCrawlerJobExecutionState = "active" | "pausing" | "paused";
+
 export interface Money {
   raw: string;
   amount: number;
@@ -433,6 +435,7 @@ export interface AmazonCrawlerSyncRetrier {
 export interface AmazonCrawlerJobSnapshot {
   jobId: string;
   status: AmazonCrawlerJobStatus;
+  executionState: AmazonCrawlerJobExecutionState;
   progress: AmazonCrawlerProgress;
   result: AmazonCrawlerOutput | null;
   error: string | null;
@@ -483,6 +486,8 @@ export interface AmazonCrawlerJobController {
   trace?(jobId: string, requestId: string, cursor?: string): Promise<AmazonCrawlerTracePage>;
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;
   get(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  pause(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
+  resume(jobId: string): Promise<AmazonCrawlerJobSnapshot>;
   cancel(jobId: string, options?: { force?: boolean }): Promise<AmazonCrawlerJobSnapshot>;
   cancelTask(taskId: string): Promise<void>;
   invalidateProductCache(asin: string, amazonZip: string): Promise<AmazonCrawlerCacheClearResult>;
@@ -860,6 +865,7 @@ export interface AmazonCrawlerAgentReleaseLoader {
 export interface AmazonCrawlerJobSummary {
   id: string;
   status: AmazonCrawlerJobStatus;
+  executionState: AmazonCrawlerJobExecutionState;
   createdAt: string;
   startedAt?: string | null;
   completedAt?: string | null;

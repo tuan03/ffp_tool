@@ -303,7 +303,10 @@ def find_project_root() -> Path:
 
 def create_coordinator_app(*, database_url: str | None = None, create_schema: bool = True,
                            operator_credentials: OperatorCredentials | None = None,
-                           agent_environment: str | None = None) -> FastAPI:
+                           agent_environment: str | None = None,
+                           operator_auth_disabled: bool = False) -> FastAPI:
+    if operator_auth_disabled and operator_credentials is not None:
+        raise ValueError("Public operator mode cannot also configure operator credentials")
     if agent_environment is not None and operator_credentials is None:
         raise ValueError("Secure agents require operator authorization")
     engine = create_database_engine(database_url)
@@ -382,14 +385,18 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.agent_security = security
     if security is not None:
         install_enrollment_routes(app, security)
-    if operator_credentials is not None:
-        install_operator_authorization(app, sessions, operator_credentials)
+    if operator_credentials is not None or operator_auth_disabled:
+        install_operator_authorization(app, sessions, operator_credentials,
+            allow_anonymous=operator_auth_disabled)
+    if operator_credentials is not None and not operator_auth_disabled:
         install_key_lifecycle_routes(app, sessions, operator_credentials.username)
         install_agent_key_routes(app, sessions, operator_credentials.username)
 
+    if operator_credentials is not None or operator_auth_disabled:
+
         @app.get("/api/v1/operator/security")
         def operator_security_contract() -> dict[str, int | bool]:
-            return {"authRequired": True, "authProtocol": 1}
+            return {"authRequired": not operator_auth_disabled, "authProtocol": 1}
     origins = [value.strip() for value in os.environ.get(
         "AMAZON_COORDINATOR_CORS_ORIGINS",
         "" if os.environ.get("NODE_ENV") == "production" else "http://localhost:5173,http://127.0.0.1:5173",
@@ -542,6 +549,28 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if result is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return result
+
+    @app.post("/api/v1/crawl-jobs/{job_id}/pause")
+    def pause_job(job_id: str) -> dict[str, Any]:
+        try:
+            snapshot = store.pause_job(job_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return snapshot
+
+    @app.post("/api/v1/crawl-jobs/{job_id}/resume")
+    async def resume_job(job_id: str) -> dict[str, Any]:
+        try:
+            snapshot = store.resume_job(job_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        if snapshot["executionState"] == "active":
+            await manager.broadcast({"type": "work_available"})
+        return snapshot
 
     @app.post("/api/v1/review-jobs", status_code=202)
     def create_review_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -735,12 +764,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     async def retry_failed(job_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=410, detail="Bulk retry was replaced by the audited dead-letter queue actions.")
 
-    def require_dlq_operator(request: Request) -> str:
+    def require_operator_actor(request: Request) -> str:
+        if operator_auth_disabled:
+            return "public"
         if operator_credentials is None:
             raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
         if not operator_credentials.accepts(request.headers.get("authorization", "")):
             raise HTTPException(status_code=401, detail="Operator authorization is required.")
         return operator_credentials.username
+
+    def require_dlq_operator(request: Request) -> str:
+        return require_operator_actor(request)
 
     @app.get("/api/v1/dead-letter")
     async def list_dead_letter_tasks(
@@ -819,10 +853,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.get("/api/v1/admission-gate")
     async def get_global_admission_gate(request: Request) -> dict[str, Any]:
-        if operator_credentials is None:
-            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
-        if not operator_credentials.accepts(request.headers.get("authorization", "")):
-            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        require_operator_actor(request)
         try:
             return await global_admission_gate_status()
         except RuntimeError:
@@ -832,15 +863,12 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     async def update_global_admission_gate(
         payload: GlobalAdmissionGateRequest, request: Request,
     ) -> dict[str, Any]:
-        if operator_credentials is None:
-            raise HTTPException(status_code=503, detail="Crawler operator authorization is unavailable.")
-        if not operator_credentials.accepts(request.headers.get("authorization", "")):
-            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        actor = require_operator_actor(request)
         try:
             gate = await asyncio.to_thread(store.set_global_admission_gate,
                 payload.state,
                 request_id=payload.requestId.lower(),
-                actor=operator_credentials.username,
+                actor=actor,
                 reason=payload.reason,
             )
             await manager.broadcast({
@@ -856,22 +884,20 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.get("/api/v1/fleet-circuit-breaker")
     async def get_fleet_circuit_breaker(request: Request) -> dict[str, Any]:
-        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
-            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        require_operator_actor(request)
         with store.sessions() as session:
             return fleet_circuit_breaker_snapshot(session)
 
     @app.post("/api/v1/fleet-circuit-breaker/reset")
     async def reset_fleet_circuit_breaker_route(payload: FleetCircuitBreakerResetRequest, request: Request) -> dict[str, Any]:
-        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
-            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        actor = require_operator_actor(request)
         with store.sessions.begin() as session:
             audit = session.get(OperatorAudit, request.state.operator_audit_id)
-            if audit is None or audit.actor != operator_credentials.username or audit.outcome != "authorized":
+            if audit is None or audit.actor != actor or audit.outcome != "authorized":
                 raise HTTPException(status_code=503, detail="Operator audit record is unavailable.")
             audit.target_id = "fleet"
             audit.reason = f"FLEET_BREAKER_RESET: {payload.reason.strip()}"
-            state = reset_fleet_circuit_breaker(session, actor=operator_credentials.username,
+            state = reset_fleet_circuit_breaker(session, actor=actor,
                 reason=payload.reason.strip())
         return state
 
@@ -903,8 +929,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.post("/api/v1/clients/bulk-commands", status_code=202)
     async def submit_bulk_agent_command(payload: BulkAgentCommandRequest, request: Request) -> dict[str, Any]:
-        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
-            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        actor = require_operator_actor(request)
         if payload.allAgents == bool(payload.agentGroup):
             raise HTTPException(status_code=422, detail="Choose exactly one explicit group or allAgents scope.")
         clients = await asyncio.to_thread(store.list_clients)
@@ -929,7 +954,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=413, detail="Bulk command scope exceeds 500 agents; narrow the filters.")
         with store.sessions.begin() as session:
             audit = session.get(OperatorAudit, request.state.operator_audit_id)
-            if audit is None or audit.actor != operator_credentials.username or audit.outcome != "authorized":
+            if audit is None or audit.actor != actor or audit.outcome != "authorized":
                 raise HTTPException(status_code=503, detail="Operator audit record is unavailable.")
             audit.target_id = payload.agentGroup or "all-agents"
             audit.reason = f"BULK_{payload.type}: {payload.reason.strip()}"

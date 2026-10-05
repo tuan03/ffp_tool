@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   DEFAULT_SEO_PIPELINE_VERSION,
+  createGeminiSeoProviderFactory,
   protectSeoProviderRuntime,
   SeoProviderCircuitBreaker,
   SeoProviderRegistry,
@@ -277,6 +278,28 @@ test("provider circuit records a primary Gemini failure while preserving success
   assert.equal(store.record?.state, "open");
   assert.equal(store.record?.failureCount, 1);
   assert.match(String(store.record?.lastError?.message), /Gemini unavailable/);
+});
+
+test("unreadable B1 images fall back without opening the Gemini provider circuit", async () => {
+  const previousProject = process.env.GOOGLE_CLOUD_PROJECT;
+  process.env.GOOGLE_CLOUD_PROJECT = "fixture-project";
+  try {
+    const store = new AtomicMemoryCircuitStore();
+    const runtime = createGeminiSeoProviderFactory().create({
+      imageMode: "full",
+      requestOptions: {},
+      onFallback: () => undefined,
+    });
+    const protectedRuntime = protectSeoProviderRuntime(runtime, new SeoProviderCircuitBreaker(store));
+    const analysis = await protectedRuntime.imageAnalyzer.analyze({
+      images: [], title: "Pattern rug", description: "", niche: "home decor",
+    });
+    assert.equal(analysis.physicalProductIdentity, "area rug");
+    assert.equal(store.record, undefined);
+  } finally {
+    if (previousProject === undefined) delete process.env.GOOGLE_CLOUD_PROJECT;
+    else process.env.GOOGLE_CLOUD_PROJECT = previousProject;
+  }
 });
 
 test("simple runner uses the same checkpointed session path as the detailed runner", async () => {

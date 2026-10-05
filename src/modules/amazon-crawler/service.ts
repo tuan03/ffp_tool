@@ -18,6 +18,7 @@ import type {
   AmazonCrawlerAdmissionGate,
   AmazonCrawlerAdmissionGateController,
   AmazonCrawlerHydratedJob,
+  AmazonCrawlerJobExecutionState,
   AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerJobController,
@@ -54,10 +55,10 @@ export async function discoverCrawlerOperatorAuth(engineUrl: string, fetchImplem
   if (response.status === 404) return false;
   if (!response.ok) throw new Error("Không kiểm tra được chế độ xác thực Coordinator.");
   const payload: unknown = await response.json();
-  if (!isRecord(payload) || payload.authRequired !== true || payload.authProtocol !== 1) {
+  if (!isRecord(payload) || typeof payload.authRequired !== "boolean" || payload.authProtocol !== 1) {
     throw new Error("Coordinator trả contract xác thực không hợp lệ.");
   }
-  return true;
+  return payload.authRequired;
 }
 
 export function createCrawlerOperatorFetch(options: {
@@ -294,6 +295,7 @@ function readJobCreated(value: unknown): JobCreatedResponse {
 interface CoordinatorSnapshot {
   id: string;
   status: AmazonCrawlerJobSnapshot["status"];
+  executionState: AmazonCrawlerJobExecutionState;
   progress: AmazonCrawlerProgress;
 }
 
@@ -307,10 +309,14 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
     throw new AmazonCrawlerServiceError("Engine returned invalid job progress.", "INVALID_ENGINE_RESPONSE");
   }
   const status = value.status as CoordinatorSnapshot["status"];
+  const executionState = value.executionState === "pausing" || value.executionState === "paused"
+    ? value.executionState
+    : "active";
   const isTerminal = ["review_pending", "completed", "partial", "cancelled"].includes(status);
   return {
     id: value.id,
     status,
+    executionState,
     progress: {
       phase: typeof value.progress.phase === "string" ? value.progress.phase as AmazonCrawlerProgress["phase"] : (isTerminal ? "export" : "product"),
       completed,
@@ -377,6 +383,7 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
   return {
     jobId: core.id,
     status: core.status,
+    executionState: core.executionState,
     progress: core.progress,
     result: null,
     error: null,
@@ -875,6 +882,14 @@ export function createAmazonCrawlerJobController({
         return { ...snapshot, result: result as AmazonCrawlerOutput };
       }
       return snapshot;
+    },
+    async pause(jobId) {
+      const response = await fetchImplementation(`${jobUrl(jobId)}/pause`, { method: "POST" });
+      return readJobSnapshot(await readJson(response));
+    },
+    async resume(jobId) {
+      const response = await fetchImplementation(`${jobUrl(jobId)}/resume`, { method: "POST" });
+      return readJobSnapshot(await readJson(response));
     },
     async cancel(jobId, options) {
       const query = options?.force ? "?force=true" : "";
@@ -1433,6 +1448,9 @@ export function createAmazonCrawlerJobLoader({
           return {
             id: String(jobRecord.id || ""),
             status: (jobRecord.status as AmazonCrawlerJobSummary["status"]) || "queued",
+            executionState: jobRecord.executionState === "pausing" || jobRecord.executionState === "paused"
+              ? jobRecord.executionState
+              : "active",
             createdAt: String(jobRecord.createdAt || ""),
             startedAt: jobRecord.startedAt ? String(jobRecord.startedAt) : null,
             completedAt: jobRecord.completedAt ? String(jobRecord.completedAt) : null,

@@ -32,6 +32,8 @@ export function getAmazonCrawlerJobController(environment: AppEnvironment, engin
     trace: async () => ({ events: [], nextCursor: null }),
     list: async () => [],
     get: async () => { throw new Error("Mock job was not found."); },
+    pause: async () => { throw new Error("Mock job was not found."); },
+    resume: async () => { throw new Error("Mock job was not found."); },
     cancel: async () => { throw new Error("Mock job was not found."); },
     cancelTask: async () => { throw new Error("Mock task was not found."); },
     invalidateProductCache: async () => ({ removedFiles: 0, removedBytes: 0 }),

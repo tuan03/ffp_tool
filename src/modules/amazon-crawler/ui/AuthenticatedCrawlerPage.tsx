@@ -14,6 +14,7 @@ import {
   discoverCrawlerOperatorAuth,
 } from "../service";
 import { AmazonCrawlerPage } from "./AmazonCrawlerPage";
+import { resolveAmbientCrawlerOperatorFetch } from "./ambient-operator-session";
 import type { AmazonCrawlerPageProps } from "./AmazonCrawlerPage";
 
 export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawlerPageProps & { engineUrl?: string }) {
@@ -35,7 +36,15 @@ export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawl
       void (async () => {
         try {
           const required = await discoverCrawlerOperatorAuth(engineUrl);
-          if (mounted) setMode(required ? "secure" : "legacy");
+          if (!mounted) return;
+          if (!required) {
+            setMode("legacy");
+            return;
+          }
+          const fetchImplementation = await resolveAmbientCrawlerOperatorFetch(engineUrl);
+          if (!mounted) return;
+          if (fetchImplementation) setSession({ fetchImplementation });
+          setMode("secure");
         } catch {
           if (mounted) {
             setMode("error");

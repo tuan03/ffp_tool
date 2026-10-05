@@ -690,6 +690,35 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
   assert.equal(requests.at(-1)?.method, "DELETE");
 });
 
+test("job controller pauses and resumes the selected coordinator job", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "https://coordinator.test/",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method });
+      return jsonResponse({
+        id: "job-1", status: "running", executionState: url.endsWith("/pause") ? "pausing" : "active",
+        inputs: ["B0MOCK0001"], settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
+        progress: { phase: "product", completed: 0, total: 1, message: "Running" },
+        createdAt: "2026-09-24T00:00:00Z", startedAt: null, completedAt: null,
+        replacementOfJobId: null,
+        cancellation: { pendingAgents: [], pendingPipeline: [], pendingPipelineItems: 0 },
+      });
+    },
+  });
+
+  const pausing = await jobs.pause("job-1");
+  const resumed = await jobs.resume("job-1");
+  assert.equal(pausing.executionState, "pausing");
+  assert.equal(resumed.executionState, "active");
+  assert.deepEqual(requests, [
+    { url: "https://coordinator.test/api/v1/crawl-jobs/job-1/pause", method: "POST" },
+    { url: "https://coordinator.test/api/v1/crawl-jobs/job-1/resume", method: "POST" },
+  ]);
+});
+
 test("job controller reads dead-letter history and submits exact audited actions", async () => {
   const requests: Array<{ url: string; method: string; body: unknown }> = [];
   const jobs = createAmazonCrawlerJobController({

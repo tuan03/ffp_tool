@@ -223,7 +223,11 @@ class DashboardAgentTests(unittest.TestCase):
         self.assertEqual(self.agent.store.pending_results(), [])
         self.assertEqual(len(self.agent.store.quarantined_uploads()), 1)
         self.assertEqual(self.agent.store.cancel_intents(), ["job-a"])
-        self.assertEqual(self.agent.status_snapshot()["dashboard"]["history"][0]["delivery"], "cancelled")
+        snapshot = self.agent.status_snapshot()
+        self.assertEqual(snapshot["dashboard"]["history"][0]["delivery"], "cancelled")
+        self.assertEqual(snapshot["pendingResults"], 0)
+        self.assertEqual(snapshot["pendingProducts"], 0)
+        self.assertEqual(snapshot["quarantinedUploads"], 1)
 
     def test_history_io_failure_does_not_stop_crawler_status(self) -> None:
         with patch.object(self.agent.dashboard, "snapshot", side_effect=sqlite3.OperationalError("disk")):

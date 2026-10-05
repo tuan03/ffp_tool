@@ -837,6 +837,19 @@ class ClientStore:
                 "results": int(connection.execute("SELECT COUNT(*) FROM pending_results").fetchone()[0]),
             }
 
+    def dashboard_upload_counts(self) -> dict[str, int]:
+        """Separate deliverable uploads from retained quarantine records for operator display."""
+        with self._connection() as connection:
+            return {
+                "products": int(connection.execute(
+                    "SELECT COUNT(*) FROM pending_products WHERE result_id NOT IN (SELECT result_id FROM outbox_quarantine)"
+                ).fetchone()[0]),
+                "results": int(connection.execute(
+                    "SELECT COUNT(*) FROM pending_results WHERE result_id NOT IN (SELECT result_id FROM outbox_quarantine)"
+                ).fetchone()[0]),
+                "quarantined": int(connection.execute("SELECT COUNT(*) FROM outbox_quarantine").fetchone()[0]),
+            }
+
     def dashboard_local_tasks(self) -> list[dict[str, Any]]:
         """Small lease metadata used to reconcile the local dashboard at startup."""
         with self._connection() as connection:

@@ -1,4 +1,4 @@
-"""Opt-in Coordinator operator boundary and durable, payload-free audit."""
+"""Coordinator operator boundary and durable, payload-free audit."""
 from __future__ import annotations
 
 import base64
@@ -52,7 +52,8 @@ class OperatorAudit(Base):
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
-def install_operator_authorization(app, sessions, credentials: OperatorCredentials) -> None:
+def install_operator_authorization(app, sessions, credentials: OperatorCredentials | None, *,
+                                   allow_anonymous: bool = False) -> None:
     @app.middleware("http")
     async def authorize(request, call_next):
         path = request.scope["path"]
@@ -63,7 +64,7 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
         if path in {"/api/v1/health", "/api/v1/ready", "/api/v1/agent-release", "/api/v1/operator/security"} or path.startswith(("/api/v1/worker/", "/api/v1/internal/")):
             # These have distinct worker/pipeline contracts, not operator rights.
             return await call_next(request)
-        operator_authenticated = credentials.accepts(request.headers.get("authorization", ""))
+        operator_authenticated = bool(credentials and credentials.accepts(request.headers.get("authorization", "")))
         review_authorization = getattr(app.state, "review_image_authorization", None)
         bridge_authenticated = bool(callable(review_authorization) and review_authorization(
             request.scope, request.headers.get("x-bridge-token", "")))
@@ -76,9 +77,9 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
             (origin is not None and (forwarded_scheme not in {"http", "https"} or origin != expected_origin))
             or request.headers.get("sec-fetch-site") == "cross-site"
         )
-        allowed = authenticated and not cross_origin
-        denial_status = 403 if authenticated else 401
-        denial_reason = "OPERATOR_ORIGIN_DENIED" if authenticated else "OPERATOR_AUTH_REQUIRED"
+        allowed = (authenticated or allow_anonymous) and not cross_origin
+        denial_status = 403 if authenticated or cross_origin else 401
+        denial_reason = "OPERATOR_ORIGIN_DENIED" if authenticated or cross_origin else "OPERATOR_AUTH_REQUIRED"
         route_name, target = "unmatched", None
         for route in app.router.routes:
             match, scope = route.matches(request.scope)
@@ -92,11 +93,14 @@ def install_operator_authorization(app, sessions, credentials: OperatorCredentia
         audit_id = uuid.uuid4().hex
         try:
             with sessions.begin() as session:
-                actor = "review-image-bridge" if bridge_authenticated else credentials.username if operator_authenticated else "unauthenticated"
+                actor = ("review-image-bridge" if bridge_authenticated else
+                    credentials.username if operator_authenticated and credentials is not None else
+                    "public" if allow_anonymous and allowed else "unauthenticated")
                 session.add(OperatorAudit(id=audit_id, actor=actor,
                     method=request.method, route=route_name, target_id=target,
                     outcome="authorized" if allowed else "denied", status_code=None if allowed else denial_status,
-                    reason="OPERATOR_AUTH_ACCEPTED" if allowed else denial_reason))
+                    reason=("PUBLIC_OPERATOR_ACCESS" if allow_anonymous and not authenticated and allowed else
+                        "OPERATOR_AUTH_ACCEPTED" if allowed else denial_reason)))
         except Exception:
             # No management side effect when mandatory audit cannot be persisted.
             return JSONResponse({"error": {"code": "OPERATOR_AUDIT_UNAVAILABLE"}}, status_code=503)

@@ -83,6 +83,7 @@ export function createMockAmazonCrawlerJobLoader(): AmazonCrawlerJobLoader {
         {
           id: "mock-job-001",
           status: "completed",
+          executionState: "active",
           createdAt: new Date().toISOString(),
           acceptedInputs: 1,
         },
