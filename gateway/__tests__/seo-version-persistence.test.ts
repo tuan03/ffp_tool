@@ -51,9 +51,9 @@ test("numbered migrations are additive, repeatable and freeze V1 constants", asy
   const f = await fixture();
   try {
     await applySeoVersionMigrations(f.database, "public", () => 200);
-    assert.deepEqual((await f.pg.query<{ version: number; name: string }>("SELECT version,name FROM seo_version_migrations")).rows,
-      [{ version: 1, name: "create-seo-version-ledger" }]);
-    assert.equal(getSeoVersionMigrations("public").length, 1);
+    assert.deepEqual((await f.pg.query<{ version: number; name: string }>("SELECT version,name FROM seo_version_migrations ORDER BY version")).rows,
+      [{ version: 1, name: "create-seo-version-ledger" }, { version: 2, name: "create-seo-rollback-draft-requests" }]);
+    assert.equal(getSeoVersionMigrations("public").length, 2);
     assert.throws(() => getSeoVersionMigrations('bad"schema'), /Invalid SEO versioning schema/);
     assert.equal(SEO_SNAPSHOT_SCHEMA_VERSION, "seo-snapshot-v1");
     assert.equal(SEO_FIELD_SET_VERSION, "seo-fields-v1");
@@ -161,5 +161,32 @@ test("rollback creates a forward-moving version with restored provenance", async
     assert.equal(v2.version.versionNumber, 2);
     assert.equal(v2.version.restoredFromVersionId, v0.version.id);
     assert.equal((await f.repository.listVersions("store-a", "p1"))[2]?.source, "ROLLBACK");
+  } finally { await f.pg.close(); }
+});
+
+test("history reads are descending, paginated and rollback requests retain current and target provenance", async () => {
+  const f = await fixture();
+  try {
+    const productGid = "gid://shopify/Product/1";
+    await f.repository.setStoreFlags({ storeId: "store-a", readEnabled: true, writeEnabled: true }, 1);
+    const v0 = await f.repository.ensureBaseline({ storeId: "store-a", shopifyProductGid: productGid, snapshot: snapshot("a"), observedAt: 2 });
+    const v1 = await f.repository.commitVersion({ storeId: "store-a", shopifyProductGid: productGid, operationId: "op-page",
+      expectedVersionId: v0.version.id, expectedContentHash: "a".repeat(64), snapshot: snapshot("b"), source: "AUTO_SEO",
+      approvedBy: "reviewer", appliedBy: "publisher", appliedAt: 3 });
+    assert.equal(v1.outcome, "COMMITTED");
+    const firstPage = await f.repository.listVersionPage("store-a", productGid, 1, 0);
+    assert.equal(firstPage.entries[0]?.versionNumber, 1);
+    assert.equal(firstPage.total, 2);
+    assert.equal(firstPage.nextOffset, 1);
+    const lifecycle = await f.repository.getProductLifecycle("store-a", productGid);
+    assert.equal(lifecycle.currentVersion.versionNumber, 1);
+    assert.equal(lifecycle.hasExternalChanges, false);
+    const request = await f.repository.requestRollbackDraft({ storeId: "store-a", shopifyProductGid: productGid,
+      targetVersionId: v0.version.id, requestId: "request-1", requestedBy: "operator", createdAt: 4 });
+    assert.equal(request.basedOnVersionId, v1.version.id);
+    assert.equal(request.restoredFromVersionId, v0.version.id);
+    assert.deepEqual(await f.repository.requestRollbackDraft({ storeId: "store-a", shopifyProductGid: productGid,
+      targetVersionId: v0.version.id, requestId: "request-1", requestedBy: "operator", createdAt: 5 }), request);
+    await assert.rejects(f.repository.getVersionSnapshot("store-a", productGid, "missing"), /SEO_VERSION_NOT_FOUND/);
   } finally { await f.pg.close(); }
 });

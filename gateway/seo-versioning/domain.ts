@@ -127,3 +127,42 @@ export interface SeoExternalChangeResult {
   readonly changed: boolean;
   readonly externalChangeId: string | null;
 }
+
+export interface SeoProductLifecycle {
+  readonly storeId: string;
+  readonly shopifyProductGid: string;
+  readonly currentVersion: SeoVersionRecord;
+  readonly currentSnapshotId: string;
+  readonly currentContentHash: string;
+  readonly state: SeoProductState;
+  readonly shopifyStatus: string;
+  readonly currentUrl: string | null;
+  readonly lastSeenAt: number;
+  readonly hasExternalChanges: boolean;
+}
+
+export interface SeoVersionPage {
+  readonly entries: readonly SeoVersionRecord[];
+  readonly total: number;
+  readonly nextOffset: number | null;
+}
+
+export interface SeoVersionSnapshot {
+  readonly version: SeoVersionRecord;
+  readonly snapshot: SeoContentSnapshotInput;
+}
+
+export interface SeoRollbackDraftRequest {
+  readonly id: string;
+  readonly requestId: string;
+  readonly storeId: string;
+  readonly shopifyProductGid: string;
+  readonly basedOnVersionId: string;
+  readonly basedOnSnapshotId: string;
+  readonly basedOnContentHash: string;
+  readonly restoredFromVersionId: string;
+  readonly restoredFromSnapshotId: string;
+  readonly status: "REQUESTED";
+  readonly requestedBy: string;
+  readonly createdAt: number;
+}

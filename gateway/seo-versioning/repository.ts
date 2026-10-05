@@ -14,9 +14,13 @@ import {
   type SeoContentSnapshotInput,
   type SeoDraftPublishContext,
   type SeoExternalChangeResult,
+  type SeoProductLifecycle,
+  type SeoRollbackDraftRequest,
   type SeoSnapshotSource,
   type SeoStoreVersioningFlags,
+  type SeoVersionPage,
   type SeoVersionRecord,
+  type SeoVersionSnapshot,
 } from "./domain";
 
 function prefix(schema: string): string {
@@ -46,6 +50,40 @@ function versionFromRow(row: Record<string, unknown>): SeoVersionRecord {
     restoredFromVersionId: row.restored_from_version_id === null ? null : String(row.restored_from_version_id),
     appliedAt: Number(row.applied_at_utc),
     publicEffectiveAt: row.public_effective_at_utc === null ? null : Number(row.public_effective_at_utc),
+  };
+}
+
+function jsonRecord(value: unknown): Readonly<Record<string, string | null>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Readonly<Record<string, string | null>>;
+}
+
+function jsonArray<T>(value: unknown): readonly T[] {
+  return Array.isArray(value) ? value as readonly T[] : [];
+}
+
+function snapshotFromRow(row: Record<string, unknown>): SeoContentSnapshotInput {
+  return {
+    contentHash: String(row.content_hash), title: String(row.title), descriptionHtml: String(row.description_html),
+    seoTitle: row.seo_title === null ? null : String(row.seo_title),
+    seoDescription: row.seo_description === null ? null : String(row.seo_description),
+    images: jsonArray(row.images), aeoMetafields: jsonRecord(row.aeo_metafields), handle: String(row.handle),
+    onlineStoreUrl: row.online_store_url === null ? null : String(row.online_store_url),
+    observedCanonicalUrl: row.observed_canonical_url === null ? null : String(row.observed_canonical_url),
+    shopifyStatus: String(row.shopify_status), vendor: row.vendor === null ? null : String(row.vendor),
+    productType: row.product_type === null ? null : String(row.product_type), tags: jsonArray<string>(row.tags),
+    extensionFields: row.extension_fields && typeof row.extension_fields === "object" && !Array.isArray(row.extension_fields)
+      ? row.extension_fields as Readonly<Record<string, unknown>> : {},
+  };
+}
+
+function rollbackRequestFromRow(row: Record<string, unknown>): SeoRollbackDraftRequest {
+  return {
+    id: String(row.id), requestId: String(row.request_id), storeId: String(row.store_id),
+    shopifyProductGid: String(row.shopify_product_gid), basedOnVersionId: String(row.based_on_version_id),
+    basedOnSnapshotId: String(row.based_on_snapshot_id), basedOnContentHash: String(row.based_on_content_hash),
+    restoredFromVersionId: String(row.restored_from_version_id), restoredFromSnapshotId: String(row.restored_from_snapshot_id),
+    status: "REQUESTED", requestedBy: String(row.requested_by), createdAt: Number(row.created_at),
   };
 }
 
@@ -236,6 +274,81 @@ export class SeoVersionRepository {
     });
   }
 
+  async getProductLifecycle(storeId: string, shopifyProductGid: string): Promise<SeoProductLifecycle> {
+    return this.database.transaction(async sql => {
+      await this.assertEnabled(sql, storeId, "read_enabled");
+      const product = await this.findProduct(sql, storeId, shopifyProductGid);
+      if (product.current_version_id === null || product.current_observed_snapshot_id === null) throw new Error("SEO_BASELINE_REQUIRED");
+      const currentVersion = await this.getVersionById(sql, storeId, String(product.current_version_id));
+      const snapshot = (await sql.query(`SELECT content_hash FROM ${this.p}seo_content_snapshots
+        WHERE store_id=$1 AND product_id=$2 AND id=$3`, [storeId, product.id, product.current_observed_snapshot_id])).rows[0];
+      if (!snapshot) throw new Error("SEO_SNAPSHOT_NOT_FOUND");
+      const external = (await sql.query(`SELECT 1 FROM ${this.p}seo_external_changes
+        WHERE store_id=$1 AND product_id=$2 AND resolved_at IS NULL LIMIT 1`, [storeId, product.id])).rows[0];
+      return {
+        storeId, shopifyProductGid, currentVersion, currentSnapshotId: String(product.current_observed_snapshot_id),
+        currentContentHash: String(snapshot.content_hash), state: String(product.versioning_state) as SeoProductLifecycle["state"],
+        shopifyStatus: String(product.shopify_status), currentUrl: product.current_url === null ? null : String(product.current_url),
+        lastSeenAt: Number(product.last_seen_at), hasExternalChanges: Boolean(external),
+      };
+    });
+  }
+
+  async listVersionPage(storeId: string, shopifyProductGid: string, limit: number, offset: number): Promise<SeoVersionPage> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0) throw new Error("INVALID_PAGINATION");
+    return this.database.transaction(async sql => {
+      await this.assertEnabled(sql, storeId, "read_enabled");
+      const product = await this.findProduct(sql, storeId, shopifyProductGid);
+      const total = Number((await sql.query(`SELECT count(*)::int AS total FROM ${this.p}seo_versions
+        WHERE store_id=$1 AND product_id=$2`, [storeId, product.id])).rows[0]?.total ?? 0);
+      const rows = await sql.query(`SELECT * FROM ${this.p}seo_versions WHERE store_id=$1 AND product_id=$2
+        ORDER BY version_number DESC LIMIT $3 OFFSET $4`, [storeId, product.id, limit, offset]);
+      const nextOffset = offset + rows.rows.length < total ? offset + rows.rows.length : null;
+      return { entries: rows.rows.map(versionFromRow), total, nextOffset };
+    });
+  }
+
+  async getVersionSnapshot(storeId: string, shopifyProductGid: string, versionId: string): Promise<SeoVersionSnapshot> {
+    return this.database.transaction(async sql => {
+      await this.assertEnabled(sql, storeId, "read_enabled");
+      const product = await this.findProduct(sql, storeId, shopifyProductGid);
+      const row = (await sql.query(`SELECT v.*,s.content_hash,s.title,s.description_html,s.seo_title,s.seo_description,
+        s.images,s.aeo_metafields,s.handle,s.online_store_url,s.observed_canonical_url,s.shopify_status,s.vendor,
+        s.product_type,s.tags,s.extension_fields FROM ${this.p}seo_versions v
+        JOIN ${this.p}seo_content_snapshots s ON s.store_id=v.store_id AND s.product_id=v.product_id AND s.id=v.snapshot_id
+        WHERE v.store_id=$1 AND v.product_id=$2 AND v.id=$3`, [storeId, product.id, versionId])).rows[0];
+      if (!row) throw new Error("SEO_VERSION_NOT_FOUND");
+      return { version: versionFromRow(row), snapshot: snapshotFromRow(row) };
+    });
+  }
+
+  async requestRollbackDraft(input: { readonly storeId: string; readonly shopifyProductGid: string; readonly targetVersionId: string;
+    readonly requestId: string; readonly requestedBy: string; readonly createdAt: number }): Promise<SeoRollbackDraftRequest> {
+    return this.database.transaction(async sql => {
+      await this.assertEnabled(sql, input.storeId, "write_enabled");
+      const product = await this.lockProduct(sql, input.storeId, input.shopifyProductGid);
+      if (product.current_version_id === null || product.current_observed_snapshot_id === null) throw new Error("SEO_BASELINE_REQUIRED");
+      if (product.versioning_state === "DIRTY") throw new Error("SEO_PRODUCT_DIRTY");
+      const current = await this.getVersionById(sql, input.storeId, String(product.current_version_id));
+      const target = await this.getVersionById(sql, input.storeId, input.targetVersionId);
+      if (target.productId !== String(product.id)) throw new Error("SEO_VERSION_NOT_FOUND");
+      if (target.id === current.id) throw new Error("ROLLBACK_TARGET_CURRENT");
+      const currentSnapshot = (await sql.query(`SELECT content_hash FROM ${this.p}seo_content_snapshots
+        WHERE store_id=$1 AND product_id=$2 AND id=$3`, [input.storeId, product.id, current.snapshotId])).rows[0];
+      const id = this.id();
+      await sql.query(`INSERT INTO ${this.p}seo_rollback_draft_requests(id,request_id,store_id,product_id,based_on_version_id,
+        based_on_snapshot_id,based_on_content_hash,restored_from_version_id,restored_from_snapshot_id,status,requested_by,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'REQUESTED',$10,$11) ON CONFLICT(store_id,request_id) DO NOTHING`,
+      [id, input.requestId, input.storeId, product.id, current.id, current.snapshotId, currentSnapshot?.content_hash,
+        target.id, target.snapshotId, input.requestedBy, input.createdAt]);
+      const row = (await sql.query(`SELECT r.*,p.shopify_product_gid FROM ${this.p}seo_rollback_draft_requests r
+        JOIN ${this.p}seo_products p ON p.store_id=r.store_id AND p.id=r.product_id
+        WHERE r.store_id=$1 AND r.request_id=$2`, [input.storeId, input.requestId])).rows[0];
+      if (!row || row.product_id !== product.id || row.restored_from_version_id !== target.id) throw new Error("ROLLBACK_REQUEST_CONFLICT");
+      return rollbackRequestFromRow(row);
+    });
+  }
+
   private async assertEnabled(sql: WorkerSql, storeId: string, column: "read_enabled" | "write_enabled"): Promise<void> {
     const row = (await sql.query(`SELECT ${column} FROM ${this.p}seo_version_store_settings WHERE store_id=$1`, [storeId])).rows[0];
     if (!row || row[column] !== true) throw new Error(column === "read_enabled" ? "SEO_VERSION_READ_DISABLED" : "SEO_VERSION_WRITE_DISABLED");
@@ -243,6 +356,12 @@ export class SeoVersionRepository {
 
   private async lockProduct(sql: WorkerSql, storeId: string, shopifyProductGid: string): Promise<Record<string, unknown>> {
     const row = (await sql.query(`SELECT * FROM ${this.p}seo_products WHERE store_id=$1 AND shopify_product_gid=$2 FOR UPDATE`, [storeId, shopifyProductGid])).rows[0];
+    if (!row) throw new Error("SEO_PRODUCT_NOT_FOUND");
+    return row;
+  }
+
+  private async findProduct(sql: WorkerSql, storeId: string, shopifyProductGid: string): Promise<Record<string, unknown>> {
+    const row = (await sql.query(`SELECT * FROM ${this.p}seo_products WHERE store_id=$1 AND shopify_product_gid=$2`, [storeId, shopifyProductGid])).rows[0];
     if (!row) throw new Error("SEO_PRODUCT_NOT_FOUND");
     return row;
   }

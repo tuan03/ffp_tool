@@ -168,6 +168,33 @@ export function getSeoVersionMigrations(schema: string): readonly SeoVersionMigr
       `CREATE TRIGGER seo_version_audit_immutable BEFORE UPDATE OR DELETE ON ${p}seo_version_audit
         FOR EACH ROW EXECUTE FUNCTION ${p}reject_seo_immutable_update()`,
     ],
+  }, {
+    version: 2,
+    name: "create-seo-rollback-draft-requests",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ${p}seo_rollback_draft_requests (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        store_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        based_on_version_id TEXT NOT NULL,
+        based_on_snapshot_id TEXT NOT NULL,
+        based_on_content_hash TEXT NOT NULL,
+        restored_from_version_id TEXT NOT NULL,
+        restored_from_snapshot_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status='REQUESTED'),
+        requested_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        UNIQUE(store_id, request_id),
+        FOREIGN KEY(store_id, product_id) REFERENCES ${p}seo_products(store_id, id),
+        FOREIGN KEY(store_id, product_id, based_on_version_id) REFERENCES ${p}seo_versions(store_id, product_id, id),
+        FOREIGN KEY(store_id, product_id, based_on_snapshot_id) REFERENCES ${p}seo_content_snapshots(store_id, product_id, id),
+        FOREIGN KEY(store_id, product_id, restored_from_version_id) REFERENCES ${p}seo_versions(store_id, product_id, id),
+        FOREIGN KEY(store_id, product_id, restored_from_snapshot_id) REFERENCES ${p}seo_content_snapshots(store_id, product_id, id)
+      )`,
+      `CREATE TRIGGER seo_rollback_draft_requests_immutable BEFORE UPDATE OR DELETE ON ${p}seo_rollback_draft_requests
+        FOR EACH ROW EXECUTE FUNCTION ${p}reject_seo_immutable_update()`,
+    ],
   }];
 }
 

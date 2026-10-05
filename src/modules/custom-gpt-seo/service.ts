@@ -1,4 +1,4 @@
-import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt } from "./types";
+import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt, SeoProductLifecycleDto, SeoRollbackDraftRequestDto, SeoVersionDiffDto, SeoVersionPageDto } from "./types";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -39,7 +39,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!response.ok) {
-      if (route.startsWith("publish") || route === "revisions") {
+      if (route.startsWith("publish") || route === "revisions" || route.startsWith("versioning/")) {
         const payload: unknown = await response.json().catch(() => null);
         const code = isRecord(payload) && isRecord(payload.error) ? payload.error.code : undefined;
         const messages: Record<string, string> = {
@@ -54,6 +54,12 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
           OPERATOR_REQUIRED: "Đăng nhập bằng tài khoản quản trị để Sync Shopify.",
           APPROVED_REVIEW_REQUIRED: "Cần lưu và duyệt bản Review hợp lệ trước khi Sync.",
           VERSION_CONFLICT: "Bản Review đã thay đổi. Tải lại trước khi Sync.",
+          SEO_VERSION_READ_DISABLED: "Lịch sử SEO chưa được bật cho store này.",
+          SEO_VERSION_WRITE_DISABLED: "Store đang ở chế độ chỉ đọc lịch sử SEO.",
+          SEO_PRODUCT_NOT_FOUND: "Sản phẩm chưa có baseline SEO trên store này.",
+          SEO_VERSION_NOT_FOUND: "Không tìm thấy phiên bản SEO được yêu cầu.",
+          SEO_PRODUCT_DIRTY: "Shopify có thay đổi ngoài FFP. Hãy đối chiếu trước khi tạo rollback.",
+          ROLLBACK_TARGET_CURRENT: "Phiên bản đã chọn đang là phiên bản hiện tại.",
         };
         throw new Error(typeof code === "string" && messages[code] ? messages[code] : route === "revisions"
           ? "Chưa tạo được revision. Kiểm tra quyền quản trị, kết nối Shopify và trạng thái job; mở Queue trước khi thử lại."
@@ -97,6 +103,11 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
 
   return {
     workerReviewHistory: (storeId: string, jobId: string, offset = 0) => agentRequest<WorkerReviewHistory>(`review-history?jobId=${encodeURIComponent(jobId)}&offset=${offset}`, storeId),
+    seoVersionLifecycle: (storeId: string, productGid: string) => agentRequest<SeoProductLifecycleDto>(`versioning/lifecycle?productGid=${encodeURIComponent(productGid)}`, storeId),
+    seoVersionHistory: (storeId: string, productGid: string, limit = 25, offset = 0) => agentRequest<SeoVersionPageDto>(`versioning/history?productGid=${encodeURIComponent(productGid)}&limit=${limit}&offset=${offset}`, storeId),
+    seoVersionDiff: (storeId: string, productGid: string, fromVersionId: string, toVersionId: string) => agentRequest<SeoVersionDiffDto>(`versioning/diff?productGid=${encodeURIComponent(productGid)}&fromVersionId=${encodeURIComponent(fromVersionId)}&toVersionId=${encodeURIComponent(toVersionId)}`, storeId),
+    refreshSeoBaseline: (storeId: string, productGid: string) => agentRequest<unknown>("versioning/baseline", storeId, { productGid }),
+    requestSeoRollbackDraft: (storeId: string, productGid: string, targetVersionId: string, requestId: string) => agentRequest<SeoRollbackDraftRequestDto>("versioning/rollback-drafts", storeId, { productGid, targetVersionId, requestId }),
     workerMetrics: (storeId: string, hours = 24) => agentRequest<WorkerMetrics>(`metrics?hours=${hours}`, storeId),
     createRevision: (storeId: string, jobId: string, requestId: string, instructions?: string) => agentRequest<{ jobId: string; previousJobId: string }>("revisions", storeId, { jobId, requestId, instructions }),
     reconcilePublish: (storeId: string, jobId: string) => agentRequest<SeoPublishReceipt>("publish-reconcile", storeId, { jobId }),

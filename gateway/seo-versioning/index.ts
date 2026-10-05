@@ -7,6 +7,10 @@ export {
 } from "./shopify-snapshot-reader";
 export { SeoPublishVersioningIntegration } from "./publish-integration";
 export type { SeoPublishPreparation } from "./publish-integration";
+export { diffSeoSnapshots } from "./diff";
+export type { SeoDiffValue, SeoImageDiff, SeoSnapshotDiff, SeoValueDiff } from "./diff";
+export { handleSeoVersionHttp } from "./http-handler";
+export type { SeoVersionHttpDependencies } from "./http-handler";
 export { applySeoVersionMigrations, getSeoVersionMigrations } from "./schema";
 export {
   SEO_FIELD_SET_VERSION,
@@ -45,8 +49,12 @@ export type {
   SeoExternalChangeResult,
   SeoImageSnapshot,
   SeoProductState,
+  SeoProductLifecycle,
+  SeoRollbackDraftRequest,
   SeoSnapshotSource,
   SeoStoreVersioningFlags,
   SeoVersionRecord,
+  SeoVersionPage,
+  SeoVersionSnapshot,
   SeoVersionSource,
 } from "./domain";
