@@ -523,6 +523,27 @@ test("HTTP Handler serves /mcp/ads/install.ps1 and /api/ads-intelligence/mcp/use
   assert.match(ps1Body, /FFP Ads Intelligence MCP Server - 1-Click Setup/);
   assert.match(ps1Body, /ffp_pat_test_123/);
 
+  // Test /mcp/ads/install.sh
+  let shBody = "";
+  let shStatus = 0;
+  const shReq = {
+    method: "GET",
+    url: "/mcp/ads/install.sh?token=ffp_pat_test_unix_456",
+    headers: { host: "ffp.b6-team.site" },
+  } as unknown as http.IncomingMessage;
+  const shRes = {
+    set statusCode(code: number) { shStatus = code; },
+    get statusCode() { return shStatus; },
+    setHeader() {},
+    end(chunk?: string) { if (chunk) shBody += chunk; },
+  } as unknown as http.ServerResponse;
+
+  await mcpHandler(shReq, shRes);
+  assert.equal(shStatus, 200);
+  assert.match(shBody, /#!\/usr\/bin\/env bash/);
+  assert.match(shBody, /FFP Ads Intelligence MCP Server - 1-Click Setup/);
+  assert.match(shBody, /ffp_pat_test_unix_456/);
+
   // Test GET /api/ads-intelligence/mcp/users
   let usersStatus = 0;
   let usersBody = "";

@@ -122,8 +122,12 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
     }
   };
 
+  const [installerOs, setInstallerOs] = useState<"windows" | "unix">("windows");
+
   const currentToken = selectedUserToken || "<CHƯA_CHỌN_TOKEN>";
-  const installCommand = `irm "${baseUrl}/mcp/ads/install.ps1?token=${currentToken}" | iex`;
+  const installCommandWindows = `irm "${baseUrl}/mcp/ads/install.ps1?token=${currentToken}" | iex`;
+  const installCommandUnix = `curl -fsSL "${baseUrl}/mcp/ads/install.sh?token=${currentToken}" | bash`;
+  const installCommand = installerOs === "windows" ? installCommandWindows : installCommandUnix;
   const agyManualCommand = `agy mcp add --header "Authorization: Bearer ${currentToken}" ads-intelligence "${baseUrl}/mcp/ads"`;
 
   return (
@@ -223,17 +227,41 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                 </div>
               </div>
 
-              {/* 1-Click PowerShell Command Box */}
+              {/* 1-Click Multi-OS Command Box */}
               <div className="rounded-xl border border-purple-800/60 bg-gradient-to-b from-purple-950/30 to-slate-950 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-emerald-400 font-bold flex items-center gap-2 text-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    Lệnh cài đặt 1 chạm (PowerShell cho Windows):
-                  </span>
+                    <span className="text-emerald-400 font-bold text-xs">Lệnh cài đặt 1 chạm:</span>
+                    <div className="inline-flex rounded-lg bg-slate-900 border border-slate-700 p-0.5 text-[11px] font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setInstallerOs("windows")}
+                        className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                          installerOs === "windows"
+                            ? "bg-purple-600 text-white shadow"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <span>🪟</span> Windows (PowerShell)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInstallerOs("unix")}
+                        className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                          installerOs === "unix"
+                            ? "bg-purple-600 text-white shadow"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <span>🍎 / 🐧</span> macOS &amp; Linux (Bash)
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => handleCopy(installCommand, "install")}
-                    className="px-3 py-1 rounded-md bg-purple-600 hover:bg-purple-500 text-white font-semibold text-[11px] transition cursor-pointer flex items-center gap-1.5 shadow"
+                    className="px-3 py-1 rounded-md bg-purple-600 hover:bg-purple-500 text-white font-semibold text-[11px] transition cursor-pointer flex items-center gap-1.5 shadow self-start sm:self-auto"
                   >
                     {copiedText === "install" ? "✓ Đã sao chép!" : "📋 Sao chép Lệnh"}
                   </button>
@@ -242,7 +270,11 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                   {installCommand}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  💡 <b>Cách dùng:</b> Chỉ cần mở PowerShell trên máy tính của bạn và dán lệnh trên rồi nhấn Enter. Script sẽ tự động nhận diện và cấu hình cho <b>Antigravity CLI (agy)</b>, <b>Codex (~/.codex/config.toml)</b> và <b>Claude Desktop</b>.
+                  {installerOs === "windows" ? (
+                    <>💡 <b>Cách dùng:</b> Mở <b>PowerShell</b> trên máy tính Windows và dán lệnh trên rồi Enter. Script sẽ tự động nhận diện và cấu hình cho <b>Antigravity CLI (agy)</b>, <b>Codex (~/.codex/config.toml)</b> và <b>Claude Desktop</b>.</>
+                  ) : (
+                    <>💡 <b>Cách dùng:</b> Mở <b>Terminal (Zsh / Bash)</b> trên máy Mac hoặc Linux và dán lệnh trên rồi Enter. Script sẽ tự động cấu hình cho <b>Antigravity CLI (agy)</b> và <b>Codex (~/.codex/config.toml)</b>.</>
+                  )}
                 </p>
               </div>
 

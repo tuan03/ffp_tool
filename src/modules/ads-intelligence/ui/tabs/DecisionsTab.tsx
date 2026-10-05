@@ -23,34 +23,6 @@ export function DecisionsTab({
   onCreateBrief,
 }: DecisionsTabProps): React.JSX.Element {
   const [filterType, setFilterType] = useState<"ALL" | "PAUSE" | "SCALE" | "CREATIVE" | "WAIT">("ALL");
-  const [selectedRunner, setSelectedRunner] = useState<"codex" | "agy">("codex");
-  const [selectedModel, setSelectedModel] = useState<string>("gpt-5.6-terra");
-
-  const runnerOptions = localAiRunners && localAiRunners.length > 0 ? localAiRunners : [
-    {
-      id: "codex" as const,
-      name: "OpenAI Codex CLI",
-      available: true,
-      defaultModel: "gpt-5.6-terra",
-      models: ["gpt-5.6-terra", "gpt-4o", "o3-mini", "o1"],
-    },
-    {
-      id: "agy" as const,
-      name: "Antigravity CLI (AGY)",
-      available: true,
-      defaultModel: "claude-sonnet-5-5-medium",
-      models: [
-        "claude-sonnet-5-5-medium",
-        "claude-opus-5-5-medium",
-        "gemini-3.8-flash-high",
-        "gemini-3.1-pro-high",
-        "gpt-oss-120b-medium",
-      ],
-    },
-  ];
-
-  const currentRunnerInfo = runnerOptions.find((r) => r.id === selectedRunner) || runnerOptions[0];
-
   const filterDecision = (card: DecisionCard): boolean => {
     if (filterType === "ALL") return true;
     if (filterType === "PAUSE") return card.decision === "PAUSE_CANDIDATE" || card.decision === "REDUCE_CANDIDATE";
@@ -79,77 +51,43 @@ export function DecisionsTab({
             </span>
             <div>
               <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                AI Strategic Analyst — Chẩn đoán Sức khỏe & Cơ hội
-                {aiReport && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-950 text-cyan-300 border border-indigo-800 font-mono">
-                    {aiReport.modelUsed}
-                  </span>
-                )}
+                Chẩn đoán Sức khỏe &amp; Quyết định Tăng trưởng
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-950 text-cyan-300 border border-indigo-800 font-mono">
+                  Financial Heuristics
+                </span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                Thực thi qua công cụ AI nội bộ máy tính (Codex / AGY CLI) kết nối MCP ffp-ads
+                Phân tích đối soát Meta Ads, Shopify &amp; GA4 bằng bộ quy tắc tài chính Senior Media Buyer (0đ phí AI)
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={() => onRunAiAnalysis(selectedRunner, selectedModel)}
+            onClick={() => onRunAiAnalysis()}
             disabled={aiAnalyzing}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-indigo-500/50 bg-indigo-950/60 text-indigo-200 hover:bg-indigo-900/60 text-xs font-semibold transition cursor-pointer self-start sm:self-auto"
           >
             <span className={aiAnalyzing ? "inline-block animate-spin" : ""}>⚡</span>
             <span>
               {aiAnalyzing
-                ? `Đang chạy ${currentRunnerInfo.name}...`
-                : `Chạy phân tích với ${selectedRunner === "codex" ? "Codex" : "AGY"}`}
+                ? "Đang tính toán lại..."
+                : "⚡ Cập nhật chẩn đoán"}
             </span>
           </button>
         </div>
 
-        {/* Local Agent & Model Selector Bar */}
+        {/* Financial Heuristics Info Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 p-3 rounded-xl border border-indigo-900/30 text-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400 font-medium">🖥️ Công cụ máy:</span>
-              <select
-                value={selectedRunner}
-                onChange={(e) => {
-                  const newRunner = e.target.value as "codex" | "agy";
-                  setSelectedRunner(newRunner);
-                  const matched = runnerOptions.find((r) => r.id === newRunner);
-                  if (matched) setSelectedModel(matched.defaultModel);
-                }}
-                className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs font-semibold focus:outline-none focus:border-indigo-500 cursor-pointer"
-              >
-                {runnerOptions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name} {r.available ? "🟢" : "⚪"}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400 font-medium">🧠 Model:</span>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-cyan-300 font-mono text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
-              >
-                {currentRunnerInfo.models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="flex items-center gap-2 text-slate-300">
+            <span className="text-emerald-400 font-bold">● Heuristics Engine:</span>
+            <span>Tự động đối soát chi tiêu thực, doanh thu ròng, MER và ngưỡng hòa vốn</span>
           </div>
 
           <div className="flex items-center gap-2 text-slate-400 text-[11px]">
-            <span>Giao thức:</span>
-            <span className="px-2 py-0.5 rounded bg-purple-950/80 text-purple-300 font-mono font-bold border border-purple-800">
-              MCP ffp-ads
+            <span>Độ sâu phân tích:</span>
+            <span className="px-2 py-0.5 rounded bg-indigo-950/80 text-cyan-300 font-mono font-bold border border-indigo-800">
+              CPA • ROAS • MER • GA4 Drop
             </span>
           </div>
         </div>

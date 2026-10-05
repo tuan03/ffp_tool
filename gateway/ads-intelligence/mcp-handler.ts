@@ -120,6 +120,67 @@ Write-Host ""
 `;
 }
 
+export function generateBashInstallerScript(hostUrl: string, defaultToken = ""): string {
+  return `#!/usr/bin/env bash
+# FFP Ads Intelligence MCP - 1-Click Installer for macOS & Linux
+# Run in terminal: curl -fsSL "${hostUrl}/mcp/ads/install.sh?token=YOUR_TOKEN" | bash
+
+set -e
+
+TOKEN="${defaultToken}"
+HOST_URL="${hostUrl}"
+
+echo "=================================================="
+echo "🚀 FFP Ads Intelligence MCP Server - 1-Click Setup"
+echo "=================================================="
+
+if [ -z "$TOKEN" ]; then
+  read -r -p "👉 Vui lòng nhập Personal MCP Token (ví dụ: ffp_pat_...): " TOKEN
+fi
+
+if [ -z "$TOKEN" ]; then
+  echo "❌ Token không được để trống. Hủy cài đặt."
+  exit 1
+fi
+
+MCP_ENDPOINT="\${HOST_URL}/mcp/ads"
+echo "🔗 MCP Endpoint: \$MCP_ENDPOINT"
+
+# 1. Antigravity CLI (agy)
+if command -v agy >/dev/null 2>&1; then
+  echo "⚡ Phát hiện Antigravity CLI. Đang đăng ký MCP server..."
+  agy mcp remove ads-intelligence >/dev/null 2>&1 || true
+  agy mcp add --header "Authorization: Bearer \$TOKEN" ads-intelligence "\$MCP_ENDPOINT"
+  echo "✅ Antigravity CLI đã cấu hình thành công!"
+else
+  echo "ℹ️ Chưa cài đặt agy (bỏ qua)."
+fi
+
+# 2. Codex Configuration (~/.codex/config.toml)
+CODEX_DIR="\$HOME/.codex"
+CODEX_CONFIG="\$CODEX_DIR/config.toml"
+mkdir -p "\$CODEX_DIR"
+
+if [ ! -f "\$CODEX_CONFIG" ] || ! grep -q "\\[mcp_servers\\.ads_intelligence\\]" "\$CODEX_CONFIG"; then
+  cat <<EOF >> "\$CODEX_CONFIG"
+
+[mcp_servers.ads_intelligence]
+url = "\$MCP_ENDPOINT"
+http_headers = { "Authorization" = "Bearer \$TOKEN" }
+EOF
+  echo "✅ Codex config (~/.codex/config.toml) đã được cập nhật!"
+else
+  echo "ℹ️ Codex config đã có cấu hình ads_intelligence."
+fi
+
+echo ""
+echo "🎉 Cài đặt hoàn tất!"
+echo "👉 Kiểm tra kết nối MCP bằng lệnh:"
+echo "   curl -H \"Authorization: Bearer \$TOKEN\" \$MCP_ENDPOINT"
+echo ""
+`;
+}
+
 export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
   const service = options.service ?? getAdsIntelligenceService();
   const configuredSecret = options.authToken || process.env.ADS_MCP_SECRET || process.env.GATEWAY_AUTH_TOKEN;
@@ -142,6 +203,20 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
       const script = generateInstallerScript(baseUrl, queryToken);
       res.statusCode = 200;
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(script);
+      return;
+    }
+
+    // Serve 1-Click Installer script for Bash (macOS / Linux) if requested
+    if (req.method === "GET" && parsedUrl.pathname.endsWith("/install.sh")) {
+      const host = req.headers.host || "ffp.b6-team.site";
+      const isLocal = host.startsWith("localhost") || host.startsWith("127.0.0.1");
+      const proto = isLocal ? "http" : "https";
+      const baseUrl = `${proto}://${host}`;
+      const queryToken = parsedUrl.searchParams.get("token") || "";
+      const script = generateBashInstallerScript(baseUrl, queryToken);
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "text/x-shellscript; charset=utf-8");
       res.end(script);
       return;
     }
