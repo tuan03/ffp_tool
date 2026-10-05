@@ -43,6 +43,12 @@ class WorkerHealth:
                 "lastFailureAt": last_failure_at,
             }
 
+    def reset(self) -> int:
+        with self._lock:
+            cleared = len(self._failures)
+            self._failures.clear()
+            return cleared
+
     def _prune(self, now: float) -> None:
         while self._failures and now - self._failures[0][0] >= self.WINDOW_SECONDS:
             self._failures.popleft()

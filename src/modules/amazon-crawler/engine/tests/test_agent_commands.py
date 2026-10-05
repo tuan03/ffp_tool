@@ -113,6 +113,111 @@ class AgentCommandInboxTests(unittest.TestCase):
 
 
 class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_restart_workers_resets_only_worker_health_after_idle_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="fixture", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=root / "agent"))
+            agent._remote_execution_state = "PAUSED"
+            agent.store.reconcile_remote_execution_state("PAUSED")
+            for index in range(5):
+                agent.worker_health.record_failure(f"fixture-{index}")
+            command = {"commandId": "restart-workers-1", "sequence": 1, "type": "RESTART_WORKERS",
+                "payload": {"scope": "worker-processes", "reason": "reset test worker circuit"},
+                "createdAt": utc_now().isoformat(), "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1,
+                "desiredExecutionState": "PAUSED", "appliedExecutionState": "PAUSED",
+                "serverLastProcessedCommandSequence": 0})
+
+            updates = []
+            while not agent.outbound_queue.empty():
+                updates.append(agent.outbound_queue.get_nowait())
+            self.assertEqual(agent.worker_health.snapshot(2)["state"], "healthy")
+            self.assertEqual(updates[-1]["status"], "SUCCESS")
+            self.assertEqual(updates[-1]["result"], {"restartedWorkers": 0, "clearedWorkerFailures": 5})
+
+    async def test_restart_agent_is_completed_only_by_replacement_boot_and_preserves_identity_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AgentConfig(server_url="http://127.0.0.1:9999", display_name="fixture",
+                max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent")
+            old_agent = DistributedCrawlerAgent(project_root=root, config=config)
+            old_agent.store.reconcile_remote_execution_state("PAUSED")
+            old_agent._remote_execution_state = "PAUSED"
+            old_agent.store.spool_result(task_id="task-outbox", lease_id="lease-outbox",
+                checksum="sha256-fixture", payload={"products": [{"id": "fixture"}]})
+            identity = old_agent.client_id
+            command = {"commandId": "restart-agent-1", "sequence": 1, "type": "RESTART_AGENT",
+                "payload": {"scope": "agent-process", "reason": "planned test restart"},
+                "createdAt": utc_now().isoformat(), "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+            old_agent.store.begin_server_command(command)
+            old_agent.store.set_server_command_running(command["commandId"])
+
+            replacement = DistributedCrawlerAgent(project_root=root, config=config,
+                restart_command_id=command["commandId"])
+            replacement._remote_execution_state = "PAUSED"
+            await replacement._process_command_batch({"commands": [command], "latestCommandSequence": 1,
+                "desiredExecutionState": "PAUSED", "appliedExecutionState": "PAUSED",
+                "serverLastProcessedCommandSequence": 0})
+
+            update = replacement.outbound_queue.get_nowait()
+            self.assertEqual(update["status"], "SUCCESS")
+            self.assertEqual(update["result"]["bootId"], replacement._boot_id)
+            self.assertTrue(update["result"]["identityRetained"])
+            self.assertEqual(update["result"]["pendingOutboxCount"], 1)
+            self.assertEqual(replacement.client_id, identity)
+            self.assertEqual(replacement.store.pending_results()[0]["taskId"], "task-outbox")
+            self.assertEqual(replacement.store.last_processed_command_sequence(), 1)
+
+    async def test_restart_agent_requires_paused_idle_agent_and_persists_running_before_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AgentConfig(server_url="http://127.0.0.1:9999", display_name="fixture",
+                max_concurrent_inputs=1, limits=AgentLimits(), data_directory=root / "agent")
+            launches: list[str] = []
+            requested_exit: list[bool] = []
+            agent = DistributedCrawlerAgent(project_root=root, config=config,
+                restart_launcher=lambda command_id, _root: launches.append(command_id) is None,
+                on_restart_requested=lambda: requested_exit.append(True))
+            agent.store.reconcile_remote_execution_state("PAUSED")
+            agent._remote_execution_state = "PAUSED"
+            command = {"commandId": "restart-agent-2", "sequence": 1, "type": "RESTART_AGENT",
+                "payload": {"scope": "agent-process", "reason": "planned test restart"},
+                "createdAt": utc_now().isoformat(), "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1,
+                "desiredExecutionState": "PAUSED", "appliedExecutionState": "PAUSED",
+                "serverLastProcessedCommandSequence": 0})
+
+            self.assertEqual(launches, [command["commandId"]])
+            self.assertEqual(requested_exit, [True])
+            self.assertTrue(agent.stop_event.is_set())
+            self.assertEqual(agent.store.server_command_status(command["commandId"]), "RUNNING")
+
+    async def test_restart_agent_refuses_running_task_without_spawning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            launches: list[str] = []
+            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="fixture", max_concurrent_inputs=1,
+                limits=AgentLimits(), data_directory=root / "agent"),
+                restart_launcher=lambda command_id, _root: launches.append(command_id) is None)
+            agent._remote_execution_state = "PAUSED"
+            agent.executing_task_ids.add("running-task")
+            command = {"commandId": "restart-agent-3", "sequence": 1, "type": "RESTART_AGENT",
+                "payload": {"scope": "agent-process", "reason": "planned test restart"},
+                "createdAt": utc_now().isoformat(), "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1,
+                "desiredExecutionState": "PAUSED", "appliedExecutionState": "PAUSED",
+                "serverLastProcessedCommandSequence": 0})
+
+            self.assertEqual(launches, [])
+            self.assertEqual(agent.store.server_command_status(command["commandId"]), "FAILED")
+            self.assertFalse(agent.stop_event.is_set())
+
     async def test_pending_purge_preserves_running_assignment_and_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -230,6 +335,59 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentCommandWebSocketTests(unittest.TestCase):
+    def test_restart_agent_requires_paused_connected_idle_agent_and_exact_confirmation(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'restart.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"), agent_environment="test")
+            client = stack.enter_context(TestClient(app))
+            auth = ("operator", "fixture")
+            key = client.post("/api/v1/agent-keys", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "name": "restart fixture", "maxWorkers": 1,
+                "crawlers": ["amazon"], "environment": "test",
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+            }).json()["key"]
+            agent_id = client.post("/api/v1/worker/register", headers={"Authorization": f"Bearer {key}"},
+                json={"requestId": uuid.uuid4().hex, "displayName": "restart fixture"}).json()["agentId"]
+            with app.state.store.sessions.begin() as session:
+                record = session.get(ClientRecord, agent_id)
+                record.applied_execution_state = "PAUSED"
+                record.desired_execution_state = "PAUSED"
+                record.capabilities = {"durableRestartV1": True}
+            with client.websocket_connect("/api/v1/worker/connect",
+                    headers={"Authorization": f"Bearer {key}"}) as socket:
+                socket.send_json({"type": "hello", "protocolVersion": "5", "authProtocol": 1,
+                    "clientId": agent_id, "displayName": "restart fixture", "maxConcurrentInputs": 1,
+                    "availableSlots": 0, "lastProcessedCommandSequence": 0,
+                    "desiredExecutionState": "PAUSED", "appliedExecutionState": "PAUSED",
+                    "executingTaskIds": [], "capabilities": {"amazon": True, "mediaGalleryV2": True,
+                        "durablePendingPurgeV1": True, "durableRestartV1": True},
+                    "localTasks": []})
+                self.assertEqual(socket.receive_json()["type"], "hello_ack")
+                bad = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                    "requestId": uuid.uuid4().hex, "type": "RESTART_AGENT", "reason": "planned test restart",
+                    "confirmation": "RESTART_AGENT:other-agent",
+                })
+                self.assertEqual(bad.status_code, 409, bad.text)
+                restart_body = {
+                    "requestId": uuid.uuid4().hex, "type": "RESTART_AGENT", "reason": "planned test restart",
+                    "confirmation": f"RESTART_AGENT:{agent_id}", "expiresInSeconds": 600,
+                }
+                accepted = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json=restart_body)
+                self.assertEqual(accepted.status_code, 202, accepted.text)
+                batch = socket.receive_json()
+                self.assertEqual(batch["type"], "command_batch")
+                self.assertEqual(batch["commands"][0]["type"], "RESTART_AGENT")
+                duplicate = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json=restart_body)
+                self.assertEqual(duplicate.status_code, 202, duplicate.text)
+                self.assertEqual(duplicate.json()["commandId"], accepted.json()["commandId"])
+                self.assertEqual(socket.receive_json()["type"], "command_batch")
+
     def test_pending_purge_requires_paused_agent_exact_preview_and_is_idempotent(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

@@ -486,6 +486,14 @@ export function createAmazonCrawlerCommandController({
       });
       await readJson(response);
     },
+    async restart(agentId, type, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type, reason,
+          confirmation: `${type}:${agentId}`, expiresInSeconds: 600 }),
+      });
+      await readJson(response);
+    },
     async history(agentId) {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
       const payload: unknown = await readJson(response);
@@ -497,7 +505,9 @@ export function createAmazonCrawlerCommandController({
         sequence: typeof entry.sequence === "number" ? entry.sequence : 0,
         type: entry.type === "PAUSE" ? "PAUSE" as const
           : entry.type === "PURGE_PENDING_TASKS" ? "PURGE_PENDING_TASKS" as const
-          : entry.type === "PURGE_ALL_LOCAL_TASKS" ? "PURGE_ALL_LOCAL_TASKS" as const : "RESUME" as const,
+          : entry.type === "PURGE_ALL_LOCAL_TASKS" ? "PURGE_ALL_LOCAL_TASKS" as const
+          : entry.type === "RESTART_WORKERS" ? "RESTART_WORKERS" as const
+          : entry.type === "RESTART_AGENT" ? "RESTART_AGENT" as const : "RESUME" as const,
         status: typeof entry.status === "string" ? entry.status : "UNKNOWN",
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
         error: typeof entry.error === "string" ? entry.error : null,

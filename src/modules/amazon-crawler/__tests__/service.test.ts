@@ -367,6 +367,22 @@ test("purge-all controller confirms the agent-wide pending scope", async () => {
   assert.match(requests[1]?.body ?? "", /"reason":"clear test agent assignments"/);
 });
 
+test("restart controller includes explicit confirmation and audited reason", async () => {
+  let body = "";
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      body = String(init?.body ?? "");
+      return jsonResponse({ commandId: "restart-command" }, 202);
+    },
+  });
+  await controller.restart("agent-1", "RESTART_AGENT", "planned safe agent restart");
+  assert.match(body, /"type":"RESTART_AGENT"/);
+  assert.match(body, /"confirmation":"RESTART_AGENT:agent-1"/);
+  assert.match(body, /"reason":"planned safe agent restart"/);
+  assert.match(body, /"expiresInSeconds":600/);
+});
+
 test("global admission controller loads and changes only the crawler gate", async () => {
   const requests: Array<{ url: string; method: string; body: string }> = [];
   const controller = createAmazonCrawlerAdmissionGateController({

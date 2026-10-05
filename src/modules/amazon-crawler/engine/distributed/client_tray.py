@@ -393,6 +393,12 @@ class TrayApplication:
         self._stop_agent()
         icon.stop()
 
+    def _request_agent_restart_exit(self) -> None:
+        if self._window is not None:
+            self._actions.put("exit")
+        elif self._icon is not None:
+            self._icon.stop()
+
     def _show_window(self, _icon: Any, _item: Any) -> None:
         if self._window is not None:
             self._actions.put("show")
@@ -491,6 +497,7 @@ class TrayApplication:
             f"FFP Crawler Agent — {self.status_text}"[:127],
             menu,
         )
+        self.agent.on_restart_requested = self._request_agent_restart_exit
         self.agent.on_status = self.handle_status
         try:
             from .client_dashboard_window import AgentDashboardWindow

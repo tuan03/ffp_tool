@@ -6,13 +6,35 @@ from ..observability import redact
 
 import argparse
 import asyncio
+from contextlib import contextmanager
 import json
 import multiprocessing
 import os
 import sys
 import time
+import re
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
+
+from .instance_lock import AgentAlreadyRunningError, AgentInstanceLock
+
+
+@contextmanager
+def _acquire_agent_lock(data_directory: Path, *, restart_command_id: str | None) -> Iterator[AgentInstanceLock]:
+    deadline = time.monotonic() + (90 if restart_command_id else 0)
+    while True:
+        lock = AgentInstanceLock(data_directory)
+        try:
+            lock.__enter__()
+            break
+        except AgentAlreadyRunningError:
+            if restart_command_id is None or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
+    try:
+        yield lock
+    finally:
+        lock.__exit__(None, None, None)
 
 
 def _configure_packaged_browser() -> None:
@@ -42,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-config", action="store_true", help="Validate configuration and exit.")
     parser.add_argument("--enroll", action="store_true", help="Prompt privately for an Agent Key and enroll over HTTPS.")
     parser.add_argument("--installation-report", type=Path, help="Write the stable client identity during --check-config for installer verification.")
+    parser.add_argument("--restart-command-id", help=argparse.SUPPRESS)
     return parser
 
 
@@ -50,9 +73,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_packaged_browser()
     from .client_agent import DistributedCrawlerAgent
     from .client_config import AgentConfig
-    from .instance_lock import AgentAlreadyRunningError, AgentInstanceLock
-
     arguments = build_parser().parse_args(argv)
+    if arguments.restart_command_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arguments.restart_command_id):
+        print("FFP Amazon Crawler restart command ID is invalid.", file=sys.stderr)
+        return 2
     try:
         config = AgentConfig.load(_resolve_config_path(arguments.config))
         project_root = (arguments.project_root or config.data_directory).resolve()
@@ -89,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         config.data_directory.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
-        with AgentInstanceLock(config.data_directory):
+        with _acquire_agent_lock(config.data_directory, restart_command_id=arguments.restart_command_id):
             use_tray = not arguments.no_tray and sys.platform == "win32"
             if use_tray:
                 try:
@@ -102,6 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 agent = DistributedCrawlerAgent(
                     project_root=project_root,
                     config=config,
+                    restart_command_id=arguments.restart_command_id,
                     on_status=lambda status: print(json.dumps(
                         {key: value for key, value in status.items() if key != "dashboard"},
                         ensure_ascii=False,
@@ -112,7 +137,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             from .client_tray import TrayApplication
 
-            agent = DistributedCrawlerAgent(project_root=project_root, config=config)
+            agent = DistributedCrawlerAgent(project_root=project_root, config=config,
+                restart_command_id=arguments.restart_command_id)
             TrayApplication(agent, config.data_directory, start_minimized=arguments.start_minimized).run()
         return 0
     except KeyboardInterrupt:

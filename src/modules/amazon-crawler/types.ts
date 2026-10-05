@@ -665,7 +665,7 @@ export interface AmazonCrawlerAgentCommandEvent {
 export interface AmazonCrawlerAgentCommandSummary {
   commandId: string;
   sequence: number;
-  type: "PAUSE" | "RESUME" | "PURGE_PENDING_TASKS" | "PURGE_ALL_LOCAL_TASKS";
+  type: "PAUSE" | "RESUME" | "PURGE_PENDING_TASKS" | "PURGE_ALL_LOCAL_TASKS" | "RESTART_WORKERS" | "RESTART_AGENT";
   status: string;
   createdAt: string | null;
   error: string | null;
@@ -678,6 +678,7 @@ export interface AmazonCrawlerCommandController {
   purgePending(agentId: string, taskIds: readonly string[], expectedPendingCount: number, reason: string): Promise<void>;
   previewPurgeAllLocal(agentId: string): Promise<AmazonCrawlerPendingPurgePreview>;
   purgeAllLocal(agentId: string, expectedPendingCount: number, reason: string): Promise<void>;
+  restart(agentId: string, type: "RESTART_WORKERS" | "RESTART_AGENT", reason: string): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 

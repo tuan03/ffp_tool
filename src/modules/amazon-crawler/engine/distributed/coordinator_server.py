@@ -136,12 +136,16 @@ class ConnectionManager:
                 for client_id, status in self.runtime.items()
             }
 
+    async def is_connected(self, client_id: str) -> bool:
+        async with self.lock:
+            return client_id in self.connections
+
     @staticmethod
     def _bounded_capabilities(value: Any) -> dict[str, bool]:
         source = value if isinstance(value, dict) else {}
         return {
             key: bool(source.get(key))
-            for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1")
+                for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1", "durableRestartV1")
             if key in source
         }
 
@@ -887,6 +891,31 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                         "leaseId": assignment["leaseId"],
                     })
             command_payload_value = purge_payload
+        elif payload.type in {"RESTART_WORKERS", "RESTART_AGENT"}:
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Restart command requires an audited reason of at least 10 characters.")
+            if payload.confirmation != f"{payload.type}:{client_id}":
+                raise HTTPException(status_code=409, detail="Restart confirmation does not match this agent and command.")
+            command_payload_value = {
+                "reason": payload.reason.strip(),
+                "scope": "worker-processes" if payload.type == "RESTART_WORKERS" else "agent-process",
+                "includeRunning": False,
+            }
+            existing = await asyncio.to_thread(command_ledger.request_snapshot, client_id, payload.requestId.hex)
+            if existing is not None:
+                if existing.get("type") != payload.type or existing.get("payload") != command_payload_value:
+                    raise HTTPException(status_code=409, detail="Request ID was already used for a different restart command.")
+                command = await asyncio.to_thread(command_ledger.submit, client_id, payload.requestId.hex,
+                    payload.type, payload.expiresInSeconds, command_payload_value)
+                await dispatch_next_agent_command(client_id)
+                return command
+            if not command_ledger.restart_allowed(client_id):
+                raise HTTPException(status_code=409, detail="Agent must advertise durable restart support and be PAUSED before restart.")
+            if not await manager.is_connected(client_id):
+                raise HTTPException(status_code=409, detail="Agent must be online to confirm restart readiness.")
+            runtime = await manager.runtime_snapshot()
+            if (runtime.get(client_id) or {}).get("executingTaskIds"):
+                raise HTTPException(status_code=409, detail="Agent still has running tasks; wait for them to finish before restart.")
         command = await asyncio.to_thread(
             command_ledger.submit, client_id, payload.requestId.hex,
             payload.type, payload.expiresInSeconds, command_payload_value,

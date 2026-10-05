@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +33,7 @@ from .client_dashboard_state import DashboardState
 from .client_store import ClientStore
 from .client_storage_pressure import storage_pressure
 from .worker_health import WorkerHealth
+from .client_restart import launch_replacement_agent
 from .protocol import HEARTBEAT_INTERVAL_SECONDS, hello_message, payload_checksum, product_source_key, settings_fingerprint, utc_iso
 
 
@@ -83,12 +85,20 @@ class DistributedCrawlerAgent:
         config: AgentConfig,
         on_status: StatusCallback | None = None,
         crawler_factory: Callable[..., Any] = AmazonCrawler,
+        restart_command_id: str | None = None,
+        restart_launcher: Callable[[str, Path], bool] = launch_replacement_agent,
+        on_restart_requested: Callable[[], None] | None = None,
     ) -> None:
         self.project_root = project_root
         self.cache = RawFamilyCache(project_root / ".runtime" / "cache")
         self.config = config
         self.on_status = on_status or (lambda _status: None)
         self.crawler_factory = crawler_factory
+        self.restart_command_id = restart_command_id
+        self.restart_launcher = restart_launcher
+        self.on_restart_requested = on_restart_requested or (lambda: None)
+        self._restart_attempted: set[str] = set()
+        self._boot_id = uuid.uuid4().hex
         self.store = ClientStore(config.data_directory / "agent.sqlite3")
         self.client_id = self.store.client_id()
         self._agent_key: str | None = None
@@ -517,6 +527,58 @@ class DistributedCrawlerAgent:
             payload = command.get("payload")
             command_type = str(command.get("type") or "")
             desired_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
+            if command_type == "RESTART_AGENT":
+                if receipt["decision"] == "resume" and self.restart_command_id == command_id:
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                    pending_uploads = self.store.upload_counts()
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "SUCCESS", "result": {
+                            "bootId": self._boot_id, "identityRetained": self.store.client_id() == self.client_id,
+                            "pendingOutboxCount": pending_uploads["results"] + pending_uploads["products"],
+                        }})
+                    self.restart_command_id = None
+                    continue
+                if receipt["decision"] != "process":
+                    continue
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                if self._remote_execution_state != "PAUSED" or self.executing_task_ids:
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None,
+                        "Agent must be paused with no running tasks before restart.")
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "FAILED",
+                        "error": "Agent must be paused with no running tasks before restart."})
+                    continue
+                if command_id in self._restart_attempted or not self.restart_launcher(command_id, Path.cwd()):
+                    error = "Replacement agent process could not be started."
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "FAILED", "error": error})
+                    continue
+                self._restart_attempted.add(command_id)
+                self.on_restart_requested()
+                self.stop_event.set()
+                return
+            if command_type == "RESTART_WORKERS":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                with self._running_crawlers_lock:
+                    active_worker_count = len(self._running_crawlers)
+                if self._remote_execution_state != "PAUSED" or self.executing_task_ids or active_worker_count:
+                    error = "Worker restart requires a paused agent with no running tasks or worker processes."
+                    await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
+                    await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                        "sequence": sequence, "status": "FAILED", "error": error})
+                    continue
+                cleared_failures = await asyncio.to_thread(self.worker_health.reset)
+                await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", None)
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "SUCCESS", "result": {
+                        "restartedWorkers": 0, "clearedWorkerFailures": cleared_failures,
+                    }})
+                continue
             if command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
                 await asyncio.to_thread(self.store.set_server_command_running, command_id)
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
@@ -1402,6 +1464,7 @@ class DistributedCrawlerAgent:
             "pinterest": True,
             "pinterestBrowserLoggedIn": self.pinterest_browser_logged_in(),
             "durablePendingPurgeV1": True,
+            "durableRestartV1": True,
         }
 
     def _current_tasks_snapshot(self) -> list[dict[str, Any]]:

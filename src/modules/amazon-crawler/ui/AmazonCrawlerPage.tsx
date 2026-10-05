@@ -464,6 +464,26 @@ export function AmazonCrawlerPage({
     }
   }
 
+  async function handleAgentRestart(client: AmazonCrawlerClientSummary,
+                                    type: "RESTART_WORKERS" | "RESTART_AGENT"): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (!client.isConnected || client.appliedExecutionState !== "PAUSED" || reason.length < 10) return;
+    const label = type === "RESTART_AGENT" ? "toàn bộ agent" : "worker crawler";
+    if (!window.confirm(`Khởi động lại ${label}? Agent phải PAUSED, không có task đang chạy. Identity và outbox sẽ được giữ.`)) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.restart(client.id, type, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : `Không gửi được lệnh restart ${label}.`);
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
   async function handlePendingPurgePreview(client: AmazonCrawlerClientSummary): Promise<void> {
     if (!amazonCrawlerCommands || commandBusyClientId) return;
     const taskIds = (purgeTaskScopes[client.id] ?? "").split(/[\s,;]+/).filter(Boolean);
@@ -540,6 +560,32 @@ export function AmazonCrawlerPage({
       isMounted = false;
     };
   }, [loadAmazonCrawlerAgentRelease]);
+
+  useEffect(() => {
+    if (!amazonCrawlerCommands || clients.length === 0) return;
+    let isActive = true;
+    const refreshCommandHistory = async (): Promise<void> => {
+      const histories = await Promise.all(clients.map(async (client) => {
+        try {
+          return [client.id, await amazonCrawlerCommands.history(client.id)] as const;
+        } catch {
+          return null;
+        }
+      }));
+      if (!isActive) return;
+      setCommandHistories((current) => {
+        const next = { ...current };
+        for (const entry of histories) if (entry) next[entry[0]] = entry[1];
+        return next;
+      });
+    };
+    void refreshCommandHistory();
+    const interval = window.setInterval(() => void refreshCommandHistory(), 3000);
+    return () => {
+      isActive = false;
+      window.clearInterval(interval);
+    };
+  }, [amazonCrawlerCommands, clients]);
 
   // 1. Fetch recent jobs list from coordinator
   useEffect(() => {
@@ -1494,6 +1540,21 @@ export function AmazonCrawlerPage({
                       onChange={(event) => setPurgeReasons((current) => ({ ...current, [client.id]: event.target.value }))}
                       className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
                       placeholder="Ít nhất 10 ký tự" />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={commandBusyClientId !== null || !client.isConnected || client.appliedExecutionState !== "PAUSED"
+                        || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
+                        className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
+                        Restart workers
+                      </button>
+                      <button type="button" disabled={commandBusyClientId !== null || !client.isConnected || client.appliedExecutionState !== "PAUSED"
+                        || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentRestart(client, "RESTART_AGENT")}
+                        className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                        Restart agent
+                      </button>
+                      <span className="text-[10px] text-slate-500">Cần online + PAUSED, không task chạy và lý do audit ≥10 ký tự.</span>
+                    </div>
                     <div className="flex items-center gap-2">
                       <button type="button" disabled={commandBusyClientId !== null || client.appliedExecutionState !== "PAUSED"}
                         onClick={() => void handlePendingPurgePreview(client)}
@@ -1523,9 +1584,16 @@ export function AmazonCrawlerPage({
                       typeof value === "object" && value !== null && !Array.isArray(value));
                     return <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
                       #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục"
-                        : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local" : "Purge pending"} — {command.status}
+                        : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local"
+                        : command.type === "PURGE_PENDING_TASKS" ? "Purge pending"
+                        : command.type === "RESTART_AGENT" ? "Restart agent" : "Restart workers"} — {command.status}
                       {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
                       {result && typeof result.beforeCount === "number" ? <p>Trước {result.beforeCount} · đã purge {typeof result.purgedCount === "number" ? result.purgedCount : 0} · còn {typeof result.afterCount === "number" ? result.afterCount : 0}</p> : null}
+                      {command.type === "RESTART_AGENT" && result && typeof result.bootId === "string" ?
+                        <p>Boot mới {result.bootId.slice(0, 8)} · identity {result.identityRetained === true ? "được giữ" : "chưa xác nhận"}
+                          · outbox giữ lại {typeof result.pendingOutboxCount === "number" ? result.pendingOutboxCount : 0}</p> : null}
+                      {command.type === "RESTART_WORKERS" && result && typeof result.clearedWorkerFailures === "number" ?
+                        <p>Worker tiến trình rời rạc được xác minh đã dừng · reset {result.clearedWorkerFailures} lỗi health gần đây.</p> : null}
                       {command.error ? <p className="text-rose-300">{command.error}</p> : null}
                     </div>;
                   })}
