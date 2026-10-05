@@ -124,6 +124,30 @@ export class AdsIntelligenceService {
     return new ShopifyOrdersClient();
   }
 
+  async testMetaAccountConnection(accountId: string): Promise<{ success: boolean; account: { id: string; name: string; currency: string; timezone: string; status: number } }> {
+    ensureEnvLoaded();
+    const token = process.env.META_ACCESS_TOKEN?.trim();
+    if (!token) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
+    const proxyUrl = process.env.META_PROXY_URL?.trim();
+    const meta = new MetaClient({
+      accessToken: token,
+      proxyUrl,
+      apiVersion: "v26.0",
+    });
+    const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
+    const account = await meta.getAccount(normalizedId);
+    return {
+      success: true,
+      account: {
+        id: account.id,
+        name: account.name,
+        currency: account.currency,
+        timezone: account.timezone_name,
+        status: account.account_status,
+      },
+    };
+  }
+
   async getStoreSummary(storeId = "chillgen", forceRefresh = false): Promise<AdsStoreSummary> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:summary`;

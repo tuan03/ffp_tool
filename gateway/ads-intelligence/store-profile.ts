@@ -4,7 +4,7 @@
  * Guarantees read-only defaults, isolated secret references, and valid platform accounts.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { AdsIntelligenceError } from "./conversions";
@@ -421,5 +421,26 @@ export function listAvailableStoreProfileIds(
     }
   }
   return Array.from(ids);
+}
+
+/**
+ * Saves a validated StoreAdsProfile to config/stores/<storeId>.ads.json.
+ */
+export function saveStoreAdsProfile(
+  storeId: string,
+  profile: StoreAdsProfile,
+  options: StoreProfileLoaderOptions = {},
+): string {
+  const baseDir = options.configDir
+    ? resolve(options.configDir)
+    : resolve(process.cwd(), "config", "stores");
+
+  if (!existsSync(baseDir)) {
+    mkdirSync(baseDir, { recursive: true });
+  }
+
+  const targetPath = resolve(baseDir, `${storeId}.ads.json`);
+  writeFileSync(targetPath, JSON.stringify(profile, null, 2), "utf-8");
+  return targetPath;
 }
 

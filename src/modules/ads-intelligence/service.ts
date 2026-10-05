@@ -97,6 +97,9 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
     getExperiments: store => request(`experiments?${storeQuery(store)}`),
     createExperiment: (storeId, payload) => request("experiments", jsonRequest("POST", { storeId, ...payload })),
     updateExperimentOutcome: (id, payload) => request(`experiments/${encodeURIComponent(id)}/outcome`, jsonRequest("PUT", payload)),
+    getStoreProfile: store => request(`profile?${storeQuery(store)}`),
+    saveStoreProfile: (storeId, payload) => request(`profile?${storeQuery(storeId)}`, jsonRequest("POST", payload)),
+    testMetaConnection: accountId => request("profile/test-connection", jsonRequest("POST", { accountId })),
     async proposeGuardedWrite() {
       throw new Error("Thực thi quảng cáo chưa khả dụng. Hãy xác minh và thao tác trực tiếp trong Meta Ads Manager.");
     },

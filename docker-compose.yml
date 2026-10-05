@@ -81,6 +81,8 @@ services:
       PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-http://localhost:3010/api/pinterest-pod/oauth/callback}
       PINTEREST_OAUTH_STATE_SECRET: ${PINTEREST_OAUTH_STATE_SECRET:-}
       PINTEREST_SCOPES: ${PINTEREST_SCOPES:-user_accounts:read,boards:read,pins:read,ads:read}
+      PINTEREST_OPERATOR_USERNAME: ${PINTEREST_OPERATOR_USERNAME:-${FFP_OPERATOR_USERNAME}}
+      PINTEREST_OPERATOR_PASSWORD: ${PINTEREST_OPERATOR_PASSWORD:-${FFP_OPERATOR_PASSWORD}}
     volumes:
       - ffp_data:/app/.local-data
       - ffp_runtime:/app/.runtime

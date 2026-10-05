@@ -542,6 +542,9 @@ export interface AdsIntelligenceClient {
   getExperiments?(storeId?: string): Promise<readonly AdsExperiment[]>;
   createExperiment?(storeId: string, payload: { briefId?: string; experiment?: AdsExperiment; customOptions?: { title?: string; budgetCapUsd?: number; reviewWindowDays?: number } }): Promise<AdsExperiment>;
   updateExperimentOutcome?(experimentId: string, payload: { results?: ExperimentResults; learning?: ExperimentLearning; status?: ExperimentStatus; statusReason?: string }): Promise<AdsExperiment>;
+  getStoreProfile?(storeId?: string): Promise<{ configured: boolean; storeId: string; shopDomain?: string; profile: any | null }>;
+  saveStoreProfile?(storeId: string, payload: any): Promise<{ success: boolean; storeId: string; profile: any }>;
+  testMetaConnection?(accountId: string): Promise<{ success: boolean; account?: any; error?: string }>;
   proposeGuardedWrite?(storeId: string, decisionIdOrEntityId: string): Promise<GuardedWriteProposal>;
   executeGuardedWrite?(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }): Promise<GuardedWriteExecutionResult>;
 }

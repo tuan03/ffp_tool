@@ -30,6 +30,7 @@ import { DecisionDrawer } from "./components/DecisionDrawer";
 import { GuardedWriteModal } from "./components/GuardedWriteModal";
 import { McpModal } from "./components/McpModal";
 import { ExperimentOutcomeModal } from "./components/ExperimentOutcomeModal";
+import { StoreProfileModal } from "./components/StoreProfileModal";
 
 // Sub-tabs
 import { DecisionsTab } from "./tabs/DecisionsTab";
@@ -96,6 +97,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
   // Modal & Drawer States
   const [selectedDrawerCard, setSelectedDrawerCard] = useState<DecisionCard | null>(null);
   const [showMcpModal, setShowMcpModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [guardedProposal, setGuardedProposal] = useState<GuardedWriteProposal | null>(null);
   const [executingGuardedWrite, setExecutingGuardedWrite] = useState(false);
   const [executionResult, setExecutionResult] = useState<GuardedWriteExecutionResult | null>(null);
@@ -328,6 +330,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
         syncMessage={syncMessage}
         onSync={handleSync}
         onOpenMcp={() => setShowMcpModal(true)}
+        onOpenProfile={() => setShowProfileModal(true)}
       />
 
       {/* Action Notification Alert Toast */}
@@ -342,6 +345,28 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
             className="text-purple-400 hover:text-white font-bold px-2 py-0.5 rounded cursor-pointer"
           >
             ✕
+          </button>
+        </div>
+      )}
+
+      {/* Quick Setup Card for Unconfigured Store */}
+      {Object.values(sourceErrors).some(msg => msg.includes("ADS_PROFILE_NOT_CONFIGURED") || msg.includes("chưa cấu hình riêng Meta/GA4")) && (
+        <div className="rounded-2xl border border-cyan-500/40 bg-gradient-to-r from-cyan-950/50 via-slate-900/90 to-indigo-950/50 p-5 shadow-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold text-cyan-300 flex items-center gap-2">
+              <span>🚀</span> Kích hoạt Ads Intelligence cho store <span className="font-mono text-white underline">{currentStoreId}</span>
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed max-w-2xl">
+              Store này đã kết nối Shopify nhưng chưa có cấu hình riêng cho Meta Ads / GA4. Bạn có thể nhập nhanh ID tài khoản hoặc tải lên file JSON để hệ thống tự động kết nối và xem báo cáo ngay tại đây.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowProfileModal(true)}
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-xs shadow-lg shadow-cyan-500/25 transition cursor-pointer flex items-center gap-2 active:scale-95"
+          >
+            <span>⚙️</span>
+            <span>Cấu hình ngay</span>
           </button>
         </div>
       )}
@@ -461,6 +486,19 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
       />
 
       {showMcpModal && <McpModal onClose={() => setShowMcpModal(false)} />}
+
+      {showProfileModal && (
+        <StoreProfileModal
+          storeId={currentStoreId}
+          shopDomain={stores.find(s => s.storeId === currentStoreId)?.shopDomain}
+          client={client}
+          onClose={() => setShowProfileModal(false)}
+          onSaved={(savedStoreId) => {
+            setActionNotification(`✅ Đã lưu cấu hình Ads cho store ${savedStoreId} thành công! Đang kết nối dữ liệu trực tiếp...`);
+            void loadData(savedStoreId);
+          }}
+        />
+      )}
 
       <ExperimentOutcomeModal
         experiment={outcomeExperiment}

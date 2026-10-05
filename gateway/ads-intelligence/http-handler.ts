@@ -13,8 +13,9 @@ import { adsIntelligenceCache } from "./cache";
 import { formatBriefMarkdown } from "./brief-generator";
 import { generateAdsOpenApiSpec } from "./openapi-spec";
 import { adsGuardedWritesService, type WritePreviewRequest, type WriteApproval } from "./guarded-writes";
-import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStatus, AdsExperiment, CreativeBrief } from "./types";
+import type { BriefStatus, ExperimentResults, ExperimentLearning, ExperimentStatus, AdsExperiment, CreativeBrief, StoreAdsProfile } from "./types";
 import { localAiRunner } from "./local-ai-runner";
+import { loadStoreAdsProfile, saveStoreAdsProfile, validateStoreAdsProfile } from "./store-profile";
 
 function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = statusCode;
@@ -123,6 +124,132 @@ export async function handleAdsIntelligenceHttpRequest(
     }
     if (pathname === "/api/ads-intelligence/stores" && req.method === "GET") {
       sendJson(res, 200, await listAdsGatewayStores());
+      return true;
+    }
+
+    if (pathname === "/api/ads-intelligence/profile") {
+      const explicitStoreId = parsedUrl.searchParams.get("storeId") || storeId;
+      if (req.method === "GET") {
+        try {
+          const profile = loadStoreAdsProfile(explicitStoreId);
+          sendJson(res, 200, { configured: true, storeId: explicitStoreId, profile });
+        } catch {
+          const stores = await listAdsGatewayStores();
+          const matched = stores.find((s) => s.storeId === explicitStoreId);
+          sendJson(res, 200, {
+            configured: false,
+            storeId: explicitStoreId,
+            shopDomain: matched?.shopDomain || "",
+            profile: null,
+          });
+        }
+        return true;
+      }
+
+      if (req.method === "POST" || req.method === "PUT") {
+        try {
+          const body = await readJsonBody<any>(req);
+          let profileToSave: StoreAdsProfile;
+
+          if (body.profile && typeof body.profile === "object") {
+            profileToSave = validateStoreAdsProfile(body.profile);
+          } else if (body.metaAccountId || (body.meta && body.meta.accountIds)) {
+            const rawAccount = body.metaAccountId || body.meta?.accountIds?.[0] || "";
+            const accountId = String(rawAccount).trim().startsWith("act_")
+              ? String(rawAccount).trim()
+              : `act_${String(rawAccount).trim()}`;
+            const stores = await listAdsGatewayStores();
+            const matched = stores.find((s) => s.storeId === explicitStoreId);
+            const shopDomain = body.shopDomain || matched?.shopDomain || `${explicitStoreId}.myshopify.com`;
+            const targetCpa = typeof body.targetCpa === "number" ? body.targetCpa : Number(body.targetCpa) || 22;
+            const breakEvenRoas = typeof body.breakEvenRoas === "number" ? body.breakEvenRoas : Number(body.breakEvenRoas) || 2.2;
+            const breakEvenCpa = typeof body.breakEvenCpa === "number" ? body.breakEvenCpa : Number(body.breakEvenCpa) || targetCpa * 1.25;
+            const watchlist = Array.isArray(body.watchlist)
+              ? body.watchlist.map(String)
+              : typeof body.watchlist === "string"
+              ? body.watchlist.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+              : [];
+
+            profileToSave = validateStoreAdsProfile({
+              storeId: explicitStoreId,
+              mode: "read_only",
+              marketCountries: ["US"],
+              reportingCurrency: body.reportingCurrency || "USD",
+              meta: {
+                accountIds: [accountId],
+                accountTimezone: body.accountTimezone || "Asia/Manila",
+                apiVersion: "v26.0",
+                purchaseActionType: "offsite_conversion.fb_pixel_purchase",
+                secretRef: "META_ACCESS_TOKEN",
+                proxyRef: "META_PROXY_URL",
+                attributionPolicyRef: "7d_click_1d_view",
+              },
+              ga4: {
+                propertyId: body.ga4PropertyId ? String(body.ga4PropertyId).trim() : null,
+                propertyTimezone: body.ga4PropertyTimezone || "America/Los_Angeles",
+                credentialRef: "credentials/ga4-service-account.json",
+              },
+              shopify: {
+                shopDomain,
+                apiVersion: "2026-07",
+                connectionRef: `shopify_${explicitStoreId}`,
+              },
+              competitors: {
+                primaryProvider: "scrapecreators",
+                backupProvider: "searchapi",
+                monthlyCostCapUsd: 65.0,
+                watchlist,
+              },
+              business: {
+                costProfileRef: `${explicitStoreId}-standard`,
+                targetCpa,
+                targetContributionPerOrder: 8.0,
+                breakEvenRoas,
+                breakEvenCpa,
+              },
+              rules: {
+                policyVersion: "2.0",
+                maturityDays: 7,
+                allowFinancialRecommendations: true,
+              },
+              budgets: {
+                totalDailyAuthorizedCap: 150.0,
+                experimentAuthorizedCap: 30.0,
+                maxChangePer24hPct: 20.0,
+                cooldownHours: 24,
+              },
+              actions: {
+                externalWritesEnabled: false,
+                approvalRequired: true,
+              },
+            });
+          } else {
+            profileToSave = validateStoreAdsProfile(body);
+          }
+
+          saveStoreAdsProfile(explicitStoreId, profileToSave);
+          adsIntelligenceCache.invalidate(explicitStoreId);
+          sendJson(res, 200, { success: true, storeId: explicitStoreId, profile: profileToSave });
+        } catch (err: any) {
+          sendJson(res, 400, { error: { code: "PROFILE_INVALID", message: err.message || "Cấu hình profile không hợp lệ." } });
+        }
+        return true;
+      }
+    }
+
+    if (pathname === "/api/ads-intelligence/profile/test-connection" && req.method === "POST") {
+      const body = await readJsonBody<{ accountId: string }>(req);
+      const rawAccount = body.accountId || "";
+      if (!rawAccount) {
+        sendJson(res, 400, { success: false, error: "Vui lòng nhập Meta Ad Account ID" });
+        return true;
+      }
+      try {
+        const testResult = await adsIntelligenceService.testMetaAccountConnection(rawAccount);
+        sendJson(res, 200, testResult);
+      } catch (err: any) {
+        sendJson(res, 400, { success: false, error: err.message || "Không thể kết nối tài khoản Meta này." });
+      }
       return true;
     }
     if (pathname === "/api/ads-intelligence/shopify" && req.method === "GET") {

@@ -75,7 +75,7 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
     // Optional authentication check
     if (configuredSecret) {
       const authHeader = req.headers.authorization;
-      const bearer = authHeader?.replace(/^Bearer\s+/i, "") || (req.headers["x-gateway-key"] as string | undefined);
+      const bearer = (authHeader?.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : undefined) || (req.headers["x-gateway-key"] as string | undefined);
       if (!matchesSecret(bearer, configuredSecret)) {
         res.setHeader("WWW-Authenticate", 'Bearer realm="ffp-ads-mcp"');
         sendJson(res, 401, {
