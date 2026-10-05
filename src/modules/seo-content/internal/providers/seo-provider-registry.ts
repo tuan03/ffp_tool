@@ -5,6 +5,7 @@ import type { ProviderRequestOptions } from "../provider-runtime";
 import type { ShoppingContextAnalyzer } from "../shopping-context/shopping-context-analyzer";
 import type { KeywordConflictAnalyzer } from "../conflict-control/keyword-conflict-analyzer";
 import type { SeoConflictCorpus } from "../conflict-control/seo-conflict-corpus";
+import { GeminiImagePreparationError } from "../product-understanding/gemini-product-image-analyzer";
 import { createDefaultProductImageAnalyzer } from "../stages/b1-product-understanding";
 import { createDefaultShoppingContextAnalyzer } from "../stages/b2-shopping-context";
 import { createDefaultB5Generator } from "../stages/b5-content-generation";
@@ -91,7 +92,7 @@ export function createGeminiSeoProviderFactory(): SeoProviderFactory {
       const model = env?.GEMINI_ANALYSIS_MODEL || env?.GEMINI_MODEL || "gemini-2.5-flash";
       const primaryFailures = new Map<"b1" | "b2" | "b5", unknown>();
       const observePrimaryFailure = (stage: "b1" | "b2" | "b5", error: unknown) => {
-        primaryFailures.set(stage, error);
+        if (!(error instanceof GeminiImagePreparationError)) primaryFailures.set(stage, error);
         options.onFallback(stage, error);
       };
       return {

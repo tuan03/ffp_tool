@@ -8,7 +8,6 @@ import {
 } from "./gemini-analysis-schema";
 import { prepareProductImagePayload } from "./product-image-payload";
 import type { GeminiContentGenerator } from "./gemini-content-generator";
-import { GeminiGeneratorError } from "./gemini-content-generator";
 import {
   type AsyncSemaphore,
 } from "./async-semaphore";
@@ -56,6 +55,13 @@ export interface GeminiProductImageAnalyzerOptions {
   readonly maxImages?: number;
   readonly semaphore?: AsyncSemaphore;
   readonly retryOptions?: GeminiRetryOptions;
+}
+
+export class GeminiImagePreparationError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "GeminiImagePreparationError";
+  }
 }
 
 function describeImageReadFailure(error: unknown): string {
@@ -131,7 +137,7 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
     }
     if (imagePayloads.length === 0) {
       const reasons = [...new Set(failures)].slice(0, 3).join(", ") || "no images provided";
-      throw new GeminiGeneratorError(
+      throw new GeminiImagePreparationError(
         `No readable product images were available for B1 analysis (tried ${failures.length} images; reasons: ${reasons}).`,
       );
     }

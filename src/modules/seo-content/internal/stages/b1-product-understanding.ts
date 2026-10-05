@@ -68,7 +68,7 @@ export function createDefaultProductImageAnalyzer(options?: ProviderRequestOptio
       const errMsg = error instanceof Error ? error.message : String(error);
       const target = input.images[0]?.url || input.images[0]?.localFilePath || "unknown";
       console.warn(
-        `[SEO B1 Fallback] Gemini analysis failed for image '${target}'. Falling back to heuristic analyzer. Cause: ${errMsg}`,
+        `[SEO B1 Fallback] Primary image analysis unavailable for image '${target}'. Falling back to heuristic analyzer. Cause: ${errMsg}`,
       );
     },
   });
