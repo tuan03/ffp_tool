@@ -5,7 +5,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { createSeoPublishTransport } from "./seo-worker/publish-transport";
-import { createDispatcherMediaPageSource, createShopifySeoSnapshotReader } from "./seo-versioning";
+import {
+  createDispatcherMediaPageSource,
+  createSeoBaselineService,
+  createShopifySeoSnapshotReader,
+} from "./seo-versioning";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
 import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
@@ -233,6 +237,26 @@ export function startGatewayServer(
         publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
         createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },
         history: async (storeId, jobId, offset) => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workerHistory.list(storeId, jobId, offset); },
+        versioning: {
+          repository: async () => {
+            const runtime = getCustomGptRuntime();
+            await runtime.initialize();
+            return runtime.queue.versioning;
+          },
+          observeProduct: async (storeId, productGid) => {
+            const runtime = getCustomGptRuntime();
+            await runtime.initialize();
+            return createSeoBaselineService({
+              dispatcher,
+              repository: runtime.queue.versioning,
+            }).observeProduct({
+              storeId,
+              shopifyProductGid: productGid,
+              observedAt: Date.now(),
+            });
+          },
+          isPublishEnabled: isBackendPublishEnabled,
+        },
       });
       return;
     }
