@@ -3,9 +3,14 @@ from __future__ import annotations
 
 import ctypes
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_CPU_SAMPLE_LOCK = threading.Lock()
+_CPU_SAMPLE: tuple[float, float] | None = None
 
 
 def _windows_processes() -> dict[int, tuple[int, str, int | None]]:
@@ -89,13 +94,23 @@ def _descendants(processes: dict[int, tuple[int, str, int | None]], root: int) -
 
 
 def sample_resources() -> dict[str, Any]:
+    global _CPU_SAMPLE
     timestamp = datetime.now(timezone.utc).isoformat()
+    wall_now = time.monotonic()
+    process_now = time.process_time()
+    with _CPU_SAMPLE_LOCK:
+        previous = _CPU_SAMPLE
+        _CPU_SAMPLE = (wall_now, process_now)
+    cpu_percent = None
+    if previous is not None and wall_now > previous[0]:
+        cpu_percent = max(0.0, min(100.0, (process_now - previous[1]) * 100.0
+            / (wall_now - previous[0]) / max(1, os.cpu_count() or 1)))
     try:
         processes = _windows_processes() if os.name == "nt" else _linux_processes()
         selected = [processes[pid] for pid in _descendants(processes, os.getpid())]
         memory = [resident for _, _, resident in selected if resident is not None]
-        return {"rssBytes": sum(memory) if memory else None, "processCount": len(selected),
+        return {"rssBytes": sum(memory) if memory else None, "cpuPercent": cpu_percent, "processCount": len(selected),
                 "browserProcesses": sum(any(marker in name.casefold() for marker in ("chrome", "chromium", "msedge")) for _, name, _ in selected),
                 "isComplete": bool(selected) and len(memory) == len(selected), "sampledAt": timestamp}
     except (OSError, ValueError):
-        return {"rssBytes": None, "browserProcesses": None, "processCount": None, "isComplete": False, "sampledAt": timestamp}
+        return {"rssBytes": None, "cpuPercent": cpu_percent, "browserProcesses": None, "processCount": None, "isComplete": False, "sampledAt": timestamp}

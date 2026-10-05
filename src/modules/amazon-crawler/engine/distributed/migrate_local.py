@@ -20,6 +20,7 @@ from sqlalchemy import MetaData, and_, create_engine, select
 from .coordinator_models import Base
 from .coordinator_migrations import migrate_coordinator
 from .global_admission_gate import GlobalAdmissionGate
+from .fleet_circuit_breaker import STATE_KEY as FLEET_BREAKER_STATE_KEY, _default_state as default_fleet_breaker_state
 from .image_profile_repository import ImageProfileRecord, ImageProfileRevision
 from ..image_processing import normalize_profile
 
@@ -48,6 +49,12 @@ def import_relational_rows(reader, writer):
             existing = writer.execute(select(table).where(key)).mappings().first()
             if existing is not None:
                 if canonical({name: existing[name] for name in values}) != canonical(values):
+                    existing_fleet_state = existing.get("value")
+                    if isinstance(existing_fleet_state, str):
+                        try:
+                            existing_fleet_state = json.loads(existing_fleet_state)
+                        except json.JSONDecodeError:
+                            existing_fleet_state = None
                     is_pristine_admission_seed = (
                         table.name == GlobalAdmissionGate.__tablename__
                         and existing.get("state") == "OPEN"
@@ -57,7 +64,12 @@ def import_relational_rows(reader, writer):
                         and existing.get("reason") is None
                         and existing.get("request_id") is None
                     )
-                    if is_pristine_admission_seed:
+                    is_pristine_fleet_breaker_seed = (
+                        table.name == "coordinator_state"
+                        and values.get("key") == FLEET_BREAKER_STATE_KEY
+                        and existing_fleet_state == default_fleet_breaker_state()
+                    )
+                    if is_pristine_admission_seed or is_pristine_fleet_breaker_seed:
                         writer.execute(table.update().where(key).values(**values))
                     else:
                         raise ValueError(f"Conflicting target row in {table.name}; import aborted.")

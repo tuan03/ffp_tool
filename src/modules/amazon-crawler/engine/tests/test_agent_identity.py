@@ -32,7 +32,8 @@ class AgentIdentityTests(unittest.TestCase):
         self.client = self.stack.enter_context(TestClient(self.app))
         response = self.client.post("/api/v1/agent-keys", auth=("operator", "fixture"), json={
             "requestId": uuid.uuid4().hex, "name": "fixture", "maxWorkers": 2, "crawlers": ["amazon"],
-            "environment": "test", "expiresAt": (utc_now() + timedelta(days=1)).isoformat()})
+            "environment": "test", "agentGroup": "amazon-us",
+            "expiresAt": (utc_now() + timedelta(days=1)).isoformat()})
         self.assertEqual(response.status_code, 201)
         self.key = response.json()["key"]
         self.key_id = response.json()["metadata"]["id"]
@@ -117,9 +118,11 @@ class AgentIdentityTests(unittest.TestCase):
         self.assertEqual(self.client.post(path, headers={"Authorization": "Bearer " + self.key}, json=payload).status_code, 401)
         response = self.client.post(path, auth=("operator", "fixture"), json=payload)
         self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["metadata"]["agentGroup"], "amazon-us")
         replacement = response.json()["key"]
         self.assertEqual(self.register(request_id).status_code, 401)
         self.assertEqual(self.register(request_id, replacement).json()["agentId"], agent_id)
+        self.assertEqual(self.app.state.store.list_clients()[0]["agentGroup"], "amazon-us")
         self.assertEqual(self.register(uuid.uuid4().hex, replacement).status_code, 409)
         retry = self.client.post(path, auth=("operator", "fixture"), json=payload)
         self.assertEqual(retry.status_code, 409)

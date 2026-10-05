@@ -263,6 +263,10 @@ export function AmazonCrawlerPage({
   const [isClientSnapshotStale, setIsClientSnapshotStale] = useState(false);
   const [lastClientRefreshAt, setLastClientRefreshAt] = useState<number | null>(null);
   const [clientPage, setClientPage] = useState(0);
+  const [clientGroupFilter, setClientGroupFilter] = useState("all");
+  const [bulkCommandReason, setBulkCommandReason] = useState("");
+  const [bulkCommandMessage, setBulkCommandMessage] = useState<string | null>(null);
+  const [isBulkCommandRunning, setIsBulkCommandRunning] = useState(false);
   const [agentRelease, setAgentRelease] = useState<AmazonCrawlerAgentRelease | null>(null);
   const [agentReleaseError, setAgentReleaseError] = useState<string | null>(null);
   const [isLoadingAgentRelease, setIsLoadingAgentRelease] = useState(true);
@@ -375,9 +379,13 @@ export function AmazonCrawlerPage({
     : connectedClients.filter(
       (client) => getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated",
     );
-  const clientPageCount = Math.max(1, Math.ceil(clients.length / CLIENTS_PER_PAGE));
+  const clientGroups = [...new Set(clients.map((client) => client.agentGroup ?? "default"))].sort();
+  const filteredClients = clientGroupFilter === "all"
+    ? clients
+    : clients.filter((client) => (client.agentGroup ?? "default") === clientGroupFilter);
+  const clientPageCount = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
   const visibleClientPage = Math.min(clientPage, clientPageCount - 1);
-  const visibleClients = clients.slice(visibleClientPage * CLIENTS_PER_PAGE, (visibleClientPage + 1) * CLIENTS_PER_PAGE);
+  const visibleClients = filteredClients.slice(visibleClientPage * CLIENTS_PER_PAGE, (visibleClientPage + 1) * CLIENTS_PER_PAGE);
   const jobPageCount = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE));
   const visibleJobPage = Math.min(jobPage, jobPageCount - 1);
   const visibleJobs = jobs.slice(visibleJobPage * JOBS_PER_PAGE, (visibleJobPage + 1) * JOBS_PER_PAGE);
@@ -483,6 +491,28 @@ export function AmazonCrawlerPage({
       setCommandError(error instanceof Error ? error.message : "Không gửi được lệnh đến agent.");
     } finally {
       setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleBulkGroupCommand(type: "PAUSE" | "RESUME" | "DRAIN"): Promise<void> {
+    if (!amazonCrawlerCommands || clientGroupFilter === "all" || isClientSnapshotStale || isBulkCommandRunning) return;
+    const reason = bulkCommandReason.trim();
+    if (reason.length < 10) {
+      setBulkCommandMessage("Lý do thao tác cần ít nhất 10 ký tự.");
+      return;
+    }
+    const actionLabel = type === "PAUSE" ? "tạm dừng" : type === "RESUME" ? "tiếp tục" : "DRAIN";
+    if (!window.confirm(`Gửi lệnh ${actionLabel} tới ${filteredClients.length} agent thuộc group ${clientGroupFilter}?`)) return;
+    setIsBulkCommandRunning(true);
+    setBulkCommandMessage(null);
+    try {
+      const result = await amazonCrawlerCommands.bulkCommand(clientGroupFilter, type, reason);
+      setBulkCommandMessage(`Group ${clientGroupFilter}: đã gửi ${result.queued}/${result.requested} lệnh; lỗi ${result.failed}. Agent offline sẽ nhận khi kết nối lại.`);
+      setClients(await loadAmazonCrawlerClients());
+    } catch (caught: unknown) {
+      setBulkCommandMessage(caught instanceof Error ? caught.message : "Không gửi được lệnh tới group.");
+    } finally {
+      setIsBulkCommandRunning(false);
     }
   }
 
@@ -1631,6 +1661,33 @@ export function AmazonCrawlerPage({
         ) : null}
         {commandError ? <p className="mt-3 text-sm text-rose-300" role="alert">{commandError}</p> : null}
         {!isLoadingClients && !clientError && clients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có crawler agent đã đăng ký. Hãy mở FFP Amazon Crawler Agent.</p> : null}
+        {clients.length > 0 ? <label className="mt-3 flex max-w-sm items-center gap-2 text-xs text-slate-300">
+          Lọc Agent group
+          <select aria-label="Lọc theo Agent group" value={clientGroupFilter}
+            onChange={(event) => { setClientGroupFilter(event.target.value); setClientPage(0); }}
+            className="min-w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100">
+            <option value="all">Tất cả group ({clients.length})</option>
+            {clientGroups.map((group) => <option key={group} value={group}>{group} ({clients.filter((client) => (client.agentGroup ?? "default") === group).length})</option>)}
+          </select>
+        </label> : null}
+        {clientGroupFilter !== "all" && amazonCrawlerCommands ? <div className="mt-3 rounded border border-slate-700 bg-slate-950/70 p-3">
+          <p className="text-xs text-slate-300">Bulk actions chỉ nhắm group <strong>{clientGroupFilter}</strong> ({filteredClients.length} agent); phạm vi không áp dụng cho group khác.</p>
+          <label className="mt-2 block max-w-xl text-xs text-slate-400">Lý do kiểm toán
+            <input value={bulkCommandReason} onChange={(event) => setBulkCommandReason(event.target.value)} maxLength={500}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+              placeholder="Nhập lý do (tối thiểu 10 ký tự)" />
+          </label>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(["PAUSE", "RESUME", "DRAIN"] as const).map((type) => <button key={type} type="button"
+              disabled={isBulkCommandRunning || isClientSnapshotStale || bulkCommandReason.trim().length < 10 || filteredClients.length === 0}
+              onClick={() => void handleBulkGroupCommand(type)}
+              className="rounded border border-cyan-800 px-2 py-1 text-xs text-cyan-200 disabled:opacity-50">
+              {isBulkCommandRunning ? "Đang gửi…" : type === "PAUSE" ? "Tạm dừng group" : type === "RESUME" ? "Tiếp tục group" : "DRAIN group"}
+            </button>)}
+          </div>
+          {bulkCommandMessage ? <p role="status" className="mt-2 text-xs text-slate-300">{bulkCommandMessage}</p> : null}
+        </div> : null}
+        {filteredClients.length === 0 && clients.length > 0 ? <p className="mt-3 text-sm text-slate-400">Không có Agent trong group đã chọn.</p> : null}
         {clients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {visibleClients.map((client) => {
@@ -1651,6 +1708,7 @@ export function AmazonCrawlerPage({
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
                   <span>Agent v{client.agentVersion}</span>
+                  <span className="rounded border border-slate-700 px-1.5 py-0.5">group: {client.agentGroup ?? "default"}</span>
                   {agentRelease ? (
                     <span className={`rounded-full px-2 py-0.5 font-semibold ${
                       getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated"
@@ -1835,9 +1893,9 @@ export function AmazonCrawlerPage({
             })}
           </div>
         ) : null}
-        {clients.length > CLIENTS_PER_PAGE ? <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">
+        {filteredClients.length > CLIENTS_PER_PAGE ? <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">
           <button type="button" disabled={visibleClientPage === 0} onClick={() => setClientPage(visibleClientPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent trước</button>
-          <span>{visibleClientPage * CLIENTS_PER_PAGE + 1}–{Math.min((visibleClientPage + 1) * CLIENTS_PER_PAGE, clients.length)} / {clients.length}</span>
+          <span>{visibleClientPage * CLIENTS_PER_PAGE + 1}–{Math.min((visibleClientPage + 1) * CLIENTS_PER_PAGE, filteredClients.length)} / {filteredClients.length}</span>
           <button type="button" disabled={visibleClientPage + 1 >= clientPageCount} onClick={() => setClientPage(visibleClientPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent tiếp</button>
         </div> : null}
       </section>
@@ -2488,6 +2546,7 @@ export function AmazonCrawlerPage({
           <NumberSetting label="CAPTCHA timeout (s)" min={30} max={900} value={settings.captchaTimeoutSeconds} onChange={(value) => updateSetting("captchaTimeoutSeconds", value)} />
           <NumberSetting label="Matrix cap" min={1} max={5000} value={settings.maxMatrixVariants} onChange={(value) => updateSetting("maxMatrixVariants", value)} />
           <label className="grid gap-1 text-sm text-slate-300">Amazon ZIP<input className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" value={settings.amazonZip} onChange={(event) => updateSetting("amazonZip", event.target.value)} /></label>
+          <label className="grid gap-1 text-sm text-slate-300">Chỉ định Agent group (không bắt buộc)<input className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" value={settings.allowedAgentGroup ?? ""} onChange={(event) => updateSetting("allowedAgentGroup", event.target.value.trim() || undefined)} placeholder="Ví dụ: amazon-us" /></label>
           <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={settings.headless} type="checkbox" onChange={(event) => updateSetting("headless", event.target.checked)} /> Headless browser</label>
           <details className="sm:col-span-3">
             <summary className="cursor-pointer text-sm font-semibold text-cyan-300">Giới hạn thời gian xử lý</summary>

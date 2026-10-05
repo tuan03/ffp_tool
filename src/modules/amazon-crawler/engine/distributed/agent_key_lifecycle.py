@@ -62,6 +62,14 @@ def install_key_lifecycle_routes(app, sessions, operator_username: str):
                 if agent_id:
                     # Serialize replacements for one identity, including adoption/reinstall.
                     session.scalar(select(ClientRecord).where(ClientRecord.id == agent_id).with_for_update())
+                    client = session.get(ClientRecord, agent_id)
+                    if client is not None:
+                        client.agent_group = payload.agentGroup or old.agent_group
+                        capabilities = dict(client.capabilities or {})
+                        capabilities["amazon"] = "amazon" in payload.crawlers
+                        capabilities["amazonReviews"] = "amazon" in payload.crawlers
+                        capabilities["pinterest"] = "pinterest" in payload.crawlers
+                        client.capabilities = capabilities
                     enrollment = session.get(AgentEnrollment, agent_id)
                     if enrollment is None:
                         session.add(AgentEnrollment(agent_id=agent_id, request_id=None))
@@ -74,6 +82,7 @@ def install_key_lifecycle_routes(app, sessions, operator_username: str):
                     name=payload.name.strip(), verifier=hashlib.sha256(raw_key.encode("ascii")).hexdigest(),
                     status="active" if agent_id else "unbound", agent_id=agent_id,
                     max_workers=payload.maxWorkers, crawlers=list(payload.crawlers), environment=payload.environment,
+                    agent_group=payload.agentGroup or old.agent_group,
                     created_by=operator_username, expires_at=payload.expiresAt)
                 session.add(replacement)
                 session.flush()

@@ -30,6 +30,7 @@ class AgentKey(Base):
     max_workers: Mapped[int] = mapped_column(Integer)
     crawlers: Mapped[list[str]] = mapped_column(JSON_VALUE)
     environment: Mapped[str] = mapped_column(String(20))
+    agent_group: Mapped[str] = mapped_column(String(80), default="default")
     created_by: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -43,6 +44,7 @@ class CreateAgentKey(BaseModel):
     maxWorkers: int = Field(strict=True, ge=1, le=2147483647)
     crawlers: list[Literal["amazon", "pinterest"]] = Field(min_length=1, max_length=2)
     environment: Literal["test", "production"]
+    agentGroup: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
     expiresAt: datetime
 
 
@@ -50,6 +52,7 @@ def key_metadata(key: AgentKey) -> dict:
     # Explicit allowlist: never serialize an ORM instance or its verifier.
     return {"id": key.id, "name": key.name, "status": key.status, "agentId": key.agent_id,
             "maxWorkers": key.max_workers, "crawlers": key.crawlers, "environment": key.environment,
+            "agentGroup": key.agent_group,
             "createdAt": key.created_at.isoformat(), "expiresAt": key.expires_at.isoformat(),
             "lastUsedAt": key.last_used_at.isoformat() if key.last_used_at else None}
 
@@ -69,6 +72,7 @@ def install_agent_key_routes(app, sessions, operator_username: str) -> None:
                 key = AgentKey(id=key_id, request_id=request_id, name=payload.name.strip(),
                     verifier=hashlib.sha256(raw_key.encode("ascii")).hexdigest(),
                     max_workers=payload.maxWorkers, crawlers=list(payload.crawlers), environment=payload.environment,
+                    agent_group=payload.agentGroup or "default",
                     created_by=operator_username, expires_at=payload.expiresAt)
                 session.add(key)
                 session.flush()

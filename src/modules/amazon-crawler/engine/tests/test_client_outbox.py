@@ -186,6 +186,55 @@ class AgentOutboxDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.agent.active["task"]["leaseId"], "b")
         self.assertEqual(self.agent.store.assignment("task")["leaseId"], "b")
 
+    async def test_batch_acknowledges_only_items_with_matching_durable_receipts(self):
+        first = self.spool()
+        second_payload = {"jobId": "job", "product": {"sourceKey": "product-2"}}
+        self.agent.store.spool_result(task_id="task-2", lease_id="b",
+                                      checksum=payload_checksum(second_payload), payload=second_payload)
+        second = self.agent.store.pending_results()[1]
+        first_receipt = {"taskId": first["taskId"], "leaseId": first["leaseId"],
+                         "status": "accepted", "checksum": first["checksum"],
+                         "receiptId": payload_checksum(["final", first["taskId"], self.agent.client_id,
+                                                         first["leaseId"], ""])}
+        # An omitted transient receipt cannot acknowledge or discard that outbox row.
+        with patch.object(self.agent, "_upload_result_batch", return_value=[first_receipt]):
+            await self.cycle()
+        remaining = self.agent.store.pending_results()
+        self.assertEqual([row["resultId"] for row in remaining], [second["resultId"]])
+        self.assertEqual(remaining[0]["attempts"], 1)
+
+    async def test_batch_upload_uses_bounded_gzipped_endpoint_and_per_item_identity(self):
+        from urllib.request import Request
+        first = self.spool()
+        second_payload = {"jobId": "job", "product": {"sourceKey": "product-2"}}
+        self.agent.store.spool_result(task_id="task-2", lease_id="b",
+                                      checksum=payload_checksum(second_payload), payload=second_payload)
+        second = self.agent.store.pending_results()[1]
+
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return b'{"results": []}'
+
+        captured = {}
+        def open_request(request):
+            self.assertIsInstance(request, Request)
+            captured["url"] = request.full_url
+            captured["headers"] = request.header_items()
+            captured["body"] = request.data
+            return Response()
+        with patch.object(self.agent, "_open_agent_request", side_effect=open_request):
+            self.assertEqual(self.agent._upload_result_batch([first, second]), [])
+        self.assertTrue(captured["url"].endswith("/api/v1/worker/results/batch"))
+        self.assertTrue(any(key.casefold() == "content-encoding" and value == "gzip"
+                            for key, value in captured["headers"]))
+        import gzip, json
+        envelope = json.loads(gzip.decompress(captured["body"]))
+        self.assertEqual([item["taskId"] for item in envelope["items"]], ["task", "task-2"])
+
     async def test_http_errors_preserve_products_and_results(self):
         final = self.spool()
         product = self.spool(product=True)

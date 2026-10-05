@@ -202,7 +202,7 @@ UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhấ
 | [x] | 43 | Artifact/manifest được xác minh trước thực thi | 23, 40 (xác minh artifact) | 42; E5.3 | Windows PowerShell artifact tests + 6 Node release tests + 6 tray tests; exact manifest/hash/size/pin/version gate | Code QA pass; real trusted Authenticode release + clean VM await Task 46 |
 | [x] | 44 | UPDATE_AGENT giữ identity/data và ACK sau boot | 8, 40, 51 (update) | 43; E5.3 | 40 focused Python + 36 crawler service tests; typecheck/build/tooling pass; full suite in Task 44 report | Simulated replacement boot pass; real signed installer/canary waits for Task 46 |
 | [x] | 45 | ROLLBACK_AGENT tương thích schema và dữ liệu | 8, 40 (rollback) | 44; E5.3 | 35 Python command tests pass including failed-update + schema-addition rollback simulation; web/tooling/typecheck/build and PowerShell parser pass; see [Task 45 report](audits/distributed-crawler/task-45-agent-rollback.md) | Simulated rollback passed; actual signed Windows replacement is explicitly deferred to Task 46 |
-| [ ] | 46 | Clean-machine installer và canary rehearsal | 2, 5, 40, 54 (installer/canary) | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | **Blocked on external prerequisites:** approved Authenticode signer and clean Windows VM; see [Task 46 runbook](audits/distributed-crawler/task-46-clean-machine-canary-runbook.md) |
+| [ ] | 46 | Clean-machine installer và canary rehearsal | 2, 5, 40, 54 (installer/canary) | 45; D10; G5 | Signed release trên Windows sạch, upgrade/uninstall; staged rollout | **Người dùng chủ động hoãn ngày 2026-10-05; chưa nghiệm thu, không tính là pass.** Xem [Task 46 runbook](audits/distributed-crawler/task-46-clean-machine-canary-runbook.md) |
 
 Task 42 là review sâu đúng lúc tích hợp; trong Task 01 chỉ ghi nhận nhánh/owner liên quan nếu cần, không tự làm luôn task updater. Thiếu chứng thư/máy sạch không được thay bằng test giả rồi công bố đạt.
 
@@ -210,13 +210,13 @@ Task 42 là review sâu đúng lúc tích hợp; trong Task 01 chỉ ghi nhận 
 
 | Đạt | ID | Một kết quả cần đạt | Mục trong đặc tả gốc / phần xử lý | Phụ thuộc / map | Assistant kiểm tra | Người dùng kiểm tra |
 | --- | --- | --- | --- | --- | --- | --- |
-| [ ] | 47 | Groups/permissions và global filters đúng scope | 22, 24, 42–43 (groups) | 46; E6 | Job affinity/allowed crawler, bulk scope, không vượt key rights | Giao việc nhóm A/B và kiểm nút bulk |
-| [ ] | 48 | Scheduler health/capacity/fairness được đo | 6, 18, 42 (scheduler) | 47; E6 | Agent nhanh/chậm, không starvation/capacity overflow | Xem phân phối task và số liệu |
-| [ ] | 49 | Auto concurrency có giới hạn/hysteresis | 7, 39, 42, 54 (auto concurrency) | 48; E6 | CPU/RAM/quota fixtures, không dao động hoặc vượt cap | Xem tăng/giảm capacity có lý do |
-| [ ] | 50 | Fleet circuit breaker với bounded probes | 50 (fleet circuit breaker) | 49; E6 | Parser lỗi hàng loạt, half-open, admin stop thắng | Demo OPEN/HALF_OPEN/CLOSED trên fixture |
-| [ ] | 51 | Batch result delivery giữ receipt từng kết quả | 19, 30–31, 54 (batch results) | 50; spec 54; E6 | Partial success, duplicate/conflict, giới hạn payload | Gửi lại batch lỗi không nhân kết quả |
-| [ ] | 52 | Metrics/load/soak và giới hạn thực tế | 7, 47, 54, 57 (metrics/scale) | 51; G6 | Tải tăng dần, p95/p99/backlog/DB; không claim500 chưa đo | Duyệt báo cáo tài nguyên và ngưỡng vận hành |
-| [ ] | 53 | Đối chiếu spec và đóng audit | 1–58 (đối chiếu cuối; không tự triển khai phần thiếu) | 52; spec 1–58 | Mỗi tiêu chí có evidence hoặc ngoại lệ được duyệt; rollback/runbook | Ký xác nhận kết quả, TODO còn lại và phạm vi release |
+| [x] | 47 | Groups/permissions và global filters đúng scope | 22, 24, 42–43 (groups) | 46 deferred by user; E6 | PostgreSQL-backed group affinity, scoped/audited bulk controls, group/capability isolation tests pass | Local QA; real operator acceptance remains part of release review; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
+| [x] | 48 | Scheduler health/capacity/fairness được đo | 6, 18, 42 (scheduler) | 47; E6 | Queue/active/available/over-capacity metrics, ready-agent signal, row-level lease locking, five-process fairness/load evidence | Local QA only; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
+| [x] | 49 | Auto concurrency có giới hạn/hysteresis | 7, 39, 42, 54 (auto concurrency) | 48; E6 | Resource/quota pressure hysteresis and cap/recovery tests pass | Local QA fixtures; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
+| [x] | 50 | Fleet circuit breaker với bounded probes | 50 (fleet circuit breaker) | 49; E6 | Durable PostgreSQL breaker, bounded half-open probe, audited reset, operator STOP precedence tests pass | Local QA; production operator procedure not exercised; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
+| [x] | 51 | Batch result delivery giữ receipt từng kết quả | 19, 30–31, 54 (batch results) | 50; spec 54; E6 | Per-result durable receipt, partial success/duplicate/conflict, bounded payload and matching outbox ACK tests pass | Local QA only; public HTTPS acceptance remains outside scope; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
+| [x] | 52 | Metrics/load/soak và giới hạn thực tế | 7, 47, 54, 57 (metrics/scale) | 51; G6 | Five real local agent processes against isolated PostgreSQL; 25/50/100/200 fixtures complete, zero final queue/active/over-capacity; metrics include DB version/schema bytes and process RSS/CPU | Bounded local load evidence only, not VPS capacity/20-agent/500-agent/soak acceptance; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
+| [x] | 53 | Đối chiếu spec và đóng audit | 1–58 (đối chiếu cuối; không tự triển khai phần thiếu) | 52; spec 1–58 | Reconciliation report records evidence, scope, user deferrals and remaining gates; this closes the Task 47–53 workstream, not the full release audit | Overall audit remains open for Tasks 14–19 acceptance, Task 38 fault scenario, deferred Task 46, and final user sign-off; see [Tasks 47–53 report](audits/distributed-crawler/task-47-53-scale-and-closeout.md) |
 
 53 task ở đây không tương ứng 1:1 với số mục spec. Một hàng vẫn có thể cần tách nhỏ sau audit code; dùng hậu tố như `26a/26b`, giữ ID cũ và xin duyệt trước khi tách. Không thêm mục lớn vào task đang chạy chỉ vì cùng file.
 
@@ -283,8 +283,8 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 
 | Nội dung | Trạng thái |
 | --- | --- |
-| Kế hoạch tổng thể và checklist | Đã soạn, chờ người dùng đọc/duyệt |
-| Task đang chạy | Task 46: clean-machine installer/canary acceptance; Tasks 39–45 passed local automated QA, Task 42 audit complete; Task 46 awaits Authenticode signer and clean Windows VM |
+| Kế hoạch tổng thể và checklist | Đã soạn, người dùng đã duyệt; checklist cập nhật sau Task 47–53 |
+| Task đang chạy | Task 53 reconciliation hoàn tất ở local scope; Tasks 47–52 implementation/local QA recorded. Task 46 được người dùng chủ động hoãn, không pass; Tasks 14–19 acceptance và Task 38 fault scenario vẫn còn mở |
 | Task 01 | Đã nghiệm thu baseline; không đồng nghĩa hoàn thành mục 15 |
 | Task 02 | Đã nghiệm thu final result |
 | Task 03 | Đã nghiệm thu product streaming |
@@ -308,12 +308,13 @@ Lưu phiếu đã điền/bằng chứng text đã loại secret trong `docs/aud
 | Task 43 | Code QA passed; see [Task 43 report](audits/distributed-crawler/task-43-verified-agent-artifacts.md); trusted signed release/clean VM pending Task 46 |
 | Task 44 | DRAIN-based update protocol and durable post-boot ACK implemented; see [Task 44 report](audits/distributed-crawler/task-44-drained-agent-update.md); real signed Windows replacement remains pending Task 46 |
 | Task 45 | DRAIN-preserving verified rollback implemented and locally tested; see [Task 45 report](audits/distributed-crawler/task-45-agent-rollback.md) |
-| Task 46 | Runbook prepared; acceptance not run because no production Authenticode signer or clean Windows VM is available |
-| Task 47–53 | Chưa làm |
+| Task 46 | Người dùng chủ động hoãn; runbook có sẵn, acceptance chưa chạy và không được tính pass |
+| Task 47–52 | Đã triển khai và qua local automated QA trong phạm vi báo cáo; Task 52 chỉ xác nhận 5 process/200 fixtures cục bộ, không phải capacity/SLA production |
+| Task 53 | Đã đối chiếu và ghi rõ bằng chứng, ngoại lệ, deferred work và remaining acceptance gates; chưa phải full audit/release sign-off |
 | Runtime/deployment đang chạy | Không rebuild/restart; không migration DB ứng dụng |
 | Push/deploy/release được thực hiện | Không |
 
-**Điểm dừng hiện tại:** chạy `python scripts/audits/audit_lease_baseline.py --proxy-auth` để kiểm tra local, đọc [báo cáo batch](audits/distributed-crawler/task-14-19-auth-local-gate.md) và chốt các gate còn lại. Chưa bật auth trên VPS, chưa publish installer; không tự push/deploy hoặc chuyển Task 20.
+**Điểm dừng hiện tại:** Task 47–53 đã hoàn tất trong phạm vi local; không push/deploy/restart. Còn các cổng Tasks 14–19 (bao gồm public/operator acceptance), Task 38 fault scenario, Task 46 đã được người dùng hoãn, và xác nhận cuối của người dùng. Đây không phải tuyên bố full audit hay production release sign-off.
 
 Follow-up acceptance: [Step 02 Crawler operator UI](audits/distributed-crawler/step-02-crawler-operator-ui.md)
 adds an isolated browser test and manual instructions. This is partial Task 19 evidence;

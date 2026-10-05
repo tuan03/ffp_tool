@@ -19,22 +19,23 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
-from .coordinator_models import Base, create_database_engine, create_session_factory
+from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
-from .operator_authorization import OperatorCredentials, install_operator_authorization
+from .operator_authorization import OperatorAudit, OperatorCredentials, install_operator_authorization
 from .agent_keys import install_agent_key_routes
 from .agent_identity import AgentSecurity, install_enrollment_routes
 from .agent_key_lifecycle import install_key_lifecycle_routes
-from .agent_command_ledger import AgentCommandLedger, AgentCommandRequest
+from .agent_command_ledger import AgentCommandLedger, AgentCommandRequest, BulkAgentCommandRequest
 from .agent_runtime_config import AgentRuntimeConfig
 from .global_admission_gate import GlobalAdmissionGateRequest
+from .fleet_circuit_breaker import FleetCircuitBreakerResetRequest, reset as reset_fleet_circuit_breaker, snapshot as fleet_circuit_breaker_snapshot
 from .protocol import payload_checksum, require_message, utc_iso
 from ..observability import safe_fields, write_log
 
@@ -119,6 +120,7 @@ class ConnectionManager:
             runtime = {
                 "activeTasks": max(0, int(active_tasks)),
                 "availableSlots": max(0, int(available_slots)),
+                "readyForTasks": bool(previous.get("readyForTasks", False)),
                 "currentTasks": self._bounded_current_tasks(current_tasks) if current_tasks is not None else list(previous.get("currentTasks") or []),
                 "executingTaskIds": sorted({str(value) for value in executing_task_ids[:32] if isinstance(value, str) and value}) if isinstance(executing_task_ids, list) else list(previous.get("executingTaskIds") or []),
                 "capabilities": self._bounded_capabilities(capabilities) if capabilities is not None else dict(previous.get("capabilities") or {}),
@@ -193,6 +195,7 @@ class ConnectionManager:
             available = max(0, min(int(available_slots), capacity))
             status["availableSlots"] = available
             status["activeTasks"] = capacity - available
+            status["readyForTasks"] = True
 
     async def update_running_task_ids(self, client_id: str, task_ids: list[str]) -> None:
         async with self.lock:
@@ -203,6 +206,7 @@ class ConnectionManager:
             self.runtime[client_id] = {
                 "activeTasks": len(current_tasks),
                 "availableSlots": max(0, int(previous.get("availableSlots", 0))),
+                "readyForTasks": bool(previous.get("readyForTasks", False)),
                 "currentTasks": current_tasks,
                 "executingTaskIds": sorted({str(value) for value in task_ids[:32] if isinstance(value, str) and value}),
                 "capabilities": dict(previous.get("capabilities") or {}),
@@ -446,7 +450,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             enriched_payload["imageProfileSlug"] = image_profile["slug"]
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
             async with cache_maintenance_lock:
-                return await asyncio.to_thread(store.create_job, enriched_payload)
+                job = await asyncio.to_thread(store.create_job, enriched_payload)
+            await manager.broadcast({"type": "work_available"})
+            return job
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:
@@ -844,6 +850,27 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         except RuntimeError:
             raise HTTPException(status_code=503, detail="Global crawler admission gate is unavailable.") from None
 
+    @app.get("/api/v1/fleet-circuit-breaker")
+    async def get_fleet_circuit_breaker(request: Request) -> dict[str, Any]:
+        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        with store.sessions() as session:
+            return fleet_circuit_breaker_snapshot(session)
+
+    @app.post("/api/v1/fleet-circuit-breaker/reset")
+    async def reset_fleet_circuit_breaker_route(payload: FleetCircuitBreakerResetRequest, request: Request) -> dict[str, Any]:
+        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        with store.sessions.begin() as session:
+            audit = session.get(OperatorAudit, request.state.operator_audit_id)
+            if audit is None or audit.actor != operator_credentials.username or audit.outcome != "authorized":
+                raise HTTPException(status_code=503, detail="Operator audit record is unavailable.")
+            audit.target_id = "fleet"
+            audit.reason = f"FLEET_BREAKER_RESET: {payload.reason.strip()}"
+            state = reset_fleet_circuit_breaker(session, actor=operator_credentials.username,
+                reason=payload.reason.strip())
+        return state
+
     @app.get("/api/v1/clients")
     async def list_clients() -> list[dict[str, Any]]:
         clients = await asyncio.to_thread(store.list_clients)
@@ -857,6 +884,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 "leasedTasks": client["activeTasks"],
                 "activeTasks": runtime.get(client["id"], {}).get("activeTasks", 0),
                 "availableSlots": runtime.get(client["id"], {}).get("availableSlots", 0),
+                "readyForTasks": bool(runtime.get(client["id"], {}).get("readyForTasks", False)),
                 "currentTasks": [
                     {key: value for key, value in task.items() if key != "leaseId"}
                     for task in runtime.get(client["id"], {}).get("currentTasks", [])
@@ -868,6 +896,54 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             }
             for client in clients
         ]
+
+    @app.post("/api/v1/clients/bulk-commands", status_code=202)
+    async def submit_bulk_agent_command(payload: BulkAgentCommandRequest, request: Request) -> dict[str, Any]:
+        if operator_credentials is None or not operator_credentials.accepts(request.headers.get("authorization", "")):
+            raise HTTPException(status_code=401, detail="Operator authorization is required.")
+        if payload.allAgents == bool(payload.agentGroup):
+            raise HTTPException(status_code=422, detail="Choose exactly one explicit group or allAgents scope.")
+        clients = await asyncio.to_thread(store.list_clients)
+        if payload.jobId:
+            with store.sessions() as session:
+                job_client_ids = set(session.scalars(select(CrawlTask.assigned_client_id).where(
+                    CrawlTask.job_id == payload.jobId,
+                    CrawlTask.assigned_client_id.is_not(None),
+                    CrawlTask.status.in_(["leased", "running", "cancelling"]),
+                )).all())
+            if not job_client_ids:
+                raise HTTPException(status_code=404, detail="No active agents are assigned to the selected job.")
+        else:
+            job_client_ids = None
+        crawler_capability = {"amazon": "amazon", "pinterest": "pinterest"}.get(payload.crawler or "")
+        selected = [client for client in clients
+            if (payload.allAgents or client.get("agentGroup") == payload.agentGroup)
+            and (payload.agentVersion is None or client.get("agentVersion") == payload.agentVersion)
+            and (crawler_capability is None or (client.get("capabilities") or {}).get(crawler_capability) is True)
+            and (job_client_ids is None or client.get("id") in job_client_ids)]
+        if len(selected) > 500:
+            raise HTTPException(status_code=413, detail="Bulk command scope exceeds 500 agents; narrow the filters.")
+        with store.sessions.begin() as session:
+            audit = session.get(OperatorAudit, request.state.operator_audit_id)
+            if audit is None or audit.actor != operator_credentials.username or audit.outcome != "authorized":
+                raise HTTPException(status_code=503, detail="Operator audit record is unavailable.")
+            audit.target_id = payload.agentGroup or "all-agents"
+            audit.reason = f"BULK_{payload.type}: {payload.reason.strip()}"
+        outcomes = []
+        for client in selected:
+            client_id = str(client["id"])
+            try:
+                command = await asyncio.to_thread(command_ledger.submit, client_id,
+                    uuid.uuid5(payload.requestId, client_id).hex, payload.type,
+                    payload.expiresInSeconds,
+                    {"reason": payload.reason.strip(), "scope": "agent", "waitForOutboxAck": True}
+                        if payload.type == "DRAIN" else None)
+                await dispatch_next_agent_command(client_id)
+                outcomes.append({"agentId": client_id, "status": "queued", "commandId": command["commandId"]})
+            except Exception:
+                outcomes.append({"agentId": client_id, "status": "failed"})
+        return {"requested": len(selected), "queued": sum(item["status"] == "queued" for item in outcomes),
+                "failed": sum(item["status"] == "failed" for item in outcomes), "agents": outcomes}
 
     @app.post("/api/v1/clients/{client_id}/commands", status_code=202)
     async def submit_agent_command(client_id: str, payload: AgentCommandRequest) -> dict[str, Any]:
@@ -1188,6 +1264,56 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if status == "invalid":
             raise HTTPException(status_code=400, detail="Result job identity does not match the leased task.")
         return response
+
+    @app.put("/api/v1/worker/results/batch")
+    async def upload_result_batch(
+        request: Request,
+        x_client_id: str = Header(alias="X-Client-Id"),
+    ) -> dict[str, Any]:
+        """Accept independently receipted final results; one bad item never rolls back siblings."""
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != x_client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
+        try:
+            body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
+            if request.headers.get("content-encoding", "").casefold() == "gzip":
+                body = decompress_gzip_limited(body, maximum_bytes=50 * 1024 * 1024)
+        except ResultPayloadTooLarge as error:
+            raise HTTPException(status_code=413, detail="Decompressed result batch exceeds 50 MB.") from error
+        except (OSError, EOFError) as error:
+            raise HTTPException(status_code=400, detail="Invalid gzip result batch.") from error
+        try:
+            envelope = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise HTTPException(status_code=400, detail="Result batch must be valid JSON.") from error
+        items = envelope.get("items") if isinstance(envelope, dict) else None
+        if not isinstance(items, list) or not items or len(items) > 25:
+            raise HTTPException(status_code=400, detail="Result batch must contain 1 to 25 items.")
+
+        receipts: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                receipts.append({"status": "invalid", "reason": "item_not_object"})
+                continue
+            task_id = str(item.get("taskId") or "")
+            lease_id = str(item.get("leaseId") or "")
+            payload = item.get("payload")
+            if not task_id or not lease_id or not isinstance(payload, dict):
+                receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "invalid_envelope"})
+                continue
+            if any(str(payload.get(name) or "") != expected for name, expected in (
+                ("taskId", task_id), ("clientId", x_client_id), ("leaseId", lease_id),
+            )):
+                receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "identity_mismatch"})
+                continue
+            checksum = payload_checksum(payload)
+            if item.get("checksum") and item["checksum"] != checksum:
+                receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "checksum_mismatch"})
+                continue
+            accepted = store.accept_result(task_id, x_client_id, lease_id, checksum, payload)
+            receipts.append({"taskId": task_id, "leaseId": lease_id, **accepted})
+        return {"results": receipts}
 
     @app.put("/api/v1/worker/tasks/{task_id}/products/{product_key}")
     async def upload_product(

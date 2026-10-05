@@ -39,6 +39,20 @@ class AgentCommandRequest(BaseModel):
     dryRun: bool = False
 
 
+class BulkAgentCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestId: uuid.UUID
+    type: Literal["PAUSE", "RESUME", "DRAIN"]
+    allAgents: bool = False
+    agentGroup: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+    crawler: Literal["amazon", "pinterest"] | None = None
+    agentVersion: str | None = Field(default=None, min_length=1, max_length=64)
+    jobId: str | None = Field(default=None, min_length=1, max_length=40)
+    expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
+    reason: str = Field(min_length=10, max_length=500)
+
+
 class AgentCommand(Base):
     __tablename__ = "crawler_agent_commands"
     __table_args__ = (

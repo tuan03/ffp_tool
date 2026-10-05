@@ -763,6 +763,44 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentCommandWebSocketTests(unittest.TestCase):
+    def test_bulk_commands_require_operator_and_are_scoped_to_selected_group(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'bulk.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"), agent_environment="test")
+            client = stack.enter_context(TestClient(app))
+            auth = ("operator", "fixture")
+            agents = {}
+            for group in ("amazon-us", "amazon-eu"):
+                key = client.post("/api/v1/agent-keys", auth=auth, json={
+                    "requestId": uuid.uuid4().hex, "name": group, "maxWorkers": 1,
+                    "crawlers": ["amazon"], "environment": "test", "agentGroup": group,
+                    "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+                }).json()["key"]
+                agent_id = client.post("/api/v1/worker/register", headers={"Authorization": "Bearer " + key},
+                    json={"requestId": uuid.uuid4().hex, "displayName": group}).json()["agentId"]
+                agents[group] = agent_id
+
+            url = "/api/v1/clients/bulk-commands"
+            payload = {"requestId": uuid.uuid4().hex, "type": "PAUSE", "agentGroup": "amazon-us",
+                "reason": "approved group pause"}
+            self.assertEqual(client.post(url, json=payload).status_code, 401)
+            ambiguous = {**payload, "requestId": uuid.uuid4().hex, "allAgents": True}
+            self.assertEqual(client.post(url, auth=auth, json=ambiguous).status_code, 422)
+            response = client.post(url, auth=auth, json=payload)
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertEqual(response.json()["queued"], 1)
+            self.assertEqual(response.json()["agents"][0]["agentId"], agents["amazon-us"])
+            from engine.distributed.agent_command_ledger import AgentCommandLedger
+            ledger = AgentCommandLedger(app.state.store.sessions)
+            self.assertEqual(ledger.history(agents["amazon-us"])[0]["type"], "PAUSE")
+            self.assertEqual(ledger.history(agents["amazon-eu"]), [])
+
     def test_update_command_is_rejected_until_a_successful_drain(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

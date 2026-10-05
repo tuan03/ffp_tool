@@ -32,6 +32,7 @@ class AgentKeyTests(unittest.TestCase):
                     created = client.post("/api/v1/agent-keys", auth=auth, json={
                         "requestId": uuid.uuid4().hex, "name": f"fixture-{index}", "maxWorkers": 2,
                         "crawlers": ["amazon"], "environment": "test",
+                        "agentGroup": "testing",
                         "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
                     })
                     self.assertEqual(created.status_code, 201, created.text)
@@ -54,13 +55,15 @@ class AgentKeyTests(unittest.TestCase):
                     operator_credentials=OperatorCredentials("operator", "fixture-password"))
             with TestClient(app) as client:
                 payload = {"requestId": uuid.uuid4().hex, "name": "fixture", "maxWorkers": 2,
-                           "crawlers": ["amazon"], "environment": "test", "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
+                           "crawlers": ["amazon"], "environment": "test", "agentGroup": "amazon-us",
+                           "expiresAt": (utc_now() + timedelta(days=1)).isoformat()}
                 url = "/api/v1/agent-keys"
                 self.assertEqual(client.post(url, json=payload).status_code, 401)
                 self.assertEqual(client.post(url, json=payload, headers={"Authorization": "Bearer agent"}).status_code, 401)
                 auth = ("operator", "fixture-password")
                 response = client.post(url, json=payload, auth=auth)
                 self.assertEqual(response.status_code, 201, response.text)
+                self.assertEqual(response.json()["metadata"]["agentGroup"], "amazon-us")
                 raw = response.json()["key"]
                 key_id = response.json()["metadata"]["id"]
                 self.assertEqual(response.headers["cache-control"], "no-store")
@@ -75,6 +78,7 @@ class AgentKeyTests(unittest.TestCase):
                 with app.state.store.sessions() as session:
                     keys = list(session.scalars(select(AgentKey)))
                     self.assertEqual(len(keys), 1)
+                    self.assertEqual(keys[0].agent_group, "amazon-us")
                     self.assertNotEqual(keys[0].verifier, raw)
                     self.assertEqual(len(keys[0].verifier), 64)
                     self.assertEqual(keys[0].verifier, hashlib.sha256(raw.encode("ascii")).hexdigest())
@@ -82,7 +86,8 @@ class AgentKeyTests(unittest.TestCase):
                     self.assertEqual(len(raw), len(f"ffp_agent_{key_id}_") + 43)
                     self.assertNotIn(raw, repr([row.__dict__ for row in session.scalars(select(OperatorAudit))]))
                     self.assertEqual(session.scalar(select(OperatorAudit).where(OperatorAudit.reason == "AGENT_KEY_CREATED")).target_id, key_id)
-                for changes in ({"maxWorkers": 0}, {"crawlers": []}, {"crawlers": ["admin"]}, {"expiresAt": "2000-01-01T00:00:00Z"}):
+                for changes in ({"maxWorkers": 0}, {"crawlers": []}, {"crawlers": ["admin"]},
+                                {"agentGroup": "bad group"}, {"expiresAt": "2000-01-01T00:00:00Z"}):
                     rejected = client.post(url, json={**payload, "requestId": uuid.uuid4().hex, **changes}, auth=auth)
                     self.assertIn(rejected.status_code, (400, 422))
                 if engine is not None and engine.dialect.name == "postgresql":

@@ -328,6 +328,25 @@ test("operator command controller submits idempotency ID and reads ordered timel
   assert.equal(history[0]?.events[0]?.status, "ACKED");
 });
 
+test("bulk group command sends only the explicit group and validates the summary", async () => {
+  let requestUrl = "";
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ requested: 3, queued: 3, failed: 0, agents: [] }, 202);
+    },
+  });
+  const summary = await controller.bulkCommand("amazon-us", "PAUSE", "approved group pause");
+  assert.equal(requestUrl, "https://coordinator.test/api/v1/clients/bulk-commands");
+  assert.equal(typeof requestBody, "object");
+  assert.equal((requestBody as { agentGroup?: unknown }).agentGroup, "amazon-us");
+  assert.equal((requestBody as { allAgents?: unknown }).allAgents, undefined);
+  assert.deepEqual(summary, { requested: 3, queued: 3, failed: 0 });
+});
+
 test("agent config reload sends the validated configuration through the operator command endpoint", async () => {
   let requestUrl = "";
   let requestBody: unknown;

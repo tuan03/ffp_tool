@@ -1,8 +1,10 @@
 """Additive, versioned Coordinator schema initialization."""
 
+import json
+
 from sqlalchemy import Column, Index, Integer, MetaData, Table, inspect, select, text
 
-from .coordinator_models import ArchivedTaskAttempt, Base, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
+from .coordinator_models import ArchivedTaskAttempt, Base, ClientRecord, CoordinatorState, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
@@ -10,8 +12,9 @@ from .agent_assets import AgentAssetNamespace
 from .agent_command_ledger import AgentCommand, AgentCommandEvent
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from . import image_profile_repository  # Register profile tables before creating metadata.
+from .fleet_circuit_breaker import STATE_KEY as FLEET_BREAKER_STATE_KEY, _default_state as default_fleet_breaker_state
 
-MIGRATION_VERSION = 12
+MIGRATION_VERSION = 14
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -142,3 +145,22 @@ def migrate_coordinator(engine) -> None:
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE crawler_clients ADD COLUMN {name} {definition}"))
             connection.execute(MIGRATIONS.insert().values(version=12))
+            versions.add(12)
+        if 13 not in versions:
+            client_columns = {column["name"] for column in inspect(connection).get_columns("crawler_clients")}
+            key_columns = {column["name"] for column in inspect(connection).get_columns("crawler_agent_keys")}
+            if "agent_group" not in client_columns:
+                connection.execute(text("ALTER TABLE crawler_clients ADD COLUMN agent_group VARCHAR(80) NOT NULL DEFAULT 'default'"))
+            if "agent_group" not in key_columns:
+                connection.execute(text("ALTER TABLE crawler_agent_keys ADD COLUMN agent_group VARCHAR(80) NOT NULL DEFAULT 'default'"))
+            existing_indexes = {index["name"] for index in inspect(connection).get_indexes("crawler_clients")}
+            if "ix_crawler_clients_agent_group" not in existing_indexes:
+                Index("ix_crawler_clients_agent_group", ClientRecord.agent_group).create(connection)
+            connection.execute(MIGRATIONS.insert().values(version=13))
+            versions.add(13)
+        if 14 not in versions:
+            if connection.scalar(select(CoordinatorState.key).where(CoordinatorState.key == FLEET_BREAKER_STATE_KEY)) is None:
+                connection.execute(CoordinatorState.__table__.insert().values(
+                    key=FLEET_BREAKER_STATE_KEY, value=json.dumps(default_fleet_breaker_state()),
+                ))
+            connection.execute(MIGRATIONS.insert().values(version=14))

@@ -40,6 +40,7 @@ class ClientRecord(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(200))
+    agent_group: Mapped[str] = mapped_column(String(80), default="default", index=True)
     status: Mapped[str] = mapped_column(String(32), default="offline", index=True)
     agent_version: Mapped[str] = mapped_column(String(32), default="unknown")
     crawler_version: Mapped[str] = mapped_column(String(64), default="unknown")

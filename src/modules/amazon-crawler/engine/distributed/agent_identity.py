@@ -36,6 +36,7 @@ class AgentPrincipal:
     agent_id: str
     max_workers: int
     crawlers: tuple[str, ...]
+    agent_group: str
 
 
 class AgentSecurity:
@@ -66,7 +67,7 @@ class AgentSecurity:
             if key.agent_id is None or key.status != "active":
                 raise HTTPException(401, detail={"code": "AGENT_ENROLLMENT_REQUIRED"})
             key.last_used_at = utc_now()
-            return AgentPrincipal(key.id, key.agent_id, key.max_workers, tuple(key.crawlers))
+            return AgentPrincipal(key.id, key.agent_id, key.max_workers, tuple(key.crawlers), key.agent_group)
 
     def register(self, authorization: str, payload: RegisterAgent) -> dict:
         with self.sessions.begin() as session:
@@ -75,7 +76,7 @@ class AgentSecurity:
                 key.agent_id = uuid.uuid4().hex
                 session.add(AgentEnrollment(agent_id=key.agent_id, request_id=payload.requestId.hex))
                 session.add(ClientRecord(id=key.agent_id, display_name=payload.displayName,
-                    max_concurrent_inputs=min(16, key.max_workers)))
+                    max_concurrent_inputs=min(16, key.max_workers), agent_group=key.agent_group))
             else:
                 enrollment = session.get(AgentEnrollment, key.agent_id)
                 if enrollment is None or enrollment.request_id not in {None, payload.requestId.hex}:
@@ -84,7 +85,7 @@ class AgentSecurity:
             key.status = "active"
             key.last_used_at = utc_now()
             return {"agentId": key.agent_id, "authProtocol": 1, "maxWorkers": min(16, key.max_workers),
-                    "crawlers": key.crawlers, "environment": key.environment}
+                    "crawlers": key.crawlers, "environment": key.environment, "agentGroup": key.agent_group}
 
 
 def install_enrollment_routes(app, security: AgentSecurity):

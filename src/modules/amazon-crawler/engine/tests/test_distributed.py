@@ -391,6 +391,7 @@ class DistributedCacheControlTests(unittest.IsolatedAsyncioTestCase):
             "client-a": {
                 "activeTasks": 3,
                 "availableSlots": 1,
+                "readyForTasks": False,
                 "currentTasks": [{
                     "taskId": "task-pin-1",
                     "jobId": "job-pin-1",
@@ -3288,6 +3289,70 @@ class CoordinatorApiTests(unittest.TestCase):
                 self.assertEqual(product_conflict.status_code, 409)
                 self.assertEqual(product_conflict.json()["detail"]["code"], "UPLOAD_CHECKSUM_CONFLICT")
                 self.assertEqual(upload(first, "client-a").status_code, 409)
+
+    def test_result_batch_returns_independent_receipts_and_retries_as_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'batch.sqlite3').as_posix()}")
+            with TestClient(app) as client:
+                store = app.state.store
+                job = store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+                store.register_client(client_hello("batch-agent", slots=2))
+                leases = store.lease_tasks("batch-agent", 2)
+                items = []
+                for lease in leases:
+                    payload = {"taskId": lease["taskId"], "leaseId": lease["leaseId"],
+                               "clientId": "batch-agent", "jobId": job["id"], "products": []}
+                    items.append({"taskId": lease["taskId"], "leaseId": lease["leaseId"],
+                                  "checksum": payload_checksum(payload), "payload": payload})
+                # A malformed sibling receives its own failure and does not prevent the valid result commit.
+                items[1]["payload"]["leaseId"] = "wrong-lease"
+                response = client.put("/api/v1/worker/results/batch",
+                                      headers={"X-Client-Id": "batch-agent"}, json={"items": items})
+                self.assertEqual(response.status_code, 200)
+                receipts = response.json()["results"]
+                self.assertEqual(receipts[0]["status"], "accepted")
+                self.assertEqual(receipts[1]["status"], "invalid")
+                items[1]["payload"]["leaseId"] = items[1]["leaseId"]
+                retry = client.put("/api/v1/worker/results/batch",
+                                   headers={"X-Client-Id": "batch-agent"}, json={"items": items[:1]})
+                self.assertEqual(retry.status_code, 200)
+                self.assertEqual(retry.json()["results"][0]["status"], "duplicate")
+                self.assertEqual(retry.json()["results"][0]["receiptId"], receipts[0]["receiptId"])
+                changed_payload = {**items[0]["payload"], "marker": "changed"}
+                changed = {**items[0], "payload": changed_payload,
+                           "checksum": payload_checksum(changed_payload)}
+                conflict = client.put("/api/v1/worker/results/batch",
+                                      headers={"X-Client-Id": "batch-agent"}, json={"items": [changed]})
+                self.assertEqual(conflict.status_code, 200)
+                self.assertEqual(conflict.json()["results"][0]["status"], "conflict")
+                self.assertEqual(conflict.json()["results"][0]["receiptId"], receipts[0]["receiptId"])
+
+    def test_client_readiness_is_false_until_agent_finishes_reconciliation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'ready.sqlite3').as_posix()}")
+            with TestClient(app) as client:
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello("ready-agent", slots=1))
+                    self.assertEqual(agent.receive_json()["type"], "hello_ack")
+                    self.assertFalse(client.get("/api/v1/clients").json()[0]["readyForTasks"])
+                    agent.send_json({"type": "ready", "availableSlots": 1,
+                                     "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
+                    self.assertTrue(client.get("/api/v1/clients").json()[0]["readyForTasks"])
+
+    def test_new_job_wakes_ready_agents_without_waiting_for_next_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'work-available.sqlite3').as_posix()}")
+            with TestClient(app) as client:
+                with client.websocket_connect("/api/v1/worker/connect") as agent:
+                    agent.send_json(client_hello("wake-agent", slots=1))
+                    self.assertEqual(agent.receive_json()["type"], "hello_ack")
+                    agent.send_json({"type": "ready", "availableSlots": 1,
+                                     "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
+                    self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).status_code, 202)
+                    self.assertEqual(agent.receive_json()["type"], "work_available")
+                    agent.send_json({"type": "ready", "availableSlots": 1,
+                                     "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
+                    self.assertEqual(agent.receive_json()["type"], "assignment")
 
     def test_single_task_cancel_route_does_not_cancel_sibling_or_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

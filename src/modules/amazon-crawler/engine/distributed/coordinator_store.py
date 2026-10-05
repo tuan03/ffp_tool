@@ -46,6 +46,7 @@ from .protocol import product_source_key as _source_key
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from .retry_taxonomy import classify_task_error, parse_retry_after
+from .fleet_circuit_breaker import acquire_capacity as acquire_fleet_capacity, record_failure as record_fleet_failure, record_success as record_fleet_success, snapshot as fleet_breaker_snapshot
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
 
@@ -275,6 +276,13 @@ class CoordinatorStore(CoordinatorObservability):
         if len(raw_urls) > 200:
             raise ValueError("A job may contain at most 200 inputs.")
         settings = CrawlSettings.from_api(payload).api_dict()
+        allowed_agent_group = str(payload.get("allowedAgentGroup", payload.get("allowed_agent_group", "")) or "").strip()
+        if allowed_agent_group and (len(allowed_agent_group) > 80
+                or not allowed_agent_group[0].isalnum()
+                or any(not (character.isalnum() or character in "_-") for character in allowed_agent_group)):
+            raise ValueError("allowedAgentGroup must contain 1-80 letters, numbers, underscores, or hyphens.")
+        if allowed_agent_group:
+            settings["allowedAgentGroup"] = allowed_agent_group
         external_request_id = str(payload.get("externalRequestId") or "").strip() or None
         with self._job_creation_lock, self.sessions.begin() as session:
             if external_request_id:
@@ -856,6 +864,18 @@ class CoordinatorStore(CoordinatorObservability):
             count = min(count, max(0, client.max_concurrent_inputs - int(active_count)))
             if count == 0:
                 return []
+            breaker = fleet_breaker_snapshot(session)
+            probe_count = 0
+            probe_started_at = breaker.get("probeStartedAt")
+            if breaker.get("state") == "HALF_OPEN" and isinstance(probe_started_at, str):
+                probe_started = datetime.fromisoformat(probe_started_at.replace("Z", "+00:00"))
+                probe_count = int(session.scalar(select(func.count(TaskAttempt.id)).where(
+                    TaskAttempt.leased_at >= probe_started,
+                    TaskAttempt.status.in_(["leased", "running"]),
+                )) or 0)
+            count = acquire_fleet_capacity(session, count, probe_count, now=now)
+            if count == 0:
+                return []
             amazon_blocked = (
                 self._active_negative(session, CAPTCHA_COOLDOWN_KEY, now) is not None
                 or self._active_negative(session, f"{CLIENT_RATE_COOLDOWN_PREFIX}{client_id}", now) is not None
@@ -864,21 +884,77 @@ class CoordinatorStore(CoordinatorObservability):
             can_pinterest = bool(client_caps.get("pinterest", False))
             can_amazon = bool(client_caps.get("amazon", True))
             can_reviews = bool(client_caps.get("amazonReviews", False))
-            tasks = session.scalars(
-                select(CrawlTask)
+            task_ids = session.scalars(
+                select(CrawlTask.id)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]))
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
-                # PostgreSQL rejects FOR UPDATE across the nullable side of the
-                # priority LEFT JOIN. Only CrawlTask rows are lease-owned.
-                .with_for_update(of=CrawlTask, skip_locked=True)
             ).all()
-            for task in tasks:
+            pending_channels: set[str] = set()
+            for pending_task_id in task_ids:
+                pending_task = session.get(CrawlTask, pending_task_id)
+                if pending_task is None:
+                    continue
+                pending_job = session.get(CrawlJob, pending_task.job_id)
+                pending_settings = dict(pending_job.settings if pending_job else {})
+                if (pending_settings.get("allowedAgentGroup") or pending_settings.get("allowed_agent_group")) \
+                        and str(pending_settings.get("allowedAgentGroup") or pending_settings.get("allowed_agent_group")) != client.agent_group:
+                    continue
+                pending_channel = str(pending_settings.get("channel", "amazon")).lower()
+                if (pending_channel == "amazon" and can_amazon and not amazon_blocked
+                        or pending_channel == "amazon_reviews" and can_reviews and not amazon_blocked
+                        or pending_channel == "pinterest" and can_pinterest):
+                    pending_channels.add(pending_channel)
+            if pending_channels:
+                capability_signature = tuple(bool(client_caps.get(key, default)) for key, default in (
+                    ("amazon", True), ("amazonReviews", False), ("pinterest", False),
+                ))
+                peers = session.scalars(select(ClientRecord).where(
+                    ClientRecord.agent_group == client.agent_group,
+                    ClientRecord.status.in_(("online", "busy", "waiting_captcha")),
+                    ClientRecord.desired_execution_state == "RUNNING",
+                    ClientRecord.global_admission_gate_revision == admission_gate.revision,
+                    ClientRecord.global_admission_gate_state == admission_gate.state,
+                )).all()
+                cohort = []
+                for peer in peers:
+                    peer_capabilities = peer.capabilities if isinstance(peer.capabilities, dict) else {}
+                    peer_signature = tuple(bool(peer_capabilities.get(key, default)) for key, default in (
+                        ("amazon", True), ("amazonReviews", False), ("pinterest", False),
+                    ))
+                    if peer_signature != capability_signature:
+                        continue
+                    offline_after = AgentRuntimeConfig.from_payload(peer.applied_agent_config or {}).clientOfflineAfterSeconds
+                    if _as_utc(peer.last_seen_at) < now - timedelta(seconds=offline_after):
+                        continue
+                    active_for_peer = int(session.scalar(select(func.count(CrawlTask.id)).where(
+                        CrawlTask.assigned_client_id == peer.id,
+                        CrawlTask.status.in_(("leased", "running", "cancelling")),
+                    )) or 0)
+                    cohort.append((peer.id, active_for_peer, max(1, peer.max_concurrent_inputs)))
+                if len(cohort) > 1:
+                    least_loaded_ratio = min(active / capacity for _, active, capacity in cohort)
+                    own_ratio = next((active / capacity for peer_id, active, capacity in cohort if peer_id == client_id), 0.0)
+                    if own_ratio > least_loaded_ratio:
+                        return []
+            for task_id in task_ids:
+                if len(leases) >= count:
+                    break
+                # Lock only the task about to be leased; locking the whole queue
+                # made simultaneous ready agents serialize behind one caller.
+                task = session.scalar(select(CrawlTask).where(
+                    CrawlTask.id == task_id, CrawlTask.status == "queued",
+                ).with_for_update(skip_locked=True).execution_options(populate_existing=True))
+                if task is None:
+                    continue
                 if task.next_retry_at is not None and _as_utc(task.next_retry_at) > now:
                     continue
                 job = session.get(CrawlJob, task.job_id)
                 job_settings = dict(job.settings if job else {})
+                allowed_agent_group = str(job_settings.get("allowedAgentGroup") or "").strip()
+                if allowed_agent_group and client.agent_group != allowed_agent_group:
+                    continue
                 channel = str(job_settings.get("channel", "amazon")).lower()
                 if channel == "pinterest" and not can_pinterest:
                     continue
@@ -1025,6 +1101,7 @@ class CoordinatorStore(CoordinatorObservability):
             else:
                 task.next_retry_at = None
             task.last_error = error
+            record_fleet_failure(session, error)
             job = session.get(CrawlJob, task.job_id)
             job_settings = job.settings if job else {}
             if str(job_settings.get("channel", "amazon")).lower() == "amazon":
@@ -1157,6 +1234,7 @@ class CoordinatorStore(CoordinatorObservability):
             attempt.finished_at = utc_now()
             attempt.result_checksum = checksum
             attempt.duration_ms = max(0, int((attempt.finished_at - _as_utc(attempt.started_at)).total_seconds() * 1000))
+            record_fleet_success(session, attempt.started_at)
             completion_event: dict[str, Any] = {"taskId": task.id, "clientId": client_id}
             if str((job.settings if job else {}).get("channel") or "").lower() == "pinterest":
                 candidate_count = len(payload.get("candidates")) if isinstance(payload.get("candidates"), list) else 0
@@ -3539,6 +3617,7 @@ class CoordinatorStore(CoordinatorObservability):
     def _client_snapshot(client: ClientRecord, *, active_tasks: int = 0) -> dict[str, Any]:
         return {
             "id": client.id, "displayName": client.display_name, "status": client.status,
+            "agentGroup": client.agent_group,
             "agentVersion": client.agent_version, "protocolVersion": client.protocol_version,
             "maxConcurrentInputs": client.max_concurrent_inputs, "capabilities": client.capabilities,
             "desiredExecutionState": client.desired_execution_state,

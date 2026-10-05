@@ -29,6 +29,7 @@ export interface AmazonCrawlerSettings {
   browserTabs: number;
   headless: boolean;
   amazonZip: string;
+  allowedAgentGroup?: string;
   captchaTimeoutSeconds: number;
   dnsTimeoutSeconds?: number;
   connectTimeoutSeconds?: number;
@@ -565,6 +566,25 @@ export interface AmazonCrawlerAgentObservability {
   backlog: number;
   dropped: number;
   sampledAt?: string;
+  agentGroup?: string;
+  activeTasks?: number;
+  maxConcurrentInputs?: number;
+  availableCapacity?: number;
+  overCapacity?: boolean;
+  completedTasks24h?: number;
+  averageTaskDurationMs24h?: number | null;
+}
+
+export interface AmazonCrawlerSchedulerMetrics {
+  activeAgents: number;
+  queuedTasks: number;
+  oldestQueuedAgeSeconds: number;
+  totalCapacity: number;
+  activeTasks: number;
+  availableCapacity: number;
+  capacityUtilization: number | null;
+  overCapacityAgents: number;
+  completedTasks24hSpread: number;
 }
 
 export interface AmazonCrawlerMetrics {
@@ -591,6 +611,7 @@ export interface AmazonCrawlerMetrics {
   rates: { cacheHit: number | null; httpSuccess: number | null; playwrightFallback: number | null; captcha: number | null };
   averageCrawlDurationMs: number | null;
   queue: { crawl: number; crawlActive: number; pipeline: number };
+  scheduler?: AmazonCrawlerSchedulerMetrics;
   agents: Array<AmazonCrawlerAgentObservability & { agentId: string; displayName: string }>;
 }
 
@@ -701,6 +722,7 @@ export interface AmazonCrawlerWorkerHealth {
 export interface AmazonCrawlerClientSummary {
   id: string;
   displayName: string;
+  agentGroup?: string;
   agentVersion: string;
   status: AmazonCrawlerClientStatus;
   isConnected: boolean;
@@ -769,6 +791,7 @@ export interface AmazonCrawlerAgentCommandSummary {
 
 export interface AmazonCrawlerCommandController {
   submit(agentId: string, type: "PAUSE" | "RESUME"): Promise<void>;
+  bulkCommand(agentGroup: string, type: "PAUSE" | "RESUME" | "DRAIN", reason: string): Promise<{ requested: number; queued: number; failed: number }>;
   previewPendingPurge(agentId: string, taskIds: readonly string[]): Promise<AmazonCrawlerPendingPurgePreview>;
   purgePending(agentId: string, taskIds: readonly string[], expectedPendingCount: number, reason: string): Promise<void>;
   previewPurgeAllLocal(agentId: string): Promise<AmazonCrawlerPendingPurgePreview>;

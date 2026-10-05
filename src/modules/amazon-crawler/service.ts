@@ -409,6 +409,7 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
     return {
       id: client.id,
       displayName: client.displayName,
+      agentGroup: typeof client.agentGroup === "string" ? client.agentGroup : "default",
       agentVersion: typeof client.agentVersion === "string" ? client.agentVersion : "unknown",
       status: client.status as AmazonCrawlerClientSummary["status"],
       isConnected: client.isConnected === true,
@@ -469,6 +470,18 @@ export function createAmazonCrawlerCommandController({
         body: JSON.stringify({ requestId: crypto.randomUUID(), type }),
       });
       await readJson(response);
+    },
+    async bulkCommand(agentGroup, type, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/bulk-commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type, agentGroup, reason }),
+      });
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || typeof payload.requested !== "number"
+          || typeof payload.queued !== "number" || typeof payload.failed !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid bulk-command response.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { requested: payload.requested, queued: payload.queued, failed: payload.failed };
     },
     async previewPendingPurge(agentId, taskIds): Promise<AmazonCrawlerPendingPurgePreview> {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {

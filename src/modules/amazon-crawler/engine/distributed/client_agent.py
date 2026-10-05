@@ -1025,7 +1025,13 @@ class DistributedCrawlerAgent:
         async for raw in websocket:
             payload = json.loads(raw)
             message_type = payload.get("type")
-            if message_type == "assignment":
+            if message_type == "work_available":
+                if (self._is_connected and self._recovery_complete and self._command_recovery_complete
+                        and not self._paused and not self._storage_pressure()["blocked"]):
+                    await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots(),
+                        "lastProcessedCommandSequence": self.store.last_processed_command_sequence(),
+                        "appliedExecutionState": self._remote_execution_state})
+            elif message_type == "assignment":
                 if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
                         or self._paused or self._storage_pressure()["blocked"]):
                     # A lease sent before the last capacity update is not
@@ -1276,6 +1282,15 @@ class DistributedCrawlerAgent:
         while True:
             await asyncio.to_thread(self.cache.maintain)
             self._resources = await asyncio.to_thread(self._sample_resources)
+            try:
+                memory_budget_mb = max(128, min(1_048_576, int(os.environ.get("FFP_AGENT_MEMORY_BUDGET_MB", "4096"))))
+            except ValueError:
+                memory_budget_mb = 4096
+            self.worker_health.record_resource_sample(
+                cpu_percent=self._resources.get("cpuPercent"),
+                rss_bytes=self._resources.get("rssBytes"),
+                memory_budget_bytes=memory_budget_mb * 1024 * 1024,
+            )
             self._publish_status()
             executing_task_ids = set(self.executing_task_ids)
             running = self._current_tasks_snapshot()
@@ -2057,26 +2072,60 @@ class DistributedCrawlerAgent:
                 self._publish_status()
                 await asyncio.sleep(retry_delay if upload_failed else 1)
                 continue
-            for result in pending:
-                if not self.store.is_upload_pending(result["resultId"]):
-                    continue
-                if self.store.has_pending_products(result["taskId"], result["leaseId"]):
-                    continue
+            eligible = [result for result in pending
+                        if self.store.is_upload_pending(result["resultId"])
+                        and not self.store.has_pending_products(result["taskId"], result["leaseId"])]
+            batches: list[list[dict[str, Any]]] = []
+            current_batch: list[dict[str, Any]] = []
+            current_bytes = 0
+            for result in eligible:
+                item_size = len(json.dumps(result["payload"], ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                # Leave room for envelopes and stay below the server's decompressed 50 MiB cap.
+                if current_batch and (len(current_batch) >= 10 or current_bytes + item_size > 45 * 1024 * 1024):
+                    batches.append(current_batch)
+                    current_batch, current_bytes = [], 0
+                current_batch.append(result)
+                current_bytes += item_size
+            if current_batch:
+                batches.append(current_batch)
+
+            for batch in batches:
                 try:
-                    self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "uploading")
-                    response = await asyncio.to_thread(self._upload_result, result)
-                    self._validate_upload_receipt(result, response)
-                    self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "sent")
-                    self.store.acknowledge_result(result["resultId"])
-                    if self.active.get(result["taskId"], {}).get("leaseId") == result["leaseId"]:
-                        self.active.pop(result["taskId"], None)
-                    await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+                    for result in batch:
+                        self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "uploading")
+                    if len(batch) == 1:
+                        single_receipt = await asyncio.to_thread(self._upload_result, batch[0])
+                        receipts = [{"taskId": batch[0]["taskId"], "leaseId": batch[0]["leaseId"], **single_receipt}]
+                    else:
+                        receipts = await asyncio.to_thread(self._upload_result_batch, batch)
+                    receipt_by_identity = {
+                        (str(receipt.get("taskId") or ""), str(receipt.get("leaseId") or "")): receipt
+                        for receipt in receipts
+                    }
+                    for result in batch:
+                        try:
+                            receipt = receipt_by_identity.get((str(result["taskId"]), str(result["leaseId"])))
+                            if receipt is None:
+                                raise ValueError("Batch response omitted a result receipt")
+                            self._validate_upload_receipt(result, receipt)
+                            self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "sent")
+                            self.store.acknowledge_result(result["resultId"])
+                            if self.active.get(result["taskId"], {}).get("leaseId") == result["leaseId"]:
+                                self.active.pop(result["taskId"], None)
+                            await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+                        except Exception as error:
+                            self._quarantine_rejected_upload(result, error)
+                            self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
+                            self.store.result_failed(result["resultId"], redact(error))
+                            upload_failed = True
+                            retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
                 except Exception as error:
-                    self._quarantine_rejected_upload(result, error)
-                    self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
-                    self.store.result_failed(result["resultId"], redact(error))
-                    upload_failed = True
-                    retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
+                    for result in batch:
+                        self._quarantine_rejected_upload(result, error)
+                        self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
+                        self.store.result_failed(result["resultId"], redact(error))
+                        upload_failed = True
+                        retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
             self._publish_status()
             self._uploads_checked.set()
             await asyncio.sleep(retry_delay if upload_failed else 1)
@@ -2088,7 +2137,7 @@ class DistributedCrawlerAgent:
             self.store.quarantine_attempt(upload["taskId"], upload["leaseId"], f"upload_http_{error.code}")
 
     def _validate_upload_receipt(self, upload: dict[str, Any], response: dict[str, Any]) -> None:
-        if response.get("status") in {"cancelled", "stale", "conflict"}:
+        if response.get("status") in {"cancelled", "stale", "conflict", "invalid", "missing"}:
             self.store.quarantine_attempt(upload["taskId"], upload["leaseId"], f"upload_{response['status']}")
         # Local resultId selects the exact immutable row. Task 05's server
         # adapter identifies that upload by attempt and canonical product key.
@@ -2133,3 +2182,21 @@ class DistributedCrawlerAgent:
         )
         with self._open_agent_request(request) as response:
             return json.loads(response.read())
+
+    def _upload_result_batch(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        items = [{"taskId": row["taskId"], "leaseId": row["leaseId"],
+                  "checksum": row["checksum"], "payload": row["payload"]} for row in results]
+        raw = json.dumps({"items": items}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(raw) > 50 * 1024 * 1024:
+            raise ValueError("Result batch exceeds the 50 MiB server limit")
+        request = urllib.request.Request(
+            f"{self.config.server_url}/api/v1/worker/results/batch",
+            data=gzip.compress(raw), method="PUT",
+            headers={"Content-Type": "application/json", "Content-Encoding": "gzip", "X-Client-Id": self.client_id},
+        )
+        with self._open_agent_request(request) as response:
+            envelope = json.loads(response.read())
+        receipts = envelope.get("results") if isinstance(envelope, dict) else None
+        if not isinstance(receipts, list):
+            raise ValueError("Batch response does not contain per-result receipts")
+        return [receipt for receipt in receipts if isinstance(receipt, dict)]

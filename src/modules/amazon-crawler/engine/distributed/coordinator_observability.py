@@ -45,6 +45,12 @@ def bounded_agent_telemetry(payload: Any) -> dict[str, Any]:
     worker_state = worker_health.get("state")
     snapshot["workerHealth"] = {
         "state": worker_state if isinstance(worker_state, str) and worker_state in {"healthy", "degraded"} else "healthy",
+        "resourcePressure": worker_health.get("resourcePressure") is True,
+        "quotaPressure": worker_health.get("quotaPressure") is True,
+        "cpuPercent": min(100.0, max(0.0, float(worker_health["cpuPercent"])))
+            if isinstance(worker_health.get("cpuPercent"), (int, float)) and not isinstance(worker_health.get("cpuPercent"), bool) else None,
+        "rssBytes": max(0, min(2**53 - 1, worker_health["rssBytes"]))
+            if isinstance(worker_health.get("rssBytes"), int) and not isinstance(worker_health.get("rssBytes"), bool) else None,
         **{
             key: max(0, min(2**53 - 1, value))
             for key in ("failuresInWindow", "failureLimit", "windowSeconds", "configuredConcurrency", "effectiveConcurrency")
@@ -188,11 +194,41 @@ class CoordinatorObservability:
             ) >= now - timedelta(
                 seconds=AgentRuntimeConfig.from_payload(client.applied_agent_config or {}).clientOfflineAfterSeconds,
             )]
-            agents = [{"agentId": client.id, "displayName": client.display_name, **dict(client.capabilities.get("observability") or {})} for client in clients]
+            active_by_agent = dict(session.execute(select(CrawlTask.assigned_client_id, func.count(CrawlTask.id))
+                .where(CrawlTask.status.in_(["leased", "running", "cancelling"]))
+                .group_by(CrawlTask.assigned_client_id)).all())
+            completed_attempts = session.execute(select(TaskAttempt.client_id, func.count(TaskAttempt.id),
+                func.avg(TaskAttempt.duration_ms)).where(TaskAttempt.finished_at >= start,
+                    TaskAttempt.status == "completed").group_by(TaskAttempt.client_id)).all()
+            completed_by_agent = {client_id: {"completedTasks24h": int(completed),
+                "averageTaskDurationMs24h": round(float(average), 2) if average is not None else None}
+                for client_id, completed, average in completed_attempts}
+            agents = [{"agentId": client.id, "displayName": client.display_name,
+                "agentGroup": client.agent_group,
+                "activeTasks": int(active_by_agent.get(client.id, 0)),
+                "maxConcurrentInputs": client.max_concurrent_inputs,
+                "availableCapacity": max(0, client.max_concurrent_inputs - int(active_by_agent.get(client.id, 0))),
+                "overCapacity": int(active_by_agent.get(client.id, 0)) > client.max_concurrent_inputs,
+                **completed_by_agent.get(client.id, {}),
+                **dict(client.capabilities.get("observability") or {})} for client in clients]
             durations = sum(int(duration or 0) for name, _, _, duration in grouped if name == "family_completed")
             family_attempts = count("family_completed")
             ratio = lambda numerator, denominator: numerator / denominator if denominator else None
             retained = session.scalar(select(func.min(CrawlTelemetryEvent.created_at)).where(*filters))
+            queue_filters = [CrawlTask.status == "queued"]
+            if job_id:
+                queue_filters.append(CrawlTask.job_id == job_id)
+            queued_tasks = int(session.scalar(select(func.count(CrawlTask.id)).where(*queue_filters)) or 0)
+            oldest_queued_at = session.scalar(select(func.min(CrawlTask.created_at)).where(*queue_filters))
+            if oldest_queued_at is not None and oldest_queued_at.tzinfo is None:
+                oldest_queued_at = oldest_queued_at.replace(tzinfo=timezone.utc)
+            eligible_agents = [client for client in clients
+                if client.status in {"online", "busy", "waiting_captcha"}
+                and client.desired_execution_state == "RUNNING"
+                and client.global_admission_gate_state == "OPEN"]
+            total_capacity = sum(client.max_concurrent_inputs for client in eligible_agents)
+            total_active = sum(int(active_by_agent.get(client.id, 0)) for client in eligible_agents)
+            completed_counts = [entry["completedTasks24h"] for entry in completed_by_agent.values()]
             return {
                 "windowStartedAt": utc_iso(start), "retainedSince": utc_iso(retained) if retained else None,
                 "sampledAt": utc_iso(now), "jobId": job_id,
@@ -208,6 +244,13 @@ class CoordinatorObservability:
                 "averageCrawlDurationMs": durations / family_attempts if family_attempts else None,
                 "queue": {"crawl": int(crawl_counts.get("queued", 0)), "crawlActive": sum(int(crawl_counts.get(status, 0)) for status in ("leased", "running")),
                           "pipeline": sum(int(value) for status, value in pipeline_counts.items() if status in {"received", "normalizing", "seo", "image_processing", "retry_wait", "sync_queued"})},
+                "scheduler": {"activeAgents": len(eligible_agents), "queuedTasks": queued_tasks,
+                    "oldestQueuedAgeSeconds": max(0, int((now - oldest_queued_at).total_seconds())) if oldest_queued_at else 0,
+                    "totalCapacity": total_capacity, "activeTasks": total_active,
+                    "availableCapacity": max(0, total_capacity - total_active),
+                    "capacityUtilization": total_active / total_capacity if total_capacity else None,
+                    "overCapacityAgents": sum(int(active_by_agent.get(client.id, 0)) > client.max_concurrent_inputs for client in clients),
+                    "completedTasks24hSpread": max(completed_counts) - min(completed_counts) if completed_counts else 0},
                 "agents": agents,
             }
 

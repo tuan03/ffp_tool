@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 
 from engine.distributed.coordinator_migrations import migrate_coordinator
-from engine.distributed.coordinator_models import ClientRecord, CrawlProductItem, CrawlTask, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import ClientRecord, CrawlJob, CrawlProductItem, CrawlTask, create_database_engine, create_session_factory
 from engine.distributed.coordinator_server import create_coordinator_app
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.operator_authorization import OperatorCredentials
@@ -76,6 +76,39 @@ class GlobalAdmissionGateStoreTests(unittest.TestCase):
             self.assertEqual(len(restarted_store.lease_tasks("agent-1", 1)), 1)
         finally:
             restarted_engine.dispose()
+
+    def test_job_group_affinity_only_leases_to_agents_in_the_allowed_group(self) -> None:
+        with self.sessions.begin() as session:
+            job = session.get(CrawlJob, self.job["id"])
+            job.settings = {**job.settings, "allowedAgentGroup": "amazon-us"}
+        group_job = self.store.get_job(self.job["id"])
+        self.assertEqual(group_job["settings"]["allowedAgentGroup"], "amazon-us")
+        self.assertEqual(self.store.lease_tasks("agent-1", 1), [])
+
+        with self.sessions.begin() as session:
+            client = session.get(ClientRecord, "agent-1")
+            client.agent_group = "amazon-us"
+        self.assertEqual(len(self.store.lease_tasks("agent-1", 1)), 1)
+
+    def test_scheduler_balances_claims_across_ready_agents_in_the_same_capability_cohort(self) -> None:
+        with self.sessions.begin() as session:
+            session.get(ClientRecord, "agent-1").status = "offline"
+            session.get(CrawlJob, self.job["id"]).status = "completed"
+        self.store.create_job({"urls": ["B0FR4MSS2H", "B0HG4NRG98", "B0D2NRQ7Q5", "B0F9JY5Y1R"]})
+        common = {"displayName": "fixture", "availableSlots": 2, "maxConcurrentInputs": 2,
+                  "capabilities": {"amazon": True, "pinterest": False}}
+        self.store.register_client({**common, "clientId": "fair-a"})
+        self.store.register_client({**common, "clientId": "fair-b"})
+        first = self.store.lease_tasks("fair-a", 2)
+        self.assertEqual(len(first), 2)
+        self.assertEqual(self.store.lease_tasks("fair-a", 1), [])
+        second = self.store.lease_tasks("fair-b", 2)
+        self.assertEqual(len(second), 2)
+        self.assertTrue({row["taskId"] for row in first}.isdisjoint({row["taskId"] for row in second}))
+
+    def test_job_rejects_invalid_agent_group_filter(self) -> None:
+        with self.assertRaisesRegex(ValueError, "allowedAgentGroup"):
+            self.store.create_job({"urls": ["B0FR4MSS2H"], "allowedAgentGroup": "two groups"})
 
     def test_gate_request_replay_is_idempotent_and_payload_conflicts_fail(self) -> None:
         request_id = uuid.uuid4().hex
