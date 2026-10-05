@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .protocol import AgentLimits
+from .client_storage_pressure import OutboxLimits
 
 
 def default_data_directory() -> Path:
@@ -25,6 +26,10 @@ class AgentConfig:
     limits: AgentLimits
     data_directory: Path
     proxy_config_path: Path | None = None
+    config_file_path: Path | None = None
+    trusted_signer_thumbprints: tuple[str, ...] = ()
+    outbox: OutboxLimits = OutboxLimits()
+    auth_mode: str = "legacy"
 
     @classmethod
     def load(cls, path: Path | None = None) -> "AgentConfig":
@@ -37,6 +42,12 @@ class AgentConfig:
         server_url = str(os.environ.get("AMAZON_COORDINATOR_URL") or payload.get("serverUrl") or "").strip().rstrip("/")
         if not server_url:
             raise ValueError("serverUrl is required in amazon-crawler-agent.json or AMAZON_COORDINATOR_URL.")
+        auth_mode = payload.get("authMode", "legacy")
+        if auth_mode not in ("legacy", "key"):
+            raise ValueError("authMode must be legacy or key.")
+        if auth_mode == "key":
+            from .client_credentials import validate_secure_origin
+            server_url = validate_secure_origin(server_url)
         display_name = str(payload.get("displayName") or socket.gethostname()).strip()
         try:
             concurrency = max(1, min(16, int(payload.get("maxConcurrentInputs", 4))))
@@ -51,6 +62,13 @@ class AgentConfig:
         else:
             proxy_config_path = configured_path.parent / "amazon-crawler-profiles.json"
         proxy_config_path = proxy_config_path.resolve()
+        raw_signers = payload.get("trustedSignerThumbprints", [])
+        if not isinstance(raw_signers, list) or any(not isinstance(pin, str) for pin in raw_signers):
+            raise ValueError("trustedSignerThumbprints must be an array of certificate thumbprints.")
+        trusted_signers = tuple(pin.strip().upper() for pin in raw_signers)
+        if any(len(pin) != 40 or any(character not in "0123456789ABCDEF" for character in pin)
+               for pin in trusted_signers):
+            raise ValueError("trustedSignerThumbprints contains an invalid certificate thumbprint.")
         return cls(
             server_url=server_url,
             display_name=display_name,
@@ -58,6 +76,10 @@ class AgentConfig:
             limits=AgentLimits.from_payload(payload.get("limits") if isinstance(payload.get("limits"), dict) else {}),
             data_directory=data_directory,
             proxy_config_path=proxy_config_path if proxy_config_path.is_file() else None,
+            config_file_path=configured_path.resolve(),
+            trusted_signer_thumbprints=trusted_signers,
+            outbox=OutboxLimits.from_payload(payload.get("outbox", {})),
+            auth_mode=auth_mode,
         )
 
     @property

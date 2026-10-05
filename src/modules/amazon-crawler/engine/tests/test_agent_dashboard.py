@@ -131,7 +131,7 @@ class DashboardStateTests(unittest.TestCase):
         self.store.spool_result(task_id="task-a", lease_id="lease-a", checksum="checksum", payload={})
         restored = DashboardState(self.store, now=lambda: self.now)
         self.assertEqual(restored.snapshot()["tasks"][0]["delivery"], "pending")
-        self.store.acknowledge_result("task-a")
+        self.store.acknowledge_result(self.store.pending_results()[0]["resultId"])
         restored = DashboardState(self.store, now=lambda: self.now)
         self.assertEqual(restored.snapshot()["tasks"], [])
 
@@ -219,9 +219,15 @@ class DashboardAgentTests(unittest.TestCase):
         self.agent.dashboard.finish(task, "completed")
         self.agent.store.spool_result(task_id="task-a", lease_id="lease-a", checksum="sum", payload={})
         self.assertEqual(self.agent.stop_and_discard_local_work(), 1)
-        self.assertEqual(self.agent.store.upload_counts()["results"], 0)
+        self.assertEqual(self.agent.store.upload_counts()["results"], 1)
+        self.assertEqual(self.agent.store.pending_results(), [])
+        self.assertEqual(len(self.agent.store.quarantined_uploads()), 1)
         self.assertEqual(self.agent.store.cancel_intents(), ["job-a"])
-        self.assertEqual(self.agent.status_snapshot()["dashboard"]["history"][0]["delivery"], "cancelled")
+        snapshot = self.agent.status_snapshot()
+        self.assertEqual(snapshot["dashboard"]["history"][0]["delivery"], "cancelled")
+        self.assertEqual(snapshot["pendingResults"], 0)
+        self.assertEqual(snapshot["pendingProducts"], 0)
+        self.assertEqual(snapshot["quarantinedUploads"], 1)
 
     def test_history_io_failure_does_not_stop_crawler_status(self) -> None:
         with patch.object(self.agent.dashboard, "snapshot", side_effect=sqlite3.OperationalError("disk")):

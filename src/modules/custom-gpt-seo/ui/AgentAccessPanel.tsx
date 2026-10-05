@@ -73,10 +73,31 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     finally { setIsBusy(false); }
   }
 
+  async function handleToggleClaims(enabled: boolean, allStores = false): Promise<void> {
+    setIsBusy(true); setError(""); setNotice("");
+    try {
+      if (enabled) {
+        await client.enableClaims(storeId, allStores);
+        setNotice(allStores ? "Đã bật nhận việc cho tất cả store." : `Đã bật nhận việc cho store ${storeId}.`);
+      } else {
+        await client.disableClaims(storeId, allStores);
+        setNotice(allStores ? "Đã tắt nhận việc cho tất cả store." : `Đã tắt nhận việc cho store ${storeId}.`);
+      }
+      setRefresh(value => value + 1);
+    } catch {
+      setError("Không thể cập nhật trạng thái nhận việc. Kiểm tra quyền quản trị và thử lại.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   return <section className="space-y-5 pt-5" aria-label="Agent Access">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="font-semibold text-white">Máy xử lý SEO</h2><p className="mt-1 text-sm text-slate-400">{storeId} · Một kết nối: xử lý SEO + đánh giá GSC. Không tự duyệt hoặc đồng bộ Shopify.</p></div>
-      {view !== "metrics" && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => setRefresh(value => value + 1)}>Làm mới</button>}
+      <div className="flex items-center gap-2">
+        {access && access.claimsEnabled && <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-700/60 bg-emerald-950/40 px-2.5 py-1 text-xs font-medium text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>Đang nhận việc</span>}
+        {view !== "metrics" && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => setRefresh(value => value + 1)}>Làm mới</button>}
+      </div>
     </div>
     <nav aria-label="Quản lý máy SEO" className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">
       {VIEWS.map(entry => <button key={entry.id} type="button" aria-pressed={view === entry.id} className={view === entry.id ? PRIMARY : BUTTON} onClick={() => { setView(entry.id); setNotice(""); setError(""); }}>{entry.label}</button>)}
@@ -84,7 +105,17 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     {error && <p role="alert" className="rounded-lg bg-rose-950/40 p-3 text-sm text-rose-300">{error}</p>}
     {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
     {view !== "metrics" && !access && !error && <p role="status" className="text-sm text-slate-400">Đang tải…</p>}
-    {access && !access.claimsEnabled && view !== "metrics" && <p className="rounded-lg border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">Store chưa bật nhận việc. Nhờ quản trị viên chuyển Queue sang Worker trước khi chạy SEO.</p>}
+    {access && !access.claimsEnabled && view !== "metrics" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">
+      <span>Store chưa bật nhận việc. Bạn có thể bật để các máy con (Codex/Worker) nhận việc xử lý SEO.</span>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={PRIMARY} disabled={isBusy} onClick={() => void handleToggleClaims(true, false)}>
+          {isBusy ? "Đang xử lý…" : "Bật nhận việc cho store này"}
+        </button>
+        <button type="button" className={BUTTON} disabled={isBusy} onClick={() => void handleToggleClaims(true, true)}>
+          {isBusy ? "Đang xử lý…" : "Bật cho tất cả store"}
+        </button>
+      </div>
+    </div>}
 
     {view === "connect" && access && <>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -92,12 +123,12 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
         {access.total > 0 && <button type="button" className={isSetupOpen ? BUTTON : PRIMARY} aria-expanded={isSetupOpen} onClick={() => setIsSetupOpen(value => !value)}>{isSetupOpen ? "Đóng thiết lập" : "+ Kết nối máy"}</button>}
       </div>
       {(isSetupOpen || access.total === 0) && <div className="grid gap-5 rounded-xl border border-cyan-900 bg-slate-900/60 p-4 lg:grid-cols-3">
-        <div className="space-y-3"><h4 className="font-semibold text-cyan-300">1. Tải và giải nén</h4><p className="text-sm text-slate-400">Tải file ZIP, tạo thư mục <code className="text-slate-200">ffp-seo-worker</code> trên máy rồi giải nén toàn bộ file vào đó.</p><a className={`${BUTTON} inline-block`} href="/seo-agent-pack/ffp-seo-worker-1.0.0-preview.zip" download>Tải file ZIP</a></div>
+        <div className="space-y-3"><h4 className="font-semibold text-cyan-300">1. Tải và giải nén</h4><p className="text-sm text-slate-400">Tải file ZIP về và giải nén vào một thư mục trên máy (ví dụ: <code className="text-slate-200">C:\ffp-seo-worker</code>).</p><a className={`${BUTTON} inline-block`} href="/seo-agent-pack/ffp-seo-worker-1.0.0-preview.zip" download>Tải file ZIP</a></div>
         <form className="space-y-3" onSubmit={event => { event.preventDefault(); void handleCreate(); }}><h4 className="font-semibold text-cyan-300">2. Cấp quyền cho máy</h4><label className="grid gap-2 text-sm">Tên máy<input className={`${INPUT} w-full`} value={workerId} onChange={event => setWorkerId(event.target.value)} maxLength={100} required placeholder="Ví dụ: rua-laptop" /></label><button type="submit" className={PRIMARY} disabled={isBusy || !workerId.trim()}>{isBusy ? "Đang xử lý…" : "Tạo token"}</button></form>
-        <div className="space-y-3"><h4 className="font-semibold text-cyan-300">3. Cài kết nối vào Codex</h4><p className="text-sm text-slate-400">Mở <code className="text-slate-200">README.md</code> trong thư mục vừa giải nén. Chạy lần lượt các lệnh ở mục <strong>Install → Login → Setup</strong>, sau đó đóng và mở lại Codex.</p><p className="text-sm text-slate-400">Cài xong? Sang <button type="button" className="text-cyan-300 underline" onClick={() => setView("runs")}>Phiên chạy</button> để giao việc.</p><details className="text-sm"><summary className="cursor-pointer text-slate-400">Máy cần có gì?</summary><p className="mt-2 text-slate-400">Python 3.11+ và kho mật khẩu hệ điều hành. Token chỉ nhập trong terminal, không dán vào chat.</p><a className="mt-2 inline-block text-cyan-300" href="/seo-agent-pack/ffp-seo-worker-1.0.0-preview.zip.sha256" download>Tải checksum SHA-256</a></details></div>
+        <div className="space-y-3"><h4 className="font-semibold text-cyan-300">3. Chạy 1-click &amp; kết nối</h4><p className="text-sm text-slate-400">Click đúp chạy <code className="text-cyan-200">cai-dat.bat</code> (Windows) hoặc <code className="text-cyan-200">cai-dat.sh</code> (Mac/Linux), dán token vào rồi khởi động lại Codex.</p><p className="text-sm text-slate-400">Cài xong? Sang <button type="button" className="text-cyan-300 underline" onClick={() => setView("runs")}>Phiên chạy</button> để giao việc.</p><details className="text-sm"><summary className="cursor-pointer text-slate-400">Máy cần có gì?</summary><p className="mt-2 text-slate-400">Python 3.11+ và kho mật khẩu hệ điều hành. Token chỉ nhập trong terminal, không dán vào chat.</p><a className="mt-2 inline-block text-cyan-300" href="/seo-agent-pack/ffp-seo-worker-1.0.0-preview.zip.sha256" download>Tải checksum SHA-256</a></details></div>
       </div>}
     </>}
-    {token && <div className="space-y-3 rounded-xl border border-amber-700 bg-amber-950/20 p-4"><p className="text-sm text-amber-200">Token chỉ hiện lần này. Dùng để login trong terminal, không gửi vào chat.</p><code className="block break-all select-all text-sm">{token}</code><div className="flex gap-2"><button type="button" className={PRIMARY} onClick={() => void handleCopy(token, "Đã sao chép token. Chỉ dán vào lệnh login trong terminal.")}>Sao chép token</button><button type="button" className={BUTTON} onClick={() => setToken(null)}>Ẩn token</button></div></div>}
+    {token && <div className="space-y-3 rounded-xl border border-amber-700 bg-amber-950/20 p-4"><p className="text-sm text-amber-200">Token chỉ hiện lần này. Hãy sao chép rồi dán vào cửa sổ <strong>cai-dat.bat</strong> khi được hỏi.</p><code className="block break-all select-all text-sm">{token}</code><div className="flex gap-2"><button type="button" className={PRIMARY} onClick={() => void handleCopy(token, "Đã sao chép token. Dán vào cửa sổ cai-dat.bat khi được hỏi.")}>Sao chép token</button><button type="button" className={BUTTON} onClick={() => setToken(null)}>Ẩn token</button></div></div>}
 
     {view === "connect" && access && <>
       {access.tokens.length === 0 ? <p className="py-5 text-center text-sm text-slate-400">Chưa có máy trên trang này. Bắt đầu bằng “Kết nối máy”.</p> : <div className="overflow-x-auto rounded-xl border border-slate-800"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-900/80 text-xs uppercase text-slate-400"><tr><th className="px-4 py-3">Máy</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Phạm vi</th><th className="px-4 py-3">Hết hạn</th><th className="px-4 py-3 text-right">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-800">{access.tokens.map(entry => {

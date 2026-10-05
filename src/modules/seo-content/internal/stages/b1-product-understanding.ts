@@ -1,14 +1,17 @@
 import type { ProviderRequestOptions } from "../provider-runtime";
 import { evolveContext } from "../pipeline-context";
 import { buildProductUnderstanding } from "../product-understanding/product-understanding-builder";
+import { heuristicProductImageAnalyzer } from "../product-understanding/heuristic-product-image-analyzer";
+import { extractTextProductSignals } from "../product-understanding/text-product-signals";
 import { GeminiProductImageAnalyzer } from "../product-understanding/gemini-product-image-analyzer";
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
-import { SeoStageError } from "../pipeline-errors";
+import { FallbackProductImageAnalyzer } from "../product-understanding/fallback-product-image-analyzer";
 
 import type {
   SeoPipelineContext,
   SeoPipelineStage,
 } from "../domain-types";
+import { resolveStoreProfile } from "../store-profiles";
 import type {
   ProductImageAnalysis,
   ProductImageAnalyzer,
@@ -16,28 +19,25 @@ import type {
 
 export interface B1ProductUnderstandingDependencies {
   readonly imageAnalyzer?: ProductImageAnalyzer;
-  /** @deprecated V2 always analyzes every supplied image. */
   readonly maxImages?: number;
 }
 
 /**
  * Creates the default product image analyzer.
  * If Google Cloud / Vertex AI environment configuration is present,
- * creates a Gemini pixel analyzer. Without pixel-analysis configuration the
- * stage fails closed; niche-only heuristics are forbidden by the V2 contract.
+ * creates GeminiProductImageAnalyzer wrapped with FallbackProductImageAnalyzer
+ * falling back to HeuristicProductImageAnalyzer with an observability warning log.
+ * If not configured, uses HeuristicProductImageAnalyzer directly.
  */
 export function createDefaultProductImageAnalyzer(options?: ProviderRequestOptions & {
   readonly onFallback?: (error: unknown) => void;
+  readonly maxImages?: number;
 }): ProductImageAnalyzer {
   const env = typeof process !== "undefined" && process.env ? process.env : undefined;
   const projectId = env?.GOOGLE_CLOUD_PROJECT;
 
   if (!projectId) {
-    return {
-      async analyze(): Promise<ProductImageAnalysis> {
-        throw new SeoStageError("b1", "IMAGE_EVIDENCE_UNAVAILABLE: pixel analyzer is not configured");
-      },
-    };
+    return heuristicProductImageAnalyzer;
   }
 
   const location = env?.GOOGLE_CLOUD_LOCATION || "global";
@@ -57,9 +57,21 @@ export function createDefaultProductImageAnalyzer(options?: ProviderRequestOptio
     signal: options?.signal,
     generator,
     model,
+    maxImages: options?.maxImages,
   });
 
-  return geminiAnalyzer;
+  return new FallbackProductImageAnalyzer({
+    primary: geminiAnalyzer,
+    fallback: heuristicProductImageAnalyzer,
+    onFallback: (error, input) => {
+      options?.onFallback?.(error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const target = input.images[0]?.url || input.images[0]?.localFilePath || "unknown";
+      console.warn(
+        `[SEO B1 Fallback] Primary image analysis unavailable for image '${target}'. Falling back to heuristic analyzer. Cause: ${errMsg}`,
+      );
+    },
+  });
 }
 
 export function createB1ProductUnderstandingStage(
@@ -67,50 +79,55 @@ export function createB1ProductUnderstandingStage(
 ): SeoPipelineStage {
   const imageAnalyzer =
     dependencies?.imageAnalyzer ??
-    createDefaultProductImageAnalyzer();
+    createDefaultProductImageAnalyzer({ maxImages: dependencies?.maxImages });
 
   return {
     name: "b1",
     async execute(context: SeoPipelineContext): Promise<SeoPipelineContext> {
       const source = context.source;
-      const storeProfile = context.storeProfile;
-      const niche = context.effectiveNiche ?? source.niche;
-      const images = source.images;
-
-      if (images.length === 0) {
-        throw new SeoStageError("b1", "IMAGE_EVIDENCE_UNAVAILABLE: at least one product image is required");
-      }
-
-      let imageAnalysis: ProductImageAnalysis;
-      try {
-        imageAnalysis = await imageAnalyzer.analyze({
-          images,
-          niche,
+      const storeProfile =
+        context.storeProfile ??
+        resolveStoreProfile({
+          storeId: source.storeId,
+          siteDomain: source.siteDomain ?? source.url,
         });
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") throw error;
-        if (error instanceof SeoStageError) throw error;
-        throw new SeoStageError("b1", "IMAGE_EVIDENCE_UNAVAILABLE: product pixels could not be analyzed", false, error);
+      const niche = context.effectiveNiche ?? storeProfile?.niche ?? source.niche;
+      const rawImages = source.images ?? [];
+      const images =
+        typeof dependencies?.maxImages === "number" && dependencies.maxImages > 0
+          ? rawImages.slice(0, dependencies.maxImages)
+          : rawImages;
+
+      const textSignals = extractTextProductSignals({
+        title: source.title ?? "",
+        description: source.description ?? "",
+        niche,
+      });
+
+      let imageAnalysis: ProductImageAnalysis | undefined;
+      if (images.length > 0) {
+        try {
+          imageAnalysis = await imageAnalyzer.analyze({
+            images,
+            title: source.title ?? "",
+            description: source.description ?? "",
+            niche,
+            maxImages: dependencies?.maxImages,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          // Do not promote source metadata into visual evidence when all image reads fail.
+        }
       }
 
-      const productUnderstanding = buildProductUnderstanding(imageAnalysis);
-      const identity = productUnderstanding.physicalProductIdentity.trim().toLowerCase();
-      const confidence = productUnderstanding.confidence;
-      const candidates = productUnderstanding.identityCandidates ?? [];
-      if (
-        !identity
-        || identity === "unknown"
-        || confidence === undefined
-        || confidence < 0.75
-        || productUnderstanding.reviewRequired
-        || candidates.length !== 1
-      ) {
-        throw new SeoStageError("b1", "PRODUCT_IDENTITY_AMBIGUOUS: image evidence does not identify one sold product");
-      }
+      const productUnderstanding = buildProductUnderstanding(
+        imageAnalysis,
+        textSignals,
+      );
 
       return evolveContext(context, {
         productUnderstanding,
-        storeProfile,
+        ...(storeProfile ? { storeProfile } : {}),
       });
     },
   };

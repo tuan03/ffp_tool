@@ -18,6 +18,8 @@ export function CrawlerMetricsView({ metrics }: { metrics: AmazonCrawlerMetrics 
     ["Partial family", String(counters.partialFamilies), "Theo kết quả mới nhất của mỗi task"],
     ["Parser lỗi", String(counters.parserFailures), "Các lỗi parser mới phát sinh"],
     ["Hàng đợi crawl", String(metrics.queue.crawl), `${metrics.queue.crawlActive} đang chạy · ${metrics.queue.pipeline} chờ xử lý sản phẩm`],
+    ...(metrics.scheduler ? [["Scheduler capacity", `${metrics.scheduler.activeTasks}/${metrics.scheduler.totalCapacity}`, `${metrics.scheduler.activeAgents} agent · ${metrics.scheduler.availableCapacity} slot khả dụng · ${metrics.scheduler.overCapacityAgents} vượt giới hạn`],
+      ["Độ trễ hàng đợi", `${metrics.scheduler.oldestQueuedAgeSeconds} s`, `${metrics.scheduler.queuedTasks} task đang chờ · chênh lệch hoàn thành 24h: ${metrics.scheduler.completedTasks24hSpread}`]] : []),
   ];
   return <div className="space-y-3">
     <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
@@ -29,6 +31,10 @@ export function CrawlerMetricsView({ metrics }: { metrics: AmazonCrawlerMetrics 
     {metrics.agents.length === 0 ? <p className="text-xs text-slate-400">Chưa có agent online gửi số liệu tài nguyên.</p> :
       <div className="grid gap-2 md:grid-cols-2">{metrics.agents.map((agent) => <div className="rounded-lg border border-slate-700 p-3 text-xs text-slate-300" key={agent.agentId}>
         <strong>{agent.displayName}</strong>
+        {agent.agentGroup ? <span className="ml-2 text-slate-400">· {agent.agentGroup}</span> : null}
+        {agent.maxConcurrentInputs !== undefined ? <p className="mt-1">Task {agent.activeTasks ?? 0}/{agent.maxConcurrentInputs} · hoàn tất 24h: {agent.completedTasks24h ?? 0}
+          {agent.averageTaskDurationMs24h === null || agent.averageTaskDurationMs24h === undefined ? "" : ` · TB ${(agent.averageTaskDurationMs24h / 1000).toFixed(1)} s`}
+          {agent.overCapacity ? " · VƯỢT CAPACITY" : ""}</p> : null}
         <p className="mt-1">{agent.resources.rssBytes === undefined ? "Chưa đo RAM" : `RAM agent và tiến trình con: ${(agent.resources.rssBytes / 1024 / 1024).toFixed(1)} MiB${agent.resources.isComplete ? "" : " (đo chưa đủ)"}`}</p>
         <p className="mt-1">{agent.resources.browserContexts === undefined ? "Chưa đo browser" : `${agent.resources.browserContexts} browser context · ${agent.resources.browserPages ?? 0} trang đang mở`}{agent.resources.browserProcesses === undefined ? "" : ` · ${agent.resources.browserProcesses} tiến trình Chromium`}</p>
         <p className="mt-1">{agent.backlog} sự kiện chờ gửi{agent.dropped ? ` · ${agent.dropped} sự kiện telemetry bị bỏ` : ""}</p>

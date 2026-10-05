@@ -10,7 +10,13 @@ import {
   type AmazonAsinChecker,
   type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
+  type AmazonCrawlerAgentRuntimeConfig,
   type AmazonCrawlerClientsLoader,
+  type AmazonCrawlerCommandController,
+  type AmazonCrawlerAdmissionGate,
+  type AmazonCrawlerAdmissionGateController,
+  type AmazonCrawlerAgentCommandSummary,
+  type AmazonCrawlerPendingPurgePreview,
   type AmazonCrawlerHandoverHandler,
   type AmazonCrawlerJobController,
   type AmazonCrawlerJobSnapshot,
@@ -25,9 +31,12 @@ import {
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
 } from "../types";
+import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG } from "../types";
 import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
+import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
+import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
 
 import {
   abortCrawlerJob,
@@ -59,7 +68,7 @@ import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
 import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
-interface AmazonCrawlerPageProps {
+export interface AmazonCrawlerPageProps {
   checkAmazonAsins?: AmazonAsinChecker;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
@@ -70,6 +79,8 @@ interface AmazonCrawlerPageProps {
   onHandoverToSeo?: AmazonCrawlerHandoverHandler;
   retryAmazonCrawlerSyncs?: AmazonCrawlerSyncRetrier;
   imageProcessingProfiles?: ImageProcessingProfileManager;
+  amazonCrawlerCommands?: AmazonCrawlerCommandController;
+  amazonCrawlerAdmissionGate?: AmazonCrawlerAdmissionGateController;
 }
 
 const COMMON_PRODUCT_TYPES = [
@@ -88,6 +99,8 @@ const COMMON_PRODUCT_TYPES = [
 ];
 
 const AGENT_RELEASE_FALLBACK_URL = "https://github.com/tuan03/ffp_tool/releases/latest";
+const CLIENTS_PER_PAGE = 25;
+const JOBS_PER_PAGE = 10;
 
 function formatDownloadSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
@@ -191,6 +204,8 @@ export function AmazonCrawlerPage({
   imageProcessingProfiles,
   loadAmazonCrawlerAgentRelease,
   loadAmazonCrawlerClients,
+  amazonCrawlerCommands,
+  amazonCrawlerAdmissionGate,
   loadAmazonCrawlerJob,
   onHandoverToSeo,
   retryAmazonCrawlerSyncs,
@@ -231,15 +246,39 @@ export function AmazonCrawlerPage({
   const [recentJobs, setRecentJobs] = useState<AmazonCrawlerJobSummary[]>([]);
   const [hydrateMessage, setHydrateMessage] = useState<string | null>(null);
   const [clients, setClients] = useState<AmazonCrawlerClientSummary[]>([]);
+  const [commandHistories, setCommandHistories] = useState<Record<string, readonly AmazonCrawlerAgentCommandSummary[]>>({});
+  const [commandHistoryErrors, setCommandHistoryErrors] = useState<Record<string, boolean>>({});
+  const [commandBusyClientId, setCommandBusyClientId] = useState<string | null>(null);
+  const [agentConfigDrafts, setAgentConfigDrafts] = useState<Record<string, AmazonCrawlerAgentRuntimeConfig>>({});
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [purgeTaskScopes, setPurgeTaskScopes] = useState<Record<string, string>>({});
+  const [purgeReasons, setPurgeReasons] = useState<Record<string, string>>({});
+  const [purgePreviews, setPurgePreviews] = useState<Record<string, AmazonCrawlerPendingPurgePreview>>({});
+  const [admissionGate, setAdmissionGate] = useState<AmazonCrawlerAdmissionGate | null>(null);
+  const [admissionGateReason, setAdmissionGateReason] = useState("");
+  const [admissionGateError, setAdmissionGateError] = useState<string | null>(null);
+  const [isChangingAdmissionGate, setIsChangingAdmissionGate] = useState(false);
   const [clientError, setClientError] = useState<string | null>(null);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [isClientSnapshotStale, setIsClientSnapshotStale] = useState(false);
+  const [lastClientRefreshAt, setLastClientRefreshAt] = useState<number | null>(null);
+  const [clientPage, setClientPage] = useState(0);
+  const [clientGroupFilter, setClientGroupFilter] = useState("all");
+  const [bulkCommandReason, setBulkCommandReason] = useState("");
+  const [bulkCommandMessage, setBulkCommandMessage] = useState<string | null>(null);
+  const [isBulkCommandRunning, setIsBulkCommandRunning] = useState(false);
   const [agentRelease, setAgentRelease] = useState<AmazonCrawlerAgentRelease | null>(null);
   const [agentReleaseError, setAgentReleaseError] = useState<string | null>(null);
   const [isLoadingAgentRelease, setIsLoadingAgentRelease] = useState(true);
   const [jobs, setJobs] = useState<readonly AmazonCrawlerJobSnapshot[]>([]);
+  const [hasLoadedJobs, setHasLoadedJobs] = useState(false);
+  const [isJobSnapshotStale, setIsJobSnapshotStale] = useState(false);
+  const [lastJobRefreshAt, setLastJobRefreshAt] = useState<number | null>(null);
+  const [jobPage, setJobPage] = useState(0);
   const [jobControlMessage, setJobControlMessage] = useState<string | null>(null);
   const [jobControlTone, setJobControlTone] = useState<JobControlTone>("info");
   const [controlledJobId, setControlledJobId] = useState<string | null>(null);
+  const [controlledTaskId, setControlledTaskId] = useState<string | null>(null);
   const [cancellationJobId, setCancellationJobId] = useState<string | null>(null);
   const [imageProfiles, setImageProfiles] = useState<ImageProcessingProfile[]>([]);
   const [editingImageProfile, setEditingImageProfile] = useState<ImageProcessingProfile | null>(null);
@@ -334,12 +373,22 @@ export function AmazonCrawlerPage({
   const firstMediaUrl = firstProductMediaUrl(selectedProduct);
   const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
   const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
-  const connectedClients = clients.filter((client) => client.isConnected && client.status !== "offline");
-  const outdatedClients = agentRelease === null
+  const connectedClients = filterConnectedCrawlerClients(clients);
+  const outdatedClients = agentRelease === null || isClientSnapshotStale
     ? []
     : connectedClients.filter(
       (client) => getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated",
     );
+  const clientGroups = [...new Set(connectedClients.map((client) => client.agentGroup ?? "default"))].sort();
+  const filteredClients = clientGroupFilter === "all"
+    ? connectedClients
+    : connectedClients.filter((client) => (client.agentGroup ?? "default") === clientGroupFilter);
+  const clientPageCount = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
+  const visibleClientPage = Math.min(clientPage, clientPageCount - 1);
+  const visibleClients = filteredClients.slice(visibleClientPage * CLIENTS_PER_PAGE, (visibleClientPage + 1) * CLIENTS_PER_PAGE);
+  const jobPageCount = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE));
+  const visibleJobPage = Math.min(jobPage, jobPageCount - 1);
+  const visibleJobs = jobs.slice(visibleJobPage * JOBS_PER_PAGE, (visibleJobPage + 1) * JOBS_PER_PAGE);
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const coordinatorActiveJob = jobs.find((job) =>
     ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status)
@@ -366,14 +415,27 @@ export function AmazonCrawlerPage({
   useEffect(() => {
     let isMounted = true;
     async function refreshClients(): Promise<void> {
+      if (amazonCrawlerAdmissionGate) {
+        try {
+          const gate = await amazonCrawlerAdmissionGate.load();
+          if (isMounted) {
+            setAdmissionGate(gate);
+            setAdmissionGateError(null);
+          }
+        } catch (caught: unknown) {
+          if (isMounted) setAdmissionGateError(caught instanceof Error ? caught.message : "Không tải được global crawler gate.");
+        }
+      }
       try {
         const nextClients = await loadAmazonCrawlerClients();
         if (!isMounted) return;
         setClients(nextClients);
+        setIsClientSnapshotStale(false);
+        setLastClientRefreshAt(Date.now());
         setClientError(null);
       } catch (caught: unknown) {
         if (!isMounted) return;
-        setClients([]);
+        setIsClientSnapshotStale(true);
         setClientError(caught instanceof Error ? caught.message : "Không tải được danh sách client.");
       } finally {
         if (isMounted) setIsLoadingClients(false);
@@ -385,7 +447,264 @@ export function AmazonCrawlerPage({
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [loadAmazonCrawlerClients]);
+  }, [loadAmazonCrawlerClients, amazonCrawlerCommands, amazonCrawlerAdmissionGate]);
+
+  async function handleAdmissionGateChange(): Promise<void> {
+    if (!amazonCrawlerAdmissionGate || !admissionGate || isChangingAdmissionGate) return;
+    const nextState = admissionGate.state === "STOPPED" ? "OPEN" : "STOPPED";
+    const reason = admissionGateReason.trim();
+    if (reason.length < 3) {
+      setAdmissionGateError("Nhập lý do ít nhất 3 ký tự để ghi audit.");
+      return;
+    }
+    if (nextState === "STOPPED" && !window.confirm(
+      "Soft stop toàn bộ crawler? Task đang thực thi sẽ hoàn tất; task đã lease nhưng chưa chạy sẽ chờ. Agent offline sẽ hiện pending confirmation. Không purge kết quả và không dừng SEO/Shopify.",
+    )) return;
+    setIsChangingAdmissionGate(true);
+    setAdmissionGateError(null);
+    try {
+      setAdmissionGate(await amazonCrawlerAdmissionGate.setState(nextState, reason));
+      setAdmissionGateReason("");
+    } catch (caught: unknown) {
+      setAdmissionGateError(caught instanceof Error ? caught.message : "Không cập nhật được global crawler gate.");
+    } finally {
+      setIsChangingAdmissionGate(false);
+    }
+  }
+
+  async function handleAgentExecutionCommand(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    if (client.desiredExecutionState === "DRAINING") return;
+    const type = client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "RESUME" : "PAUSE";
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.submit(client.id, type);
+      try {
+        const history = await amazonCrawlerCommands.history(client.id);
+        setCommandHistories((current) => ({ ...current, [client.id]: history }));
+        setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+      } catch {
+        setCommandHistoryErrors((current) => ({ ...current, [client.id]: true }));
+      }
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được lệnh đến agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleBulkGroupCommand(type: "PAUSE" | "RESUME" | "DRAIN"): Promise<void> {
+    if (!amazonCrawlerCommands || clientGroupFilter === "all" || isClientSnapshotStale || isBulkCommandRunning) return;
+    const reason = bulkCommandReason.trim();
+    if (reason.length < 10) {
+      setBulkCommandMessage("Lý do thao tác cần ít nhất 10 ký tự.");
+      return;
+    }
+    const actionLabel = type === "PAUSE" ? "tạm dừng" : type === "RESUME" ? "tiếp tục" : "DRAIN";
+    if (!window.confirm(`Gửi lệnh ${actionLabel} tới ${filteredClients.length} agent thuộc group ${clientGroupFilter}?`)) return;
+    setIsBulkCommandRunning(true);
+    setBulkCommandMessage(null);
+    try {
+      const result = await amazonCrawlerCommands.bulkCommand(clientGroupFilter, type, reason);
+      setBulkCommandMessage(`Group ${clientGroupFilter}: đã gửi ${result.queued}/${result.requested} lệnh; lỗi ${result.failed}. Agent offline sẽ nhận khi kết nối lại.`);
+      setClients(await loadAmazonCrawlerClients());
+    } catch (caught: unknown) {
+      setBulkCommandMessage(caught instanceof Error ? caught.message : "Không gửi được lệnh tới group.");
+    } finally {
+      setIsBulkCommandRunning(false);
+    }
+  }
+
+  async function handleAgentDrain(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || client.desiredExecutionState !== "RUNNING") return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (reason.length < 10) return;
+    if (!window.confirm("Ngừng nhận task mới, hoàn tất task đã nhận và đợi mọi outbox được server xác nhận? Nếu mất mạng, agent sẽ giữ trạng thái DRAINING và dữ liệu cục bộ.")) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.drain(client.id, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được yêu cầu DRAIN.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleAgentSelfTest(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || !client.isConnected) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (reason.length < 10) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.selfTest(client.id, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không chạy được self-test agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleAgentUpdate(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || !client.isConnected
+        || client.desiredExecutionState !== "DRAINED" || client.appliedExecutionState !== "DRAINED"
+        || client.activeTasks !== 0) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    const targetVersion = window.prompt("Nhập chính xác version Agent đã phát hành (x.y.z):")?.trim() ?? "";
+    if (!/^\d+\.\d+\.\d+$/.test(targetVersion) || reason.length < 10) return;
+    if (!window.confirm(`Cài Agent ${targetVersion} sau khi xác minh chữ ký, giữ nguyên identity/outbox và chỉ ACK sau boot + self-test PASS?`)) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.updateAgent(client.id, targetVersion, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được yêu cầu cập nhật Agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleAgentRollback(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || !client.isConnected
+        || client.desiredExecutionState !== "DRAINED" || client.appliedExecutionState !== "DRAINED"
+        || client.activeTasks !== 0) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (reason.length < 10 || !window.confirm("Phục hồi bản Agent trước khi cập nhật thất bại? Agent phải vẫn DRAINED và toàn bộ outbox đã được server ACK.")) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.rollbackAgent(client.id, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được yêu cầu rollback Agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleAgentConfigReload(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.reloadConfig(client.id, config);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không cập nhật được cấu hình agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  function updateAgentConfig(clientId: string, update: (config: AmazonCrawlerAgentRuntimeConfig) => AmazonCrawlerAgentRuntimeConfig): void {
+    setAgentConfigDrafts((current) => {
+      const config = current[clientId] ?? clients.find((client) => client.id === clientId)?.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+      return { ...current, [clientId]: update(config) };
+    });
+  }
+
+  async function handleAgentRestart(client: AmazonCrawlerClientSummary,
+                                    type: "RESTART_WORKERS" | "RESTART_AGENT"): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (!client.isConnected || client.appliedExecutionState !== "PAUSED" || reason.length < 10) return;
+    const label = type === "RESTART_AGENT" ? "toàn bộ agent" : "worker crawler";
+    if (!window.confirm(`Khởi động lại ${label}? Agent phải PAUSED, không có task đang chạy. Identity và outbox sẽ được giữ.`)) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.restart(client.id, type, reason);
+      try {
+        const history = await amazonCrawlerCommands.history(client.id);
+        setCommandHistories((current) => ({ ...current, [client.id]: history }));
+        setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+      } catch {
+        setCommandHistoryErrors((current) => ({ ...current, [client.id]: true }));
+      }
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : `Không gửi được lệnh restart ${label}.`);
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handlePendingPurgePreview(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    const taskIds = (purgeTaskScopes[client.id] ?? "").split(/[\s,;]+/).filter(Boolean);
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      const preview = await amazonCrawlerCommands.previewPendingPurge(client.id, taskIds);
+      setPurgePreviews((current) => ({ ...current, [client.id]: preview }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không kiểm tra được phạm vi purge.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handlePurgeAllLocalPreview(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      const preview = await amazonCrawlerCommands.previewPurgeAllLocal(client.id);
+      setPurgePreviews((current) => ({ ...current, [client.id]: preview }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không kiểm tra được phạm vi purge-all.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handlePendingPurge(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
+    const preview = purgePreviews[client.id];
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (!preview || preview.ineligibleCount !== 0 || preview.pendingCount < 1 || reason.length < 10) return;
+    const isPurgeAll = preview.scope === "all-local";
+    if (!window.confirm(`Xóa ${preview.pendingCount} assignment chưa chạy${isPurgeAll ? " trong toàn agent" : ""}? Task đang chạy và outbox được giữ nguyên.`)) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      if (isPurgeAll) await amazonCrawlerCommands.purgeAllLocal(client.id, preview.pendingCount, reason);
+      else await amazonCrawlerCommands.purgePending(client.id, preview.eligibleTaskIds, preview.pendingCount, reason);
+      let history: readonly AmazonCrawlerAgentCommandSummary[] | null = null;
+      try { history = await amazonCrawlerCommands.history(client.id); }
+      catch { setCommandHistoryErrors((current) => ({ ...current, [client.id]: true })); }
+      setPurgePreviews((current) => {
+        const next = { ...current };
+        delete next[client.id];
+        return next;
+      });
+      setPurgeTaskScopes((current) => ({ ...current, [client.id]: "" }));
+      setPurgeReasons((current) => ({ ...current, [client.id]: "" }));
+      if (history) {
+        setCommandHistories((current) => ({ ...current, [client.id]: history }));
+        setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+      }
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không purge được assignment pending.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -406,6 +725,40 @@ export function AmazonCrawlerPage({
       isMounted = false;
     };
   }, [loadAmazonCrawlerAgentRelease]);
+
+  useEffect(() => {
+    if (!amazonCrawlerCommands || clients.length === 0 || isClientSnapshotStale) return;
+    let isActive = true;
+    const refreshCommandHistory = async (): Promise<void> => {
+      const histories = await Promise.all(clients.map(async (client) => {
+        try {
+          return { clientId: client.id, history: await amazonCrawlerCommands.history(client.id), failed: false } as const;
+        } catch {
+          return { clientId: client.id, history: null, failed: true } as const;
+        }
+      }));
+      if (!isActive) return;
+      setCommandHistories((current) => {
+        const next = { ...current };
+        for (const entry of histories) if (entry.history) next[entry.clientId] = entry.history;
+        return next;
+      });
+      setCommandHistoryErrors((current) => {
+        const next = { ...current };
+        for (const entry of histories) {
+          if (entry.failed) next[entry.clientId] = true;
+          else delete next[entry.clientId];
+        }
+        return next;
+      });
+    };
+    void refreshCommandHistory();
+    const interval = window.setInterval(() => void refreshCommandHistory(), 3000);
+    return () => {
+      isActive = false;
+      window.clearInterval(interval);
+    };
+  }, [amazonCrawlerCommands, clients, isClientSnapshotStale]);
 
   // 1. Fetch recent jobs list from coordinator
   useEffect(() => {
@@ -506,7 +859,7 @@ export function AmazonCrawlerPage({
     let isMounted = true;
     async function refreshJobs(): Promise<void> {
       try {
-        let nextJobs = await jobController.list(25);
+        let nextJobs = await jobController.list(100);
         if (activeJobId && !nextJobs.some((job) => job.jobId === activeJobId)) {
           try {
             const activeJob = await jobController.get(activeJobId);
@@ -520,9 +873,16 @@ export function AmazonCrawlerPage({
             setJobControlMessage("Job không còn trên coordinator; trạng thái chạy trên giao diện đã được đồng bộ lại.");
           }
         }
-        if (isMounted) setJobs(nextJobs);
+        if (isMounted) {
+          setJobs(nextJobs);
+          setIsJobSnapshotStale(false);
+          setLastJobRefreshAt(Date.now());
+          setHasLoadedJobs(true);
+        }
       } catch (caught: unknown) {
         if (isMounted) {
+          setIsJobSnapshotStale(true);
+          setHasLoadedJobs(true);
           setJobControlTone("error");
           setJobControlMessage(caught instanceof Error ? caught.message : "Không tải được danh sách job.");
         }
@@ -1028,6 +1388,53 @@ export function AmazonCrawlerPage({
     }
   }
 
+  async function handlePauseResumeJob(job: AmazonCrawlerJobSnapshot): Promise<void> {
+    if (!amazonCrawlerJobs || controlledJobId) return;
+    const shouldResume = job.executionState !== "active";
+    setControlledJobId(job.jobId);
+    setJobControlMessage(null);
+    try {
+      const updated = shouldResume
+        ? await amazonCrawlerJobs.resume(job.jobId)
+        : await amazonCrawlerJobs.pause(job.jobId);
+      setJobs((current) => current.map((currentJob) => currentJob.jobId === updated.jobId ? updated : currentJob));
+      setJobControlTone("info");
+      setJobControlMessage(shouldResume
+        ? "Đã tiếp tục job; các ASIN chưa xử lý sẽ được cấp lại, kết quả đã hoàn tất được giữ nguyên."
+        : updated.executionState === "paused"
+          ? "Job đã tạm dừng; kết quả đã lưu được giữ nguyên. Pipeline của sản phẩm đã crawl vẫn tiếp tục."
+          : "Đang tạm dừng: Coordinator đã ngừng cấp ASIN mới và chờ task đang chạy kết thúc an toàn.");
+    } catch (caught: unknown) {
+      setJobControlTone("error");
+      setJobControlMessage(caught instanceof Error ? caught.message : "Không thể cập nhật trạng thái tạm dừng job.");
+    } finally {
+      setControlledJobId(null);
+    }
+  }
+
+  async function handleCancelTask(jobId: string, taskId: string, asin: string): Promise<void> {
+    if (!amazonCrawlerJobs || controlledJobId || controlledTaskId) return;
+    setControlledTaskId(taskId);
+    setJobControlMessage(null);
+    try {
+      await amazonCrawlerJobs.cancelTask(taskId);
+      setJobs((current) => current.map((job) => job.jobId !== jobId ? job : {
+        ...job,
+        progress: {
+          ...job.progress,
+          items: job.progress.items?.map((item) => item.taskId === taskId ? { ...item, status: "cancelling" } : item),
+        },
+      }));
+      setJobControlTone("info");
+      setJobControlMessage(`Đã gửi yêu cầu hủy task ${asin}; các task khác trong job tiếp tục chạy.`);
+    } catch (caught: unknown) {
+      setJobControlTone("error");
+      setJobControlMessage(caught instanceof Error ? caught.message : `Không hủy được task ${asin}.`);
+    } finally {
+      setControlledTaskId(null);
+    }
+  }
+
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
     const sources = urls.length > 0 ? [...urls] : [...job.inputs];
@@ -1191,15 +1598,19 @@ export function AmazonCrawlerPage({
         <p className="mt-2 text-sm text-slate-400">Cào Amazon family, tách product và xử lý Customize — không rewrite dữ liệu.</p>
       </div>
 
+      <AmazonCrawlerDeadLetterPanel controller={amazonCrawlerJobs} />
+
       <section className="rounded-xl border border-slate-700 bg-slate-950/50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="font-semibold text-slate-100">Crawler clients</h2>
-            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online.</p>
+            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online. Tạm dừng chỉ chặn job mới, không hủy task đang chạy.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
-              {connectedClients.length} đang kết nối
+              {isClientSnapshotStale
+                ? `${connectedClients.length} kết nối lần cuối · trạng thái hiện chưa xác minh`
+                : `${connectedClients.length} đang kết nối`}
             </span>
             <a
               className="inline-flex items-center rounded-lg bg-cyan-400 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300"
@@ -1240,18 +1651,88 @@ export function AmazonCrawlerPage({
           </div>
         ) : null}
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-400">Đang kiểm tra client...</p> : null}
-        {clientError ? <p className="mt-3 text-sm text-rose-300">{clientError}</p> : null}
-        {!isLoadingClients && !clientError && connectedClients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Chưa có client online. Hãy mở FFP Amazon Crawler Agent.</p> : null}
+        {clientError ? <p className="mt-3 text-sm text-rose-300" role="alert">{clientError}</p> : null}
+        {lastClientRefreshAt !== null ? <p className="mt-1 text-[11px] text-slate-500">Lần cập nhật danh sách agent: {new Date(lastClientRefreshAt).toLocaleTimeString()}{isClientSnapshotStale ? " · dữ liệu hiển thị là snapshot cũ; thao tác agent tạm khóa" : ""}</p> : null}
+        {amazonCrawlerAdmissionGate ? (
+          <div className={`mt-4 rounded-lg border p-3 ${admissionGate?.state === "STOPPED" ? "border-rose-700 bg-rose-950/40" : "border-slate-700 bg-slate-900/70"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">
+                  Global crawler admission: {admissionGate?.state === "STOPPED" ? "STOPPED" : admissionGate ? "OPEN" : "đang tải…"}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">Soft stop chặn lease mới và không cho bắt đầu task đang chờ; task đang thực thi được hoàn tất. Không hủy job, purge kết quả hoặc dừng SEO/Shopify.</p>
+                {admissionGate ? <p className="mt-1 text-xs text-slate-300">Agent xác nhận gate: {admissionGate.confirmedAgents} đã xác nhận · {admissionGate.pendingAgents} đang chờ.</p> : null}
+                {admissionGate?.pendingAgents ? <ul className="mt-1 text-xs text-amber-300" aria-label="Agent chờ xác nhận global gate">
+                {admissionGate.confirmations.filter((agent) => agent.status === "pending_confirmation" && agent.isConnected).map((agent) => (
+                    <li key={agent.agentId}>{agent.displayName} — {agent.isConnected ? "đang xác nhận" : "offline, sẽ nhận gate khi kết nối lại"}</li>
+                  ))}
+                </ul> : null}
+                {admissionGate?.actor ? <p className="mt-1 text-xs text-slate-500">Cập nhật bởi {admissionGate.actor} · {admissionGate.reason}</p> : null}
+              </div>
+              <button type="button" disabled={!admissionGate || isChangingAdmissionGate || admissionGateReason.trim().length < 3}
+                onClick={() => void handleAdmissionGateChange()}
+                className={`rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${admissionGate?.state === "STOPPED" ? "border border-emerald-700 text-emerald-200" : "border border-rose-700 text-rose-200"}`}>
+                {isChangingAdmissionGate ? "Đang lưu…" : admissionGate?.state === "STOPPED" ? "Mở lại nhận task" : "Dừng nhận task mới"}
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <input aria-label="Lý do đổi admission gate" className="min-w-64 flex-1 rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                maxLength={500} placeholder="Lý do (bắt buộc, tối thiểu 3 ký tự)" value={admissionGateReason}
+                onChange={(event) => setAdmissionGateReason(event.target.value)} />
+            </div>
+            {admissionGateError ? <p className="mt-2 text-sm text-rose-300" role="alert">{admissionGateError}</p> : null}
+          </div>
+        ) : null}
+        {commandError ? <p className="mt-3 text-sm text-rose-300" role="alert">{commandError}</p> : null}
+        {!isLoadingClients && !clientError && connectedClients.length === 0 ? <p className="mt-3 text-sm text-amber-300">Hiện không có crawler agent nào đang kết nối. Agent offline được ẩn khỏi danh sách.</p> : null}
+        {connectedClients.length > 0 ? <label className="mt-3 flex max-w-sm items-center gap-2 text-xs text-slate-300">
+          Lọc Agent group
+          <select aria-label="Lọc theo Agent group" value={clientGroupFilter}
+            onChange={(event) => { setClientGroupFilter(event.target.value); setClientPage(0); }}
+            className="min-w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100">
+            <option value="all">Tất cả group ({connectedClients.length})</option>
+            {clientGroups.map((group) => <option key={group} value={group}>{group} ({connectedClients.filter((client) => (client.agentGroup ?? "default") === group).length})</option>)}
+          </select>
+        </label> : null}
+        {clientGroupFilter !== "all" && amazonCrawlerCommands ? <div className="mt-3 rounded border border-slate-700 bg-slate-950/70 p-3">
+          <p className="text-xs text-slate-300">Bulk actions chỉ nhắm group <strong>{clientGroupFilter}</strong> ({filteredClients.length} agent); phạm vi không áp dụng cho group khác.</p>
+          <label className="mt-2 block max-w-xl text-xs text-slate-400">Lý do kiểm toán
+            <input value={bulkCommandReason} onChange={(event) => setBulkCommandReason(event.target.value)} maxLength={500}
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+              placeholder="Nhập lý do (tối thiểu 10 ký tự)" />
+          </label>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(["PAUSE", "RESUME", "DRAIN"] as const).map((type) => <button key={type} type="button"
+              disabled={isBulkCommandRunning || isClientSnapshotStale || bulkCommandReason.trim().length < 10 || filteredClients.length === 0}
+              onClick={() => void handleBulkGroupCommand(type)}
+              className="rounded border border-cyan-800 px-2 py-1 text-xs text-cyan-200 disabled:opacity-50">
+              {isBulkCommandRunning ? "Đang gửi…" : type === "PAUSE" ? "Tạm dừng group" : type === "RESUME" ? "Tiếp tục group" : "DRAIN group"}
+            </button>)}
+          </div>
+          {bulkCommandMessage ? <p role="status" className="mt-2 text-xs text-slate-300">{bulkCommandMessage}</p> : null}
+        </div> : null}
+        {filteredClients.length === 0 && connectedClients.length > 0 ? <p className="mt-3 text-sm text-slate-400">Không có Agent đang kết nối trong group đã chọn.</p> : null}
         {connectedClients.length > 0 ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {connectedClients.map((client) => (
+            {visibleClients.map((client) => {
+              const clientCommandHistory = commandHistories[client.id] ?? [];
+              const latestUpdate = [...clientCommandHistory].reverse().find((command) => command.type === "UPDATE_AGENT");
+              const latestUpdateResult = latestUpdate?.events.map((event) => event.detail.result)
+                .find((value): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value));
+              const canRollbackLatestUpdate = latestUpdate?.status === "FAILED" && latestUpdateResult?.rollbackAvailable === true;
+              return (
               <article className="rounded-lg border border-slate-700 bg-slate-900/70 p-3" key={client.id}>
                 <div className="flex items-center justify-between gap-2">
                   <strong className="truncate text-sm" title={client.displayName}>{client.displayName}</strong>
-                  <span className={`text-xs font-semibold ${!client.isConnected || client.status === "offline" ? "text-rose-300" : client.status === "waiting_captcha" ? "text-amber-300" : "text-emerald-300"}`}>{client.isConnected ? client.status : "offline"}</span>
+                  {(() => {
+                    const presence = getCrawlerClientPresence(client.isConnected, client.status, isClientSnapshotStale);
+                    const toneClass = presence.tone === "offline" ? "text-rose-300" : presence.tone === "warning" ? "text-amber-300" : presence.tone === "unknown" ? "text-slate-400" : "text-emerald-300";
+                    return <span className={`text-xs font-semibold ${toneClass}`}>{presence.label}</span>;
+                  })()}
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
                   <span>Agent v{client.agentVersion}</span>
+                  <span className="rounded border border-slate-700 px-1.5 py-0.5">group: {client.agentGroup ?? "default"}</span>
                   {agentRelease ? (
                     <span className={`rounded-full px-2 py-0.5 font-semibold ${
                       getAgentVersionStatus(client.agentVersion, agentRelease.version) === "outdated"
@@ -1269,11 +1750,178 @@ export function AmazonCrawlerPage({
                   ) : null}
                 </div>
                 <p className="mt-1 text-xs text-slate-400">{client.activeTasks} đang chạy · {client.availableSlots}/{client.maxConcurrentInputs} slot trống</p>
+                {client.observability?.workerHealth?.state === "degraded" ? (
+                  <p className="mt-1 text-xs text-amber-300" role="status">
+                    Worker degraded: {client.observability.workerHealth.failuresInWindow}/{client.observability.workerHealth.failureLimit} lỗi trong {Math.round(client.observability.workerHealth.windowSeconds / 60)} phút · concurrency giảm còn {client.observability.workerHealth.effectiveConcurrency}/{client.observability.workerHealth.configuredConcurrency}.
+                  </p>
+                ) : null}
                 {client.leasedTasks === client.activeTasks ? null : <p className="mt-1 text-xs text-amber-300">{client.leasedTasks} lease trên server đang chờ đồng bộ</p>}
+                {amazonCrawlerCommands ? <div className="mt-3 border-t border-slate-700 pt-3">
+                  <details className="mb-3 rounded border border-slate-700 p-2">
+                    <summary className="cursor-pointer text-xs text-slate-300">Cấu hình agent · desired v{client.desiredConfigVersion ?? 0} / applied v{client.appliedConfigVersion ?? 0}</summary>
+                    {(() => {
+                      const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
+                      return <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                        {(["maxConcurrentInputs", "heartbeatIntervalSeconds", "clientOfflineAfterSeconds", "leaseSeconds"] as const).map((field) => <label key={field} className="text-slate-400">
+                          {field}<input type="number" min={1} value={config[field]} onChange={(event) => updateAgentConfig(client.id, (current) => ({ ...current, [field]: Number(event.target.value) }))}
+                            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200" />
+                        </label>)}
+                        <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected}
+                          onClick={() => void handleAgentConfigReload(client)}
+                          className="col-span-2 rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:opacity-50">
+                          {commandBusyClientId === client.id ? "Đang áp dụng…" : "Lưu và áp dụng cấu hình"}
+                        </button>
+                        <p className="col-span-2 text-slate-500">Server kiểm tra ràng buộc heartbeat/offline/lease. Config không chứa proxy secret hoặc đường dẫn local.</p>
+                      </div>;
+                    })()}
+                  </details>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng"
+                      : client.desiredExecutionState === "DRAINING" ? "đang DRAIN"
+                      : client.desiredExecutionState === "DRAINED" ? "đã DRAINED" : "đang chạy"}
+                      {client.appliedExecutionState !== client.desiredExecutionState ? " · đang đồng bộ" : ""}</span>
+                    <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.desiredExecutionState === "DRAINING"}
+                      onClick={() => void handleAgentExecutionCommand(client)}
+                      className="rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50">
+                      {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "Tiếp tục" : "Tạm dừng"}
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2 rounded border border-slate-700 p-2">
+                    <label className="block text-[11px] text-slate-300" htmlFor={`pending-purge-tasks-${client.id}`}>
+                      Purge assignment chưa chạy (nhập task ID, cách nhau bằng dấu phẩy hoặc dòng mới)
+                    </label>
+                    <textarea id={`pending-purge-tasks-${client.id}`} rows={2}
+                      value={purgeTaskScopes[client.id] ?? ""}
+                      onChange={(event) => {
+                        setPurgeTaskScopes((current) => ({ ...current, [client.id]: event.target.value }));
+                        setPurgePreviews((current) => {
+                          const next = { ...current };
+                          delete next[client.id];
+                          return next;
+                        });
+                      }}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
+                      placeholder="task-id-1, task-id-2" />
+                    <label className="block text-[11px] text-slate-300" htmlFor={`pending-purge-reason-${client.id}`}>Lý do</label>
+                    <input id={`pending-purge-reason-${client.id}`} value={purgeReasons[client.id] ?? ""}
+                      onChange={(event) => setPurgeReasons((current) => ({ ...current, [client.id]: event.target.value }))}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
+                      placeholder="Ít nhất 10 ký tự" />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                        || !client.isConnected || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentSelfTest(client)}
+                        className="rounded border border-sky-700 px-2 py-1 text-[11px] text-sky-200 disabled:opacity-50">
+                        Chạy self-test
+                      </button>
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                        || client.desiredExecutionState !== "RUNNING" || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentDrain(client)}
+                        className="rounded border border-violet-700 px-2 py-1 text-[11px] text-violet-200 disabled:opacity-50">
+                        DRAIN agent
+                      </button>
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                        || !client.isConnected || client.desiredExecutionState !== "DRAINED"
+                        || client.appliedExecutionState !== "DRAINED" || client.activeTasks !== 0
+                        || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentUpdate(client)}
+                        className="rounded border border-emerald-700 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-50">
+                        Cập nhật đã DRAINED
+                      </button>
+                      {canRollbackLatestUpdate ?
+                        <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                          || !client.isConnected || client.desiredExecutionState !== "DRAINED"
+                          || client.appliedExecutionState !== "DRAINED" || client.activeTasks !== 0
+                          || (purgeReasons[client.id] ?? "").trim().length < 10}
+                          onClick={() => void handleAgentRollback(client)}
+                          className="rounded border border-rose-700 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                          Rollback bản cập nhật lỗi
+                        </button> : null}
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
+                        || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
+                        className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
+                        Restart workers
+                      </button>
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
+                        || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentRestart(client, "RESTART_AGENT")}
+                        className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                        Restart agent
+                      </button>
+                      <span className="text-[10px] text-slate-500">Cần online + PAUSED, không task chạy và lý do audit ≥10 ký tự.</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.appliedExecutionState !== "PAUSED"}
+                        onClick={() => void handlePendingPurgePreview(client)}
+                        className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
+                        {commandBusyClientId === client.id ? "Đang kiểm tra…" : "Kiểm tra phạm vi"}
+                      </button>
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.appliedExecutionState !== "PAUSED"}
+                        onClick={() => void handlePurgeAllLocalPreview(client)}
+                        className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                        Preview purge-all
+                      </button>
+                      {purgePreviews[client.id] ? <span className="text-[11px] text-slate-300">
+                        {purgePreviews[client.id].scope === "all-local" ? "Toàn agent: " : "Scope IDs: "}
+                        {purgePreviews[client.id].pendingCount} pending · {purgePreviews[client.id].ineligibleCount} không hợp lệ
+                      </span> : null}
+                      {purgePreviews[client.id]?.pendingCount && purgePreviews[client.id]?.ineligibleCount === 0 ?
+                        <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || (purgeReasons[client.id] ?? "").trim().length < 10}
+                          onClick={() => void handlePendingPurge(client)}
+                        className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                          {purgePreviews[client.id].scope === "all-local" ? "Purge all local" : "Purge pending"}
+                        </button> : null}
+                    </div>
+                    <p className="text-[10px] text-slate-500">Chỉ thao tác khi agent PAUSED; task đang chạy và outbox không bị xóa.</p>
+                  </div>
+                  {(commandHistories[client.id] ?? []).slice(-3).reverse().map((command) => {
+                    const result = command.events.map((event) => event.detail.result).find((value): value is Record<string, unknown> =>
+                      typeof value === "object" && value !== null && !Array.isArray(value));
+                    return <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
+                      #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục"
+                        : command.type === "DRAIN" ? "Drain agent"
+                        : command.type === "RUN_SELF_TEST" ? "Self-test agent"
+                        : command.type === "UPDATE_AGENT" ? "Cập nhật Agent"
+                        : command.type === "ROLLBACK_AGENT" ? "Rollback Agent"
+                        : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local"
+                        : command.type === "PURGE_PENDING_TASKS" ? "Purge pending"
+                        : command.type === "RESTART_AGENT" ? "Restart agent" : "Restart workers"} — {command.status}
+                      {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
+                      {command.type === "DRAIN" ? <p>{command.status === "SUCCESS"
+                        ? "Agent DRAINED sau khi hết task và server ACK toàn bộ outbox."
+                        : "Đang chờ task kết thúc và server ACK outbox; timeout/mất mạng không xóa dữ liệu."}</p> : null}
+                      {command.type === "UPDATE_AGENT" && result ? <p>
+                        {typeof result.previousVersion === "string" ? result.previousVersion : "?"} → {typeof result.version === "string" ? result.version : "?"}
+                        {` · identity ${result.identityRetained === true ? "được giữ" : "chưa xác nhận"}`}
+                        {` · outbox còn ${typeof result.pendingOutboxCount === "number" ? result.pendingOutboxCount : "?"}`}
+                        {` · self-test ${typeof result.selfTestStatus === "string" ? result.selfTestStatus : "?"}`}
+                      </p> : null}
+                      {command.type === "RUN_SELF_TEST" && result ? <p>Self-test: {typeof result.status === "string" ? result.status : "không rõ"}
+                        {typeof result.checks === "object" && result.checks !== null ? ` · ${Object.entries(result.checks as Record<string, unknown>)
+                          .map(([name, check]) => `${name}: ${typeof check === "object" && check !== null && "status" in check ? String(check.status) : "không rõ"}`)
+                          .join(" · ")}` : ""}</p> : null}
+                      {result && typeof result.beforeCount === "number" ? <p>Trước {result.beforeCount} · đã purge {typeof result.purgedCount === "number" ? result.purgedCount : 0} · còn {typeof result.afterCount === "number" ? result.afterCount : 0}</p> : null}
+                      {command.type === "RESTART_AGENT" && result && typeof result.bootId === "string" ?
+                        <p>Boot mới {result.bootId.slice(0, 8)} · identity {result.identityRetained === true ? "được giữ" : "chưa xác nhận"}
+                          · outbox giữ lại {typeof result.pendingOutboxCount === "number" ? result.pendingOutboxCount : 0}</p> : null}
+                      {command.type === "RESTART_WORKERS" && result && typeof result.clearedWorkerFailures === "number" ?
+                        <p>Worker tiến trình rời rạc được xác minh đã dừng · reset {result.clearedWorkerFailures} lỗi health gần đây.</p> : null}
+                      {command.error ? <p className="text-rose-300">{command.error}</p> : null}
+                    </div>;
+                  })}
+                  {commandHistoryErrors[client.id] ? <p role="status" className="mt-2 text-[11px] text-amber-300">Không tải được trạng thái lệnh mới; lịch sử bên dưới có thể đã cũ.</p> : null}
+                </div> : null}
               </article>
-            ))}
+              );
+            })}
           </div>
         ) : null}
+        {filteredClients.length > CLIENTS_PER_PAGE ? <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">
+          <button type="button" disabled={visibleClientPage === 0} onClick={() => setClientPage(visibleClientPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent trước</button>
+          <span>{visibleClientPage * CLIENTS_PER_PAGE + 1}–{Math.min((visibleClientPage + 1) * CLIENTS_PER_PAGE, filteredClients.length)} / {filteredClients.length}</span>
+          <button type="button" disabled={visibleClientPage + 1 >= clientPageCount} onClick={() => setClientPage(visibleClientPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent tiếp</button>
+        </div> : null}
       </section>
 
       <CrawlerObservability controller={amazonCrawlerJobs}
@@ -1922,6 +2570,7 @@ export function AmazonCrawlerPage({
           <NumberSetting label="CAPTCHA timeout (s)" min={30} max={900} value={settings.captchaTimeoutSeconds} onChange={(value) => updateSetting("captchaTimeoutSeconds", value)} />
           <NumberSetting label="Matrix cap" min={1} max={5000} value={settings.maxMatrixVariants} onChange={(value) => updateSetting("maxMatrixVariants", value)} />
           <label className="grid gap-1 text-sm text-slate-300">Amazon ZIP<input className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" value={settings.amazonZip} onChange={(event) => updateSetting("amazonZip", event.target.value)} /></label>
+          <label className="grid gap-1 text-sm text-slate-300">Chỉ định Agent group (không bắt buộc)<input className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" value={settings.allowedAgentGroup ?? ""} onChange={(event) => updateSetting("allowedAgentGroup", event.target.value.trim() || undefined)} placeholder="Ví dụ: amazon-us" /></label>
           <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={settings.headless} type="checkbox" onChange={(event) => updateSetting("headless", event.target.checked)} /> Headless browser</label>
           <details className="sm:col-span-3">
             <summary className="cursor-pointer text-sm font-semibold text-cyan-300">Giới hạn thời gian xử lý</summary>
@@ -1947,21 +2596,45 @@ export function AmazonCrawlerPage({
             <div>
               <h2 className="font-semibold text-slate-100">Job đang chạy và gần đây</h2>
               <p className="text-xs text-slate-400">Hủy job sẽ dừng crawler và dọn dữ liệu tạm của job. Cache sản phẩm hợp lệ và sản phẩm đã ghi lên Shopify được giữ nguyên.</p>
+              <p className="text-xs text-slate-400">Tạm dừng sẽ ngừng nhận ASIN mới sau khi task đang chạy kết thúc an toàn; kết quả đã lưu được giữ lại. Pipeline SEO của sản phẩm đã crawl vẫn tiếp tục. Pause agent riêng không thay thế Pause job.</p>
             </div>
-            <span className="text-xs text-slate-500">Tự làm mới mỗi 3 giây</span>
+            <div className="text-right text-xs text-slate-500">
+              <p>Tự làm mới mỗi 3 giây · phân trang 10 job, tải 100 job gần nhất</p>
+              {lastJobRefreshAt !== null ? <p>{isJobSnapshotStale ? "Snapshot cũ; trạng thái hiện chưa xác minh" : "Cập nhật"} lúc {new Date(lastJobRefreshAt).toLocaleTimeString()}</p> : null}
+            </div>
           </div>
-          {jobs.length === 0 ? <p className="text-sm text-slate-400">Chưa có job trên coordinator.</p> : (
+          {jobs.length === 0 ? <p className="text-sm text-slate-400">{!hasLoadedJobs ? "Đang tải danh sách job…" : isJobSnapshotStale ? "Chưa thể xác minh danh sách job do lỗi kết nối." : "Chưa có job trên coordinator."}</p> : (
             <div className="grid gap-2">
-              {jobs.slice(0, 10).map((job) => {
+              {visibleJobs.map((job) => {
                 const isActiveJob = ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status);
                 const cancellationMessage = describeJobCancellation(job);
+                const executionStateMessage = job.executionState === "pausing"
+                  ? " · Đang tạm dừng"
+                  : job.executionState === "paused" ? " · Đã tạm dừng" : "";
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
                     <div className="min-w-0">
                       <p className="font-mono text-xs text-cyan-300">{job.jobId}</p>
                       <p className="text-sm text-slate-300">
-                        {job.status} · {job.progress.completed}/{job.progress.total} link
+                        {job.status}{executionStateMessage} · {job.progress.completed}/{job.progress.total} link
                       </p>
+                      {job.progress.items?.filter((task): task is typeof task & { taskId: string } =>
+                        Boolean(task.taskId) && ["queued", "running", "cancelling"].includes(task.status)
+                      ).map((task) => (
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-400" key={task.taskId}>
+                          <span>{task.asin} · {task.status}</span>
+                          {task.status !== "cancelling" ? (
+                            <button
+                              className="rounded border border-rose-800 px-2 py-0.5 text-rose-300 disabled:opacity-50"
+                              type="button"
+                              disabled={isJobSnapshotStale || controlledTaskId !== null || controlledJobId !== null || job.status === "cancelling"}
+                              onClick={() => void handleCancelTask(job.jobId, task.taskId, task.asin)}
+                            >
+                              {controlledTaskId === task.taskId ? "Đang hủy..." : "Hủy task"}
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
                       {cancellationMessage ? (
                         <p className={job.status === "cancelled" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
                           {cancellationMessage}
@@ -1988,13 +2661,26 @@ export function AmazonCrawlerPage({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {isActiveJob && job.status !== "cancelling" ? (
-                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
+                        <>
+                          <button
+                            className="rounded border border-amber-500 px-3 py-1 text-xs font-semibold text-amber-300 disabled:opacity-50"
+                            disabled={isJobSnapshotStale || controlledJobId !== null}
+                            type="button"
+                            onClick={() => void handlePauseResumeJob(job)}
+                          >
+                            {controlledJobId === job.jobId
+                              ? "Đang cập nhật..."
+                              : job.executionState === "pausing" ? "Tiếp tục ngay"
+                                : job.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
+                          </button>
+                          <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
+                        </>
                       ) : job.status === "cancelling" ? (
                         <button
                           className="rounded border border-amber-600 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-300 hover:border-rose-500 hover:bg-rose-950/60 hover:text-rose-200 transition-colors"
                           type="button"
                           title="Bấm để buộc dừng ngay lập tức (Force Stop)"
-                          disabled={controlledJobId === job.jobId}
+                          disabled={isJobSnapshotStale || controlledJobId === job.jobId}
                           onClick={() => void handleStopJob(job.jobId)}
                         >
                           {controlledJobId === job.jobId ? "Đang dừng..." : "Buộc dừng ngay ✕"}
@@ -2018,11 +2704,11 @@ export function AmazonCrawlerPage({
                         </button>
                       ) : ["completed", "partial", "cancelled"].includes(job.status) ? (
                         <>
-                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
-                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
+                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
+                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
                         </>
                       ) : job.status === "cancelling" ? (
-                        <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)} title="Hủy bỏ và xóa job">Delete</button>
+                        <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)} title="Hủy bỏ và xóa job">Delete</button>
                       ) : null}
                     </div>
                   </div>
@@ -2030,6 +2716,11 @@ export function AmazonCrawlerPage({
               })}
             </div>
           )}
+          {jobs.length > JOBS_PER_PAGE ? <div className="flex items-center justify-end gap-3 text-xs text-slate-400">
+            <button type="button" disabled={visibleJobPage === 0} onClick={() => setJobPage(visibleJobPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job trước</button>
+            <span>{visibleJobPage * JOBS_PER_PAGE + 1}–{Math.min((visibleJobPage + 1) * JOBS_PER_PAGE, jobs.length)} / {jobs.length}</span>
+            <button type="button" disabled={visibleJobPage + 1 >= jobPageCount} onClick={() => setJobPage(visibleJobPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job tiếp</button>
+          </div> : null}
           {shouldShowStandaloneJobControlMessage(jobControlTone, jobControlMessage) ? (
             <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : "text-rose-300"}`}>
               {jobControlMessage}
@@ -2039,7 +2730,20 @@ export function AmazonCrawlerPage({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
+        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
+        {activeManagedJob && ["queued", "running", "waiting_captcha"].includes(activeManagedJob.status) ? (
+          <button
+            className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50"
+            disabled={isJobSnapshotStale || controlledJobId !== null}
+            type="button"
+            onClick={() => void handlePauseResumeJob(activeManagedJob)}
+          >
+            {controlledJobId === activeManagedJob.jobId
+              ? "Đang cập nhật..."
+              : activeManagedJob.executionState === "pausing" ? "Tiếp tục ngay"
+                : activeManagedJob.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
+          </button>
+        ) : null}
         <button
           className={`rounded-lg border px-5 py-2 font-semibold transition-colors ${
             isCancellationPending

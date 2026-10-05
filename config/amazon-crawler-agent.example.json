@@ -2,6 +2,12 @@
   "serverUrl": "https://crawler.example.com",
   "displayName": "",
   "maxConcurrentInputs": 4,
+  "outbox": {
+    "maxBytes": 1073741824,
+    "maxRecords": 10000,
+    "minFreeBytes": 2147483648,
+    "warnAgeSeconds": 86400
+  },
   "limits": {
     "productThreads": 4,
     "variantThreads": 8,

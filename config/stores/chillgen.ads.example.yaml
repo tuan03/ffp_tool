@@ -1,0 +1,45 @@
+# Chillgen Store Ads Example Profile (YAML template)
+store_id: chillgen
+mode: read_only
+market_countries:
+  - US
+reporting_currency: USD
+meta:
+  account_ids: []
+  account_timezone: America/Los_Angeles
+  api_version: v26.0
+  purchase_action_type: offsite_conversion.fb_pixel_purchase
+  secret_ref: META_ACCESS_TOKEN
+  proxy_ref: META_PROXY_URL
+  attribution_policy_ref: 7d_click_1d_view
+ga4:
+  property_id: null
+  property_timezone: America/Los_Angeles
+  credential_ref: credentials/chillgen-service-account.json
+shopify:
+  shop_domain: chillgen.myshopify.com
+  api_version: "2026-07"
+  connection_ref: shopify_chillgen
+competitors:
+  primary_provider: scrapecreators
+  backup_provider: searchapi
+  monthly_cost_cap_usd: 65.0
+  watchlist: []
+business:
+  cost_profile_ref: null
+  target_cpa: null
+  target_contribution_per_order: null
+  break_even_roas: null
+  break_even_cpa: null
+rules:
+  policy_version: "2.0"
+  maturity_days: 7
+  allow_financial_recommendations: false
+budgets:
+  total_daily_authorized_cap: null
+  experiment_authorized_cap: null
+  max_change_per_24h_pct: 20.0
+  cooldown_hours: 24
+actions:
+  external_writes_enabled: false
+  approval_required: true

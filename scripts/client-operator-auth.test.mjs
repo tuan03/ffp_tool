@@ -60,7 +60,22 @@ test("production client keeps health checks public and separate from protected A
   assert.doesNotMatch(compose, /wget -q --spider http:\/\/127\.0\.0\.1\/ \|\| exit 1/);
 });
 
-test("client container creates its password file from operator credentials without receiving the gateway token", async () => {
+test("production client proxies active crawler operator APIs through the coordinator", async () => {
+  const [nginxConfig, crawlerService, deadLetterPanel] = await Promise.all([
+    readFile("deploy/client/nginx.conf", "utf8"),
+    readFile("src/modules/amazon-crawler/service.ts", "utf8"),
+    readFile("src/modules/amazon-crawler/ui/components/AmazonCrawlerDeadLetterPanel.tsx", "utf8"),
+  ]);
+  const coordinatorRoute = nginxConfig.match(/location ~ \^\/api\/v1\/\(([^)]*)\)\(\/\|\$\)/)?.[1] ?? "";
+  for (const route of ["operator", "dead-letter", "crawl-tasks", "admission-gate", "fleet-circuit-breaker", "agent-keys"]) {
+    assert.ok(coordinatorRoute.split("|").includes(route), `Nginx must proxy ${route}`);
+  }
+  assert.match(crawlerService, /api\/v1\/operator\/security/);
+  assert.match(crawlerService, /clients\|crawl-jobs\|crawl-tasks[\s\S]*dead-letter[\s\S]*agent-keys/);
+  assert.match(deadLetterPanel, /items\.length === 0 && !error/);
+});
+
+test("server and client receive operator credentials while only client creates the Nginx password file", async () => {
   const [dockerfile, compose, entrypoint] = await Promise.all([
     readFile("deploy/client/Dockerfile", "utf8"),
     readFile("docker-compose.yml", "utf8"),
@@ -71,7 +86,13 @@ test("client container creates its password file from operator credentials witho
   assert.match(dockerfile, /COPY deploy\/client\/configure-operator-auth\.sh \/docker-entrypoint\.d\/10-configure-operator-auth\.sh/);
   assert.match(dockerfile, /chmod 755 \/docker-entrypoint\.d\/10-configure-operator-auth\.sh/);
 
+  const serverService = compose.slice(compose.indexOf("  server:"), compose.indexOf("  client:"));
   const clientService = compose.slice(compose.indexOf("  client:"));
+  assert.match(serverService, /FFP_OPERATOR_USERNAME: \$\{FFP_OPERATOR_USERNAME:\?/);
+  assert.match(serverService, /FFP_OPERATOR_PASSWORD: \$\{FFP_OPERATOR_PASSWORD:\?/);
+  assert.match(serverService, /PINTEREST_COORDINATOR_OPERATOR_USERNAME: \$\{FFP_OPERATOR_USERNAME:\?/);
+  assert.match(serverService, /PINTEREST_COORDINATOR_OPERATOR_PASSWORD: \$\{FFP_OPERATOR_PASSWORD:\?/);
+  assert.match(serverService, /FFP_CRAWLER_OPERATOR_AUTH_ENABLED: \$\{FFP_CRAWLER_OPERATOR_AUTH_ENABLED:-false\}/);
   assert.match(clientService, /FFP_OPERATOR_USERNAME: \$\{FFP_OPERATOR_USERNAME:\?/);
   assert.match(clientService, /FFP_OPERATOR_PASSWORD: \$\{FFP_OPERATOR_PASSWORD:\?/);
   assert.doesNotMatch(clientService, /GATEWAY_AUTH_TOKEN/);

@@ -99,6 +99,28 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
         const input = z.object({ tokenId: z.string().uuid() }).strict().parse(body);
         await repository.deleteRevokedToken(storeId, input.tokenId); send(res, 200, { deleted: true }); return;
       }
+      if (url.pathname === "/api/seo-agent/enable-claims") {
+        const input = z.object({ allStores: z.boolean().optional() }).nullish().parse(body);
+        const targetStoreIds = input?.allStores && options.listStoreIds ? options.listStoreIds() : [storeId];
+        const results: { storeId: string; imported: number }[] = [];
+        for (const id of targetStoreIds) {
+          try {
+            results.push({ storeId: id, ...await repository.enableStore(id) });
+          } catch {
+            await repository.enableStoreRaw(id);
+            results.push({ storeId: id, imported: 0 });
+          }
+        }
+        send(res, 200, { enabled: true, results }); return;
+      }
+      if (url.pathname === "/api/seo-agent/disable-claims") {
+        const input = z.object({ allStores: z.boolean().optional() }).nullish().parse(body);
+        const targetStoreIds = input?.allStores && options.listStoreIds ? options.listStoreIds() : [storeId];
+        for (const id of targetStoreIds) {
+          await repository.disableClaims(id);
+        }
+        send(res, 200, { enabled: false, storeIds: targetStoreIds }); return;
+      }
     }
     send(res, 404, { error: { code: "NOT_FOUND" } });
   } catch (error) {

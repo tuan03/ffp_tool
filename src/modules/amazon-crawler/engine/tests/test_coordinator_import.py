@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, select
 
 from engine.distributed.coordinator_migrations import migrate_coordinator
 from engine.distributed.image_profile_repository import ImageProfileRecord
+from engine.distributed.global_admission_gate import GlobalAdmissionGate, GLOBAL_ADMISSION_GATE_ID
 from engine.distributed.migrate_local import import_profile_files, import_relational_rows
 from engine.image_processing import ImageProfileStore
 
@@ -49,6 +50,28 @@ class CoordinatorImportTests(unittest.TestCase):
             transaction.rollback()
         with self.target.connect() as connection:
             self.assertEqual(connection.execute(select(self.table)).all(), [])
+
+    def test_import_replaces_only_the_pristine_open_gate_seed_and_preserves_stopped_state(self):
+        with self.source.begin() as connection:
+            connection.execute(GlobalAdmissionGate.__table__.update()
+                .where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
+                .values(state="STOPPED", revision=1, actor="operator", reason="maintenance", request_id="a" * 32))
+        for _ in range(2):
+            with self.source.connect() as reader, self.target.begin() as writer:
+                import_relational_rows(reader, writer)
+        with self.target.connect() as connection:
+            gate = connection.execute(select(GlobalAdmissionGate)).mappings().one()
+            self.assertEqual(gate["state"], "STOPPED")
+            self.assertEqual(gate["actor"], "operator")
+            self.assertEqual(gate["reason"], "maintenance")
+
+        with self.target.begin() as connection:
+            connection.execute(GlobalAdmissionGate.__table__.update()
+                .where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
+                .values(state="OPEN", revision=2, actor="operator", reason="opened", request_id="b" * 32))
+        with self.assertRaisesRegex(ValueError, "crawler_global_admission_gate"):
+            with self.source.connect() as reader, self.target.begin() as writer:
+                import_relational_rows(reader, writer)
 
     def test_profile_files_import_without_modifying_source_and_can_repeat(self):
         with tempfile.TemporaryDirectory() as directory:

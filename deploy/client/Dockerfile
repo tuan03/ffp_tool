@@ -36,11 +36,13 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Copy Nginx configuration
 COPY deploy/client/nginx.conf /etc/nginx/conf.d/default.conf
 COPY deploy/client/configure-operator-auth.sh /docker-entrypoint.d/10-configure-operator-auth.sh
-RUN chmod 755 /docker-entrypoint.d/10-configure-operator-auth.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.d/10-configure-operator-auth.sh && \
+    chmod 755 /docker-entrypoint.d/10-configure-operator-auth.sh
 
 # Copy 1-command installer scripts so they can be downloaded directly from the web client
 RUN mkdir -p /usr/share/nginx/html/scripts
 COPY scripts/install-agent.ps1 /usr/share/nginx/html/scripts/install-agent.ps1
+COPY scripts/agent-release-policy.ps1 /usr/share/nginx/html/scripts/agent-release-policy.ps1
 COPY scripts/install-agent-source.ps1 /usr/share/nginx/html/scripts/install-agent-source.ps1
 COPY scripts/install-agent.sh /usr/share/nginx/html/scripts/install-agent.sh
 COPY scripts/update-agent.ps1 /usr/share/nginx/html/scripts/update-agent.ps1

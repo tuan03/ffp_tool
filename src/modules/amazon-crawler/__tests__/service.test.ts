@@ -6,6 +6,9 @@ import {
   createAmazonCrawlerAgentReleaseLoader,
   createAmazonCrawlerCacheClearer,
   createAmazonCrawlerClientsLoader,
+  createAmazonCrawlerCommandController,
+  DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG,
+  createAmazonCrawlerAdmissionGateController,
   createAmazonCrawlerJobController,
   createAmazonCrawlerJobLoader,
   createAmazonCrawlerReviewClient,
@@ -275,15 +278,242 @@ test("client loader returns coordinator client capacity and status", async () =>
   const loadClients = createAmazonCrawlerClientsLoader({
     engineUrl: "http://coordinator.test/",
     fetchImplementation: async () => jsonResponse([
-      { id: "client-a", displayName: "Máy Lợi", agentVersion: "5.0.0", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, lastSeenAt: "2026-09-22T10:00:00Z" },
+      { id: "client-a", displayName: "Máy Lợi", agentVersion: "5.0.0", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, desiredExecutionState: "DRAINING", appliedExecutionState: "RUNNING", lastSeenAt: "2026-09-22T10:00:00Z" },
       { id: "client-b", displayName: "Máy cũ", status: "offline", isConnected: false, maxConcurrentInputs: 4, activeTasks: 0, lastSeenAt: "2026-09-21T10:00:00Z" },
     ]),
   });
   const clients = await loadClients();
-  assert.equal(clients.length, 1);
+  assert.equal(clients.length, 2);
   assert.equal(clients[0]?.agentVersion, "5.0.0");
   assert.equal(clients[0]?.displayName, "Máy Lợi");
   assert.equal(clients[0]?.activeTasks, 2);
+  assert.equal(clients[0]?.desiredExecutionState, "DRAINING");
+  assert.equal(clients[0]?.appliedExecutionState, "RUNNING");
+});
+
+test("client loader preserves degraded worker health from coordinator observability", async () => {
+  const loadClients = createAmazonCrawlerClientsLoader({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async () => jsonResponse([{
+      id: "client-a", displayName: "Agent A", agentVersion: "5.0.0", status: "degraded", isConnected: true,
+      maxConcurrentInputs: 8, activeTasks: 0, leasedTasks: 0, availableSlots: 4,
+      observability: { workerHealth: {
+        state: "degraded", failuresInWindow: 5, failureLimit: 5, windowSeconds: 600,
+        configuredConcurrency: 8, effectiveConcurrency: 4,
+      } },
+    }]),
+  });
+
+  const [client] = await loadClients();
+  assert.equal(client?.status, "degraded");
+  assert.equal(client?.observability?.workerHealth?.effectiveConcurrency, 4);
+});
+
+test("operator command controller submits idempotency ID and reads ordered timeline", async () => {
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      if (init?.method === "POST") return jsonResponse({ commandId: "cmd-1" }, 202);
+      return jsonResponse({ commands: [{ commandId: "cmd-1", sequence: 1, type: "PAUSE", status: "SUCCESS",
+        events: [{ status: "ACKED", at: "2026-10-05T00:00:00Z", detail: {} }] }] });
+    },
+  });
+  await controller.submit("agent/one", "PAUSE");
+  const history = await controller.history("agent/one");
+  assert.equal(requests[0]?.url, "https://coordinator.test/api/v1/clients/agent%2Fone/commands");
+  assert.equal(requests[0]?.method, "POST");
+  assert.match(requests[0]?.body ?? "", /"requestId":"[0-9a-f-]{36}"/);
+  assert.equal(history[0]?.events[0]?.status, "ACKED");
+});
+
+test("bulk group command sends only the explicit group and validates the summary", async () => {
+  let requestUrl = "";
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ requested: 3, queued: 3, failed: 0, agents: [] }, 202);
+    },
+  });
+  const summary = await controller.bulkCommand("amazon-us", "PAUSE", "approved group pause");
+  assert.equal(requestUrl, "https://coordinator.test/api/v1/clients/bulk-commands");
+  assert.equal(typeof requestBody, "object");
+  assert.equal((requestBody as { agentGroup?: unknown }).agentGroup, "amazon-us");
+  assert.equal((requestBody as { allAgents?: unknown }).allAgents, undefined);
+  assert.deepEqual(summary, { requested: 3, queued: 3, failed: 0 });
+});
+
+test("agent config reload sends the validated configuration through the operator command endpoint", async () => {
+  let requestUrl = "";
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "config-command" }, 202);
+    },
+  });
+  await controller.reloadConfig("agent-1", DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG);
+  assert.equal(requestUrl, "https://coordinator.test/api/v1/clients/agent-1/commands");
+  assert.equal(typeof requestBody, "object");
+  assert.deepEqual((requestBody as { config?: unknown }).config, DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG);
+  assert.equal((requestBody as { type?: unknown }).type, "RELOAD_CONFIG");
+});
+
+test("drain command requires a durable operator reason and requests no purge", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "drain-command" }, 202);
+    },
+  });
+  await controller.drain("agent-1", "planned updater rehearsal");
+  const body = requestBody as { type?: unknown; reason?: unknown; payload?: unknown };
+  assert.equal(body.type, "DRAIN");
+  assert.equal(body.reason, "planned updater rehearsal");
+  assert.equal(body.payload, undefined);
+});
+
+test("self-test command sends only read-only request and audited reason", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "self-test-command" }, 202);
+    },
+  });
+  await controller.selfTest("agent-1", "operator readiness verification");
+  const body = requestBody as { type?: unknown; reason?: unknown; taskIds?: unknown; includeRunning?: unknown };
+  assert.equal(body.type, "RUN_SELF_TEST");
+  assert.equal(body.reason, "operator readiness verification");
+  assert.equal(body.taskIds, undefined);
+  assert.equal(body.includeRunning, undefined);
+});
+
+test("agent update command includes the explicit target version and audited reason", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "update-command" }, 202);
+    },
+  });
+  await controller.updateAgent("agent-1", "5.3.0", "approved safe agent update");
+  const body = requestBody as { type?: unknown; targetVersion?: unknown; reason?: unknown; expiresInSeconds?: unknown };
+  assert.equal(body.type, "UPDATE_AGENT");
+  assert.equal(body.targetVersion, "5.3.0");
+  assert.equal(body.reason, "approved safe agent update");
+  assert.equal(body.expiresInSeconds, 86400);
+});
+
+test("agent rollback command includes an audited reason and stable request envelope", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "rollback-command" }, 202);
+    },
+  });
+  await controller.rollbackAgent("agent-1", "restore last known good agent");
+  const body = requestBody as { type?: unknown; reason?: unknown; expiresInSeconds?: unknown; requestId?: unknown };
+  assert.equal(body.type, "ROLLBACK_AGENT");
+  assert.equal(body.reason, "restore last known good agent");
+  assert.equal(body.expiresInSeconds, 86400);
+  assert.equal(typeof body.requestId, "string");
+});
+
+test("pending purge controller previews and sends exact scoped confirmation", async () => {
+  const requests: Array<{ body: string; method: string }> = [];
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requests.push({ body: String(init?.body ?? ""), method: init?.method ?? "GET" });
+      return jsonResponse(requests.length === 1
+        ? { dryRun: true, scope: "pending", requestedCount: 1, pendingCount: 1,
+          eligibleTaskIds: ["task-1"], ineligibleCount: 0 }
+        : { commandId: "purge-command" }, requests.length === 1 ? 200 : 202);
+    },
+  });
+  const preview = await controller.previewPendingPurge("agent-1", ["task-1"]);
+  assert.equal(preview.pendingCount, 1);
+  await controller.purgePending("agent-1", preview.eligibleTaskIds, preview.pendingCount, "remove test assignment");
+  assert.match(requests[0]?.body ?? "", /"dryRun":true/);
+  assert.match(requests[1]?.body ?? "", /"confirmation":"PURGE_PENDING_TASKS:1"/);
+  assert.match(requests[1]?.body ?? "", /"reason":"remove test assignment"/);
+});
+
+test("purge-all controller confirms the agent-wide pending scope", async () => {
+  const requests: Array<{ body: string }> = [];
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requests.push({ body: String(init?.body ?? "") });
+      return jsonResponse(requests.length === 1
+        ? { dryRun: true, scope: "all-local", requestedCount: 2, pendingCount: 2,
+          eligibleTaskIds: ["task-1", "task-2"], ineligibleCount: 0 }
+        : { commandId: "purge-all-command" }, requests.length === 1 ? 200 : 202);
+    },
+  });
+  const preview = await controller.previewPurgeAllLocal("agent-1");
+  assert.equal(preview.scope, "all-local");
+  assert.deepEqual(preview.eligibleTaskIds, ["task-1", "task-2"]);
+  await controller.purgeAllLocal("agent-1", preview.pendingCount, "clear test agent assignments");
+  assert.match(requests[0]?.body ?? "", /"type":"PURGE_ALL_LOCAL_TASKS"/);
+  assert.match(requests[0]?.body ?? "", /"dryRun":true/);
+  assert.match(requests[1]?.body ?? "", /"confirmation":"PURGE_ALL_LOCAL_TASKS:2"/);
+  assert.match(requests[1]?.body ?? "", /"reason":"clear test agent assignments"/);
+});
+
+test("restart controller includes explicit confirmation and audited reason", async () => {
+  let body = "";
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      body = String(init?.body ?? "");
+      return jsonResponse({ commandId: "restart-command" }, 202);
+    },
+  });
+  await controller.restart("agent-1", "RESTART_AGENT", "planned safe agent restart");
+  assert.match(body, /"type":"RESTART_AGENT"/);
+  assert.match(body, /"confirmation":"RESTART_AGENT:agent-1"/);
+  assert.match(body, /"reason":"planned safe agent restart"/);
+  assert.match(body, /"expiresInSeconds":600/);
+});
+
+test("global admission controller loads and changes only the crawler gate", async () => {
+  const requests: Array<{ url: string; method: string; body: string }> = [];
+  const controller = createAmazonCrawlerAdmissionGateController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      return jsonResponse({ state: init?.method === "POST" ? "STOPPED" : "OPEN", scope: "crawler", revision: 3,
+        actor: "operator", reason: "planned maintenance", updatedAt: "2026-10-05T00:00:00Z",
+        confirmedAgents: 1, pendingAgents: 1, confirmations: [{ agentId: "offline-agent",
+          displayName: "Offline agent", isConnected: false, state: "OPEN", revision: 2,
+          status: "pending_confirmation" }] });
+    },
+  });
+  assert.equal((await controller.load()).state, "OPEN");
+  const stopped = await controller.setState("STOPPED", "planned maintenance");
+  assert.equal(stopped.scope, "crawler");
+  assert.equal(stopped.state, "STOPPED");
+  assert.equal(stopped.confirmedAgents, 1);
+  assert.equal(stopped.pendingAgents, 1);
+  assert.equal(stopped.confirmations[0]?.displayName, "Offline agent");
+  assert.equal(requests[0]?.url, "https://coordinator.test/api/v1/admission-gate");
+  assert.equal(requests[1]?.method, "POST");
+  assert.match(requests[1]?.body ?? "", /"state":"STOPPED"/);
+  assert.match(requests[1]?.body ?? "", /"reason":"planned maintenance"/);
 });
 
 test("runner reports an offline coordinator with a stable error code", async () => {
@@ -452,9 +682,87 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
 
   assert.equal((await jobs.list())[0]?.jobId, "job-1");
   assert.equal((await jobs.cancel("job-1")).status, "cancelling");
+  await jobs.cancelTask("task/1");
+  assert.equal(requests.at(-1)?.url, "http://coordinator.test/api/v1/crawl-tasks/task%2F1/cancel");
+  assert.equal(requests.at(-1)?.method, "POST");
   assert.equal((await jobs.replace("job-1", input)).jobId, "job-2");
   await jobs.delete("job-1");
   assert.equal(requests.at(-1)?.method, "DELETE");
+});
+
+test("job controller pauses and resumes the selected coordinator job", async () => {
+  const requests: Array<{ url: string; method: string }> = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "https://coordinator.test/",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method });
+      return jsonResponse({
+        id: "job-1", status: "running", executionState: url.endsWith("/pause") ? "pausing" : "active",
+        inputs: ["B0MOCK0001"], settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
+        progress: { phase: "product", completed: 0, total: 1, message: "Running" },
+        createdAt: "2026-09-24T00:00:00Z", startedAt: null, completedAt: null,
+        replacementOfJobId: null,
+        cancellation: { pendingAgents: [], pendingPipeline: [], pendingPipelineItems: 0 },
+      });
+    },
+  });
+
+  const pausing = await jobs.pause("job-1");
+  const resumed = await jobs.resume("job-1");
+  assert.equal(pausing.executionState, "pausing");
+  assert.equal(resumed.executionState, "active");
+  assert.deepEqual(requests, [
+    { url: "https://coordinator.test/api/v1/crawl-jobs/job-1/pause", method: "POST" },
+    { url: "https://coordinator.test/api/v1/crawl-jobs/job-1/resume", method: "POST" },
+  ]);
+});
+
+test("job controller reads dead-letter history and submits exact audited actions", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as unknown : null;
+      requests.push({ url, method, body });
+      if (url.includes("/dead-letter/actions")) return jsonResponse({
+        action: "requeue", changed: 1, taskIds: ["task-1"], jobId: null, errorCode: "NETWORK_TIMEOUT",
+      });
+      if (url.includes("/dead-letter?")) return jsonResponse({ items: [{
+        taskId: "task-1", jobId: "job-1", asin: "B0FR4MSS2H", status: "dead_letter",
+        failureCount: 3, maxRetry: 3, requeueCount: 0, attemptCount: 3,
+        errorCode: "NETWORK_TIMEOUT", errorMessage: "timeout", nextRetryAt: null,
+        createdAt: "2026-10-05T00:00:00Z", failedAt: "2026-10-05T00:01:00Z",
+      }], total: 1, limit: 100, offset: 0 });
+      return jsonResponse([{
+        attemptId: "attempt-1", taskId: "task-1", jobId: "job-1", clientId: "agent-1",
+        status: "failed", errorCode: "NETWORK_TIMEOUT", errorMessage: "timeout",
+        agentVersion: "1.2.3", crawlerVersion: "1.2.3", parserVersion: "p4",
+        leasedAt: "2026-10-05T00:00:00Z", startedAt: "2026-10-05T00:00:00Z",
+        finishedAt: "2026-10-05T00:00:05Z", durationMs: 5000, archived: false,
+      }]);
+    },
+  });
+  const listDeadLetters = jobs.listDeadLetterTasks;
+  const listAttempts = jobs.listTaskAttempts;
+  const applyAction = jobs.applyDeadLetterAction;
+  assert.ok(listDeadLetters && listAttempts && applyAction);
+  const page = await listDeadLetters({ errorCode: "NETWORK_TIMEOUT" });
+  assert.equal(page.items[0]?.errorCode, "NETWORK_TIMEOUT");
+  assert.equal((await listAttempts("task-1"))[0]?.parserVersion, "p4");
+  assert.deepEqual(await applyAction({
+    action: "requeue", requestId: "request-1", taskIds: ["task-1"], expectedCount: 1,
+    reason: "Verified timeout is transient and approved retry.",
+  }), { action: "requeue", changed: 1, taskIds: ["task-1"], jobId: null, errorCode: "NETWORK_TIMEOUT" });
+  assert.equal(requests[0]?.url, "http://coordinator.test/api/v1/dead-letter?error_code=NETWORK_TIMEOUT&limit=100&offset=0");
+  assert.equal(requests[2]?.method, "POST");
+  assert.deepEqual(requests[2]?.body, {
+    action: "requeue", requestId: "request-1", taskIds: ["task-1"], expectedCount: 1,
+    reason: "Verified timeout is transient and approved retry.",
+  });
 });
 
 test("cache maintenance targets one ASIN or temporary data through separate endpoints", async () => {

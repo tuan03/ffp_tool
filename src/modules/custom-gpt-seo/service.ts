@@ -118,6 +118,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: number }>("tokens", storeId, { workerId }),
     revokeAgentToken: (storeId: string, tokenId: string) => agentRequest<{ revoked: true }>("revoke", storeId, { tokenId }),
     deleteAgentToken: (storeId: string, tokenId: string) => agentRequest<{ deleted: true }>("delete-token", storeId, { tokenId }),
+    enableClaims: (storeId: string, allStores = false) => agentRequest<{ enabled: boolean }>("enable-claims", storeId, { allStores }),
+    disableClaims: (storeId: string, allStores = false) => agentRequest<{ enabled: boolean }>("disable-claims", storeId, { allStores }),
     stores: listStores,
     settings: (storeId: string) => request<GptSeoSettings>("settings", storeId),
     configure: (storeId: string, settings: GptSeoSettings) => request<GptSeoSettings>("settings", storeId, settings),

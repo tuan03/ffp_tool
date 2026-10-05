@@ -13,6 +13,7 @@ function createJob(overrides: Partial<AmazonCrawlerJobSnapshot> = {}): AmazonCra
   return {
     jobId: "job-1",
     status: "cancelling",
+    executionState: "active",
     progress: { phase: "seo", completed: 0, total: 1, message: "Stopping" },
     result: null,
     error: null,

@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import { amazonCrawlerCoordinatorUrl, environment } from "../../config/environment";
 import { agentInstallServerUrl } from "../../config/agent-install-url";
 import { createSeoPerformanceRoutes, getSeoPerformanceClient } from "../../modules/seo-performance";
+import { createAdsIntelligenceRoutes, getAdsIntelligenceClient } from "../../modules/ads-intelligence";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
@@ -174,7 +175,7 @@ export function AppRoutes({
       }
     };
 
-    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl);
+    const podRoutes = createPinterestPodRoutes(podClient, handlePinterestHandover, agentInstallServerUrl, environment !== "mock");
 
     const handleAutoSeoHandover = async (
       shopifyProducts: readonly ShopifyProductForAutoSeoUi[],
@@ -539,6 +540,7 @@ export function AppRoutes({
       imageProcessingProfiles,
       amazonCrawlerJobs,
       loadAmazonCrawlerJob,
+      environment === "mock" ? undefined : amazonCrawlerCoordinatorUrl,
     );
 
     return createBrowserRouter([
@@ -562,6 +564,7 @@ export function AppRoutes({
           { path: "review-images", element: <Navigate to="/review-studio" replace /> },
           ...customizationRoutes,
           ...createSeoPerformanceRoutes(getSeoPerformanceClient(environment)),
+          ...createAdsIntelligenceRoutes(getAdsIntelligenceClient(environment)),
           {
             path: "seo-review",
             element: (
