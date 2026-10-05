@@ -52,6 +52,59 @@ class OperatorAuthorizationTests(unittest.TestCase):
                 self.assertEqual(client.get("/api/v1/clients").status_code, 401)
                 self.assertEqual(client.get("/api/v1/clients", auth=("operator", "fixture-secret")).status_code, 200)
 
+    def test_public_operator_mode_removes_login_but_keeps_audit_and_origin_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("engine.distributed.coordinator_server.find_project_root", return_value=root):
+                app = create_coordinator_app(
+                    database_url=f"sqlite:///{(root / 'public-operator.db').as_posix()}",
+                    operator_auth_disabled=True,
+                )
+            with TestClient(app) as client:
+                discovery = client.get("/api/v1/operator/security")
+                self.assertEqual(discovery.status_code, 200)
+                self.assertEqual(discovery.json(), {"authRequired": False, "authProtocol": 1})
+                self.assertEqual(client.get("/api/v1/clients").status_code, 200)
+                self.assertEqual(client.get("/api/v1/dead-letter").status_code, 200)
+                self.assertEqual(client.get("/api/v1/admission-gate").status_code, 200)
+                self.assertEqual(client.get("/api/v1/fleet-circuit-breaker").status_code, 200)
+                stopped = client.post("/api/v1/admission-gate", json={
+                    "requestId": "a" * 32, "state": "STOPPED", "reason": "public mode fixture stop",
+                })
+                self.assertEqual(stopped.status_code, 200, stopped.text)
+                resumed = client.post("/api/v1/admission-gate", json={
+                    "requestId": "b" * 32, "state": "OPEN", "reason": "public mode fixture resume",
+                })
+                self.assertEqual(resumed.status_code, 200, resumed.text)
+                reset_breaker = client.post("/api/v1/fleet-circuit-breaker/reset", json={
+                    "reason": "public mode fixture reset",
+                })
+                self.assertEqual(reset_breaker.status_code, 200, reset_breaker.text)
+                bulk = client.post("/api/v1/clients/bulk-commands", json={
+                    "requestId": "2a1877aa-9767-470e-8c00-23d2678996ce", "type": "PAUSE",
+                    "allAgents": True, "reason": "public mode fixture command",
+                })
+                self.assertEqual(bulk.status_code, 202, bulk.text)
+                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]})
+                self.assertEqual(created.status_code, 202, created.text)
+                job_id = created.json()["id"]
+                canceled = client.post(f"/api/v1/crawl-jobs/{job_id}/cancel")
+                self.assertEqual(canceled.status_code, 200, canceled.text)
+                denied = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]},
+                    headers={"Origin": "https://untrusted.invalid"})
+                self.assertEqual(denied.status_code, 403)
+                self.assertEqual(client.get("/api/v1/agent-keys").status_code, 404)
+                with app.state.store.sessions() as session:
+                    audits = list(session.scalars(select(OperatorAudit).order_by(OperatorAudit.created_at)))
+                    self.assertGreaterEqual(len(audits), 12)
+                    public_audits = [row for row in audits if row.actor == "public"]
+                    self.assertGreaterEqual(len(public_audits), 11)
+                    public_reasons = [row.reason for row in public_audits]
+                    self.assertGreaterEqual(public_reasons.count("PUBLIC_OPERATOR_ACCESS"), 8)
+                    self.assertTrue(any(reason.startswith("FLEET_BREAKER_RESET:") for reason in public_reasons))
+                    self.assertTrue(any(reason.startswith("BULK_PAUSE:") for reason in public_reasons))
+                    self.assertTrue(any(row.outcome == "denied" and row.reason == "OPERATOR_ORIGIN_DENIED" for row in audits))
+
     def test_operator_allowed_anonymous_and_agent_denied_with_safe_audit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

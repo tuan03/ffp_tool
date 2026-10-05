@@ -41,6 +41,7 @@ test("operator discovery uses its own contract independently from agent authenti
   }), false);
   assert.deepEqual(requestedUrls, ["https://fixture.test/api/v1/operator/security", "https://fixture.test/api/v1/worker/security"]);
   assert.equal(await discoverCrawlerOperatorAuth("https://fixture.test", async () => Response.json({ authRequired: true, authProtocol: 1 })), true);
+  assert.equal(await discoverCrawlerOperatorAuth("https://fixture.test", async () => Response.json({ authRequired: false, authProtocol: 1 })), false);
   await assert.rejects(discoverCrawlerOperatorAuth("https://fixture.test", async () => Response.json({ authRequired: false })));
   await assert.rejects(discoverCrawlerOperatorAuth("https://fixture.test", async () => new Response(null, { status: 503 })));
   await assert.rejects(discoverCrawlerOperatorAuth("https://fixture.test", async () => { throw new Error("offline"); }));

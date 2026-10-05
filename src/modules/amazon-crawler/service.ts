@@ -54,10 +54,10 @@ export async function discoverCrawlerOperatorAuth(engineUrl: string, fetchImplem
   if (response.status === 404) return false;
   if (!response.ok) throw new Error("Không kiểm tra được chế độ xác thực Coordinator.");
   const payload: unknown = await response.json();
-  if (!isRecord(payload) || payload.authRequired !== true || payload.authProtocol !== 1) {
+  if (!isRecord(payload) || typeof payload.authRequired !== "boolean" || payload.authProtocol !== 1) {
     throw new Error("Coordinator trả contract xác thực không hợp lệ.");
   }
-  return true;
+  return payload.authRequired;
 }
 
 export function createCrawlerOperatorFetch(options: {

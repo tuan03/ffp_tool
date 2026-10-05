@@ -24,6 +24,15 @@ def operator_credentials_from_environment(environ=os.environ):
     return operator_authorization.OperatorCredentials(username, password)
 
 
+def operator_auth_enabled_from_environment(environ=os.environ):
+    value = environ.get("FFP_CRAWLER_OPERATOR_AUTH_ENABLED", "true").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("FFP_CRAWLER_OPERATOR_AUTH_ENABLED must be true or false")
+
+
 def create_app(*, operator_credentials=None):
     database_url = os.environ.get("AMAZON_COORDINATOR_DATABASE_URL", "")
     if not database_url or make_url(database_url).get_backend_name() != "postgresql":
@@ -33,9 +42,13 @@ def create_app(*, operator_credentials=None):
     pipeline = os.environ.get("SHOPIFY_PIPELINE_TOKEN", "")
     if any(len(value) < 24 or value == "change-this-token" for value in (internal, extension, pipeline)):
         raise ValueError("Configure strong Review Studio internal/extension and pipeline tokens before startup")
-    if operator_credentials is None:
+    operator_auth_enabled = operator_auth_enabled_from_environment()
+    if not operator_auth_enabled:
+        operator_credentials = None
+    elif operator_credentials is None:
         operator_credentials = operator_credentials_from_environment()
-    app = crawler.create_coordinator_app(database_url=database_url, operator_credentials=operator_credentials)
+    app = crawler.create_coordinator_app(database_url=database_url, operator_credentials=operator_credentials,
+        operator_auth_disabled=not operator_auth_enabled)
     review_app = review.create_review_app(
         engine=create_engine(database_url, pool_pre_ping=True),
         runtime_root=Path(os.environ.get("REVIEW_IMAGE_RUNTIME_ROOT", "/app/.runtime/review-image")),
