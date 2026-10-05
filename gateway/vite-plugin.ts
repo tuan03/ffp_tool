@@ -10,7 +10,7 @@ import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
 } from "./pinterest-pod-handler";
-import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, isSameOriginRequest, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -31,33 +31,6 @@ export interface ShopifyGatewayDevPluginOptions {
   readonly maxBodyBytes?: number;
 }
 
-function isSameOriginRequest(headers: Record<string, string | string[] | undefined>): boolean {
-  if (headers["sec-fetch-site"] === "same-origin") {
-    return true;
-  }
-  const host = typeof headers.host === "string" ? headers.host : undefined;
-  if (!host) {
-    return false;
-  }
-  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
-  if (origin) {
-    try {
-      return new URL(origin).host.toLowerCase() === host.toLowerCase();
-    } catch {
-      return false;
-    }
-  }
-  const referer = typeof headers.referer === "string" ? headers.referer : undefined;
-  if (referer) {
-    try {
-      return new URL(referer).host.toLowerCase() === host.toLowerCase();
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
 export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions): Plugin {
   return {
     name: "shopify-gateway-dev",
@@ -76,7 +49,8 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         process.env.VITE_APP_ENV === "mock" ||
         process.env.APP_ENV === "mock";
 
-      const stores = loadBootstrappedStores({ env });
+      const storeConfigFile = env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
+      const stores = loadBootstrappedStores({ env, configFile: storeConfigFile });
 
       const storeRegistry = new InMemoryStoreRegistry(stores);
       const tokenProvider = new CompositeTokenProvider();
@@ -89,7 +63,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         storeRegistry,
         tokenProvider,
         graphqlClient,
-        persistConfigFile: "stores.local.json",
+        persistConfigFile: storeConfigFile,
       });
 
       server.middlewares.use(async (req, res, next) => {
@@ -128,7 +102,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
 
-        const isKnownApi = isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+        const isKnownApi = req.url?.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
 
         if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
           if (!req.headers["x-gateway-key"]) {
@@ -138,7 +112,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
 
         if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
           try {
-            const freshStores = loadBootstrappedStores({ env: loadLocalEnv() });
+            const freshStores = loadBootstrappedStores({ env: loadLocalEnv(), configFile: storeConfigFile });
             const freshIds = new Set(freshStores.map((s) => s.storeId));
             for (const store of freshStores) {
               if (!storeRegistry.getStore(store.storeId)) {

@@ -104,6 +104,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), pinterestPodBackendPlugin(), shopifyGatewayDevPlugin()],
   server: {
     proxy: {
+      "/api/ads-intelligence": {
+        target: "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
       "/api/seo-performance": {
         target: process.env.SEO_PERFORMANCE_GATEWAY_URL || "http://127.0.0.1:3001",
         changeOrigin: true,

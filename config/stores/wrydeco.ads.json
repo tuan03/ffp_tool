@@ -1,0 +1,56 @@
+{
+  "storeId": "wrydeco",
+  "mode": "read_only",
+  "marketCountries": ["US"],
+  "reportingCurrency": "USD",
+  "meta": {
+    "accountIds": ["act_2226190591074454"],
+    "accountTimezone": "Asia/Manila",
+    "apiVersion": "v26.0",
+    "purchaseActionType": "offsite_conversion.fb_pixel_purchase",
+    "secretRef": "META_ACCESS_TOKEN",
+    "proxyRef": "META_PROXY_URL",
+    "attributionPolicyRef": "7d_click_1d_view"
+  },
+  "ga4": {
+    "propertyId": null,
+    "propertyTimezone": "America/Los_Angeles",
+    "credentialRef": "credentials/ga4-service-account.json"
+  },
+  "shopify": {
+    "shopDomain": "wrydeco.myshopify.com",
+    "apiVersion": "2026-07",
+    "connectionRef": "shopify_wrydeco"
+  },
+  "competitors": {
+    "primaryProvider": "scrapecreators",
+    "backupProvider": "searchapi",
+    "monthlyCostCapUsd": 65.0,
+    "watchlist": [
+      "100064829182341",
+      "100083124589211"
+    ]
+  },
+  "business": {
+    "costProfileRef": "wrydeco-decor-standard-v1",
+    "targetCpa": 20.0,
+    "targetContributionPerOrder": 7.0,
+    "breakEvenRoas": 2.5,
+    "breakEvenCpa": 25.0
+  },
+  "rules": {
+    "policyVersion": "2.0",
+    "maturityDays": 7,
+    "allowFinancialRecommendations": true
+  },
+  "budgets": {
+    "totalDailyAuthorizedCap": 150.0,
+    "experimentAuthorizedCap": 30.0,
+    "maxChangePer24hPct": 20.0,
+    "cooldownHours": 24
+  },
+  "actions": {
+    "externalWritesEnabled": false,
+    "approvalRequired": true
+  }
+}

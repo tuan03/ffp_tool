@@ -1,0 +1,53 @@
+{
+  "storeId": "chillgen",
+  "mode": "read_only",
+  "marketCountries": ["US"],
+  "reportingCurrency": "USD",
+  "meta": {
+    "accountIds": ["act_REPLACE_WITH_ACT_ID"],
+    "accountTimezone": "America/Los_Angeles",
+    "apiVersion": "v26.0",
+    "purchaseActionType": "offsite_conversion.fb_pixel_purchase",
+    "secretRef": "META_ACCESS_TOKEN",
+    "proxyRef": "META_PROXY_URL",
+    "attributionPolicyRef": "7d_click_1d_view"
+  },
+  "ga4": {
+    "propertyId": "REPLACE_WITH_NUMERIC_PROPERTY_ID",
+    "propertyTimezone": "America/Los_Angeles",
+    "credentialRef": "credentials/chillgen-service-account.json"
+  },
+  "shopify": {
+    "shopDomain": "chillgen.myshopify.com",
+    "apiVersion": "2026-07",
+    "connectionRef": "shopify_chillgen"
+  },
+  "competitors": {
+    "primaryProvider": "scrapecreators",
+    "backupProvider": "searchapi",
+    "monthlyCostCapUsd": 65.0,
+    "watchlist": []
+  },
+  "business": {
+    "costProfileRef": null,
+    "targetCpa": null,
+    "targetContributionPerOrder": null,
+    "breakEvenRoas": null,
+    "breakEvenCpa": null
+  },
+  "rules": {
+    "policyVersion": "2.0",
+    "maturityDays": 7,
+    "allowFinancialRecommendations": false
+  },
+  "budgets": {
+    "totalDailyAuthorizedCap": null,
+    "experimentAuthorizedCap": null,
+    "maxChangePer24hPct": 20.0,
+    "cooldownHours": 24
+  },
+  "actions": {
+    "externalWritesEnabled": false,
+    "approvalRequired": true
+  }
+}

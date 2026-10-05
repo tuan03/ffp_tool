@@ -7,6 +7,7 @@ import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { createSeoPublishTransport } from "./seo-worker/publish-transport";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
+import { configureAdsGateway, handleAdsIntelligenceHttpRequest, handleAdsMcpHttpRequest } from "./ads-intelligence";
 import { handleSeoAgentHttp } from "./seo-worker/admin-handler";
 import { createSeoRevision } from "./seo-worker/revision-service";
 import { handleWorkerMcp } from "./seo-worker/mcp-handler";
@@ -26,7 +27,7 @@ import {
   handlePinterestPodDirectShopifySyncHttpRequest,
   handlePinterestPodSeoHttpRequest,
 } from "./pinterest-pod-handler";
-import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
+import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, isSameOriginRequest, MAX_BODY_BYTES } from "./http-server";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
@@ -149,6 +150,7 @@ export function startGatewayServer(
   const tokenProvider = new CompositeTokenProvider();
   const throttleManager = new InMemoryThrottleManager();
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
+  configureAdsGateway({ storeRegistry, graphqlClient });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
   const isBackendPublishEnabled = (process.env.SEO_WORKER_PUBLISH_ENABLED ?? env.SEO_WORKER_PUBLISH_ENABLED) === "true" && Boolean(operatorUsername) && Boolean(getAutoSeoDatabaseUrl());
@@ -171,6 +173,9 @@ export function startGatewayServer(
       isOperatorAuthorized(req.headers.authorization, operatorUsername, operatorPassword),
     );
     if (isAuthenticatedOperator && authToken) req.headers["x-gateway-key"] = authToken;
+    if (authToken && isSameOriginRequest(req.headers) && !req.headers["x-gateway-key"] && !req.headers["authorization"]) {
+      req.headers["x-gateway-key"] = authToken;
+    }
 
     if (url === "/health") {
       res.statusCode = 200;
@@ -252,7 +257,7 @@ export function startGatewayServer(
     const isStoreGet = url === "/api/stores/get" || url.startsWith("/api/stores/get?");
     const isProxyCheck = url === "/api/proxy/check" || url.startsWith("/api/proxy/check?");
 
-    if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
+    if (url.startsWith("/mcp/ads") || url.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
       try {
         const freshEnv = loadLocalEnv();
         const freshStores = loadBootstrappedStores({
@@ -275,6 +280,21 @@ export function startGatewayServer(
       } catch {
         // non-fatal env sync in gateway server
       }
+    }
+
+    if (url === "/mcp/ads" || url === "/mcp/ads-intelligence" || url.startsWith("/mcp/ads?") || url.startsWith("/mcp/ads-intelligence?")) {
+      await handleAdsMcpHttpRequest(req, res);
+      return;
+    }
+
+    if (url.startsWith("/api/ads-intelligence/")) {
+      if (authToken && !isGatewayAuthorized(req.headers, authToken)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { code: "ADS_GATEWAY_UNAUTHORIZED", message: "Gateway authentication required" } }));
+        return;
+      }
+      const handled = await handleAdsIntelligenceHttpRequest(req, res);
+      if (handled) return;
     }
 
     if (isShopify) {
