@@ -17,7 +17,7 @@ from .protocol import utc_now
 
 
 JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
-COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "RELOAD_CONFIG": 4, "DRAIN": 5, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5,
                     "RESTART_WORKERS": 5, "RESTART_AGENT": 6}
 TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
 ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
@@ -27,7 +27,7 @@ class AgentCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requestId: uuid.UUID
-    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
+    type: Literal["PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"]
     expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
     taskIds: list[str] = Field(default_factory=list, max_length=500)
     includeRunning: bool = Field(default=False, strict=True)
@@ -111,7 +111,7 @@ class AgentCommandLedger:
                command_payload_value: dict[str, Any] | None = None) -> dict[str, Any]:
         if command_type not in COMMAND_PRIORITY:
             raise HTTPException(422, detail="Unsupported agent command.")
-        target_state = "PAUSED" if command_type == "PAUSE" else "RUNNING" if command_type == "RESUME" else None
+        target_state = "PAUSED" if command_type == "PAUSE" else "RUNNING" if command_type == "RESUME" else "DRAINING" if command_type == "DRAIN" else None
         with self.sessions.begin() as session:
             existing = session.scalar(select(AgentCommand).where(
                 AgentCommand.agent_id == agent_id, AgentCommand.request_id == request_id,
@@ -119,7 +119,7 @@ class AgentCommandLedger:
             if existing is not None:
                 if existing.command_type != command_type:
                     raise HTTPException(409, detail="Command requestId was reused with a different command.")
-                if command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"} and existing.payload != (command_payload_value or {}):
+                if command_type in {"DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT"} and existing.payload != (command_payload_value or {}):
                     raise HTTPException(409, detail="Command requestId was reused with a different command scope.")
                 return self._snapshot(session, existing)
             agent = session.get(ClientRecord,
@@ -128,15 +128,17 @@ class AgentCommandLedger:
                 raise HTTPException(404, detail="Crawler agent was not found.")
             now = utc_now()
             sequence = agent.command_sequence + 1
+            expires_at = now + (timedelta(days=36500) if command_type == "DRAIN"
+                                else timedelta(seconds=expires_in_seconds))
             command = AgentCommand(
                 id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
                 sequence=sequence, command_type=command_type,
                 payload=(dict(command_payload_value or {}) if command_type in {
-                    "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
+                    "DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
                 }
                          else {"desiredExecutionState": target_state}),
                 priority=COMMAND_PRIORITY[command_type], status="PENDING",
-                created_at=now, expires_at=now + timedelta(seconds=expires_in_seconds),
+                created_at=now, expires_at=expires_at,
             )
             session.add(command)
             agent.command_sequence = sequence
@@ -211,7 +213,7 @@ class AgentCommandLedger:
                 AgentCommand.agent_id == agent_id, AgentCommand.sequence > sequence,
             ).order_by(AgentCommand.sequence).limit(limit)))
             for command in rows:
-                if command.status not in TERMINAL_STATUSES and _expired(command.expires_at, now):
+                if command.status not in TERMINAL_STATUSES and command.command_type != "DRAIN" and _expired(command.expires_at, now):
                     self._finish(session, agent, command, "EXPIRED", "Command expired before execution.", now)
             payloads = [command_payload(command) for command in rows]
             return (payloads, latest, agent.desired_execution_state,
@@ -228,7 +230,7 @@ class AgentCommandLedger:
             agent = session.get(ClientRecord, agent_id)
             if agent is None:
                 return None
-            if _expired(command.expires_at, now):
+            if command.command_type != "DRAIN" and _expired(command.expires_at, now):
                 self._finish(session, agent, command, "EXPIRED", "Command expired before delivery.", now)
                 return command_payload(command)
             if command.status == "PENDING":
@@ -275,7 +277,14 @@ class AgentCommandLedger:
                     raise HTTPException(409, detail="Agent config acknowledgement does not match the requested version.")
                 agent.applied_agent_config = dict(command.payload.get("config") or {})
                 agent.applied_config_version = expected_version
-            if status in {"ACKED", "RUNNING", "SUCCESS", "FAILED"} and _expired(command.expires_at, now):
+            if status == "SUCCESS" and command.command_type == "DRAIN":
+                result = update.get("result")
+                if not isinstance(result, dict) or result.get("drained") is not True:
+                    raise HTTPException(409, detail="DRAIN success requires a confirmed drained result.")
+                if any(type(result.get(field)) is not int or result.get(field) != 0
+                       for field in ("activeTaskCount", "pendingOutboxCount")):
+                    raise HTTPException(409, detail="DRAIN cannot complete while tasks or outbox entries remain.")
+            if command.command_type != "DRAIN" and status in {"ACKED", "RUNNING", "SUCCESS", "FAILED"} and _expired(command.expires_at, now):
                 self._finish(session, agent, command, "EXPIRED", "Command expired before execution.", now)
                 return self._snapshot(session, command)
             allowed = {
@@ -293,7 +302,7 @@ class AgentCommandLedger:
             detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
             result = update.get("result") if command.command_type in {
                 "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS", "RESTART_WORKERS", "RESTART_AGENT",
-                "RELOAD_CONFIG",
+                "RELOAD_CONFIG", "DRAIN",
             } else None
             event_detail = {"error": detail} if detail else {}
             if isinstance(result, dict):
@@ -306,6 +315,10 @@ class AgentCommandLedger:
                     } if command.command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"} else {
                         **({"appliedConfigVersion": _bounded_count(result.get("appliedConfigVersion"))}
                            if command.command_type == "RELOAD_CONFIG" else {}),
+                        **({"drained": result.get("drained") is True,
+                            "activeTaskCount": _bounded_count(result.get("activeTaskCount")),
+                            "pendingOutboxCount": _bounded_count(result.get("pendingOutboxCount"))}
+                           if command.command_type == "DRAIN" else {}),
                         "bootId": str(result.get("bootId") or "")[:64],
                         "identityRetained": bool(result.get("identityRetained")),
                         "pendingOutboxCount": _bounded_count(result.get("pendingOutboxCount")),
@@ -332,6 +345,7 @@ class AgentCommandLedger:
         with self.sessions.begin() as session:
             rows = list(session.scalars(select(AgentCommand).where(
                 AgentCommand.status.in_(["PENDING", "DELIVERED", "ACKED", "RUNNING"]),
+                AgentCommand.command_type != "DRAIN",
                 AgentCommand.expires_at <= now,
             ).with_for_update()))
             for command in rows:
@@ -383,6 +397,10 @@ class AgentCommandLedger:
             agent.last_processed_command_sequence = command.sequence
         if status == "SUCCESS" and command.command_type in {"PAUSE", "RESUME"}:
             agent.applied_execution_state = command.payload["desiredExecutionState"]
+        elif status == "SUCCESS" and command.command_type == "DRAIN":
+            agent.applied_execution_state = "DRAINED"
+            if agent.desired_execution_state == "DRAINING":
+                agent.desired_execution_state = "DRAINED"
         elif (status in {"FAILED", "EXPIRED"} and command.command_type in {"PAUSE", "RESUME"}
               and agent.desired_execution_state == command.payload["desiredExecutionState"]):
             previous = session.scalar(select(AgentCommand).where(

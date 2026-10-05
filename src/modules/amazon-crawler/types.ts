@@ -709,8 +709,8 @@ export interface AmazonCrawlerClientSummary {
   leasedTasks: number;
   availableSlots: number;
   lastSeenAt: string | null;
-  desiredExecutionState?: "RUNNING" | "PAUSED";
-  appliedExecutionState?: "RUNNING" | "PAUSED";
+  desiredExecutionState?: "RUNNING" | "PAUSED" | "DRAINING" | "DRAINED";
+  appliedExecutionState?: "RUNNING" | "PAUSED" | "DRAINING" | "DRAINED";
   commandSequence?: number;
   lastProcessedCommandSequence?: number;
   desiredConfigVersion?: number;
@@ -775,6 +775,7 @@ export interface AmazonCrawlerCommandController {
   purgeAllLocal(agentId: string, expectedPendingCount: number, reason: string): Promise<void>;
   restart(agentId: string, type: "RESTART_WORKERS" | "RESTART_AGENT", reason: string): Promise<void>;
   reloadConfig(agentId: string, config: AmazonCrawlerAgentRuntimeConfig): Promise<void>;
+  drain(agentId: string, reason: string): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 

@@ -885,6 +885,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             )
             await dispatch_next_agent_command(client_id)
             return command
+        if payload.type == "DRAIN":
+            if not payload.reason or len(payload.reason.strip()) < 10:
+                raise HTTPException(status_code=422, detail="Drain command requires an audited reason of at least 10 characters.")
+            command_payload_value = {"reason": payload.reason.strip(), "scope": "agent", "waitForOutboxAck": True}
         if payload.type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
             is_purge_all = payload.type == "PURGE_ALL_LOCAL_TASKS"
             if is_purge_all and payload.includeRunning:

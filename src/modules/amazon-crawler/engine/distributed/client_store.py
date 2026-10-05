@@ -418,7 +418,7 @@ class ClientStore:
                 "SELECT key,value FROM agent_state WHERE key IN ('remote_execution_state','last_processed_command_sequence')"
             ).fetchall())
         state = str(rows.get("remote_execution_state", "RUNNING"))
-        return state if state in {"RUNNING", "PAUSED"} else "RUNNING"
+        return state if state in {"RUNNING", "PAUSED", "DRAINING", "DRAINED"} else "RUNNING"
 
     def global_admission_gate(self) -> dict[str, Any]:
         with self._connection() as connection:
@@ -453,7 +453,7 @@ class ClientStore:
         return self.global_admission_gate()
 
     def reconcile_remote_execution_state(self, execution_state: str) -> None:
-        if execution_state not in {"RUNNING", "PAUSED"}:
+        if execution_state not in {"RUNNING", "PAUSED", "DRAINING", "DRAINED"}:
             raise ValueError("Remote execution state is invalid.")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -479,7 +479,7 @@ class ClientStore:
         except (TypeError, ValueError):
             raise ValueError("Invalid command sequence.") from None
         if not command_id or command_type not in {
-            "PAUSE", "RESUME", "RELOAD_CONFIG", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
+            "PAUSE", "RESUME", "RELOAD_CONFIG", "DRAIN", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS",
             "RESTART_WORKERS", "RESTART_AGENT",
         }:
             raise ValueError("Unsupported or malformed server command.")
@@ -540,7 +540,7 @@ class ClientStore:
                                 error: str | None = None) -> None:
         if status not in {"SUCCESS", "FAILED", "EXPIRED"}:
             raise ValueError("Command completion status is invalid.")
-        if execution_state is not None and execution_state not in {"RUNNING", "PAUSED"}:
+        if execution_state is not None and execution_state not in {"RUNNING", "PAUSED", "DRAINING", "DRAINED"}:
             raise ValueError("Remote execution state is invalid.")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -555,6 +555,71 @@ class ClientStore:
             )
             connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('last_processed_command_sequence',?)", (str(sequence),))
             connection.commit()
+
+    def drain_command(self) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            rows = dict(connection.execute(
+                "SELECT key,value FROM agent_state WHERE key IN ('drain_command_id','drain_command_sequence','drain_state')"
+            ).fetchall())
+        if rows.get("drain_state") not in {"DRAINING", "DRAINED"} or not rows.get("drain_command_id"):
+            return None
+        try:
+            sequence = int(rows.get("drain_command_sequence", "0"))
+        except (TypeError, ValueError):
+            raise ValueError("Stored drain command is corrupt.") from None
+        return {"commandId": rows["drain_command_id"], "sequence": sequence, "state": rows["drain_state"]}
+
+    def set_drain_command(self, command_id: str, sequence: int, state: str) -> None:
+        if not command_id or sequence < 1 or state not in {"DRAINING", "DRAINED"}:
+            raise ValueError("Drain command state is invalid.")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('drain_command_id',?)", (command_id,))
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('drain_command_sequence',?)", (str(sequence),))
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('drain_state',?)", (state,))
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('remote_execution_state',?)", (state,))
+            connection.commit()
+
+    def clear_drain_command(self) -> None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES('drain_state','IDLE')")
+            connection.commit()
+
+    def complete_drain_command(self, command_id: str, sequence: int) -> None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            last_sequence = self._read_agent_state(connection, "last_processed_command_sequence", 0)
+            local_command = connection.execute(
+                "SELECT status FROM agent_commands WHERE command_id=? AND sequence=?", (command_id, sequence),
+            ).fetchone()
+            if sequence != last_sequence + 1 or local_command is None or local_command["status"] not in {"ACKED", "RUNNING"}:
+                connection.rollback()
+                raise ValueError("Drain command completion is not contiguous or durable.")
+            now = utc_iso()
+            connection.execute("UPDATE agent_commands SET status='SUCCESS',completed_at=? WHERE command_id=?", (now, command_id))
+            for key, value in (("drain_state", "DRAINED"), ("remote_execution_state", "DRAINED"),
+                               ("last_processed_command_sequence", str(sequence))):
+                connection.execute("INSERT OR REPLACE INTO agent_state(key,value) VALUES(?,?)", (key, value))
+            connection.commit()
+
+    def drain_outbox_count(self) -> int:
+        return int(self.drain_outbox_counts()["total"])
+
+    def drain_outbox_counts(self) -> dict[str, int]:
+        with self._connection() as connection:
+            counts = {
+                "results": int(connection.execute("SELECT COUNT(*) FROM pending_results WHERE result_id NOT IN (SELECT result_id FROM outbox_quarantine)").fetchone()[0]),
+                "products": int(connection.execute("SELECT COUNT(*) FROM pending_products WHERE result_id NOT IN (SELECT result_id FROM outbox_quarantine)").fetchone()[0]),
+                "telemetry": int(connection.execute("SELECT COUNT(*) FROM telemetry_spool").fetchone()[0]),
+                "cancelIntents": int(connection.execute("SELECT COUNT(*) FROM cancel_intents").fetchone()[0]),
+                "quarantined": int(connection.execute("SELECT COUNT(*) FROM outbox_quarantine").fetchone()[0]),
+            }
+        # Quarantined records retain their payload and have not been ACKed by
+        # the server; they must continue to block a lossless DRAIN.
+        counts["total"] = (counts["results"] + counts["products"] + counts["telemetry"]
+                           + counts["cancelIntents"] + counts["quarantined"])
+        return counts
 
     def server_command_status(self, command_id: str) -> str | None:
         with self._connection() as connection:

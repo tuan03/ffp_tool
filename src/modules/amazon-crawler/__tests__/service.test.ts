@@ -278,7 +278,7 @@ test("client loader returns coordinator client capacity and status", async () =>
   const loadClients = createAmazonCrawlerClientsLoader({
     engineUrl: "http://coordinator.test/",
     fetchImplementation: async () => jsonResponse([
-      { id: "client-a", displayName: "Máy Lợi", agentVersion: "5.0.0", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, lastSeenAt: "2026-09-22T10:00:00Z" },
+      { id: "client-a", displayName: "Máy Lợi", agentVersion: "5.0.0", status: "busy", isConnected: true, maxConcurrentInputs: 4, activeTasks: 2, desiredExecutionState: "DRAINING", appliedExecutionState: "RUNNING", lastSeenAt: "2026-09-22T10:00:00Z" },
       { id: "client-b", displayName: "Máy cũ", status: "offline", isConnected: false, maxConcurrentInputs: 4, activeTasks: 0, lastSeenAt: "2026-09-21T10:00:00Z" },
     ]),
   });
@@ -287,6 +287,8 @@ test("client loader returns coordinator client capacity and status", async () =>
   assert.equal(clients[0]?.agentVersion, "5.0.0");
   assert.equal(clients[0]?.displayName, "Máy Lợi");
   assert.equal(clients[0]?.activeTasks, 2);
+  assert.equal(clients[0]?.desiredExecutionState, "DRAINING");
+  assert.equal(clients[0]?.appliedExecutionState, "RUNNING");
 });
 
 test("client loader preserves degraded worker health from coordinator observability", async () => {
@@ -342,6 +344,22 @@ test("agent config reload sends the validated configuration through the operator
   assert.equal(typeof requestBody, "object");
   assert.deepEqual((requestBody as { config?: unknown }).config, DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG);
   assert.equal((requestBody as { type?: unknown }).type, "RELOAD_CONFIG");
+});
+
+test("drain command requires a durable operator reason and requests no purge", async () => {
+  let requestBody: unknown;
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+      return jsonResponse({ commandId: "drain-command" }, 202);
+    },
+  });
+  await controller.drain("agent-1", "planned updater rehearsal");
+  const body = requestBody as { type?: unknown; reason?: unknown; payload?: unknown };
+  assert.equal(body.type, "DRAIN");
+  assert.equal(body.reason, "planned updater rehearsal");
+  assert.equal(body.payload, undefined);
 });
 
 test("pending purge controller previews and sends exact scoped confirmation", async () => {

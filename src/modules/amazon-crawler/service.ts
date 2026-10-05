@@ -417,8 +417,8 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
       leasedTasks: typeof client.leasedTasks === "number" ? client.leasedTasks : 0,
       availableSlots: typeof client.availableSlots === "number" ? client.availableSlots : 0,
       lastSeenAt: typeof client.lastSeenAt === "string" ? client.lastSeenAt : null,
-      desiredExecutionState: client.desiredExecutionState === "PAUSED" ? "PAUSED" : "RUNNING",
-      appliedExecutionState: client.appliedExecutionState === "PAUSED" ? "PAUSED" : "RUNNING",
+      desiredExecutionState: readExecutionState(client.desiredExecutionState),
+      appliedExecutionState: readExecutionState(client.appliedExecutionState),
       commandSequence: typeof client.commandSequence === "number" ? client.commandSequence : 0,
       lastProcessedCommandSequence: typeof client.lastProcessedCommandSequence === "number" ? client.lastProcessedCommandSequence : 0,
       desiredConfigVersion: typeof client.desiredConfigVersion === "number" ? client.desiredConfigVersion : 0,
@@ -438,6 +438,10 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
         : undefined,
     };
   });
+}
+
+function readExecutionState(value: unknown): AmazonCrawlerClientSummary["desiredExecutionState"] {
+  return value === "PAUSED" || value === "DRAINING" || value === "DRAINED" ? value : "RUNNING";
 }
 
 function readAgentRuntimeConfig(value: unknown): AmazonCrawlerAgentRuntimeConfig {
@@ -525,6 +529,13 @@ export function createAmazonCrawlerCommandController({
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId: crypto.randomUUID(), type: "RELOAD_CONFIG", config }),
+      });
+      await readJson(response);
+    },
+    async drain(agentId, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "DRAIN", reason, expiresInSeconds: 86400 }),
       });
       await readJson(response);
     },

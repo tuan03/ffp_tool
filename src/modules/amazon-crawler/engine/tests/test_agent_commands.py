@@ -100,6 +100,31 @@ class AgentCommandLedgerTests(unittest.TestCase):
             self.assertEqual(agent.applied_config_version, 1)
             self.assertEqual(agent.applied_agent_config, config)
 
+    def test_drain_stops_admission_until_all_tasks_and_outbox_are_confirmed(self) -> None:
+        payload = {"reason": "planned local updater rehearsal", "scope": "agent", "waitForOutboxAck": True}
+        command = self.ledger.submit("agent-1", uuid.uuid4().hex, "DRAIN", 300, payload)
+        self.assertEqual(command["payload"], payload)
+        with self.sessions.begin() as session:
+            stored_command = session.get(AgentCommand, command["commandId"])
+            stored_command.expires_at = utc_now() - timedelta(seconds=1)
+        self.assertEqual(self.ledger.expire_pending(), 0)
+        self.assertFalse(self.ledger.admission_open("agent-1", 0, "RUNNING"))
+        for status in ("ACKED", "RUNNING"):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1, "status": status})
+        with self.assertRaisesRegex(Exception, "tasks or outbox entries remain"):
+            self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
+                "status": "SUCCESS", "result": {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 1}})
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, "agent-1")
+            self.assertEqual(agent.desired_execution_state, "DRAINING")
+            self.assertEqual(agent.applied_execution_state, "RUNNING")
+        self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
+            "status": "SUCCESS", "result": {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}})
+        with self.sessions() as session:
+            agent = session.get(ClientRecord, "agent-1")
+            self.assertEqual(agent.desired_execution_state, "DRAINED")
+            self.assertEqual(agent.applied_execution_state, "DRAINED")
+
 
 class AgentCommandInboxTests(unittest.TestCase):
     def test_receipt_state_and_sequence_survive_restart_and_duplicates_are_safe(self) -> None:
@@ -147,6 +172,38 @@ class AgentCommandInboxTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 restarted.save_agent_runtime_config(2, config)
 
+    def test_drain_state_and_outbox_survive_restart_and_only_complete_after_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "agent.sqlite3"
+            store = ClientStore(path)
+            command = {"commandId": "drain-1", "sequence": 1, "type": "DRAIN",
+                "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat(), "payload": {}}
+            store.begin_server_command(command)
+            store.set_server_command_running("drain-1")
+            store.set_drain_command("drain-1", 1, "DRAINING")
+            store.spool_result(task_id="task-1", lease_id="lease-1", checksum="checksum", payload={"value": 1})
+            restarted = ClientStore(path)
+            self.assertEqual(restarted.remote_execution_state(), "DRAINING")
+            self.assertEqual(restarted.drain_command(), {"commandId": "drain-1", "sequence": 1, "state": "DRAINING"})
+            self.assertEqual(restarted.drain_outbox_count(), 1)
+            with self.assertRaisesRegex(ValueError, "contiguous or durable"):
+                restarted.complete_drain_command("drain-1", 2)
+            restarted.acknowledge_result(restarted.pending_results()[0]["resultId"])
+            self.assertEqual(restarted.drain_outbox_count(), 0)
+            restarted.complete_drain_command("drain-1", 1)
+            self.assertEqual(ClientStore(path).remote_execution_state(), "DRAINED")
+            self.assertEqual(ClientStore(path).last_processed_command_sequence(), 1)
+
+    def test_quarantined_payload_remains_part_of_drain_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ClientStore(Path(directory) / "agent.sqlite3")
+            store.spool_result(task_id="task-1", lease_id="lease-1", checksum="checksum", payload={"value": 1})
+            store.quarantine_attempt("task-1", "lease-1", "operator_review")
+            counts = store.drain_outbox_counts()
+            self.assertEqual(counts["quarantined"], 1)
+            self.assertEqual(counts["results"], 0)
+            self.assertEqual(counts["total"], 1)
+
     def test_operator_pause_does_not_clear_local_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ClientStore(Path(directory) / "agent.sqlite3")
@@ -156,6 +213,42 @@ class AgentCommandInboxTests(unittest.TestCase):
 
 
 class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_drain_waits_for_durable_tasks_and_outbox_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = DistributedCrawlerAgent(project_root=root, config=AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="fixture", max_concurrent_inputs=2,
+                limits=AgentLimits(), data_directory=root / "agent"))
+            agent._is_connected = False
+            agent._recovery_complete = True
+            agent._command_recovery_complete = True
+            agent.store.spool_result(task_id="task-1", lease_id="lease-1", checksum="checksum", payload={"value": 1})
+            command = {"commandId": "drain-1", "sequence": 1, "type": "DRAIN",
+                "payload": {"reason": "planned test drain"}, "createdAt": utc_now().isoformat(),
+                "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+            await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1})
+            self.assertEqual(agent.store.server_command_status("drain-1"), "RUNNING")
+            self.assertEqual(agent.store.remote_execution_state(), "DRAINING")
+            self.assertEqual(agent.store.drain_outbox_count(), 1)
+            self.assertEqual(agent._available_slots(), 0)
+            self.assertEqual((await agent.outbound_queue.get())["status"], "ACKED")
+            self.assertEqual((await agent.outbound_queue.get())["status"], "RUNNING")
+            with patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError):
+                with self.assertRaises(asyncio.CancelledError):
+                    await agent._drain_monitor_loop()
+            self.assertEqual(agent.store.server_command_status("drain-1"), "RUNNING")
+            self.assertEqual(agent.store.drain_outbox_count(), 1)
+            agent._is_connected = True
+            agent.store.acknowledge_result(agent.store.pending_results()[0]["resultId"])
+            with patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError):
+                with self.assertRaises(asyncio.CancelledError):
+                    await agent._drain_monitor_loop()
+            self.assertEqual(agent.store.server_command_status("drain-1"), "SUCCESS")
+            self.assertEqual(agent.store.remote_execution_state(), "DRAINED")
+            update = await agent.outbound_queue.get()
+            self.assertEqual(update["status"], "SUCCESS")
+            self.assertEqual(update["result"], {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0})
+
     async def test_reload_config_applies_and_persists_only_valid_increasing_versions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -410,6 +503,38 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentCommandWebSocketTests(unittest.TestCase):
+    def test_drain_operator_command_is_audited_and_closes_admission_without_purging(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'drain.db').as_posix()}",
+                operator_credentials=OperatorCredentials("operator", "fixture"), agent_environment="test")
+            client = stack.enter_context(TestClient(app))
+            auth = ("operator", "fixture")
+            key = client.post("/api/v1/agent-keys", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "name": "drain fixture", "maxWorkers": 1,
+                "crawlers": ["amazon"], "environment": "test",
+                "expiresAt": (utc_now() + timedelta(days=1)).isoformat(),
+            }).json()["key"]
+            agent_id = client.post("/api/v1/worker/register", headers={"Authorization": "Bearer " + key},
+                json={"requestId": uuid.uuid4().hex, "displayName": "drain fixture"}).json()["agentId"]
+            rejected = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "DRAIN", "reason": "short",
+            })
+            self.assertEqual(rejected.status_code, 422)
+            accepted = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "DRAIN", "reason": "planned safe updater rollout",
+            })
+            self.assertEqual(accepted.status_code, 202, accepted.text)
+            self.assertEqual(accepted.json()["payload"]["waitForOutboxAck"], True)
+            state = app.state.store.list_clients()[0]
+            self.assertEqual(state["desiredExecutionState"], "DRAINING")
+            self.assertEqual(state["appliedExecutionState"], "RUNNING")
+
     def test_restart_agent_requires_paused_connected_idle_agent_and_exact_confirmation(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

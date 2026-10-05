@@ -131,9 +131,10 @@ class DistributedCrawlerAgent:
         self.connection_status = "offline"
         self._locally_paused = self.store.is_paused()
         self._remote_execution_state = self.store.remote_execution_state()
+        self._drain_command = self.store.drain_command()
         self._global_admission_gate = self.store.global_admission_gate()
         self._global_admission_stopped = self._global_admission_gate["state"] == "STOPPED"
-        self._paused = self._locally_paused or self._remote_execution_state == "PAUSED" or self._global_admission_stopped
+        self._paused = self._locally_paused or self._remote_execution_state in {"PAUSED", "DRAINED"} or self._global_admission_stopped
         self._command_recovery_complete = False
         self._command_recovery_event = asyncio.Event()
         self._captcha_waiting = False
@@ -231,6 +232,7 @@ class DistributedCrawlerAgent:
             "runningTasks": len(self.executing_task_ids & self.active.keys()),
             "queuedTasks": len(self.active.keys() - self.executing_task_ids),
             "pendingCancellations": pending_cancellations,
+            "drainState": self._drain_command["state"] if self._drain_command else None,
             "limits": self._agent_limits().apply({}),
             "agentConfigVersion": self._agent_config_version,
             "dashboard": dashboard,
@@ -357,7 +359,7 @@ class DistributedCrawlerAgent:
 
     def _refresh_pause_state(self) -> None:
         was_paused = self._paused
-        self._paused = (self._locally_paused or self._remote_execution_state == "PAUSED"
+        self._paused = (self._locally_paused or self._remote_execution_state in {"PAUSED", "DRAINED"}
                         or self._global_admission_stopped)
         if self._paused:
             self.connection_status = "paused"
@@ -535,6 +537,8 @@ class DistributedCrawlerAgent:
                     update["appliedExecutionState"] = self._remote_execution_state
                     if str(command.get("type") or "") == "RELOAD_CONFIG":
                         update["result"] = {"appliedConfigVersion": self._agent_config_version}
+                    elif str(command.get("type") or "") == "DRAIN":
+                        update["result"] = {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}
                 await self.outbound_queue.put(update)
                 continue
             if receipt["decision"] == "expired":
@@ -547,6 +551,16 @@ class DistributedCrawlerAgent:
             payload = command.get("payload")
             command_type = str(command.get("type") or "")
             desired_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
+            if command_type == "DRAIN":
+                await asyncio.to_thread(self.store.set_server_command_running, command_id)
+                await asyncio.to_thread(self.store.set_drain_command, command_id, sequence, "DRAINING")
+                self._drain_command = {"commandId": command_id, "sequence": sequence, "state": "DRAINING"}
+                self._remote_execution_state = "DRAINING"
+                self._refresh_pause_state()
+                await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
+                    "sequence": sequence, "status": "RUNNING"})
+                self._publish_status()
+                continue
             if command_type == "RELOAD_CONFIG":
                 await asyncio.to_thread(self.store.set_server_command_running, command_id)
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
@@ -654,6 +668,9 @@ class DistributedCrawlerAgent:
                 "sequence": sequence, "status": "RUNNING"})
             await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "SUCCESS", desired_state)
             self._remote_execution_state = desired_state
+            if command_type == "RESUME":
+                await asyncio.to_thread(self.store.clear_drain_command)
+                self._drain_command = None
             self._refresh_pause_state()
             update = {"type": "command_update", "commandId": command_id,
                 "sequence": sequence, "status": "SUCCESS", "appliedExecutionState": desired_state}
@@ -666,12 +683,17 @@ class DistributedCrawlerAgent:
         applied_state = str(message.get("appliedExecutionState") or self._remote_execution_state)
         server_sequence = int(message.get("serverLastProcessedCommandSequence") or 0)
         if last_sequence < latest_sequence:
+            if any(command.get("command_type") == "DRAIN" and command.get("status") == "RUNNING"
+                   for command in self.store.server_command_history(limit=200)):
+                self._command_recovery_complete = True
+                self._command_recovery_event.set()
+                return
             await self.outbound_queue.put({"type": "command_sync", "afterSequence": last_sequence})
             return
-        if desired_state in {"RUNNING", "PAUSED"} and self._remote_execution_state != desired_state:
+        if desired_state in {"RUNNING", "PAUSED", "DRAINING", "DRAINED"} and self._remote_execution_state != desired_state:
             await self.outbound_queue.put({"type": "command_sync", "afterSequence": max(0, last_sequence - 1)})
             return
-        if (applied_state in {"RUNNING", "PAUSED"} and desired_state == applied_state
+        if (applied_state in {"RUNNING", "PAUSED", "DRAINING", "DRAINED"} and desired_state == applied_state
                 and server_sequence >= latest_sequence and self._remote_execution_state != applied_state):
             await asyncio.to_thread(self.store.reconcile_remote_execution_state, applied_state)
             self._remote_execution_state = applied_state
@@ -773,6 +795,7 @@ class DistributedCrawlerAgent:
                         asyncio.create_task(self._heartbeat_loop()),
                         asyncio.create_task(self._upload_loop()),
                         asyncio.create_task(self._telemetry_loop()),
+                        asyncio.create_task(self._drain_monitor_loop()),
                     ]
                     connection_tasks.append(asyncio.create_task(self._recovery_gate_loop()))
                     stop_waiter = asyncio.create_task(self.stop_event.wait())
@@ -1103,11 +1126,36 @@ class DistributedCrawlerAgent:
                 await self.outbound_queue.put({"type": "telemetry", "events": events})
             await asyncio.sleep(1)
 
+    async def _drain_monitor_loop(self) -> None:
+        while True:
+            drain = self.store.drain_command()
+            if drain is not None and drain["state"] == "DRAINING" and self._is_connected:
+                try:
+                    pending_outbox = await asyncio.to_thread(self.store.drain_outbox_count)
+                    if (pending_outbox == 0 and not self.active and not self.executing_task_ids
+                            and self.assignment_queue.empty()):
+                        await asyncio.to_thread(
+                            self.store.complete_drain_command, str(drain["commandId"]), int(drain["sequence"]),
+                        )
+                        self._remote_execution_state = "DRAINED"
+                        self._drain_command = {**drain, "state": "DRAINED"}
+                        self._refresh_pause_state()
+                        await self.outbound_queue.put({"type": "command_update",
+                            "commandId": drain["commandId"], "sequence": drain["sequence"],
+                            "status": "SUCCESS", "appliedExecutionState": "DRAINED",
+                            "result": {"drained": True, "activeTaskCount": 0, "pendingOutboxCount": 0}})
+                        self._publish_status()
+                except (OSError, sqlite3.Error, ValueError):
+                    # Keep the agent draining with every local record intact.
+                    pass
+            await asyncio.sleep(0.5)
+
     def _storage_pressure(self) -> dict[str, Any]:
         return storage_pressure(self.store, self.config.outbox, self.project_root)
 
     def _available_slots(self) -> int:
         if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
+                or self._remote_execution_state in {"DRAINING", "DRAINED"}
                 or self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]):
             return 0
         effective_concurrency = int(self._worker_health_snapshot()["effectiveConcurrency"])

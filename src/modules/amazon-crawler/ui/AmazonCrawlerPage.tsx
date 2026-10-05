@@ -466,7 +466,8 @@ export function AmazonCrawlerPage({
 
   async function handleAgentExecutionCommand(client: AmazonCrawlerClientSummary): Promise<void> {
     if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
-    const type = client.desiredExecutionState === "PAUSED" ? "RESUME" : "PAUSE";
+    if (client.desiredExecutionState === "DRAINING") return;
+    const type = client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "RESUME" : "PAUSE";
     setCommandBusyClientId(client.id);
     setCommandError(null);
     try {
@@ -480,6 +481,25 @@ export function AmazonCrawlerPage({
       }
     } catch (error: unknown) {
       setCommandError(error instanceof Error ? error.message : "Không gửi được lệnh đến agent.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
+  async function handleAgentDrain(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale || client.desiredExecutionState !== "RUNNING") return;
+    const reason = (purgeReasons[client.id] ?? "").trim();
+    if (reason.length < 10) return;
+    if (!window.confirm("Ngừng nhận task mới, hoàn tất task đã nhận và đợi mọi outbox được server xác nhận? Nếu mất mạng, agent sẽ giữ trạng thái DRAINING và dữ liệu cục bộ.")) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      await amazonCrawlerCommands.drain(client.id, reason);
+      const history = await amazonCrawlerCommands.history(client.id);
+      setCommandHistories((current) => ({ ...current, [client.id]: history }));
+      setCommandHistoryErrors((current) => { const next = { ...current }; delete next[client.id]; return next; });
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không gửi được yêu cầu DRAIN.");
     } finally {
       setCommandBusyClientId(null);
     }
@@ -1608,12 +1628,14 @@ export function AmazonCrawlerPage({
                     })()}
                   </details>
                   <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng" : "đang chạy"}
+                    <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng"
+                      : client.desiredExecutionState === "DRAINING" ? "đang DRAIN"
+                      : client.desiredExecutionState === "DRAINED" ? "đã DRAINED" : "đang chạy"}
                       {client.appliedExecutionState !== client.desiredExecutionState ? " · đang đồng bộ" : ""}</span>
-                    <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale}
+                    <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.desiredExecutionState === "DRAINING"}
                       onClick={() => void handleAgentExecutionCommand(client)}
                       className="rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50">
-                      {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" ? "Tiếp tục" : "Tạm dừng"}
+                      {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "Tiếp tục" : "Tạm dừng"}
                     </button>
                   </div>
                   <div className="mt-3 space-y-2 rounded border border-slate-700 p-2">
@@ -1638,6 +1660,12 @@ export function AmazonCrawlerPage({
                       className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
                       placeholder="Ít nhất 10 ký tự" />
                     <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
+                        || client.desiredExecutionState !== "RUNNING" || (purgeReasons[client.id] ?? "").trim().length < 10}
+                        onClick={() => void handleAgentDrain(client)}
+                        className="rounded border border-violet-700 px-2 py-1 text-[11px] text-violet-200 disabled:opacity-50">
+                        DRAIN agent
+                      </button>
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
@@ -1681,10 +1709,14 @@ export function AmazonCrawlerPage({
                       typeof value === "object" && value !== null && !Array.isArray(value));
                     return <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
                       #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục"
+                        : command.type === "DRAIN" ? "Drain agent"
                         : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local"
                         : command.type === "PURGE_PENDING_TASKS" ? "Purge pending"
                         : command.type === "RESTART_AGENT" ? "Restart agent" : "Restart workers"} — {command.status}
                       {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
+                      {command.type === "DRAIN" ? <p>{command.status === "SUCCESS"
+                        ? "Agent DRAINED sau khi hết task và server ACK toàn bộ outbox."
+                        : "Đang chờ task kết thúc và server ACK outbox; timeout/mất mạng không xóa dữ liệu."}</p> : null}
                       {result && typeof result.beforeCount === "number" ? <p>Trước {result.beforeCount} · đã purge {typeof result.purgedCount === "number" ? result.purgedCount : 0} · còn {typeof result.afterCount === "number" ? result.afterCount : 0}</p> : null}
                       {command.type === "RESTART_AGENT" && result && typeof result.bootId === "string" ?
                         <p>Boot mới {result.bootId.slice(0, 8)} · identity {result.identityRetained === true ? "được giữ" : "chưa xác nhận"}
