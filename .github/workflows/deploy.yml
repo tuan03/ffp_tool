@@ -89,7 +89,8 @@ jobs:
             EXISTING_DATABASE_ENV_FILE="$(mktemp)"
             EXISTING_SEARCH_CONSOLE_ENV_FILE="$(mktemp)"
             EXISTING_SERVICE_TOKEN_ENV_FILE="$(mktemp)"
-            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE" "$EXISTING_SEARCH_CONSOLE_ENV_FILE" "$EXISTING_SERVICE_TOKEN_ENV_FILE"' EXIT
+            EXISTING_ADS_ENV_FILE="$(mktemp)"
+            trap 'rm -f "$EXISTING_STORE_ENV_FILE" "$EXISTING_DATABASE_ENV_FILE" "$EXISTING_SEARCH_CONSOLE_ENV_FILE" "$EXISTING_SERVICE_TOKEN_ENV_FILE" "$EXISTING_ADS_ENV_FILE"' EXIT
             if [ -f .env ]; then
               EXISTING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
               EXISTING_GPT_SEO_MCP_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_MCP_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
@@ -99,6 +100,7 @@ jobs:
               grep -E '^[[:space:]]*(export[[:space:]]+)?(POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|AUTO_SEO_DATABASE_URL|DATABASE_URL)[[:space:]]*=' .env > "$EXISTING_DATABASE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(SEO_PERFORMANCE_ENABLED|GSC_CLIENT_ID|GSC_CLIENT_SECRET|GSC_REDIRECT_URI|GSC_TOKEN_ENCRYPTION_KEY)[[:space:]]*=' .env > "$EXISTING_SEARCH_CONSOLE_ENV_FILE" || true
               grep -E '^[[:space:]]*(export[[:space:]]+)?(REVIEW_IMAGE_BRIDGE_TOKEN|REVIEW_IMAGE_EXTENSION_TOKEN|SHOPIFY_PIPELINE_TOKEN)[[:space:]]*=' .env > "$EXISTING_SERVICE_TOKEN_ENV_FILE" || true
+              grep -E '^[[:space:]]*(export[[:space:]]+)?(META_ACCESS_TOKEN|META_PROXY_URL)[[:space:]]*=' .env > "$EXISTING_ADS_ENV_FILE" || true
             fi
 
             if [ -n "$ENV_B64" ]; then
@@ -117,6 +119,16 @@ jobs:
                   printf '%s\n' "$store_line" >> .env
                 fi
               done < "$EXISTING_STORE_ENV_FILE"
+            fi
+
+            if [ -s "$EXISTING_ADS_ENV_FILE" ]; then
+              printf '\n' >> .env
+              while IFS= read -r ads_line; do
+                ads_key="${ads_line%%=*}"
+                if ! grep -q "^${ads_key}=" .env; then
+                  printf '%s\n' "$ads_line" >> .env
+                fi
+              done < "$EXISTING_ADS_ENV_FILE"
             fi
 
             INCOMING_GPT_SEO_ACTION_KEYS_JSON=$(sed -nE 's/^[[:space:]]*GPT_SEO_ACTION_KEYS_JSON=(.*)$/\1/p' .env | head -n 1 || true)
