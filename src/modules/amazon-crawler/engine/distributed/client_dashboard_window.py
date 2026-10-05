@@ -273,7 +273,7 @@ class AgentDashboardWindow:
         if _mapping(snapshot.get("storage")).get("blocked"):
             operating = "Tạm ngưng nhận việc do lưu trữ"
         self.connection.configure(text=f"{connected}  •  {operating}")
-        self.counters.configure(text=f"Chạy: {snapshot.get('runningTasks', 0)}  |  Chờ: {snapshot.get('queuedTasks', 0)}  |  Slot: {snapshot.get('activeTasks', 0)}/{snapshot.get('maxConcurrentInputs', 0)}  |  Chờ gửi: {snapshot.get('pendingProducts', 0)} sản phẩm + {snapshot.get('pendingResults', 0)} kết quả")
+        self.counters.configure(text=f"Chạy: {snapshot.get('runningTasks', 0)}  |  Chờ: {snapshot.get('queuedTasks', 0)}  |  Slot: {snapshot.get('activeTasks', 0)}/{snapshot.get('maxConcurrentInputs', 0)}  |  Chờ gửi: {snapshot.get('pendingProducts', 0)} sản phẩm + {snapshot.get('pendingResults', 0)} kết quả  |  Cách ly: {snapshot.get('quarantinedUploads', 0)}")
         warnings = []
         storage_warning = storage_warning_text(snapshot.get("storage"))
         if storage_warning:

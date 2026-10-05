@@ -207,10 +207,10 @@ class DistributedCrawlerAgent:
 
     def status_snapshot(self) -> dict[str, Any]:
         try:
-            uploads = self.store.upload_counts()
+            uploads = self.store.dashboard_upload_counts()
             pending_cancellations = len(self.store.cancel_intents())
         except (OSError, sqlite3.Error):
-            uploads = {"results": 0, "products": 0}
+            uploads = {"results": 0, "products": 0, "quarantined": 0}
             pending_cancellations = 0
         try:
             dashboard = self.dashboard.snapshot() if self.dashboard is not None else {"tasks": [], "history": [], "events": []}
@@ -232,6 +232,7 @@ class DistributedCrawlerAgent:
             "pendingUploads": uploads["results"] + uploads["products"],
             "pendingProducts": uploads["products"],
             "pendingResults": uploads["results"],
+            "quarantinedUploads": uploads["quarantined"],
             "storage": self._storage_pressure(),
             "isConnected": self._is_connected,
             "agentVersion": AGENT_VERSION,
