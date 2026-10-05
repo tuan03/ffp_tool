@@ -20,6 +20,7 @@ export interface MetaCampaignRaw {
   readonly daily_budget?: string;
   readonly lifetime_budget?: string;
   readonly objective?: string;
+  readonly created_time?: string;
 }
 
 export interface MetaAdSetRaw {
@@ -31,6 +32,7 @@ export interface MetaAdSetRaw {
   readonly daily_budget?: string;
   readonly lifetime_budget?: string;
   readonly optimization_goal?: string;
+  readonly created_time?: string;
 }
 
 export interface MetaAdRaw {
@@ -40,6 +42,7 @@ export interface MetaAdRaw {
   readonly adset_id: string;
   readonly status: string;
   readonly effective_status: string;
+  readonly created_time?: string;
 }
 
 export interface MetaActionRaw {
@@ -134,7 +137,7 @@ export class MetaClient {
   async getCampaigns(accountId: string): Promise<readonly MetaCampaignRaw[]> {
     const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
     const res = await this.request<{ data?: readonly MetaCampaignRaw[] }>(`${normalizedId}/campaigns`, {
-      fields: "id,name,status,effective_status,daily_budget,lifetime_budget,objective",
+      fields: "id,name,status,effective_status,daily_budget,lifetime_budget,objective,created_time",
       limit: "50",
     });
     return res.data ?? [];
@@ -143,7 +146,7 @@ export class MetaClient {
   async getAdSets(accountId: string): Promise<readonly MetaAdSetRaw[]> {
     const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
     const res = await this.request<{ data?: readonly MetaAdSetRaw[] }>(`${normalizedId}/adsets`, {
-      fields: "id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,optimization_goal",
+      fields: "id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,optimization_goal,created_time",
       limit: "100",
     });
     return res.data ?? [];
@@ -152,7 +155,7 @@ export class MetaClient {
   async getAds(accountId: string): Promise<readonly MetaAdRaw[]> {
     const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
     const res = await this.request<{ data?: readonly MetaAdRaw[] }>(`${normalizedId}/ads`, {
-      fields: "id,name,campaign_id,adset_id,status,effective_status",
+      fields: "id,name,campaign_id,adset_id,status,effective_status,created_time",
       limit: "100",
     });
     return res.data ?? [];

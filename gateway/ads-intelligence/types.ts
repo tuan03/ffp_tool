@@ -421,6 +421,7 @@ export interface AdsHierarchyAd {
   readonly purchaseValue: string;
   readonly cpa: string | null;
   readonly roas: string | null;
+  readonly createdTime?: string;
 }
 
 export interface AdsHierarchyAdSet {
@@ -435,6 +436,7 @@ export interface AdsHierarchyAdSet {
   readonly cpa: string | null;
   readonly roas: string | null;
   readonly ads: readonly AdsHierarchyAd[];
+  readonly createdTime?: string;
 }
 
 export interface AdsHierarchyCampaign {
@@ -451,6 +453,7 @@ export interface AdsHierarchyCampaign {
   readonly cpa: string | null;
   readonly roas: string | null;
   readonly adsets: readonly AdsHierarchyAdSet[];
+  readonly createdTime?: string;
 }
 
 export interface CompetitorAdCard {

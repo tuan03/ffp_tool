@@ -5,8 +5,23 @@ export interface HierarchyTabProps {
   readonly campaigns: readonly AdsHierarchyCampaign[];
 }
 
-type SortField = "spend" | "purchases" | "cpa" | "roas";
+type SortField = "createdTime" | "spend" | "purchases" | "cpa" | "roas";
 type SortDirection = "asc" | "desc";
+
+function formatDate(dateStr?: string): string {
+  if (!dateStr) return "—";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    return `${year}-${month}-${day}`;
+  } catch {
+    return dateStr;
+  }
+}
 
 export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
@@ -14,7 +29,7 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
   const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({
     [campaigns[0]?.id || ""]: true,
   });
-  const [sortField, setSortField] = useState<SortField>("spend");
+  const [sortField, setSortField] = useState<SortField>("createdTime");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   const toggleCampaign = (id: string) => {
@@ -52,6 +67,14 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
 
     // Sort
     result.sort((a, b) => {
+      if (sortField === "createdTime") {
+        const timeA = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+        const timeB = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+        if (timeA !== timeB) {
+          return sortDirection === "desc" ? timeB - timeA : timeA - timeB;
+        }
+        return Number(b.spend) - Number(a.spend);
+      }
       let valA = Number(a[sortField]) || 0;
       let valB = Number(b[sortField]) || 0;
       return sortDirection === "desc" ? valB - valA : valA - valB;
@@ -115,6 +138,12 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
           <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-mono border-b border-slate-800 select-none">
             <tr>
               <th className="py-3 px-4 min-w-[240px]">Chiến dịch / Nhóm QC / Quảng cáo</th>
+              <th
+                onClick={() => handleSort("createdTime")}
+                className="py-3 px-3 cursor-pointer hover:text-cyan-300 transition"
+              >
+                Ngày tạo {sortField === "createdTime" && (sortDirection === "desc" ? "↓" : "↑")}
+              </th>
               <th className="py-3 px-3">Trạng thái</th>
               <th className="py-3 px-3">Ngân sách</th>
               <th
@@ -146,7 +175,7 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
           <tbody className="divide-y divide-slate-800/80 font-mono text-xs">
             {processedCampaigns.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-500 font-sans">
+                <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
                   Không tìm thấy chiến dịch nào phù hợp với bộ lọc.
                 </td>
               </tr>
@@ -170,6 +199,9 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
                           <span>{camp.name}</span>
                         </span>
                       </td>
+                      <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">
+                        {formatDate(camp.createdTime)}
+                      </td>
                       <td className="py-3 px-3">
                         <span
                           className={`text-[10px] px-2 py-0.5 rounded font-bold ${
@@ -190,48 +222,82 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
 
                     {/* Ad Sets & Ads */}
                     {isExpanded &&
-                      camp.adsets.map((adset) => (
-                        <React.Fragment key={adset.id}>
-                          {/* AdSet Row */}
-                          <tr className="bg-slate-900/40 text-slate-300 hover:bg-slate-850/60 transition">
-                            <td className="py-2.5 px-4 pl-9 flex items-center gap-2">
-                              <span className="text-blue-400 text-xs">📁</span>
-                              <span className="font-sans font-semibold text-slate-200">{adset.name}</span>
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className="text-[10px] text-slate-400">{adset.effectiveStatus}</span>
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-500">
-                              {adset.dailyBudget ? `$${adset.dailyBudget}/ngày` : "Thừa hưởng"}
-                            </td>
-                            <td className="py-2.5 px-3 text-right text-slate-200">${adset.spend}</td>
-                            <td className="py-2.5 px-3 text-right text-emerald-400">{adset.purchases}</td>
-                            <td className="py-2.5 px-3 text-right text-cyan-300">${adset.cpa || "—"}</td>
-                            <td className="py-2.5 px-3 text-right text-indigo-400">{adset.roas || "—"}×</td>
-                          </tr>
+                      (() => {
+                        const sortedAdsets = [...camp.adsets].sort((a, b) => {
+                          if (sortField === "createdTime") {
+                            const timeA = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+                            const timeB = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+                            if (timeA !== timeB) return sortDirection === "desc" ? timeB - timeA : timeA - timeB;
+                            return Number(b.spend) - Number(a.spend);
+                          }
+                          let valA = Number(a[sortField]) || 0;
+                          let valB = Number(b[sortField]) || 0;
+                          return sortDirection === "desc" ? valB - valA : valA - valB;
+                        });
 
-                          {/* Ads under AdSet */}
-                          {adset.ads.map((ad) => (
-                            <tr
-                              key={ad.id}
-                              className="bg-slate-950/60 text-slate-400 hover:bg-slate-900/60 transition text-[11px]"
-                            >
-                              <td className="py-2 px-4 pl-14 flex items-center gap-2">
-                                <span className="text-slate-600">↳</span>
-                                <span className="text-slate-300">{ad.name}</span>
-                              </td>
-                              <td className="py-2 px-3">
-                                <span className="text-[9px] text-slate-500">{ad.effectiveStatus}</span>
-                              </td>
-                              <td className="py-2 px-3 text-slate-600">—</td>
-                              <td className="py-2 px-3 text-right text-slate-300">${ad.spend}</td>
-                              <td className="py-2 px-3 text-right text-emerald-400">{ad.purchases}</td>
-                              <td className="py-2 px-3 text-right text-cyan-400">${ad.cpa || "—"}</td>
-                              <td className="py-2 px-3 text-right text-indigo-400">{ad.roas || "—"}×</td>
-                            </tr>
-                          ))}
-                        </React.Fragment>
-                      ))}
+                        return sortedAdsets.map((adset) => {
+                          const sortedAds = [...adset.ads].sort((a, b) => {
+                            if (sortField === "createdTime") {
+                              const timeA = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+                              const timeB = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+                              if (timeA !== timeB) return sortDirection === "desc" ? timeB - timeA : timeA - timeB;
+                              return Number(b.spend) - Number(a.spend);
+                            }
+                            let valA = Number(a[sortField]) || 0;
+                            let valB = Number(b[sortField]) || 0;
+                            return sortDirection === "desc" ? valB - valA : valA - valB;
+                          });
+
+                          return (
+                            <React.Fragment key={adset.id}>
+                              {/* AdSet Row */}
+                              <tr className="bg-slate-900/40 text-slate-300 hover:bg-slate-850/60 transition">
+                                <td className="py-2.5 px-4 pl-9 flex items-center gap-2">
+                                  <span className="text-blue-400 text-xs">📁</span>
+                                  <span className="font-sans font-semibold text-slate-200">{adset.name}</span>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-500 font-mono text-[10px]">
+                                  {formatDate(adset.createdTime)}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className="text-[10px] text-slate-400">{adset.effectiveStatus}</span>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-500">
+                                  {adset.dailyBudget ? `$${adset.dailyBudget}/ngày` : "Thừa hưởng"}
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-slate-200">${adset.spend}</td>
+                                <td className="py-2.5 px-3 text-right text-emerald-400">{adset.purchases}</td>
+                                <td className="py-2.5 px-3 text-right text-cyan-300">${adset.cpa || "—"}</td>
+                                <td className="py-2.5 px-3 text-right text-indigo-400">{adset.roas || "—"}×</td>
+                              </tr>
+
+                              {/* Ads under AdSet */}
+                              {sortedAds.map((ad) => (
+                                <tr
+                                  key={ad.id}
+                                  className="bg-slate-950/60 text-slate-400 hover:bg-slate-900/60 transition text-[11px]"
+                                >
+                                  <td className="py-2 px-4 pl-14 flex items-center gap-2">
+                                    <span className="text-slate-600">↳</span>
+                                    <span className="text-slate-300">{ad.name}</span>
+                                  </td>
+                                  <td className="py-2 px-3 text-slate-500 font-mono text-[10px]">
+                                    {formatDate(ad.createdTime)}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <span className="text-[9px] text-slate-500">{ad.effectiveStatus}</span>
+                                  </td>
+                                  <td className="py-2 px-3 text-slate-600">—</td>
+                                  <td className="py-2 px-3 text-right text-slate-300">${ad.spend}</td>
+                                  <td className="py-2 px-3 text-right text-emerald-400">{ad.purchases}</td>
+                                  <td className="py-2 px-3 text-right text-cyan-400">${ad.cpa || "—"}</td>
+                                  <td className="py-2 px-3 text-right text-indigo-400">{ad.roas || "—"}×</td>
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          );
+                        });
+                      })()}
                   </React.Fragment>
                 );
               })

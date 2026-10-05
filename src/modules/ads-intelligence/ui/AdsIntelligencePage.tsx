@@ -389,7 +389,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
       {/* 3. Streamlined Tabs Navigation */}
       <div className="flex border-b border-slate-800 gap-2 overflow-x-auto whitespace-nowrap">
         {[
-          { id: "decisions", label: "🎯 Gợi ý theo quy tắc & AI", badge: loading || sourceErrors["Quyết định"] ? null : decisions.length },
+          { id: "decisions", label: "🎯 Quyết định & Đề xuất", badge: loading || sourceErrors["Quyết định"] ? null : decisions.length },
           { id: "hierarchy", label: "📊 Chiến dịch & Ads", badge: loading || sourceErrors["Chiến dịch"] ? null : campaigns.length },
           { id: "funnel", label: "🔄 Phễu & Đối soát", badge: null },
           { id: "competitors", label: "🕵️ Spy Đối thủ", badge: null },

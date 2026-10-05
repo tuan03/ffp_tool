@@ -344,6 +344,7 @@ export class AdsIntelligenceService {
         purchaseValue: wm.metrics.purchase_value ?? "0.00",
         cpa: wm.metrics.cpa,
         roas: wm.metrics.roas,
+        createdTime: ad.created_time,
       };
 
       const list = adsByAdSet.get(ad.adset_id) ?? [];
@@ -358,6 +359,13 @@ export class AdsIntelligenceService {
       const rawActionsRecord = { actions: ins?.actions ?? [], action_values: ins?.action_values ?? [] };
       const wm = websiteMetrics(rawActionsRecord, ins?.spend);
 
+      const rawAds = adsByAdSet.get(adset.id) ?? [];
+      const sortedAds = [...rawAds].sort((a, b) => {
+        const timeA = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+        const timeB = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+        return timeB - timeA;
+      });
+
       const adsetItem: AdsHierarchyAdSet = {
         id: adset.id,
         name: adset.name,
@@ -369,7 +377,8 @@ export class AdsIntelligenceService {
         purchases: wm.metrics.purchase ?? "0",
         cpa: wm.metrics.cpa,
         roas: wm.metrics.roas,
-        ads: adsByAdSet.get(adset.id) ?? [],
+        ads: sortedAds,
+        createdTime: adset.created_time,
       };
 
       const list = adsetsByCampaign.get(adset.campaign_id) ?? [];
@@ -386,6 +395,13 @@ export class AdsIntelligenceService {
       const budgetType = camp.daily_budget ? "CAMPAIGN" : "ADSET";
       const dailyBudget = camp.daily_budget ? (Number(camp.daily_budget) / 100).toFixed(2) : null;
 
+      const rawAdSets = adsetsByCampaign.get(camp.id) ?? [];
+      const sortedAdSets = [...rawAdSets].sort((a, b) => {
+        const timeA = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+        const timeB = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+        return timeB - timeA;
+      });
+
       return {
         id: camp.id,
         name: camp.name,
@@ -399,8 +415,17 @@ export class AdsIntelligenceService {
         purchaseValue: wm.metrics.purchase_value ?? "0.00",
         cpa: wm.metrics.cpa,
         roas: wm.metrics.roas,
-        adsets: adsetsByCampaign.get(camp.id) ?? [],
+        adsets: sortedAdSets,
+        createdTime: camp.created_time,
       };
+    });
+
+    // Default sort campaigns by createdTime desc (newest first, fallback to spend)
+    result.sort((a, b) => {
+      const timeA = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+      const timeB = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+      if (timeA !== timeB) return timeB - timeA;
+      return Number(b.spend) - Number(a.spend);
     });
 
     adsIntelligenceCache.set(cacheKey, result);
