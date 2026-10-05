@@ -193,6 +193,31 @@ export function startGatewayServer(
     persistConfigFile: storeConfigFile,
   });
 
+  const syncStores = () => {
+    try {
+      const freshEnv = loadLocalEnv();
+      const freshStores = loadBootstrappedStores({
+        env: freshEnv,
+        configFile: getRuntimeStoreConfigFile(freshEnv),
+      });
+      const freshIds = new Set(freshStores.map((s) => s.storeId));
+      for (const store of freshStores) {
+        if (!storeRegistry.getStore(store.storeId)) {
+          storeRegistry.registerStore(store);
+        } else {
+          storeRegistry.updateStore(store);
+        }
+      }
+      for (const existing of storeRegistry.listStores()) {
+        if (!freshIds.has(existing.storeId)) {
+          storeRegistry.removeStore(existing.storeId);
+        }
+      }
+    } catch {
+      // non-fatal env sync in gateway server
+    }
+  };
+
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
     const hasOperatorAuthentication = Boolean(operatorUsername && operatorPassword);
@@ -240,7 +265,15 @@ export function startGatewayServer(
       return;
     }
     if (url.startsWith("/api/seo-performance/")) {
-      await handlePerformanceHttp(req, res, { service: getPerformanceService(), authToken, hasStore: storeId => storeRegistry.hasStore(storeId) });
+      await handlePerformanceHttp(req, res, {
+        service: getPerformanceService(),
+        authToken,
+        hasStore: (storeId) => {
+          if (storeRegistry.hasStore(storeId)) return true;
+          syncStores();
+          return storeRegistry.hasStore(storeId);
+        },
+      });
       return;
     }
     if (url.startsWith("/api/review-images/")) {
@@ -257,8 +290,15 @@ export function startGatewayServer(
     if (url.startsWith("/api/seo-agent/")) {
       await handleSeoAgentHttp(req, res, {
         operator: isAuthenticatedOperator ? operatorUsername : undefined,
-        hasStore: storeId => storeRegistry.hasStore(storeId),
-        listStoreIds: () => storeRegistry.listStores().map(store => store.storeId),
+        hasStore: (storeId) => {
+          if (storeRegistry.hasStore(storeId)) return true;
+          syncStores();
+          return storeRegistry.hasStore(storeId);
+        },
+        listStoreIds: () => {
+          syncStores();
+          return storeRegistry.listStores().map((store) => store.storeId);
+        },
         repository: async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workers; },
         publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
         createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },
@@ -310,28 +350,7 @@ export function startGatewayServer(
     const isProxyCheck = url === "/api/proxy/check" || url.startsWith("/api/proxy/check?");
 
     if (url.startsWith("/mcp/ads") || url.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
-      try {
-        const freshEnv = loadLocalEnv();
-        const freshStores = loadBootstrappedStores({
-          env: freshEnv,
-          configFile: getRuntimeStoreConfigFile(freshEnv),
-        });
-        const freshIds = new Set(freshStores.map((s) => s.storeId));
-        for (const store of freshStores) {
-          if (!storeRegistry.getStore(store.storeId)) {
-            storeRegistry.registerStore(store);
-          } else {
-            storeRegistry.updateStore(store);
-          }
-        }
-        for (const existing of storeRegistry.listStores()) {
-          if (!freshIds.has(existing.storeId)) {
-            storeRegistry.removeStore(existing.storeId);
-          }
-        }
-      } catch {
-        // non-fatal env sync in gateway server
-      }
+      syncStores();
     }
 
     if (url.startsWith("/mcp/ads") || url.startsWith("/mcp/ads-intelligence")) {

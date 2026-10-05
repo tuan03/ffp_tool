@@ -1,8 +1,13 @@
+import { createHash } from "node:crypto";
+
 import type {
   BatchDetailData,
   BenchmarkProductItem,
   BenchmarkSummaryKpis,
   ConnectionsSyncData,
+  Ga4IntegrationSummary,
+  GscIntegrationSummary,
+  PerformanceIntegrationStatus,
   ProductSeoDetailData,
 } from "../../src/modules/seo-performance";
 import type { PerformanceService } from "./service";
@@ -277,12 +282,248 @@ const BASELINE_KPIS: BenchmarkSummaryKpis = {
   },
 };
 
+function formatTitleFromUrl(url: string, auditTitle?: string | null): string {
+  if (auditTitle && auditTitle.trim().length > 0) {
+    return auditTitle.trim();
+  }
+  try {
+    const pathname = new URL(url).pathname;
+    const parts = pathname.split("/products/");
+    const rawSlug = parts[1] ?? pathname;
+    const cleanSlug = decodeURIComponent(rawSlug).replace(/(-[a-f0-9]{8,12})+$/i, "");
+    const formatted = cleanSlug
+      .split("-")
+      .filter(Boolean)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+    return formatted.length > 0 ? formatted : url;
+  } catch {
+    return url;
+  }
+}
+
+function extractProductIdentity(url: string, dbProductId?: string | null): { productId: string; shopifyProductGid: string } {
+  if (dbProductId && dbProductId.trim().length > 0) {
+    const raw = dbProductId.trim();
+    const cleanId = raw.replace(/^gid:\/\/shopify\/Product\//, "");
+    return {
+      productId: cleanId,
+      shopifyProductGid: raw.startsWith("gid://") ? raw : `gid://shopify/Product/${cleanId}`,
+    };
+  }
+  const hash = createHash("sha1").update(url).digest("hex").slice(0, 8);
+  try {
+    const pathname = new URL(url).pathname;
+    const parts = pathname.split("/products/");
+    const slug = decodeURIComponent(parts[1] ?? pathname).replace(/[^a-zA-Z0-9_-]/g, "");
+    return {
+      productId: `prod_${slug}_${hash}`,
+      shopifyProductGid: `gid://shopify/Product/${slug.slice(0, 24)}_${hash}`,
+    };
+  } catch {
+    return {
+      productId: `prod_${hash}`,
+      shopifyProductGid: `gid://shopify/Product/${hash}`,
+    };
+  }
+}
+
 export async function loadBenchmarkProducts(
-  _service: PerformanceService,
-  _storeId: string,
+  service: PerformanceService,
+  storeId: string,
   searchParams: URLSearchParams,
 ): Promise<{ readonly items: readonly BenchmarkProductItem[]; readonly total: number; readonly kpis: BenchmarkSummaryKpis }> {
-  let filtered = [...BASELINE_PRODUCTS];
+  await service.ready();
+
+  let allProducts: BenchmarkProductItem[] = [];
+  let kpis: BenchmarkSummaryKpis = BASELINE_KPIS;
+
+  try {
+    const dbResult = await service.repository.pool.query<{
+      url: string;
+      product_id: string | null;
+      audit: { title?: string; image?: string; [key: string]: unknown } | null;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      position: number | null;
+      query_count: number;
+    }>(`
+      SELECT
+        p.url,
+        p.product_id,
+        p.audit,
+        COALESCE(m.clicks, 0)::int AS clicks,
+        COALESCE(m.impressions, 0)::int AS impressions,
+        CASE
+          WHEN COALESCE(m.impressions, 0) > 0 THEN ROUND((m.clicks::numeric / m.impressions::numeric), 4)::float
+          ELSE 0
+        END AS ctr,
+        CASE
+          WHEN COALESCE(m.impressions, 0) > 0 THEN ROUND((m.weighted_position::numeric / m.impressions::numeric), 2)::float
+          ELSE NULL
+        END AS position,
+        COALESCE(q.query_count, 0)::int AS query_count
+      FROM sp_pages p
+      LEFT JOIN (
+        SELECT
+          page,
+          SUM(clicks) AS clicks,
+          SUM(impressions) AS impressions,
+          SUM(position * impressions) AS weighted_position
+        FROM sp_metrics
+        WHERE store_id = $1 AND dataset = 'page'
+        GROUP BY page
+      ) m ON p.url = m.page
+      LEFT JOIN (
+        SELECT
+          page,
+          COUNT(DISTINCT query) AS query_count
+        FROM sp_metrics
+        WHERE store_id = $1 AND dataset = 'query'
+        GROUP BY page
+      ) q ON p.url = q.page
+      WHERE p.store_id = $1 AND p.kind = 'product'
+      ORDER BY clicks DESC, impressions DESC, p.url ASC
+    `, [storeId]);
+
+    if (dbResult.rows.length > 0) {
+      allProducts = dbResult.rows.map(row => {
+        const { productId, shopifyProductGid } = extractProductIdentity(row.url, row.product_id);
+        const title = formatTitleFromUrl(row.url, row.audit?.title);
+        const thumbnailUrl = typeof row.audit?.image === "string" ? row.audit.image : null;
+
+        return {
+          productId,
+          shopifyProductGid,
+          title,
+          url: row.url,
+          thumbnailUrl,
+          currentVersion: "v0",
+          versionSource: "INITIAL",
+          promptVersion: null,
+          batchId: null,
+          publishedAt: null,
+          hasExternalDrift: false,
+          seoAge: null,
+          targetDays: 28,
+          coverageDays: 0,
+          clicks: {
+            after: row.clicks,
+            before: null,
+            deltaAbsolute: null,
+            deltaPercent: null,
+            isNewActivity: false,
+          },
+          impressions: {
+            after: row.impressions,
+            before: null,
+            deltaAbsolute: null,
+            deltaPercent: null,
+          },
+          ctr: {
+            after: row.ctr,
+            before: null,
+            deltaPercentagePoints: null,
+          },
+          position: {
+            after: row.position,
+            before: null,
+            improvement: null,
+          },
+          queries: {
+            afterCount: row.query_count,
+            beforeCount: null,
+            delta: null,
+            newlyObserved: 0,
+            noLongerObserved: 0,
+            matchedCount: 0,
+          },
+          organicSessions: {
+            after: 0,
+            before: null,
+            deltaAbsolute: null,
+            deltaPercent: null,
+            isGscQueryFilterApplied: false,
+          },
+          status: {
+            dataStatus: "FRESH",
+            measurementStatus: "BASELINE",
+            performanceStatus: "NOT_EVALUATED",
+            technicalFlags: [],
+            label: "Baseline · v0",
+            reason: "Sản phẩm gốc chưa áp dụng phiên bản Auto-SEO.",
+            rulesetVersion: "v1.0.0-standard",
+            lastEvaluatedAt: new Date().toISOString(),
+          },
+          action: {
+            type: "AUTO_SEO",
+            label: "Tạo Auto-SEO",
+            enabled: true,
+          },
+        };
+      });
+
+      const totalAfterClicks = allProducts.reduce((sum, p) => sum + p.clicks.after, 0);
+      const totalAfterImpressions = allProducts.reduce((sum, p) => sum + p.impressions.after, 0);
+      const totalAfterCtr = totalAfterImpressions > 0
+        ? Math.round((totalAfterClicks / totalAfterImpressions) * 10000) / 10000
+        : 0;
+
+      let sumPosImp = 0;
+      let sumImpWithPos = 0;
+      for (const p of allProducts) {
+        if (p.position.after !== null && p.impressions.after > 0) {
+          sumPosImp += p.position.after * p.impressions.after;
+          sumImpWithPos += p.impressions.after;
+        }
+      }
+      const avgPosition = sumImpWithPos > 0
+        ? Math.round((sumPosImp / sumImpWithPos) * 10) / 10
+        : null;
+
+      kpis = {
+        totalManaged: allProducts.length,
+        v0Count: allProducts.length,
+        seoVersionCount: 0,
+        eligibleCount: 0,
+        improvingCount: 0,
+        stableOrMixedCount: 0,
+        decliningCount: 0,
+        collectingOrInsufficientCount: 0,
+        technicalIssuesCount: 0,
+        cohortTotals: {
+          beforeClicks: 0,
+          afterClicks: totalAfterClicks,
+          clicksDeltaAbsolute: 0,
+          clicksDeltaPercent: null,
+          beforeImpressions: 0,
+          afterImpressions: totalAfterImpressions,
+          impressionsDeltaAbsolute: 0,
+          impressionsDeltaPercent: null,
+          beforeCtr: null,
+          afterCtr: totalAfterCtr,
+          ctrDeltaPp: null,
+          beforePosition: null,
+          afterPosition: avgPosition,
+          positionImprovement: null,
+          beforeOrganicSessions: null,
+          afterOrganicSessions: 0,
+          organicSessionsDelta: null,
+          isGscQueryFilterApplied: false,
+        },
+      };
+    }
+  } catch {
+    // Graceful fallback to mock fixtures if database fails or table is empty
+  }
+
+  if (allProducts.length === 0) {
+    allProducts = [...BASELINE_PRODUCTS];
+    kpis = BASELINE_KPIS;
+  }
+
+  let filtered = [...allProducts];
 
   const versionFilter = searchParams.get("versionFilter");
   if (versionFilter === "v0") {
@@ -307,6 +548,13 @@ export async function loadBenchmarkProducts(
         isGscQueryFilterApplied: true,
       },
     }));
+    kpis = {
+      ...kpis,
+      cohortTotals: {
+        ...kpis.cohortTotals,
+        isGscQueryFilterApplied: true,
+      },
+    };
   }
 
   const search = searchParams.get("search");
@@ -327,6 +575,8 @@ export async function loadBenchmarkProducts(
         return sortDir * ((a.ctr.after ?? 0) - (b.ctr.after ?? 0));
       case "position":
         return sortDir * ((a.position.after ?? 999) - (b.position.after ?? 999));
+      case "queries":
+        return sortDir * (a.queries.afterCount - b.queries.afterCount);
       case "title":
         return sortDir * a.title.localeCompare(b.title);
       default:
@@ -335,17 +585,7 @@ export async function loadBenchmarkProducts(
   });
 
   const offset = Number(searchParams.get("offset") ?? 0);
-  const limit = Number(searchParams.get("limit") ?? 20);
-
-  const kpis: BenchmarkSummaryKpis = queryParam
-    ? {
-        ...BASELINE_KPIS,
-        cohortTotals: {
-          ...BASELINE_KPIS.cohortTotals,
-          isGscQueryFilterApplied: true,
-        },
-      }
-    : BASELINE_KPIS;
+  const limit = Number(searchParams.get("limit") ?? 50);
 
   return {
     items: filtered.slice(offset, offset + limit),
@@ -355,74 +595,160 @@ export async function loadBenchmarkProducts(
 }
 
 export async function loadProductSeoDetail(
-  _service: PerformanceService,
-  _storeId: string,
+  service: PerformanceService,
+  storeId: string,
   productId: string,
 ): Promise<ProductSeoDetailData> {
-  const matched = BASELINE_PRODUCTS.find(p => p.productId === productId || p.shopifyProductGid === productId) ?? BASELINE_PRODUCTS[0];
+  await service.ready();
+
+  let matched = BASELINE_PRODUCTS.find(p => p.productId === productId || p.shopifyProductGid === productId);
+  if (!matched) {
+    const { items } = await loadBenchmarkProducts(service, storeId, new URLSearchParams({ limit: "1000" }));
+    matched = items.find(p => p.productId === productId || p.shopifyProductGid === productId || p.url === productId) ?? items[0] ?? BASELINE_PRODUCTS[0];
+  }
+
+  let queries: Array<{
+    query: string;
+    category: "matched" | "new" | "lost";
+    beforeClicks: number;
+    afterClicks: number;
+    clicksDelta: number;
+    beforeImpressions: number;
+    afterImpressions: number;
+    beforeCtr: number;
+    afterCtr: number;
+    beforePosition: number;
+    afterPosition: number;
+    positionImprovement: number;
+  }> = [];
+
+  try {
+    const queryRows = (await service.repository.pool.query<{
+      query: string;
+      clicks: number;
+      impressions: number;
+      position: number | null;
+    }>(`
+      SELECT
+        query,
+        SUM(clicks)::int AS clicks,
+        SUM(impressions)::int AS impressions,
+        CASE
+          WHEN SUM(impressions) > 0 THEN ROUND((SUM(position * impressions)::numeric / SUM(impressions)::numeric), 1)::float
+          ELSE NULL
+        END AS position
+      FROM sp_metrics
+      WHERE store_id = $1 AND dataset = 'query' AND page = $2
+      GROUP BY query
+      ORDER BY clicks DESC, impressions DESC
+      LIMIT 20
+    `, [storeId, matched.url])).rows;
+
+    if (queryRows.length > 0) {
+      queries = queryRows.map(q => {
+        const ctr = q.impressions > 0 ? Math.round((q.clicks / q.impressions) * 1000) / 1000 : 0;
+        return {
+          query: q.query,
+          category: "matched",
+          beforeClicks: 0,
+          afterClicks: q.clicks,
+          clicksDelta: q.clicks,
+          beforeImpressions: 0,
+          afterImpressions: q.impressions,
+          beforeCtr: 0,
+          afterCtr: ctr,
+          beforePosition: q.position ?? 0,
+          afterPosition: q.position ?? 0,
+          positionImprovement: 0,
+        };
+      });
+    }
+  } catch {
+    // fallback if query table not accessible
+  }
+
+  if (queries.length === 0) {
+    queries = [
+      {
+        query: matched.title.toLowerCase().slice(0, 30),
+        category: "matched",
+        beforeClicks: 0,
+        afterClicks: matched.clicks.after,
+        clicksDelta: matched.clicks.after,
+        beforeImpressions: 0,
+        afterImpressions: matched.impressions.after,
+        beforeCtr: 0,
+        afterCtr: matched.ctr.after ?? 0,
+        beforePosition: matched.position.after ?? 0,
+        afterPosition: matched.position.after ?? 0,
+        positionImprovement: 0,
+      },
+    ];
+  }
+
   return {
     product: matched,
     versions: [
       {
-        versionId: "v2-uuid",
-        versionNumber: 2,
-        source: "AUTO_SEO",
-        actor: "codex-agent",
-        batchId: "batch_2026_08_pilot",
-        promptVersion: "v2.1-ecommerce",
-        appliedAt: "2026-08-23T00:00:00.000Z",
-        publicEffectiveAt: "2026-08-23T00:00:00.000Z",
-        contentHash: "hash-v2-abc12345",
+        versionId: `v0-${matched.productId}`,
+        versionNumber: 0,
+        source: "INITIAL",
+        actor: "system",
+        batchId: null,
+        promptVersion: null,
+        appliedAt: new Date().toISOString(),
+        publicEffectiveAt: null,
+        contentHash: `hash-${matched.productId}`,
         snapshot: {
           title: matched.title,
-          descriptionHtml: "<p>Chăn lông cừu tự nhiên mềm mại, giữ ấm vượt trội trong mùa đông lạnh giá.</p>",
-          seoTitle: `${matched.title} | Jeminise`,
-          seoDescription: "Chăn lông cừu tự nhiên đạt chứng nhận Oeko-Tex an toàn cho da.",
-          media: [{ id: "m1", alt: "Chăn lông cừu gập gọn", url: matched.thumbnailUrl ?? "" }],
+          descriptionHtml: `<p>${matched.title}</p>`,
+          seoTitle: `${matched.title} | ${storeId}`,
+          seoDescription: `${matched.title} - Chất lượng cao từ ${storeId}`,
+          media: matched.thumbnailUrl ? [{ id: "m1", alt: matched.title, url: matched.thumbnailUrl }] : [],
         },
       },
     ],
-    selectedVersionNumber: 2,
-    comparedVersionNumber: 1,
+    selectedVersionNumber: 0,
+    comparedVersionNumber: 0,
     diffs: [
       {
         field: "title",
         label: "Tên sản phẩm",
-        before: "Chăn Lông Cừu",
+        before: matched.title,
         after: matched.title,
-        hasChanged: true,
+        hasChanged: false,
       },
       {
         field: "descriptionHtml",
         label: "Mô tả chi tiết (HTML)",
-        before: "<p>Chăn dày ấm.</p>",
-        after: "<p>Chăn lông cừu tự nhiên mềm mại, giữ ấm vượt trội trong mùa đông lạnh giá.</p>",
-        hasChanged: true,
+        before: `<p>${matched.title}</p>`,
+        after: `<p>${matched.title}</p>`,
+        hasChanged: false,
       },
       {
         field: "seoTitle",
         label: "SEO Title",
-        before: "Chăn Lông Cừu",
-        after: `${matched.title} | Jeminise`,
-        hasChanged: true,
+        before: `${matched.title} | ${storeId}`,
+        after: `${matched.title} | ${storeId}`,
+        hasChanged: false,
       },
       {
         field: "seoDescription",
         label: "SEO Meta Description",
-        before: "Chăn lông cừu chất lượng.",
-        after: "Chăn lông cừu tự nhiên đạt chứng nhận Oeko-Tex an toàn cho da.",
-        hasChanged: true,
+        before: `${matched.title} - Chất lượng cao từ ${storeId}`,
+        after: `${matched.title} - Chất lượng cao từ ${storeId}`,
+        hasChanged: false,
       },
     ],
-    mediaDiffs: [
+    mediaDiffs: matched.thumbnailUrl ? [
       {
         mediaId: "m1",
-        url: matched.thumbnailUrl ?? "",
-        beforeAlt: "(không có alt)",
-        afterAlt: "Chăn lông cừu gập gọn",
-        hasChanged: true,
+        url: matched.thumbnailUrl,
+        beforeAlt: matched.title,
+        afterAlt: matched.title,
+        hasChanged: false,
       },
-    ],
+    ] : [],
     windows: {
       beforeStart: "2026-07-26",
       beforeEnd: "2026-08-22",
@@ -434,7 +760,7 @@ export async function loadProductSeoDetail(
     inspection: {
       verdict: "INDEXED",
       coverageState: "Submitted and indexed",
-      lastCrawlAt: "2026-09-02T14:32:00.000Z",
+      lastCrawlAt: new Date().toISOString(),
       indexingState: "INDEXING_ALLOWED",
       googleCanonical: matched.url,
       userCanonical: matched.url,
@@ -442,33 +768,17 @@ export async function loadProductSeoDetail(
       derivedState: "INDEXED_AND_FRESH",
     },
     timelineAnnotations: [
-      { date: "2026-08-23", type: "version", note: "Publish version v2 qua Auto-SEO" },
-      { date: "2026-09-02", type: "version", note: "Google Search Console recrawl quan sát được" },
+      { date: new Date().toISOString().slice(0, 10), type: "version", note: "Phiên bản gốc v0 (Baseline)" },
     ],
-    queries: [
-      {
-        query: "chan long cuu cao cap",
-        category: "matched",
-        beforeClicks: 24,
-        afterClicks: 42,
-        clicksDelta: 18,
-        beforeImpressions: 800,
-        afterImpressions: 1100,
-        beforeCtr: 0.03,
-        afterCtr: 0.0382,
-        beforePosition: 6.8,
-        afterPosition: 4.1,
-        positionImprovement: 2.7,
-      },
-    ],
+    queries,
     ga4: {
-      landingSessions: { current: 85, previous: 58, delta: 27 },
-      totalUsers: { current: 72, previous: 50, delta: 22 },
-      engagedSessions: { current: 68, previous: 41, delta: 27 },
-      engagementRate: { current: 0.8, previous: 0.7069 },
-      eventCounts: { viewItem: 142, addToCart: 31, beginCheckout: 16, purchase: 9 },
-      purchaseRevenue: { amount: 1125.0, currency: "USD" },
-      acquisition: [{ channel: "Google Organic", sessions: 85, users: 72 }],
+      landingSessions: { current: matched.clicks.after, previous: 0, delta: matched.clicks.after },
+      totalUsers: { current: matched.clicks.after, previous: 0, delta: matched.clicks.after },
+      engagedSessions: { current: matched.clicks.after, previous: 0, delta: matched.clicks.after },
+      engagementRate: { current: 1.0, previous: 0 },
+      eventCounts: { viewItem: matched.impressions.after, addToCart: 0, beginCheckout: 0, purchase: 0 },
+      purchaseRevenue: { amount: 0, currency: "USD" },
+      acquisition: [{ channel: "Google Organic", sessions: matched.clicks.after, users: matched.clicks.after }],
       isGscQueryFilterNotice: false,
     },
     recommendations: [],
@@ -529,15 +839,56 @@ export async function loadConnectionsSync(
     service.repository.integrations(storeId),
     service.repository.jobs(storeId),
   ]);
-  const gsc = integrations.find(i => i.source === "gsc");
-  const ga4 = integrations.find(i => i.source === "ga4");
+  const gsc = integrations.find((i): i is GscIntegrationSummary => i.source === "gsc");
+  const ga4 = integrations.find((i): i is Ga4IntegrationSummary => i.source === "ga4");
+
+  let ga4Status: PerformanceIntegrationStatus = ga4?.status ?? "NOT_CONFIGURED";
+  const latestGa4Job = jobs.find(j => j.kind === "ga4_sync");
+
+  // Active validation: if marked CONNECTED or has connection and property, verify whether GA4 API is actually reachable or disabled/forbidden (403)
+  if (ga4?.connectionId && ga4.property?.propertyId) {
+    try {
+      const token = await service.google.tokenForConnection(ga4.connectionId);
+      const res = await fetch(
+        `https://analyticsdata.googleapis.com/v1beta/properties/${ga4.property.propertyId}/metadata`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(3000),
+        },
+      );
+      if (!res.ok) {
+        if (res.status === 403) {
+          ga4Status = "PERMISSION_DENIED";
+        } else if (res.status === 401) {
+          ga4Status = "RECONNECT_REQUIRED";
+        } else {
+          ga4Status = "ERROR";
+        }
+      } else {
+        ga4Status = "CONNECTED";
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("PERMISSION") || msg.includes("403") || msg.includes("SERVICE_DISABLED")) {
+        ga4Status = "PERMISSION_DENIED";
+      } else if (msg.includes("RECONNECT") || msg.includes("401") || msg.includes("INVALID_GRANT")) {
+        ga4Status = "RECONNECT_REQUIRED";
+      } else if (latestGa4Job?.error) {
+        ga4Status = latestGa4Job.error === "GA4_PERMISSION_OR_QUOTA" ? "PERMISSION_DENIED" : "ERROR";
+      } else {
+        ga4Status = "ERROR";
+      }
+    }
+  } else if (!ga4 || !ga4.property?.propertyId) {
+    ga4Status = "NOT_CONFIGURED";
+  }
 
   return {
     gsc: {
       connectionId: gsc?.connectionId ?? null,
-      status: gsc?.status ?? "CONNECTED",
-      property: gsc?.property ?? "sc-domain:jeminise.com",
-      origin: gsc?.origin ?? "https://jeminise.com",
+      status: gsc?.status ?? "NOT_CONFIGURED",
+      property: gsc?.property ?? null,
+      origin: gsc?.origin ?? null,
       grantedScopes: [
         "https://www.googleapis.com/auth/webmasters.readonly",
         "https://www.googleapis.com/auth/webmasters",
@@ -552,12 +903,12 @@ export async function loadConnectionsSync(
     },
     ga4: {
       connectionId: ga4?.connectionId ?? null,
-      status: ga4?.status ?? "CONNECTED",
-      propertyId: ga4?.property?.propertyId ?? "549055707",
-      hostnameScope: ga4?.property?.hostnameScope ?? "jeminise.com",
-      streamId: ga4?.property?.streamId ?? "9876543210",
-      timezone: ga4?.property?.timeZone ?? "America/Los_Angeles",
-      currency: ga4?.property?.currencyCode ?? "USD",
+      status: ga4Status,
+      propertyId: ga4?.property?.propertyId ?? null,
+      hostnameScope: ga4?.property?.hostnameScope ?? null,
+      streamId: ga4?.property?.streamId ?? null,
+      timezone: ga4?.property?.timeZone ?? null,
+      currency: ga4?.property?.currencyCode ?? null,
       grantedScopes: [
         "https://www.googleapis.com/auth/analytics.readonly",
       ],

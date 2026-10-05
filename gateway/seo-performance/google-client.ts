@@ -116,6 +116,13 @@ export class GoogleSearchClient {
         [state.store_id, source, connectionId],
       );
     }
+    await this.pool.query(
+      `INSERT INTO sp_connection(id,encrypted_token,reconnect,generation)
+       VALUES(1,$1,false,$2)
+       ON CONFLICT(id) DO UPDATE SET encrypted_token=excluded.encrypted_token,
+         reconnect=false,generation=excluded.generation`,
+      [encryptedRefreshToken, randomUUID()],
+    );
   }
   private async tokenRequest(values: Record<string, string>, markLegacyReconnect = true): Promise<z.infer<typeof tokenSchema>> {
     const response = await this.fetcher("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ ...values, client_id: this.config.clientId, client_secret: this.config.clientSecret }), signal: AbortSignal.timeout(20_000) });
@@ -130,7 +137,19 @@ export class GoogleSearchClient {
   }
   async token(): Promise<string> {
     const row = (await this.pool.query<{ encrypted_token: string; reconnect: boolean; generation: string }>("SELECT * FROM sp_connection WHERE id=1")).rows[0];
-    if (!row || row.reconnect) throw new Error("GSC_RECONNECT_REQUIRED");
+    if (!row || row.reconnect) {
+      const googleRow = (await this.pool.query<{ encrypted_refresh_token: string; generation: string }>(
+        "SELECT encrypted_refresh_token, generation FROM sp_google_connections WHERE status='CONNECTED' ORDER BY updated_at DESC LIMIT 1",
+      )).rows[0];
+      if (googleRow) {
+        await this.pool.query(
+          "INSERT INTO sp_connection(id,encrypted_token,reconnect,generation) VALUES(1,$1,false,$2) ON CONFLICT(id) DO UPDATE SET encrypted_token=excluded.encrypted_token,reconnect=false,generation=excluded.generation",
+          [googleRow.encrypted_refresh_token, googleRow.generation],
+        );
+        return this.token();
+      }
+      throw new Error("GSC_RECONNECT_REQUIRED");
+    }
     if (this.cachedToken && this.cachedToken.generation === row.generation && this.cachedToken.expiresAt > Date.now()) return this.cachedToken.value;
     const token = await this.tokenRequest({ grant_type: "refresh_token", refresh_token: decryptSecret(row.encrypted_token, this.key()) });
     // Do not revive a connection disconnected or replaced while refresh was running.

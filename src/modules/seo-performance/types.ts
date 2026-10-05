@@ -1,7 +1,14 @@
 export type PageKind = "product" | "collection" | "blog" | "page" | "home" | "other";
 export interface SearchMetrics { readonly clicks: number; readonly impressions: number; readonly ctr: number; readonly position: number }
 export type PerformanceDataSource = "gsc" | "ga4";
-export type PerformanceIntegrationStatus = "CONNECTED" | "MISSING_PERMISSION" | "RECONNECT_REQUIRED" | "DISCONNECTED" | "NOT_CONFIGURED";
+export type PerformanceIntegrationStatus =
+  | "CONNECTED"
+  | "MISSING_PERMISSION"
+  | "RECONNECT_REQUIRED"
+  | "DISCONNECTED"
+  | "NOT_CONFIGURED"
+  | "ERROR"
+  | "PERMISSION_DENIED";
 export interface Ga4PropertyMetadata {
   /** Numeric Google Analytics property ID represented as a string to avoid precision loss. */
   readonly propertyId: string;
