@@ -14,7 +14,7 @@ import { SeoRevisionRepository } from "../seo-worker/revision-repository";
 import { SeoCutoverRepository } from "../seo-worker/cutover";
 import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
 import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
-import { normalizeSeoEnqueue } from "./input-contract";
+import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -90,6 +90,17 @@ export class PostgresCustomGptQueue implements SeoQueue {
         sourceIdentity: execution.sourceIdentity, sourceRevision: execution.sourceRevision, original: execution.originalSnapshot,
         inputHash, settings: input.settings ?? (await this.settings(execution.storeId)), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
       (await this.db.prepare("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES (?,?,?,?,?,?,?)").run(job.id, job.storeId, dedup, job.status, JSON.stringify(job), job.createdAt, job.settings.provider));
+      const versioningFlags = await this.versioning.getStoreFlags(job.storeId);
+      if (versioningFlags.readEnabled && execution.productId) {
+        await this.versioning.recordDraftBase({
+          jobId: job.id,
+          storeId: job.storeId,
+          shopifyProductGid: `gid://shopify/Product/${execution.productId}`,
+          inputContractVersion: SEO_WORKER_SCHEMA_VERSION,
+          storeProfileVersion: input.input.storeProfile.profileVersion,
+          createdAt: job.createdAt,
+        });
+      }
       if (workerMode) {
         await this.db.prepare("INSERT INTO seo_worker_jobs(job_id,store_id,product_key,state,updated_at) VALUES (?,?,?,'READY',?)").run(job.id, job.storeId, getWorkerProductKey(job.execution), this.now());
       }
@@ -459,6 +470,9 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
       if (job.status !== "REVIEW_READY") throw new Error("Sync requires a ready review");
+      if ((await this.versioning.getStoreFlags(storeId)).writeEnabled) {
+        throw new Error("BACKEND_PUBLISH_REQUIRED: versioning-enabled stores cannot use the browser publisher");
+      }
       if ((await this.publisher.status(storeId, jobId)).managed) throw new Error("BACKEND_PUBLISH_REQUIRED: use the operator publish endpoint");
       const newer = (await this.db.prepare("SELECT 1 FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND rowid>(SELECT rowid FROM gpt_jobs WHERE id=?) LIMIT 1").get(storeId, job.source, job.sourceIdentity, jobId));
       if (newer) throw new Error("Sync conflict: a newer source revision exists");
