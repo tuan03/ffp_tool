@@ -23,6 +23,23 @@ For updated guidance, replace the installed `.agents/skills/ffp-seo/SKILL.md` wi
 the ZIP's `skill/SKILL.md` after reviewing any local customizations. Do not rerun
 setup over an existing configuration or overwrite other MCP entries.
 
+### Quickstart (Tự động 1-click)
+
+1. **Windows**: Click đúp vào file `cai-dat.bat` (hoặc `setup.bat`).
+2. **macOS / Linux**: Mở terminal, chạy `bash cai-dat.sh` (hoặc `bash setup.sh`).
+
+Script sẽ tự động:
+- Kiểm tra Python 3.11+.
+- Khởi tạo môi trường ảo `.venv` và cài đặt `requirements.txt`.
+- Đăng nhập lưu token vào kho mật khẩu bảo mật của hệ điều hành (Windows Credential Manager / macOS Keychain / Linux Secret Service).
+- Tự động thêm MCP server và Skill vào Codex Workspace.
+
+---
+
+### Manual Install (Thủ công từng bước)
+
+Dành cho người muốn kiểm soát từng bước bằng lệnh terminal:
+
 Use Python 3.11+ in a dedicated virtual environment. Keep this extracted folder
 at a stable absolute path; Codex configuration references it.
 

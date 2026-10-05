@@ -21,7 +21,20 @@ test('Agent Pack is deterministic, readable and contains only public files and c
   const inspection = JSON.parse(execFileSync('python', ['-c',
     'import zipfile,json; z=zipfile.ZipFile("' + archive + '"); assert z.testzip() is None; print(json.dumps({"files":z.namelist(),"schema":json.loads(z.read("resources/submission.schema.json"))}))',
   ], { encoding: 'utf8' }));
-  assert.deepEqual(inspection.files, ['ffp_worker.py', 'test_vault_live.py', 'requirements.txt', 'README.md', 'skill/SKILL.md', 'resources/submission.schema.json', 'resources/analysis.schema.json', 'resources/rules.json']);
+  assert.deepEqual(inspection.files, [
+    'cai-dat.bat',
+    'cai-dat.sh',
+    'setup.bat',
+    'setup.sh',
+    'ffp_worker.py',
+    'test_vault_live.py',
+    'requirements.txt',
+    'README.md',
+    'skill/SKILL.md',
+    'resources/submission.schema.json',
+    'resources/analysis.schema.json',
+    'resources/rules.json',
+  ]);
   const contracts = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', 'scripts/export-seo-worker-contracts.ts'], { encoding: 'utf8' }));
   assert.deepEqual(inspection.schema, contracts.submission);
 });

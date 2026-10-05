@@ -58,6 +58,7 @@ config/amazon-crawler-agent.json
 
 #=== [start] - module SEO Content - Lth Loi ===
 .agents
+.codex
 compress-src.cmd
 dev.cmd
 .compressignore
