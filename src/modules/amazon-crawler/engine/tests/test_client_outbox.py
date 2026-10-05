@@ -165,6 +165,21 @@ class AgentOutboxDeliveryTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await self.agent._upload_loop()
 
+    def test_agent_http_requests_use_stable_product_identity(self):
+        from engine.distributed import AGENT_VERSION
+        from urllib.request import Request
+
+        request = Request("http://127.0.0.1:9999/api/v1/worker/security")
+        response = object()
+        with patch("urllib.request.urlopen", return_value=response) as open_request:
+            self.assertIs(self.agent._open_agent_request(request), response)
+
+        sent_request = open_request.call_args.args[0]
+        self.assertEqual(
+            sent_request.get_header("User-agent"),
+            f"FFP-Amazon-Crawler-Agent/{AGENT_VERSION}",
+        )
+
     async def test_missing_or_wrong_receipt_never_deletes_outbox(self):
         row = self.spool()
         for response in ({"status": "duplicate"}, {"status": "accepted", "receiptId": "wrong", "checksum": row["checksum"]}):

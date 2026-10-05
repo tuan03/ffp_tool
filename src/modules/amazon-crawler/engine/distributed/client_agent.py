@@ -1724,6 +1724,10 @@ class DistributedCrawlerAgent:
             loop.call_soon_threadsafe(self._publish_status)
 
     def _open_agent_request(self, request):
+        # Cloudflare Browser Integrity rejects Python's default urllib signature
+        # with error 1010. Use an explicit product identity for every Agent HTTP
+        # request while keeping authentication independent from the user agent.
+        request.add_header("User-Agent", f"FFP-Amazon-Crawler-Agent/{AGENT_VERSION}")
         if self.config.auth_mode == "key":
             from .client_credentials import credential_request
             if self._agent_key is None:
