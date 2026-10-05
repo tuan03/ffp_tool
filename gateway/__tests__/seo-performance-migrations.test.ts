@@ -47,7 +47,7 @@ test("SEO Performance migrations create the complete schema and rerun idempotent
     );
     assert.deepEqual(
       migrations.rows.map(row => Number(row.version)),
-      [1, SEO_PERFORMANCE_SCHEMA_VERSION],
+      Array.from({ length: SEO_PERFORMANCE_SCHEMA_VERSION }, (_, index) => index + 1),
     );
     const tables = await fixture.database.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables

@@ -34,17 +34,40 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
       res.setHeader("Referrer-Policy", "no-referrer"); res.writeHead(303, { Location: "/seo-performance" }); res.end(); return;
     }
     if (route === "oauth/start" && req.method === "POST") {
-      const connection = await service.google.connect(session);
+      const storeIdValue = url.searchParams.get("storeId");
+      const connection = storeIdValue
+        ? await (async () => {
+          const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(storeIdValue);
+          if (!await options.hasStore(storeId)) throw new Error("STORE_NOT_FOUND");
+          const input = z.object({ sources: z.array(z.enum(["gsc", "ga4"])).min(1).default(["gsc", "ga4"]) }).strict().parse(await body(req));
+          return service.google.connectStore({ session, storeId, sources: input.sources.map(source => source === "gsc" ? "GSC" as const : "GA4" as const) });
+        })()
+        : await service.google.connect(session);
       res.setHeader("Set-Cookie", `ffp_gsc_oauth=${connection.cookie}; Path=/api/seo-performance/oauth; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
       send(res, 200, { url: connection.url }); return;
     }
-    if (route === "disconnect" && req.method === "POST") { await service.google.disconnect(); send(res, 200, { ok: true }); return; }
-    if (route === "properties" && req.method === "GET") { send(res, 200, await service.google.properties()); return; }
+    if (route === "disconnect" && req.method === "POST") {
+      const storeIdValue = url.searchParams.get("storeId");
+      if (storeIdValue) {
+        const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(storeIdValue);
+        if (!await options.hasStore(storeId)) throw new Error("STORE_NOT_FOUND");
+        await service.google.disconnectConnection(await service.repository.connectionFor(storeId, "GSC"));
+      } else await service.google.disconnect();
+      send(res, 200, { ok: true }); return;
+    }
+    if (route === "properties" && req.method === "GET") {
+      const storeIdValue = url.searchParams.get("storeId");
+      if (!storeIdValue) { send(res, 200, await service.google.properties()); return; }
+      const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(storeIdValue);
+      if (!await options.hasStore(storeId)) throw new Error("STORE_NOT_FOUND");
+      send(res, 200, await service.google.properties(await service.repository.connectionFor(storeId, "GSC"))); return;
+    }
     const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(url.searchParams.get("storeId"));
     if (!await options.hasStore(storeId)) { send(res, 404, { error: { code: "STORE_NOT_FOUND" } }); return; }
     const filters = filtersSchema.parse(Object.fromEntries([...url.searchParams].filter(([key]) => key !== "storeId" && key !== "url")));
     if (req.method === "GET") {
       switch (route) {
+        case "integrations": send(res, 200, await service.repository.integrations(storeId)); return;
         case "overview": send(res, 200, await service.overview(storeId, filters)); return;
         case "pages": send(res, 200, await service.repository.pages(storeId, filters)); return;
         case "queries": send(res, 200, await service.repository.queries(storeId, z.string().url().parse(url.searchParams.get("url")), filters)); return;
@@ -57,7 +80,7 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
       switch (route) {
         case "report": { const input = z.object({ filters: reportFiltersSchema, view: reportViewSchema }).strict().parse(payload); send(res, 200, await loadSearchReport(service.repository, storeId, input.filters, input.view)); return; }
         case "mapping": { const input = z.object({ property: z.string().min(1).max(2000), origin: z.string().url(), confirmed: z.literal(true) }).strict().parse(payload); await service.map(storeId, input.property, input.origin); send(res, 200, { ok: true }); return; }
-        case "jobs": { const input = z.object({ kind: z.enum(["sync", "crawl"]) }).strict().parse(payload); send(res, 202, await service.start(storeId, input.kind)); return; }
+        case "jobs": { const input = z.object({ kind: z.enum(["sync", "gsc_sync", "ga4_sync", "crawl"]) }).strict().parse(payload); send(res, 202, await service.start(storeId, input.kind)); return; }
         case "inspection": { const input = z.object({ url: z.string().url() }).strict().parse(payload); send(res, 202, await service.inspect(storeId, input.url)); return; }
         case "revise": { const input = z.object({ recommendationId: z.string().uuid() }).strict().parse(payload); send(res, 202, await service.revise(storeId, input.recommendationId, "operator")); return; }
         case "dismiss": { const input = z.object({ recommendationId: z.string().uuid() }).strict().parse(payload); await service.dismiss(storeId, input.recommendationId, "operator"); send(res, 200, { ok: true }); return; }

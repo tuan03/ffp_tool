@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
 
-import type { PageAudit, PerformanceMapping, PerformanceFilters, PerformanceList, PerformancePage, SearchMetrics, SeoRecommendation, RecommendationInput, PerformanceEvent, PerformanceJob } from "../../src/modules/seo-performance";
+import type { PageAudit, PerformanceIntegrationSummary, PerformanceMapping, PerformanceFilters, PerformanceList, PerformancePage, SearchMetrics, SeoRecommendation, RecommendationInput, PerformanceEvent, PerformanceJob } from "../../src/modules/seo-performance";
 import { aggregateMetrics, opportunityReasons, pacificDate, shiftDate } from "./analytics";
 import { digest } from "./google-client";
 import { applyPerformanceMigrations } from "./migrations";
@@ -36,6 +36,23 @@ export class PerformanceRepository {
     finally { client.release(); }
   }
   async mapping(storeId: string): Promise<PerformanceMapping | null> {
+    const current = (await this.pool.query<{
+      store_id: string; mapping_revision: number; connection_id: string | null; gsc_property_raw: string;
+      storefront_origin: string; timezone: string | null; last_sync: Date | null;
+    }>(`SELECT integration.store_id,integration.mapping_revision,integration.connection_id,integration.gsc_property_raw,
+        integration.storefront_origin,integration.timezone,mapping.last_sync
+      FROM sp_store_integrations integration
+      LEFT JOIN sp_mappings mapping ON mapping.store_id=integration.store_id AND mapping.property=integration.gsc_property_raw
+      WHERE integration.store_id=$1 AND integration.source='GSC' AND integration.is_current`, [storeId])).rows[0];
+    if (current) return {
+      storeId: current.store_id,
+      property: current.gsc_property_raw,
+      origin: current.storefront_origin,
+      lastSync: current.last_sync?.toISOString() ?? null,
+      mappingRevision: current.mapping_revision,
+      gscConnectionId: current.connection_id,
+      timeZone: current.timezone,
+    };
     const row = (await this.pool.query<{ store_id: string; property: string; origin: string; last_sync: Date | null }>("SELECT * FROM sp_mappings WHERE store_id=$1", [storeId])).rows[0];
     return row ? { storeId: row.store_id, property: row.property, origin: row.origin, lastSync: row.last_sync?.toISOString() ?? null } : null;
   }
@@ -45,6 +62,75 @@ export class PerformanceRepository {
     const existing = await this.mapping(storeId);
     if (existing && (existing.property !== property || existing.origin !== origin)) throw new Error("MAPPING_CHANGE_REQUIRES_NEW_HISTORY");
     await this.pool.query("INSERT INTO sp_mappings(store_id,property,origin) VALUES($1,$2,$3) ON CONFLICT(store_id) DO NOTHING", [storeId, property, origin]);
+  }
+  async connectionFor(storeId: string, source: "GSC" | "GA4"): Promise<string> {
+    const mapped = (await this.pool.query<{ connection_id: string }>(
+      "SELECT connection_id FROM sp_store_integrations WHERE store_id=$1 AND source=$2 AND is_current AND connection_id IS NOT NULL",
+      [storeId, source],
+    )).rows[0];
+    if (mapped) return mapped.connection_id;
+    const consented = (await this.pool.query<{ connection_id: string }>(
+      `SELECT connection_id FROM sp_oauth_states_v2
+       WHERE store_id=$1 AND consumed_at IS NOT NULL AND connection_id IS NOT NULL AND $2=ANY(requested_sources)
+       ORDER BY consumed_at DESC LIMIT 1`,
+      [storeId, source],
+    )).rows[0];
+    if (!consented) throw new Error("GOOGLE_CONNECTION_REQUIRED");
+    return consented.connection_id;
+  }
+  async integrations(storeId: string): Promise<readonly PerformanceIntegrationSummary[]> {
+    const rows = (await this.pool.query<{
+      source: "GSC" | "GA4"; status: PerformanceIntegrationSummary["status"]; connection_id: string | null;
+      mapping_revision: number; gsc_property_raw: string | null; ga4_property_id: string | null;
+      storefront_origin: string; stream_id: string | null; hostname_scope: string | null; timezone: string | null;
+      currency: string | null; last_sync: Date | null;
+    }>(`SELECT integration.*,mapping.last_sync FROM sp_store_integrations integration
+      LEFT JOIN sp_mappings mapping ON mapping.store_id=integration.store_id AND integration.source='GSC'
+      WHERE integration.store_id=$1 AND integration.is_current ORDER BY integration.source`, [storeId])).rows;
+    const bySource = new Map(rows.map(row => [row.source, row]));
+    const latestConnection = async (source: "GSC" | "GA4"): Promise<string | null> => {
+      try { return await this.connectionFor(storeId, source); } catch { return null; }
+    };
+    const summaries: PerformanceIntegrationSummary[] = [];
+    for (const source of ["GSC", "GA4"] as const) {
+      const row = bySource.get(source);
+      const freshness = {
+        dataThrough: row?.last_sync?.toISOString().slice(0, 10) ?? null,
+        fetchedAt: row?.last_sync?.toISOString() ?? null,
+        lastSuccessfulSync: row?.last_sync?.toISOString() ?? null,
+        stale: !row?.last_sync || Date.now() - row.last_sync.getTime() > 4 * 86400000,
+        staleReason: !row?.last_sync ? "NEVER_SYNCED" : Date.now() - row.last_sync.getTime() > 4 * 86400000 ? "SOURCE_STALE" : null,
+      };
+      const connectionId = row?.connection_id ?? await latestConnection(source);
+      if (source === "GSC") summaries.push({ source: "gsc", status: row?.status ?? "NOT_CONFIGURED", connectionId, mappingRevision: row?.mapping_revision ?? null, origin: row?.storefront_origin ?? null, freshness, quality: [], property: row?.gsc_property_raw ?? null });
+      else summaries.push({ source: "ga4", status: row?.status ?? "NOT_CONFIGURED", connectionId, mappingRevision: row?.mapping_revision ?? null, origin: row?.storefront_origin ?? null, freshness, quality: [], property: row?.ga4_property_id && row.hostname_scope && row.timezone && row.currency ? { propertyId: row.ga4_property_id, streamId: row.stream_id, hostnameScope: row.hostname_scope, timeZone: row.timezone, currencyCode: row.currency } : null });
+    }
+    return summaries;
+  }
+  async mapIntegration(input: {
+    readonly storeId: string; readonly source: "GSC" | "GA4"; readonly connectionId: string;
+    readonly origin: string; readonly gscProperty?: string; readonly ga4PropertyId?: string;
+    readonly streamId?: string; readonly hostnameScope?: string; readonly timeZone?: string; readonly currencyCode?: string;
+  }): Promise<number> {
+    if (input.source === "GSC" && !input.gscProperty) throw new Error("GSC_PROPERTY_REQUIRED");
+    if (input.source === "GA4" && (!input.ga4PropertyId || !/^\d+$/.test(input.ga4PropertyId) || !input.hostnameScope || !input.timeZone || !input.currencyCode)) throw new Error("GA4_MAPPING_REQUIRED");
+    return this.transaction(async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`sp-mapping:${input.storeId}:${input.source}`]);
+      const connection = (await client.query<{ status: string }>("SELECT status FROM sp_google_connections WHERE id=$1 FOR UPDATE", [input.connectionId])).rows[0];
+      if (!connection || connection.status !== "CONNECTED") throw new Error("GOOGLE_CONNECTION_REQUIRED");
+      const previous = (await client.query<{ mapping_revision: number }>("SELECT mapping_revision FROM sp_store_integrations WHERE store_id=$1 AND source=$2 AND is_current FOR UPDATE", [input.storeId, input.source])).rows[0];
+      const revision = (previous?.mapping_revision ?? 0) + 1;
+      if (previous) await client.query("UPDATE sp_store_integrations SET is_current=false,retired_at=now() WHERE store_id=$1 AND source=$2 AND is_current", [input.storeId, input.source]);
+      await client.query(`INSERT INTO sp_store_integrations(
+        store_id,source,mapping_revision,connection_id,status,gsc_property_raw,ga4_property_id,
+        storefront_origin,stream_id,hostname_scope,timezone,currency,verified_at
+      ) VALUES($1,$2,$3,$4,'CONNECTED',$5,$6,$7,$8,$9,$10,$11,now())`, [
+        input.storeId, input.source, revision, input.connectionId, input.gscProperty ?? null,
+        input.ga4PropertyId ?? null, input.origin, input.streamId ?? null, input.hostnameScope ?? null,
+        input.timeZone ?? (input.source === "GSC" ? "America/Los_Angeles" : null), input.currencyCode ?? null,
+      ]);
+      return revision;
+    });
   }
   async range(storeId: string, filters: PerformanceFilters = {}): Promise<{ start: string; end: string; previousStart: string; previousEnd: string }> {
     const latest = (await this.pool.query<{ day: string | null }>("SELECT max(day)::text AS day FROM sp_days WHERE store_id=$1 AND dataset='property' AND complete=true", [storeId])).rows[0]?.day;
@@ -124,10 +210,13 @@ export class PerformanceRepository {
     return { items, total, nextOffset: (filters.offset ?? 0) + items.length < total ? (filters.offset ?? 0) + items.length : null };
   }
   async startJob(storeId: string, kind: PerformanceJob["kind"], requestKey: string, payload: Record<string, unknown> = {}): Promise<{ jobId: string }> {
-    await this.requireMapping(storeId);
+    if (kind === "ga4_sync") {
+      const mapping = await this.pool.query("SELECT 1 FROM sp_store_integrations WHERE store_id=$1 AND source='GA4' AND is_current AND status='CONNECTED'", [storeId]);
+      if (!mapping.rowCount) throw new Error("GA4_MAPPING_REQUIRED");
+    } else await this.requireMapping(storeId);
     return this.transaction(async client => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`sp-job:${storeId}:${kind}`]);
-      const existing = (await client.query<{ id: string }>("SELECT id FROM sp_jobs WHERE store_id=$1 AND kind=$2 AND (request_key=$3 OR (kind IN ('sync','crawl') AND status IN ('pending','running'))) ORDER BY updated_at DESC LIMIT 1", [storeId, kind, requestKey])).rows[0];
+      const existing = (await client.query<{ id: string }>("SELECT id FROM sp_jobs WHERE store_id=$1 AND kind=$2 AND (request_key=$3 OR (kind IN ('sync','gsc_sync','ga4_sync','crawl','benchmark','recommendation','health') AND status IN ('pending','running'))) ORDER BY updated_at DESC LIMIT 1", [storeId, kind, requestKey])).rows[0];
       if (existing) return { jobId: existing.id };
       const jobId = randomUUID();
       await client.query("INSERT INTO sp_jobs(id,store_id,kind,request_key,payload) VALUES($1,$2,$3,$4,$5)", [jobId, storeId, kind, requestKey, JSON.stringify(payload)]);
