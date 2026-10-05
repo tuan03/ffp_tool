@@ -302,6 +302,7 @@ export async function handleAdsIntelligenceHttpRequest(
         endpoints: {
           mcpStreamableHttp: "/mcp/ads",
           installerScript: "/mcp/ads/install.ps1",
+          installerScriptUnix: "/mcp/ads/install.sh",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
         toolsCount: 37,
