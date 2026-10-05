@@ -5,6 +5,8 @@ export {
   createDispatcherMediaPageSource,
   createShopifySeoSnapshotReader,
 } from "./shopify-snapshot-reader";
+export { SeoPublishVersioningIntegration } from "./publish-integration";
+export type { SeoPublishPreparation } from "./publish-integration";
 export { applySeoVersionMigrations, getSeoVersionMigrations } from "./schema";
 export {
   SEO_FIELD_SET_VERSION,
@@ -39,6 +41,7 @@ export type {
   SeoBaselineResult,
   SeoCommitResult,
   SeoContentSnapshotInput,
+  SeoDraftPublishContext,
   SeoExternalChangeResult,
   SeoImageSnapshot,
   SeoProductState,

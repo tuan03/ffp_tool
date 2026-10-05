@@ -108,6 +108,13 @@ export interface RecordDraftBaseInput {
   readonly createdAt: number;
 }
 
+export interface SeoDraftPublishContext {
+  readonly versionId: string;
+  readonly snapshotId: string;
+  readonly contentHash: string;
+  readonly versionNumber: number;
+}
+
 export interface ObserveExternalChangeInput {
   readonly storeId: string;
   readonly shopifyProductGid: string;

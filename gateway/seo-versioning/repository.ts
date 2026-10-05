@@ -12,6 +12,7 @@ import {
   type SeoBaselineResult,
   type SeoCommitResult,
   type SeoContentSnapshotInput,
+  type SeoDraftPublishContext,
   type SeoExternalChangeResult,
   type SeoSnapshotSource,
   type SeoStoreVersioningFlags,
@@ -102,7 +103,11 @@ export class SeoVersionRepository {
 
   async commitVersion(input: CommitVersionInput): Promise<SeoCommitResult> {
     this.validateSnapshot(input.snapshot);
-    return this.database.transaction(async sql => {
+    return this.database.transaction(sql => this.commitVersionInTransaction(sql, input));
+  }
+
+  async commitVersionInTransaction(sql: WorkerSql, input: CommitVersionInput): Promise<SeoCommitResult> {
+    this.validateSnapshot(input.snapshot);
       await this.assertEnabled(sql, input.storeId, "write_enabled");
       const product = await this.lockProduct(sql, input.storeId, input.shopifyProductGid);
       const receipt = (await sql.query(`SELECT * FROM ${this.p}seo_version_operation_receipts WHERE operation_id=$1`, [input.operationId])).rows[0];
@@ -150,7 +155,25 @@ export class SeoVersionRepository {
         input.snapshot.contentHash, input.appliedAt);
       await this.audit(sql, input.storeId, String(product.id), "VERSION_COMMITTED", versionId, { operationId: input.operationId }, input.appliedAt);
       return { outcome: "COMMITTED", version: await this.getVersionById(sql, input.storeId, versionId) };
-    });
+  }
+
+  async resolveDraftPublishContext(sql: WorkerSql, storeId: string, jobId: string,
+    shopifyProductGid: string): Promise<SeoDraftPublishContext | null> {
+    const flags = (await sql.query(`SELECT read_enabled,write_enabled FROM ${this.p}seo_version_store_settings WHERE store_id=$1`, [storeId])).rows[0];
+    if (!flags || flags.write_enabled !== true) return null;
+    if (flags.read_enabled !== true) throw new Error("SEO_VERSION_READ_REQUIRED");
+    const row = (await sql.query(`SELECT d.based_on_version_id,d.based_on_snapshot_id,d.based_on_content_hash,v.version_number
+      FROM ${this.p}seo_draft_bases d
+      JOIN ${this.p}seo_products p ON p.store_id=d.store_id AND p.id=d.product_id
+      JOIN ${this.p}seo_versions v ON v.store_id=d.store_id AND v.product_id=d.product_id AND v.id=d.based_on_version_id
+      WHERE d.store_id=$1 AND d.job_id=$2 AND p.shopify_product_gid=$3`, [storeId, jobId, shopifyProductGid])).rows[0];
+    if (!row) throw new Error("SEO_DRAFT_BASE_REQUIRED");
+    return {
+      versionId: String(row.based_on_version_id),
+      snapshotId: String(row.based_on_snapshot_id),
+      contentHash: String(row.based_on_content_hash),
+      versionNumber: Number(row.version_number),
+    };
   }
 
   async recordDraftBase(input: RecordDraftBaseInput): Promise<void> {
@@ -181,7 +204,10 @@ export class SeoVersionRepository {
       if (product.current_version_id === null || product.current_observed_snapshot_id === null) throw new Error("SEO_BASELINE_REQUIRED");
       const previous = (await sql.query(`SELECT content_hash FROM ${this.p}seo_content_snapshots WHERE id=$1`, [product.current_observed_snapshot_id])).rows[0];
       if (previous?.content_hash === input.snapshot.contentHash) {
-        await sql.query(`UPDATE ${this.p}seo_products SET last_seen_at=$1 WHERE id=$2`, [input.observedAt, product.id]);
+        const nextState = product.versioning_state === "DIRTY" ? "DIRTY" : this.state(input.snapshot.shopifyStatus);
+        await sql.query(`UPDATE ${this.p}seo_products SET current_url=$1,shopify_status=$2,last_seen_at=$3,versioning_state=$4 WHERE id=$5`,
+          [input.snapshot.onlineStoreUrl, input.snapshot.shopifyStatus, input.observedAt, nextState, product.id]);
+        await this.recordUrlObservation(sql, input.storeId, String(product.id), input.snapshot, input.observedAt);
         return { changed: false, externalChangeId: null };
       }
       const snapshotId = this.id();

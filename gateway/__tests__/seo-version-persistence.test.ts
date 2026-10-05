@@ -115,8 +115,20 @@ test("draft bases stay on committed snapshots while external observations create
     await f.repository.setStoreFlags({ storeId: "store-a", readEnabled: true, writeEnabled: true }, 1);
     const baseline = await f.repository.ensureBaseline({ storeId: "store-a", shopifyProductGid: "p1", snapshot: snapshot("a"), observedAt: 2 });
     assert.deepEqual(await f.repository.observeExternalChange({
-      storeId: "store-a", shopifyProductGid: "p1", snapshot: snapshot("a"), observedAt: 3, changedFields: [],
+      storeId: "store-a", shopifyProductGid: "p1", snapshot: snapshot("a", {
+        onlineStoreUrl: "https://example.com/products/quilt-renamed", shopifyStatus: "ARCHIVED",
+      }), observedAt: 3, changedFields: [],
     }), { changed: false, externalChangeId: null });
+    const contextOnly = (await f.pg.query<{ current_url: string; shopify_status: string; versioning_state: string }>(
+      "SELECT current_url,shopify_status,versioning_state FROM seo_products",
+    )).rows[0];
+    assert.deepEqual(contextOnly, {
+      current_url: "https://example.com/products/quilt-renamed",
+      shopify_status: "ARCHIVED",
+      versioning_state: "ARCHIVED",
+    });
+    assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_versions")).rows[0].count, 1);
+    assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_external_changes")).rows[0].count, 0);
     const drift = await f.repository.observeExternalChange({
       storeId: "store-a", shopifyProductGid: "p1", snapshot: snapshot("b", { title: "External title", onlineStoreUrl: "https://example.com/products/new-handle" }),
       observedAt: 4, changedFields: ["title", "url"],
@@ -129,7 +141,7 @@ test("draft bases stay on committed snapshots while external observations create
     assert.equal(draft.based_on_snapshot_id, baseline.version.snapshotId);
     assert.equal((await f.pg.query<{ versioning_state: string }>("SELECT versioning_state FROM seo_products")).rows[0].versioning_state, "DIRTY");
     assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_external_changes")).rows[0].count, 1);
-    assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_product_url_history")).rows[0].count, 2);
+    assert.equal((await f.pg.query<{ count: number }>("SELECT count(*)::int AS count FROM seo_product_url_history")).rows[0].count, 3);
   } finally { await f.pg.close(); }
 });
 
