@@ -10,6 +10,7 @@ export interface AdsHeaderProps {
   readonly syncMessage: string | null;
   readonly onSync: () => void;
   readonly onOpenMcp: () => void;
+  readonly onOpenProfile?: () => void;
 }
 
 export function AdsHeader({
@@ -21,6 +22,7 @@ export function AdsHeader({
   syncMessage,
   onSync,
   onOpenMcp,
+  onOpenProfile,
 }: AdsHeaderProps): React.JSX.Element {
   const [showMaturityTooltip, setShowMaturityTooltip] = useState(false);
 
@@ -117,6 +119,19 @@ export function AdsHeader({
           <span>🤖</span>
           <span>MCP</span>
         </button>
+
+        {/* Profile Settings Button */}
+        {onOpenProfile && (
+          <button
+            type="button"
+            onClick={onOpenProfile}
+            className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:border-slate-500 hover:text-white transition cursor-pointer"
+            title="Cấu hình tài khoản Meta Ads, GA4 và Target CPA cho store này"
+          >
+            <span>⚙️</span>
+            <span>Cấu hình Ads</span>
+          </button>
+        )}
 
         {/* Refresh / Sync Button */}
         <button

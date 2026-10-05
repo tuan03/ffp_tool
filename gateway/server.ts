@@ -224,7 +224,7 @@ export function startGatewayServer(
       } catch { if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: { code: "WORKER_UNAVAILABLE" } })); } }
       return;
     }
-    if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
+    if (hasOperatorAuthentication && !url.startsWith("/api/") && !url.startsWith("/mcp/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
       return;
     }
@@ -303,7 +303,7 @@ export function startGatewayServer(
       }
     }
 
-    if (url === "/mcp/ads" || url === "/mcp/ads-intelligence" || url.startsWith("/mcp/ads?") || url.startsWith("/mcp/ads-intelligence?")) {
+    if (url.startsWith("/mcp/ads") || url.startsWith("/mcp/ads-intelligence")) {
       await handleAdsMcpHttpRequest(req, res);
       return;
     }

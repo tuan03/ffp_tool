@@ -542,8 +542,17 @@ export interface AdsIntelligenceClient {
   getExperiments?(storeId?: string): Promise<readonly AdsExperiment[]>;
   createExperiment?(storeId: string, payload: { briefId?: string; experiment?: AdsExperiment; customOptions?: { title?: string; budgetCapUsd?: number; reviewWindowDays?: number } }): Promise<AdsExperiment>;
   updateExperimentOutcome?(experimentId: string, payload: { results?: ExperimentResults; learning?: ExperimentLearning; status?: ExperimentStatus; statusReason?: string }): Promise<AdsExperiment>;
+  getStoreProfile?(storeId?: string): Promise<{ configured: boolean; storeId: string; shopDomain?: string; profile: any | null }>;
+  saveStoreProfile?(storeId: string, payload: any): Promise<{ success: boolean; storeId: string; profile: any }>;
+  testMetaConnection?(accountId: string): Promise<{ success: boolean; account?: any; error?: string }>;
+  testGa4Connection?(propertyId: string): Promise<{ success: boolean; propertyId?: string; sessions?: number; currency?: string; error?: string }>;
   proposeGuardedWrite?(storeId: string, decisionIdOrEntityId: string): Promise<GuardedWriteProposal>;
   executeGuardedWrite?(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }): Promise<GuardedWriteExecutionResult>;
+  listMcpUsers?(): Promise<{ users: readonly McpUserToken[] }>;
+  createMcpUser?(payload: { name: string; allowedStores: string[]; role?: string }): Promise<{ success: boolean; user: McpUserToken }>;
+  revokeMcpUser?(id: string): Promise<{ success: boolean }>;
+  deleteMcpUser?(id: string): Promise<{ success: boolean }>;
+  getMcpAuditLogs?(limit?: number): Promise<{ auditLogs: readonly McpAuditLog[] }>;
 }
 
 export interface LocalAiRunnerInfo {
@@ -613,3 +622,26 @@ export interface SpyJob {
   readonly startedAt: string; readonly finishedAt?: string; readonly phase: string; readonly errorCode?: string;
   readonly published?: boolean; readonly selectedCount?: number; readonly adCount?: number; readonly brandsWithAds?: number;
 }
+
+export interface McpUserToken {
+  readonly id: string;
+  readonly name: string;
+  readonly token: string;
+  readonly allowedStores: readonly string[];
+  readonly role: "admin" | "media_buyer" | "viewer";
+  readonly createdAt: string;
+  readonly lastUsedAt?: string | null;
+  readonly status: "ACTIVE" | "REVOKED";
+}
+
+export interface McpAuditLog {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly userId: string;
+  readonly userName: string;
+  readonly toolName: string;
+  readonly storeId?: string;
+  readonly success: boolean;
+  readonly error?: string;
+}
+

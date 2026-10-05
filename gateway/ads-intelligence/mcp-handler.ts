@@ -41,11 +41,111 @@ export interface AdsMcpHandlerOptions {
   readonly defaultStoreId?: string;
 }
 
+import { mcpUserManager } from "./mcp-users";
+
+export function generateInstallerScript(hostUrl: string, defaultToken = ""): string {
+  return `# FFP Ads Intelligence MCP - 1-Click Installer
+# Run in PowerShell: irm "${hostUrl}/mcp/ads/install.ps1?token=YOUR_TOKEN" | iex
+param(
+  [string]$Token = "${defaultToken}",
+  [string]$HostUrl = "${hostUrl}"
+)
+
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host "🚀 FFP Ads Intelligence MCP Server - 1-Click Setup" -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Cyan
+
+if (-not $Token) {
+  $Token = Read-Host "👉 Vui lòng nhập Personal MCP Token (ví dụ: ffp_pat_...)"
+}
+
+if (-not $Token) {
+  Write-Host "❌ Token không được để trống. Hủy cài đặt." -ForegroundColor Red
+  exit 1
+}
+
+$mcpEndpoint = "$HostUrl/mcp/ads"
+Write-Host "🔗 MCP Endpoint: $mcpEndpoint" -ForegroundColor Gray
+
+# 1. Antigravity CLI (agy)
+$agyCmd = Get-Command "agy" -ErrorAction SilentlyContinue
+if ($agyCmd) {
+  Write-Host "⚡ Phát hiện Antigravity CLI. Đang đăng ký MCP server..." -ForegroundColor Yellow
+  try {
+    & agy mcp remove ads-intelligence 2>$null
+    & agy mcp add --header "Authorization: Bearer $Token" ads-intelligence $mcpEndpoint
+    Write-Host "✅ Antigravity CLI đã cấu hình thành công!" -ForegroundColor Green
+  } catch {
+    Write-Host "⚠️ Không thể tự động thêm vào agy: $_" -ForegroundColor Yellow
+  }
+} else {
+  Write-Host "ℹ️ Chưa cài đặt agy (bỏ qua)." -ForegroundColor DarkGray
+}
+
+# 2. Codex Configuration (~/.codex/config.toml)
+$codexDir = Join-Path $HOME ".codex"
+$codexConfig = Join-Path $codexDir "config.toml"
+try {
+  if (-not (Test-Path $codexDir)) {
+    New-Item -ItemType Directory -Path $codexDir -Force | Out-Null
+  }
+
+  $entry = @"
+
+[mcp_servers.ads_intelligence]
+url = "$mcpEndpoint"
+http_headers = { "Authorization" = "Bearer $Token" }
+"@
+
+  $existingContent = ""
+  if (Test-Path $codexConfig) {
+    $existingContent = Get-Content -Raw $codexConfig -ErrorAction SilentlyContinue
+  }
+
+  if ($existingContent -notmatch "\[mcp_servers\.ads_intelligence\]") {
+    Add-Content -Path $codexConfig -Value $entry
+    Write-Host "✅ Codex config (~/.codex/config.toml) đã được cập nhật!" -ForegroundColor Green
+  } else {
+    Write-Host "ℹ️ Codex config đã có cấu hình ads_intelligence." -ForegroundColor Yellow
+  }
+} catch {
+  Write-Host "⚠️ Không thể ghi cấu hình Codex: $_" -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "🎉 Cài đặt hoàn tất!" -ForegroundColor Green
+Write-Host "👉 Kiểm tra kết nối MCP bằng lệnh:" -ForegroundColor Cyan
+Write-Host "   curl -H 'Authorization: Bearer $Token' $mcpEndpoint" -ForegroundColor White
+Write-Host ""
+`;
+}
+
 export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
   const service = options.service ?? getAdsIntelligenceService();
   const configuredSecret = options.authToken || process.env.ADS_MCP_SECRET || process.env.GATEWAY_AUTH_TOKEN;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(req.url || "/", "http://localhost");
+    } catch {
+      parsedUrl = new URL("/", "http://localhost");
+    }
+
+    // Serve 1-Click Installer script for PowerShell if requested
+    if (req.method === "GET" && parsedUrl.pathname.endsWith("/install.ps1")) {
+      const host = req.headers.host || "ffp.b6-team.site";
+      const isLocal = host.startsWith("localhost") || host.startsWith("127.0.0.1");
+      const proto = isLocal ? "http" : "https";
+      const baseUrl = `${proto}://${host}`;
+      const queryToken = parsedUrl.searchParams.get("token") || "";
+      const script = generateInstallerScript(baseUrl, queryToken);
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(script);
+      return;
+    }
+
     // Info probe for GET
     if (req.method === "GET") {
       sendJson(res, 200, {
@@ -55,10 +155,11 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
         transport: "StreamableHTTP",
         description: "FFP Ads Intelligence MCP Server exposing performance, creative gaps, brief studio, and experiment ledger tools for Codex & AI agents.",
         endpoints: {
-          mcpStreamableHttp: req.url?.split("?")[0] || "/mcp/ads",
+          mcpStreamableHttp: parsedUrl.pathname || "/mcp/ads",
+          installerScript: "/mcp/ads/install.ps1",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 37, // Includes store discovery and research publishing tools
+        toolsCount: 37,
       });
       return;
     }
@@ -72,11 +173,25 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
       return;
     }
 
-    // Optional authentication check
-    if (configuredSecret) {
-      const authHeader = req.headers.authorization;
-      const bearer = authHeader?.replace(/^Bearer\s+/i, "") || (req.headers["x-gateway-key"] as string | undefined);
-      if (!matchesSecret(bearer, configuredSecret)) {
+    // Authentication & Identity Resolution
+    const authHeader = req.headers.authorization;
+    const bearer =
+      (authHeader?.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : undefined) ||
+      (req.headers["x-gateway-key"] as string | undefined) ||
+      parsedUrl.searchParams.get("token") ||
+      undefined;
+
+    let currentUser: { name: string; token: string; allowedStores: readonly string[] } = {
+      name: "Direct Caller",
+      token: "direct",
+      allowedStores: ["*"],
+    };
+
+    const hasUsers = mcpUserManager.listUsers().length > 0;
+    const isAuthRequired = Boolean(configuredSecret || hasUsers);
+
+    if (isAuthRequired) {
+      if (!bearer) {
         res.setHeader("WWW-Authenticate", 'Bearer realm="ffp-ads-mcp"');
         sendJson(res, 401, {
           jsonrpc: "2.0",
@@ -85,23 +200,60 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
         });
         return;
       }
+
+      if (configuredSecret && matchesSecret(bearer, configuredSecret)) {
+        currentUser = {
+          name: "Super Admin",
+          token: bearer,
+          allowedStores: ["*"],
+        };
+      } else {
+        const user = mcpUserManager.findUserByToken(bearer);
+        if (user && user.status === "ACTIVE") {
+          currentUser = {
+            name: user.name,
+            token: user.token,
+            allowedStores: user.allowedStores,
+          };
+        } else {
+          res.setHeader("WWW-Authenticate", 'Bearer realm="ffp-ads-mcp"');
+          sendJson(res, 401, {
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: user && user.status === "REVOKED"
+                ? "This MCP token has been revoked by an administrator."
+                : "Invalid or missing MCP authorization credentials.",
+            },
+            id: null,
+          });
+          return;
+        }
+      }
+    } else if (bearer) {
+      if (configuredSecret && matchesSecret(bearer, configuredSecret)) {
+        currentUser = { name: "Super Admin", token: bearer, allowedStores: ["*"] };
+      } else {
+        const user = mcpUserManager.findUserByToken(bearer);
+        if (user && user.status === "ACTIVE") {
+          currentUser = { name: user.name, token: user.token, allowedStores: user.allowedStores };
+        }
+      }
     }
 
     // Extract storeId if passed as query parameter
     let storeId = options.defaultStoreId || "chillgen";
-    try {
-      const url = new URL(req.url || "/", "http://localhost");
-      const storeParam = url.searchParams.get("storeId");
-      if (storeParam) {
-        storeId = storeParam;
-      }
-    } catch {
-      // Use fallback
+    const storeParam = parsedUrl.searchParams.get("storeId");
+    if (storeParam) {
+      storeId = storeParam;
     }
 
     const server = createAdsMcpServer({
       service,
       defaultStoreId: storeId,
+      userToken: currentUser.token,
+      userName: currentUser.name,
+      allowedStores: currentUser.allowedStores,
     });
 
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
