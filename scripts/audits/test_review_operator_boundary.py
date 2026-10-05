@@ -34,6 +34,35 @@ class ReviewOperatorBoundaryTests(unittest.TestCase):
         self.assertTrue(credentials.accepts("Basic " + base64.b64encode(b"operator:fixture-password").decode()))
         self.assertNotIn("fixture-password", repr(credentials))
 
+    def test_crawler_operator_auth_environment_flag_is_explicit_and_strict(self):
+        composition = importlib.import_module("scripts.coordinator_app")
+        self.assertTrue(composition.operator_auth_enabled_from_environment({}))
+        self.assertFalse(composition.operator_auth_enabled_from_environment({"FFP_CRAWLER_OPERATOR_AUTH_ENABLED": "false"}))
+        self.assertTrue(composition.operator_auth_enabled_from_environment({"FFP_CRAWLER_OPERATOR_AUTH_ENABLED": "yes"}))
+        with self.assertRaises(ValueError):
+            composition.operator_auth_enabled_from_environment({"FFP_CRAWLER_OPERATOR_AUTH_ENABLED": "sometimes"})
+
+    def test_composition_disables_coordinator_operator_auth_when_configured(self):
+        composition = importlib.import_module("scripts.coordinator_app")
+        coordinator = composition.crawler
+        review_server = composition.review
+        values = {
+            "AMAZON_COORDINATOR_DATABASE_URL": "postgresql://fixture:fixture@127.0.0.1/ffp",
+            "REVIEW_IMAGE_BRIDGE_TOKEN": INTERNAL,
+            "REVIEW_IMAGE_EXTENSION_TOKEN": EXTENSION,
+            "SHOPIFY_PIPELINE_TOKEN": PIPELINE,
+            "FFP_CRAWLER_OPERATOR_AUTH_ENABLED": "false",
+        }
+        review_app = FastAPI()
+        review_app.state.authorizes_operator_request = lambda scope, token: False
+        with patch.dict(os.environ, values), \
+                patch.object(coordinator, "create_coordinator_app", return_value=FastAPI()) as create_coordinator, \
+                patch.object(review_server, "create_review_app", return_value=review_app), \
+                patch.object(composition, "create_engine", return_value=object()):
+            composition.create_app()
+        self.assertIsNone(create_coordinator.call_args.kwargs["operator_credentials"])
+        self.assertTrue(create_coordinator.call_args.kwargs["operator_auth_disabled"])
+
     def test_bridge_is_scoped_audited_and_does_not_replace_operator_or_pipeline(self):
         with tempfile.TemporaryDirectory() as temporary:
             engine = create_engine("sqlite:///" + str(Path(temporary) / "test.sqlite3"), connect_args={"check_same_thread": False})

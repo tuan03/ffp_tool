@@ -1388,6 +1388,30 @@ export function AmazonCrawlerPage({
     }
   }
 
+  async function handlePauseResumeJob(job: AmazonCrawlerJobSnapshot): Promise<void> {
+    if (!amazonCrawlerJobs || controlledJobId) return;
+    const shouldResume = job.executionState !== "active";
+    setControlledJobId(job.jobId);
+    setJobControlMessage(null);
+    try {
+      const updated = shouldResume
+        ? await amazonCrawlerJobs.resume(job.jobId)
+        : await amazonCrawlerJobs.pause(job.jobId);
+      setJobs((current) => current.map((currentJob) => currentJob.jobId === updated.jobId ? updated : currentJob));
+      setJobControlTone("info");
+      setJobControlMessage(shouldResume
+        ? "Đã tiếp tục job; các ASIN chưa xử lý sẽ được cấp lại, kết quả đã hoàn tất được giữ nguyên."
+        : updated.executionState === "paused"
+          ? "Job đã tạm dừng; kết quả đã lưu được giữ nguyên. Pipeline của sản phẩm đã crawl vẫn tiếp tục."
+          : "Đang tạm dừng: Coordinator đã ngừng cấp ASIN mới và chờ task đang chạy kết thúc an toàn.");
+    } catch (caught: unknown) {
+      setJobControlTone("error");
+      setJobControlMessage(caught instanceof Error ? caught.message : "Không thể cập nhật trạng thái tạm dừng job.");
+    } finally {
+      setControlledJobId(null);
+    }
+  }
+
   async function handleCancelTask(jobId: string, taskId: string, asin: string): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId || controlledTaskId) return;
     setControlledTaskId(taskId);
@@ -2572,6 +2596,7 @@ export function AmazonCrawlerPage({
             <div>
               <h2 className="font-semibold text-slate-100">Job đang chạy và gần đây</h2>
               <p className="text-xs text-slate-400">Hủy job sẽ dừng crawler và dọn dữ liệu tạm của job. Cache sản phẩm hợp lệ và sản phẩm đã ghi lên Shopify được giữ nguyên.</p>
+              <p className="text-xs text-slate-400">Tạm dừng sẽ ngừng nhận ASIN mới sau khi task đang chạy kết thúc an toàn; kết quả đã lưu được giữ lại. Pipeline SEO của sản phẩm đã crawl vẫn tiếp tục. Pause agent riêng không thay thế Pause job.</p>
             </div>
             <div className="text-right text-xs text-slate-500">
               <p>Tự làm mới mỗi 3 giây · phân trang 10 job, tải 100 job gần nhất</p>
@@ -2583,12 +2608,15 @@ export function AmazonCrawlerPage({
               {visibleJobs.map((job) => {
                 const isActiveJob = ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status);
                 const cancellationMessage = describeJobCancellation(job);
+                const executionStateMessage = job.executionState === "pausing"
+                  ? " · Đang tạm dừng"
+                  : job.executionState === "paused" ? " · Đã tạm dừng" : "";
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
                     <div className="min-w-0">
                       <p className="font-mono text-xs text-cyan-300">{job.jobId}</p>
                       <p className="text-sm text-slate-300">
-                        {job.status} · {job.progress.completed}/{job.progress.total} link
+                        {job.status}{executionStateMessage} · {job.progress.completed}/{job.progress.total} link
                       </p>
                       {job.progress.items?.filter((task): task is typeof task & { taskId: string } =>
                         Boolean(task.taskId) && ["queued", "running", "cancelling"].includes(task.status)
@@ -2633,7 +2661,20 @@ export function AmazonCrawlerPage({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {isActiveJob && job.status !== "cancelling" ? (
-                        <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
+                        <>
+                          <button
+                            className="rounded border border-amber-500 px-3 py-1 text-xs font-semibold text-amber-300 disabled:opacity-50"
+                            disabled={isJobSnapshotStale || controlledJobId !== null}
+                            type="button"
+                            onClick={() => void handlePauseResumeJob(job)}
+                          >
+                            {controlledJobId === job.jobId
+                              ? "Đang cập nhật..."
+                              : job.executionState === "pausing" ? "Tiếp tục ngay"
+                                : job.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
+                          </button>
+                          <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
+                        </>
                       ) : job.status === "cancelling" ? (
                         <button
                           className="rounded border border-amber-600 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-300 hover:border-rose-500 hover:bg-rose-950/60 hover:text-rose-200 transition-colors"
@@ -2690,6 +2731,19 @@ export function AmazonCrawlerPage({
 
       <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
+        {activeManagedJob && ["queued", "running", "waiting_captcha"].includes(activeManagedJob.status) ? (
+          <button
+            className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50"
+            disabled={isJobSnapshotStale || controlledJobId !== null}
+            type="button"
+            onClick={() => void handlePauseResumeJob(activeManagedJob)}
+          >
+            {controlledJobId === activeManagedJob.jobId
+              ? "Đang cập nhật..."
+              : activeManagedJob.executionState === "pausing" ? "Tiếp tục ngay"
+                : activeManagedJob.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
+          </button>
+        ) : null}
         <button
           className={`rounded-lg border px-5 py-2 font-semibold transition-colors ${
             isCancellationPending

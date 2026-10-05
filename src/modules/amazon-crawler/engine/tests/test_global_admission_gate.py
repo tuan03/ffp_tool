@@ -16,10 +16,19 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 
 from engine.distributed.coordinator_migrations import migrate_coordinator
-from engine.distributed.coordinator_models import ClientRecord, CrawlJob, CrawlProductItem, CrawlTask, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import (
+    ClientRecord,
+    CrawlJob,
+    CrawlProductItem,
+    CrawlTask,
+    TaskResult,
+    create_database_engine,
+    create_session_factory,
+)
 from engine.distributed.coordinator_server import create_coordinator_app
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.operator_authorization import OperatorCredentials
+from engine.distributed.protocol import utc_now
 
 
 class GlobalAdmissionGateStoreTests(unittest.TestCase):
@@ -89,6 +98,52 @@ class GlobalAdmissionGateStoreTests(unittest.TestCase):
             client = session.get(ClientRecord, "agent-1")
             client.agent_group = "amazon-us"
         self.assertEqual(len(self.store.lease_tasks("agent-1", 1)), 1)
+
+    def test_job_pause_waits_for_active_lease_then_resume_preserves_queued_work(self) -> None:
+        leases = self.store.lease_tasks("agent-1", 1)
+        self.assertEqual(len(leases), 1)
+        task_id = leases[0]["taskId"]
+
+        pausing = self.store.pause_job(self.job["id"])
+        self.assertEqual(pausing["executionState"], "pausing")
+        self.assertEqual(self.store.lease_tasks("agent-1", 2), [])
+
+        with self.sessions.begin() as session:
+            task = session.get(CrawlTask, task_id)
+            task.status = "completed"
+            task.lease_expires_at = None
+            task.completed_at = utc_now()
+            session.add(TaskResult(
+                task_id=task_id, client_id="agent-1", lease_id=leases[0]["leaseId"],
+                checksum="a" * 64, payload={"products": [{"id": "saved-product"}]},
+            ))
+            self.store._refresh_job(session, self.job["id"])
+
+        paused = self.store.get_job(self.job["id"])
+        self.assertEqual(paused["executionState"], "paused")
+        self.assertEqual(paused["taskCounts"].get("completed"), 1)
+        self.assertEqual(paused["taskCounts"].get("queued"), 1)
+        with self.sessions() as session:
+            self.assertEqual(session.get(TaskResult, task_id).payload["products"][0]["id"], "saved-product")
+        self.assertEqual(self.store.lease_tasks("agent-1", 2), [])
+
+        resumed = self.store.resume_job(self.job["id"])
+        self.assertEqual(resumed["executionState"], "active")
+        self.assertEqual(len(self.store.lease_tasks("agent-1", 1)), 1)
+
+    def test_job_pause_survives_coordinator_reopen(self) -> None:
+        paused = self.store.pause_job(self.job["id"])
+        self.assertEqual(paused["executionState"], "paused")
+
+        self.engine.dispose()
+        restarted_engine = create_database_engine(f"sqlite:///{self.database_path.as_posix()}")
+        try:
+            restarted_store = CoordinatorStore(create_session_factory(restarted_engine))
+            restored = restarted_store.get_job(self.job["id"])
+            self.assertEqual(restored["executionState"], "paused")
+            self.assertEqual(restarted_store.lease_tasks("agent-1", 1), [])
+        finally:
+            restarted_engine.dispose()
 
     def test_scheduler_balances_claims_across_ready_agents_in_the_same_capability_cohort(self) -> None:
         with self.sessions.begin() as session:
@@ -181,6 +236,35 @@ class GlobalAdmissionGateStoreTests(unittest.TestCase):
 
 
 class GlobalAdmissionGateHttpTests(unittest.TestCase):
+    def test_job_pause_and_resume_routes_preserve_active_job_state(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(database_url=f"sqlite:///{(root / 'jobs.db').as_posix()}")
+            client = stack.enter_context(TestClient(app))
+            job = app.state.store.create_job({"urls": ["B0FR4MSS2H", "B0HG4NRG98"]})
+
+            with client.websocket_connect("/api/v1/worker/connect") as socket:
+                socket.send_json({"type": "hello", "protocolVersion": "5", "clientId": "online-agent",
+                    "displayName": "Online agent", "maxConcurrentInputs": 1, "availableSlots": 0,
+                    "capabilities": {"mediaGalleryV2": True, "amazon": True}})
+                self.assertEqual(socket.receive_json()["type"], "hello_ack")
+
+                paused = client.post(f"/api/v1/crawl-jobs/{job['id']}/pause")
+                self.assertEqual(paused.status_code, 200, paused.text)
+                self.assertEqual(paused.json()["executionState"], "paused")
+                self.assertEqual(paused.json()["status"], "queued")
+
+                repeated_pause = client.post(f"/api/v1/crawl-jobs/{job['id']}/pause")
+                self.assertEqual(repeated_pause.status_code, 200, repeated_pause.text)
+                self.assertEqual(repeated_pause.json()["executionState"], "paused")
+
+                resumed = client.post(f"/api/v1/crawl-jobs/{job['id']}/resume")
+                self.assertEqual(resumed.status_code, 200, resumed.text)
+                self.assertEqual(resumed.json()["executionState"], "active")
+                self.assertEqual(socket.receive_json()["type"], "work_available")
+                self.assertEqual(client.get(f"/api/v1/crawl-jobs/{job['id']}").json()["executionState"], "active")
+
     def test_operator_auth_and_gate_routes(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

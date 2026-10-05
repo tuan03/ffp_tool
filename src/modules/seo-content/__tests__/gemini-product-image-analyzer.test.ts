@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { FakeGeminiContentGenerator } from "../internal/product-understanding/gemini-content-generator";
-import { GeminiProductImageAnalyzer } from "../internal/product-understanding/gemini-product-image-analyzer";
+import {
+  GeminiImagePreparationError,
+  GeminiProductImageAnalyzer,
+} from "../internal/product-understanding/gemini-product-image-analyzer";
 
 const response = JSON.stringify({
   typography: { visibleTexts: ["Song Title", "Artist"], styleSummary: "white interface labels" },
@@ -53,6 +56,16 @@ test("Gemini B1 limits analysis to maxImages when specified", async () => {
   assert.equal(generator.calls.length, 1);
   assert.equal(generator.calls[0].imagePayloads.length, 1);
   assert.match(generator.calls[0].prompt, /batch \(1 readable image in supplied order\)/);
+});
+
+test("unreadable image batches are classified as preparation failures before Gemini is called", async () => {
+  const generator = new FakeGeminiContentGenerator(response);
+  const analyzer = new GeminiProductImageAnalyzer({ generator });
+  await assert.rejects(
+    () => analyzer.analyze({ title: "Rug", description: "", niche: "decor", images: [] }),
+    (error: unknown) => error instanceof GeminiImagePreparationError,
+  );
+  assert.equal(generator.calls.length, 0);
 });
 
 test("Gemini B1 tries the next image when the preferred image cannot be read", async () => {
