@@ -6,7 +6,12 @@ import { isSameProduct } from "./internal/conflict-control/seo-conflict-corpus";
 import { UnofficialGoogleSuggestClient } from "./internal/search-suggestions/google-suggest-client";
 import type { ProductUnderstanding, ShoppingContext } from "./internal/domain-types";
 import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
-import type { SeoContentDetailedOutput, SeoContentInput } from "./types";
+import type { SeoContentDetailedOutput, SeoContentInput, SeoExecutionEnvelope } from "./types";
+
+export interface ExternalSeoOperationalOptions {
+  readonly execution: SeoExecutionEnvelope;
+  readonly corpus?: SeoConflictCorpus;
+}
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object");
@@ -79,13 +84,14 @@ export async function researchExternalSeo(seeds: readonly string[], language = "
   return results;
 }
 /** @deprecated Legacy Custom GPT Actions compatibility only. */
-export async function checkExternalSeoKeywords(input: SeoContentInput, keywords: readonly string[], providedCorpus?: SeoConflictCorpus) {
-  if (!input.storeId || !/^[a-zA-Z0-9_-]+$/.test(input.storeId)) throw new Error("Valid storeId required");
+export async function checkExternalSeoKeywords(keywords: readonly string[], options: ExternalSeoOperationalOptions) {
+  const { execution } = options;
+  if (!execution.storeId || !/^[a-zA-Z0-9_-]+$/.test(execution.storeId)) throw new Error("Valid storeId required");
   if (!keywords.length || keywords.length > 10 || keywords.some(keyword => !keyword.trim() || keyword.length > 120)) throw new Error("Provide 1–10 keywords of at most 120 characters");
-  const corpus = providedCorpus ?? new FileSeoConflictCorpus({ storeId: input.storeId, maxRegisteredKeywordsPerProduct: 1024 });
+  const corpus = options.corpus ?? new FileSeoConflictCorpus({ storeId: execution.storeId, maxRegisteredKeywordsPerProduct: 1024 });
   if (!corpus.getSnapshot) throw new Error("Persistent corpus snapshot required");
   const snapshot = await corpus.getSnapshot();
-  const owner = { storeId: input.storeId, productId: input.productId, handle: input.handle, url: input.url };
+  const owner = { storeId: execution.storeId, productId: execution.productId, url: execution.sourceIdentity };
   const conflicts = await Promise.all(keywords.map(async keyword => ({ keyword, matches: await corpus.findConflicts({ keyword, owner, snapshot }) })));
   const previousKeywords = snapshot.products.filter(product => isSameProduct(product, owner)).flatMap(product => product.keywords.map(keyword => keyword.keyword));
   return { revision: snapshot.revision, previousKeywords, conflicts, semanticMode: "local_with_gpt_review" as const };
@@ -94,12 +100,12 @@ export async function checkExternalSeoKeywords(input: SeoContentInput, keywords:
  * No default provider factories are called: every reasoning result comes from the external draft.
  * @deprecated Legacy Custom GPT Actions compatibility only.
  */
-export async function finalizeExternalSeo(input: SeoContentInput, analysisPayload: unknown, keywordPayload: unknown, submission: unknown, providedCorpus?: SeoConflictCorpus): Promise<SeoContentDetailedOutput> {
+export async function finalizeExternalSeo(input: SeoContentInput, analysisPayload: unknown, keywordPayload: unknown, submission: unknown, options: ExternalSeoOperationalOptions): Promise<SeoContentDetailedOutput> {
   const analysis = validateExternalSeoAnalysis(input, analysisPayload);
   const decision = object(keywordPayload);
   const keywords = strings(decision.keywords, "keywords");
   text(decision.reason, "keyword decision reason");
-  const check = await checkExternalSeoKeywords(input, keywords, providedCorpus);
+  const check = await checkExternalSeoKeywords(keywords, options);
   if (check.conflicts.some(conflict => conflict.matches.length)) throw new Error("Keyword conflict: check keywords again and choose non-conflicting targets");
   const raw = object(submission);
   const draft = validateDraft(raw.draft);
@@ -111,7 +117,8 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
     const id = image.id || `image-${index + 1}`;
     const alt = text(alts[id], `alt for ${id}`);
     if (alt.length > 125) throw new Error(`Alt for ${id} exceeds 125 characters`);
-    return { sourceUrl: image.url, alt, webp: { filename: `${input.handle || "product"}-${index + 1}.webp`, url: image.url } };
+    const safeId = id.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `image-${index + 1}`;
+    return { sourceUrl: image.url, alt, webp: { filename: `${safeId}.webp`, url: image.url } };
   });
   let context = evolveContext(createInitialContext(input), {
     productUnderstanding: analysis.understanding,
@@ -120,10 +127,10 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   });
   context = await executeB5ContentGeneration(context, { generator: { generate: async () => draft } });
   context = evolveContext(context, { imageResult: { processedImages: imageOutputs } });
-  const corpus = providedCorpus ?? new FileSeoConflictCorpus({ storeId: input.storeId, maxRegisteredKeywordsPerProduct: 1024 });
+  const corpus = options.corpus ?? new FileSeoConflictCorpus({ storeId: options.execution.storeId, maxRegisteredKeywordsPerProduct: 1024 });
   if (!corpus.upsertProduct) throw new Error("Persistent corpus registration required");
   // Preserve previously committed keywords while a replacement is only a review draft.
   // Replaying after a crash is harmless: upsert replaces this same owner's union.
-  await corpus.upsertProduct({ identity: { storeId: input.storeId, productId: input.productId, handle: input.handle, url: input.url }, title: input.title, approvedKeywords: [...new Set([...keywords, ...check.previousKeywords])], expectedRevision: check.revision });
+  await corpus.upsertProduct({ identity: { storeId: options.execution.storeId, productId: options.execution.productId, url: options.execution.sourceIdentity }, title: context.contentResult?.productTitle, approvedKeywords: [...new Set([...keywords, ...check.previousKeywords])], expectedRevision: check.revision });
   return { output: finalizePipelineOutput(context), metadata: { engine: "custom_gpt", fieldsApplied: ["title", "description", "seoTitle", "seoDescription", "alt", "aeoQuickSummary", "aeoFaq", "aeoJsonLd"], fallbackStages: [], warnings: ["Image evidence is supplied by an external reasoning provider and must be reviewed. Semantic conflict review uses local retrieval, not Vertex embeddings."], approvedKeywords: keywords, corpusRevision: check.revision + 1 } };
 }

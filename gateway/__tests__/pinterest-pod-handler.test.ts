@@ -68,6 +68,7 @@ function createMockReqRes(options: {
 
 const sampleDeliverables: PinterestPodDeliverables = {
   workflowId: "test_job_123",
+  storeId: "jeminise",
   success: true,
   productType: "rug",
   totalProduced: 1,
@@ -149,14 +150,14 @@ test("handlePinterestPodSeoHttpRequest: successfully processes deliverables and 
   try {
     const mockSeoRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
       return {
-        productTitle: `Enhanced ${input.title}`,
-        productDescription: `<p>SEO optimized description for ${input.title}</p>`,
+        productTitle: `Enhanced ${input.niche}`,
+        productDescription: `<p>SEO optimized description for ${input.niche}</p>`,
         productHandle: "enhanced-gothic-skull-moon-area-rug",
-        productSeoTitle: `Enhanced ${input.title} - Best Quality`,
-        productSeoDescription: `Shop ${input.title} with high quality finish.`,
+        productSeoTitle: `Enhanced ${input.niche} - Best Quality`,
+        productSeoDescription: `Shop ${input.niche} with high quality finish.`,
         images: input.images.map((img) => ({
           sourceUrl: img.url,
-          alt: `Alt text for ${input.title}`,
+          alt: `Alt text for ${input.niche}`,
           webp: {
             filename: "enhanced.webp",
             url: "/api/assets/enhanced.webp",
@@ -194,7 +195,7 @@ test("handlePinterestPodSeoHttpRequest: successfully processes deliverables and 
     assert.ok(Array.isArray(viewModels));
     assert.equal(viewModels.length, 1);
     assert.equal(viewModels[0].id, "design_alpha");
-    assert.equal(viewModels[0].productTitle.value, "Enhanced Gothic Skull Moon Area Rug");
+    assert.equal(viewModels[0].productTitle.value, "Enhanced gothic rug");
     assert.equal(viewModels[0].sourceOrigin, "pinterest_pod");
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -211,10 +212,10 @@ test("handlePinterestPodSeoHttpRequest: safely sanitizes path-traversal in workf
     };
 
     const mockSeoRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => ({
-      productTitle: input.title,
+      productTitle: input.niche,
       productDescription: "<p>safe</p>",
       productHandle: "safe",
-      productSeoTitle: input.title,
+      productSeoTitle: input.niche,
       productSeoDescription: "safe",
       images: [],
     });

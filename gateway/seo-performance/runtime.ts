@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { parseSeoPerformanceEnvironment } from "../../src/config/seo-performance-environment";
 import { createPerformanceRevision } from "../../src/modules/orchestrator";
-import { fromAutoSeoProduct } from "../../src/modules/seo-content";
+import { fromAutoSeoProduct, resolveStoreProfile } from "../../src/modules/seo-content";
 import type { GatewayDispatcher } from "../dispatcher";
 import { loadLocalEnv } from "../store-config-loader";
 import type { SeoQueue } from "../custom-gpt-seo/queue-contract";
@@ -41,7 +41,16 @@ export function configurePerformanceRuntime(dispatcher: GatewayDispatcher, queue
   const bridge = {
     settings: async (storeId: string) => queue().settings(storeId),
     syncState: async (storeId: string, jobId: string) => queue().syncState(storeId, jobId),
-    revise: (request: Parameters<typeof createPerformanceRevision>[0]) => createPerformanceRevision(request, { loadProduct: source.product, prepareInput: fromAutoSeoProduct, settings: async storeId => queue().settings(storeId), enqueue: async input => queue().enqueue(input) }),
+    revise: (request: Parameters<typeof createPerformanceRevision>[0]) => createPerformanceRevision(request, {
+      loadProduct: source.product,
+      prepareInput: (product, storeId) => {
+        const storeProfile = resolveStoreProfile({ storeId });
+        if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
+        return fromAutoSeoProduct(product, storeProfile.niche, storeProfile);
+      },
+      settings: async storeId => queue().settings(storeId),
+      enqueue: async input => queue().enqueue(input),
+    }),
   };
   const service = new PerformanceService(repository, google, bridge);
   const worker = new PerformanceWorker(repository, google, source);

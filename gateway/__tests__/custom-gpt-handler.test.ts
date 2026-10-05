@@ -4,6 +4,7 @@ import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import { createCustomGptHandler } from "../custom-gpt-seo/handler";
+import { createTestEnqueue } from "./seo-v2-fixtures";
 
 test("Actions reject missing keys and cannot access administration or another store", async () => {
   const db = new DatabaseSync(":memory:");
@@ -68,14 +69,7 @@ test("administration lists every active batch for the selected store", async () 
   const queue = new CustomGptQueue(db);
   const settings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 1 });
   for (const sourceIdentity of ["office-product", "laptop-product"]) {
-    queue.enqueue({
-      storeId: "capozen",
-      source: "auto_seo",
-      sourceIdentity,
-      input: { title: sourceIdentity, description: "Description", handle: sourceIdentity, niche: "home", images: [] },
-      original: {},
-      settings,
-    });
+    queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity, input: { niche: "home", images: [] }, settings }));
   }
   const officeBatch = queue.claim("capozen", "office-claim", "codex_mcp", "codex_mcp:office-pc");
   const laptopBatch = queue.claim("capozen", "laptop-claim", "codex_mcp", "codex_mcp:laptop");
@@ -110,14 +104,8 @@ test("administration filters queue status before pagination", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   for (let index = 0; index < 51; index += 1) {
-    const job = queue.enqueue({
-      storeId: "jeminise-real",
-      source: "auto_seo",
-      sourceIdentity: `product-${index}`,
-      input: { title: `Product ${index}`, description: "Description", handle: `product-${index}`, niche: "home", images: [] },
-      original: {},
-      settings: { provider: "codex_mcp", batchSize: 10, version: 1, language: "en-US", instructions: "Grounded facts only." },
-    });
+    const job = queue.enqueue(createTestEnqueue({ storeId: "jeminise-real", sourceIdentity: `product-${index}`,
+      input: { niche: "home", images: [] }, settings: { provider: "codex_mcp", batchSize: 10, version: 1, language: "en-US", instructions: "Grounded facts only." } }));
     if (index < 50) {
       db.prepare("UPDATE gpt_jobs SET status='REVIEW_READY',payload=json_set(payload,'$.status','REVIEW_READY') WHERE id=?").run(job.id);
     }
@@ -153,13 +141,8 @@ test("administration lists complete review records and saves review states in bu
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   queue.configure("jeminise-real", { provider: "custom_gpt", batchSize: 1 });
-  const job = queue.enqueue({
-    storeId: "jeminise-real",
-    source: "auto_seo",
-    sourceIdentity: "review-product",
-    input: { title: "Review product", description: "Description", handle: "review-product", niche: "home", images: [] },
-    original: { id: "review-product" },
-  });
+  const job = queue.enqueue(createTestEnqueue({ storeId: "jeminise-real", sourceIdentity: "review-product",
+    input: { niche: "home", images: [] }, original: { id: "review-product" } }));
   const batch = queue.claim("jeminise-real", "review-claim", "custom_gpt", "custom_gpt");
   queue.checkpoint("jeminise-real", job.id, {
     batchId: batch.id,
@@ -210,36 +193,17 @@ test("waiting-jobs lists read-only identifiers for the authenticated store witho
   let currentTime = 0;
   const queue = new CustomGptQueue(db, () => ++currentTime);
   queue.configure("capozen", { provider: "custom_gpt", batchSize: 2 });
-  const firstJob = queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity: "waiting-product-1",
-    input: {
-      productId: "101",
-      title: "First waiting product",
-      description: "Description",
-      handle: "first-waiting-product",
-      niche: "home",
+  const firstJob = queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "waiting-product-1", productId: "101",
+    input: { niche: "home",
       images: [
         { id: "front", url: "https://cdn.shopify.com/front.jpg" },
         { id: "detail", url: "https://cdn.shopify.com/detail.jpg" },
       ],
-    },
-    original: {},
-  });
-  const secondJob = queue.enqueue({
-    storeId: "capozen",
-    source: "amazon",
-    sourceIdentity: "WAITINGPRODUCT2",
-    input: {
-      title: "Second waiting product",
-      description: "Description",
-      handle: "second-waiting-product",
-      niche: "home",
+    }, original: {} }));
+  const secondJob = queue.enqueue(createTestEnqueue({ storeId: "capozen", source: "amazon", sourceIdentity: "WAITINGPRODUCT2",
+    input: { niche: "home",
       images: [{ id: "front", url: "https://cdn.shopify.com/second.jpg" }],
-    },
-    original: {},
-  });
+    }, original: {} }));
   const batch = queue.claim("capozen", "claim-waiting-products", "custom_gpt", "custom_gpt");
   queue.issue("capozen", firstJob.id, batch.id, batch.leaseToken, "Attach clearer product images");
   queue.issue("capozen", secondJob.id, batch.id, batch.leaseToken, "Confirm visible product text");
@@ -267,19 +231,12 @@ test("waiting-jobs lists read-only identifiers for the authenticated store witho
       jobs: [
         {
           jobId: firstJob.id,
-          source: "auto_seo",
-          productId: "101",
-          title: "First waiting product",
-          handle: "first-waiting-product",
           status: "WAITING_INPUT",
           imageCount: 2,
           issue: "Attach clearer product images",
         },
         {
           jobId: secondJob.id,
-          source: "amazon",
-          title: "Second waiting product",
-          handle: "second-waiting-product",
           status: "WAITING_INPUT",
           imageCount: 1,
           issue: "Confirm visible product text",
@@ -315,19 +272,10 @@ test("image listings return the original public image URL without signing it", a
     adminKey: "admin-key",
     publicUrl: "https://seo.example.test",
   });
-  const job = queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity: "product-1",
-    input: {
-      title: "Product",
-      description: "Description",
-      handle: "product",
-      niche: "home",
+  const job = queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "product-1",
+    input: { niche: "home",
       images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }],
-    },
-    original: {},
-  });
+    }, original: {} }));
   const server = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -337,8 +285,8 @@ test("image listings return the original public image URL without signing it", a
   try {
     const response = await fetch(`${base}/api/v1/gpt-seo/images?jobId=${job.id}`, { headers: { Authorization: "Bearer capozen-key" } });
     assert.equal(response.status, 200);
-    const payload = await response.json() as { images: readonly { id: string; url: string }[] };
-    assert.deepEqual(payload.images, [{ id: "front", url: "https://cdn.shopify.com/front.png" }]);
+    const payload = await response.json() as { images: readonly { id: string }[] };
+    assert.deepEqual(payload.images, [{ id: "front" }]);
     assert.equal((await fetch(`${base}/api/v1/gpt-seo/images?jobId=${job.id}`, { headers: { Authorization: "Bearer wrydeco-key" } })).status, 404);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
 });
@@ -353,19 +301,10 @@ test("image-content is no longer exposed after image listings return original UR
     adminKey: "admin-key",
     publicUrl: "https://ffp.example.test",
   });
-  const job = queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity: "product-image-content",
-    input: {
-      title: "Product",
-      description: "Description",
-      handle: "product",
-      niche: "home",
+  const job = queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "product-image-content",
+    input: { niche: "home",
       images: [{ id: "front", url: "https://cdn.shopify.com/s/files/1/2/files/product.jpg?v=1784524386" }],
-    },
-    original: {},
-  });
+    }, original: {} }));
   const server = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -385,13 +324,7 @@ test("administration can cancel a ready review without deleting its audit data",
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
-  const job = queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity: "cancel-through-api",
-    input: { title: "Product", description: "Description", handle: "product", niche: "home", images: [] },
-    original: {},
-  });
+  const job = queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "cancel-through-api", input: { niche: "home", images: [] }, original: {} }));
   const batch = queue.claim("capozen", "cancel-api-claim", "custom_gpt", "custom_gpt");
   queue.checkpoint("capozen", job.id, {
     batchId: batch.id,
@@ -430,20 +363,18 @@ test("administration can cancel a ready review without deleting its audit data",
 test("administration clears only safe jobs in the selected store", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
-  queue.enqueue({
+  queue.enqueue(createTestEnqueue({
     storeId: "capozen",
-    source: "auto_seo",
     sourceIdentity: "clear-api",
-    input: { title: "Product", description: "Description", handle: "product", niche: "home", images: [] },
+    input: { niche: "home", images: [] },
     original: {},
-  });
-  queue.enqueue({
+  }));
+  queue.enqueue(createTestEnqueue({
     storeId: "other",
-    source: "auto_seo",
     sourceIdentity: "keep-other",
-    input: { title: "Other", description: "Description", handle: "other", niche: "home", images: [] },
+    input: { niche: "home", images: [] },
     original: {},
-  });
+  }));
   const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
   const server = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));

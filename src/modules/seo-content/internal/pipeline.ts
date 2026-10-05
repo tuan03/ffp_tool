@@ -9,7 +9,6 @@ import { b4ConflictControlStage } from "./stages/b4-conflict-control";
 import { b5ContentGenerationStage, buildB5ContentInput } from "./stages/b5-content-generation";
 import { b6ImageProcessingStage } from "./stages/b6-image-processing";
 import type { SiteNicheResolver } from "./site-niche/site-niche-resolver";
-import { resolveStoreProfile } from "./store-profiles";
 import type { SeoCheckpoint, SeoCheckpointStore } from "./checkpoint";
 import { FileSeoCheckpointStore, SeoCheckpointManager } from "./checkpoint";
 
@@ -259,18 +258,11 @@ export function createSeoPipeline(
         && checkpoint?.stages.b1?.stageHash === stageHashes.get("b1"),
       );
 
-      const storeProfile = resolveStoreProfile({
-        storeId: input.storeId,
-        siteDomain: input.siteDomain ?? input.url,
-      });
-      const resolution = !resume && !isB1Cached && siteNicheResolver
-        ? await awaitWithAbort(siteNicheResolver.resolve({
-            signal: overallController.signal,
-            siteDomain: input.siteDomain ?? "",
-            fallbackNiche: input.niche ?? storeProfile?.niche,
-          }), overallController.signal)
-        : undefined;
-      let currentContext = resume?.research ?? createInitialContext(input, resolution?.niche ?? storeProfile?.niche ?? input.niche);
+      // Niche is resolved before the V2 contract is created. Generation never
+      // crawls a domain or admits site metadata as a hidden fourth input.
+      void siteNicheResolver;
+      void isB1Cached;
+      let currentContext = resume?.research ?? createInitialContext(input, input.niche);
       const fallbackStages: string[] = [...(resume?.researchFallbacks ?? [])];
       const warnings: string[] = [...(resume?.researchWarnings ?? [])];
       let research = resume?.research;

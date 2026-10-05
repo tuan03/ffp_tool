@@ -54,7 +54,7 @@ function createRuntime() {
     try {
       await queue.initialize();
       if (publishTransport) {
-        try { await processSeoPublish(queue.publisher, publishTransport); }
+        try { await processSeoPublish(queue.publisher, publishTransport, queue.publishVersioning); }
         catch { console.error("[SEO Publish] Processing unavailable; durable operation will be recovered."); }
       }
       if (Date.now() - lastWorkerRecoveryAt >= 60_000) {

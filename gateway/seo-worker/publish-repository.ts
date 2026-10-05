@@ -3,8 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { canonicalizeJson } from "../canonical-json";
+import type { SeoContentSnapshot } from "../seo-versioning/snapshot-types";
 
-import type { WorkerDatabase } from "./database";
+import type { WorkerDatabase, WorkerSql } from "./database";
 import { SeoWorkerError } from "./protocol";
 
 const field = z.object({ value: z.string() });
@@ -37,17 +38,42 @@ export interface PublishOperation {
   readonly leaseId: string | null;
   readonly seoVersion: number | null;
   readonly errorCode: string | null;
+  readonly operator?: string;
+  readonly basedOnVersionId?: string | null;
+  readonly basedOnSnapshotId?: string | null;
+  readonly basedOnContentHash?: string | null;
+  readonly basedOnVersionNumber?: number | null;
+  readonly versionSource?: "AUTO_SEO" | "ROLLBACK" | "IMPORTED";
+  readonly restoredFromVersionId?: string | null;
+  readonly targetContentHash?: string | null;
+}
+
+interface SeoPublishVersioningBridge {
+  resolveDraftBase(sql: WorkerSql, storeId: string, jobId: string, shopifyProductGid: string): Promise<{
+    readonly versionId: string; readonly snapshotId: string; readonly contentHash: string; readonly versionNumber: number;
+  } | null>;
+  commit(sql: WorkerSql, operation: PublishOperation, snapshot: SeoContentSnapshot, confirmedAt: number): Promise<{
+    readonly outcome: "COMMITTED" | "NO_CHANGE"; readonly versionId: string; readonly versionNumber: number;
+  }>;
 }
 function operation(row: Record<string, unknown>): PublishOperation {
   return { id: String(row.id), jobId: String(row.job_id), storeId: String(row.store_id), productId: String(row.product_id),
     fields: row.fields as PublishFields, sourceVersion: String(row.source_version), state: String(row.state),
     leaseId: row.lease_id === null ? null : String(row.lease_id), seoVersion: row.seo_version === null ? null : Number(row.seo_version),
-    errorCode: row.error_code === null ? null : String(row.error_code) };
+    errorCode: row.error_code === null ? null : String(row.error_code), operator: String(row.operator),
+    basedOnVersionId: row.based_on_version_id == null ? null : String(row.based_on_version_id),
+    basedOnSnapshotId: row.based_on_snapshot_id == null ? null : String(row.based_on_snapshot_id),
+    basedOnContentHash: row.based_on_content_hash == null ? null : String(row.based_on_content_hash),
+    basedOnVersionNumber: row.based_on_version_number == null ? null : Number(row.based_on_version_number),
+    versionSource: String(row.version_source ?? "AUTO_SEO") as PublishOperation["versionSource"],
+    restoredFromVersionId: row.restored_from_version_id == null ? null : String(row.restored_from_version_id),
+    targetContentHash: row.target_content_hash == null ? null : String(row.target_content_hash) };
 }
 
 /** Durable outbox; network calls must happen outside these short transactions. */
 export class SeoPublishRepository {
-  constructor(private readonly database: WorkerDatabase, private readonly now: () => number = Date.now) {}
+  constructor(private readonly database: WorkerDatabase, private readonly now: () => number = Date.now,
+    private readonly versioning?: SeoPublishVersioningBridge) {}
 
   async status(storeId: string, jobId: string): Promise<{ managed: boolean; operation: PublishOperation | null }> {
     return this.database.transaction(async sql => {
@@ -70,8 +96,12 @@ export class SeoPublishRepository {
     });
   }
 
-  async enqueue(input: { storeId: string; jobId: string; reviewUpdatedAt: number; requestId: string; operator: string }): Promise<PublishOperation> {
-    z.object({ storeId: z.string().min(1).max(100), jobId: z.string().min(1).max(200), reviewUpdatedAt: z.number().int(), requestId: z.string().min(1).max(200), operator: z.string().min(1).max(200) }).strict().parse(input);
+  async enqueue(input: { storeId: string; jobId: string; reviewUpdatedAt: number; requestId: string; operator: string;
+    versionSource?: "AUTO_SEO" | "ROLLBACK"; restoredFromVersionId?: string | null }): Promise<PublishOperation> {
+    z.object({ storeId: z.string().min(1).max(100), jobId: z.string().min(1).max(200), reviewUpdatedAt: z.number().int(), requestId: z.string().min(1).max(200),
+      operator: z.string().min(1).max(200), versionSource: z.enum(["AUTO_SEO", "ROLLBACK"]).optional(), restoredFromVersionId: z.string().min(1).nullable().optional() }).strict().parse(input);
+    const versionSource = input.versionSource ?? "AUTO_SEO";
+    if ((versionSource === "ROLLBACK") !== Boolean(input.restoredFromVersionId)) throw new SeoWorkerError("ROLLBACK_SOURCE_REQUIRED");
     return this.database.transaction(async sql => {
       const replay = (await sql.query("SELECT * FROM seo_publish_operations WHERE store_id=$1 AND (request_id=$2 OR job_id=$3) FOR UPDATE", [input.storeId, input.requestId, input.jobId])).rows[0];
       if (replay) {
@@ -91,11 +121,13 @@ export class SeoPublishRepository {
       const review = reviewSchema.safeParse(JSON.parse(String(row.review)));
       if (!review.success) throw new SeoWorkerError("APPROVED_REVIEW_REQUIRED");
       if (review.data.updatedAt !== input.reviewUpdatedAt) throw new SeoWorkerError("VERSION_CONFLICT");
-      const job = z.object({ input: z.object({ productId: z.string().regex(/^(gid:\/\/shopify\/Product\/)?\d+$/) }),
-        original: z.object({ updatedAt: z.string().min(1), seoVersion: z.number().int().nonnegative().optional() }) }).safeParse(JSON.parse(String(row.payload)));
+      const job = z.object({ execution: z.object({ productId: z.string().regex(/^(gid:\/\/shopify\/Product\/)?\d+$/),
+        originalSnapshot: z.object({ updatedAt: z.string().min(1), seoVersion: z.number().int().nonnegative().optional() }) }) }).safeParse(JSON.parse(String(row.payload)));
       if (!job.success) throw new SeoWorkerError("SOURCE_VERSION_REQUIRED");
       if ((await sql.query("SELECT job_id FROM gpt_sync WHERE job_id=$1", [input.jobId])).rows.length) throw new SeoWorkerError("SYNC_ALREADY_STARTED");
-      const productId = job.data.input.productId.replace(/^gid:\/\/shopify\/Product\//, "");
+      const productId = job.data.execution.productId.replace(/^gid:\/\/shopify\/Product\//, "");
+      const draftBase = this.versioning ? await this.versioning.resolveDraftBase(sql, input.storeId, input.jobId,
+        `gid://shopify/Product/${productId}`) : null;
       const active = (await sql.query("SELECT id FROM seo_publish_operations WHERE store_id=$1 AND product_id=$2 AND state!='SUCCEEDED' AND superseded_by IS NULL", [input.storeId, productId])).rows[0];
       if (active) throw new SeoWorkerError("PRODUCT_PUBLISH_ACTIVE");
       const fields: PublishFields = { title: review.data.productTitle.value, descriptionHtml: review.data.productDescription.value,
@@ -107,9 +139,13 @@ export class SeoPublishRepository {
           ...(review.data.aeoJsonLd ? [{ namespace: "custom", key: "aeo_json_ld", type: "json", value: review.data.aeoJsonLd.value }] : []),
         ] } : {}) };
       const id = randomUUID();
-      const created = (await sql.query(`INSERT INTO seo_publish_operations(id,job_id,store_id,product_id,request_id,review_revision,operator,fields,source_version,baseline_version,state,created_at,updated_at,review_fingerprint)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,'QUEUED',$11,$11,$12) RETURNING *`,
-      [id, input.jobId, input.storeId, productId, input.requestId, input.reviewUpdatedAt, input.operator, JSON.stringify(fields), job.data.original.updatedAt, job.data.original.seoVersion ?? 0, this.now(), reviewFingerprint(review.data)])).rows[0];
+      const created = (await sql.query(`INSERT INTO seo_publish_operations(id,job_id,store_id,product_id,request_id,review_revision,operator,fields,source_version,baseline_version,state,created_at,updated_at,review_fingerprint,
+        based_on_version_id,based_on_snapshot_id,based_on_content_hash,based_on_version_number,version_source,restored_from_version_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,'QUEUED',$11,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+      [id, input.jobId, input.storeId, productId, input.requestId, input.reviewUpdatedAt, input.operator, JSON.stringify(fields),
+        job.data.execution.originalSnapshot.updatedAt, job.data.execution.originalSnapshot.seoVersion ?? 0, this.now(), reviewFingerprint(review.data),
+        draftBase?.versionId ?? null, draftBase?.snapshotId ?? null, draftBase?.contentHash ?? null, draftBase?.versionNumber ?? null,
+        versionSource, input.restoredFromVersionId ?? null])).rows[0];
       await sql.query("INSERT INTO gpt_sync(job_id,token,status) VALUES ($1,$2,'SYNCING')", [input.jobId, id]);
       return operation(created);
     });
@@ -137,7 +173,8 @@ export class SeoPublishRepository {
     });
   }
 
-  async authorizeWrite(op: PublishOperation, remoteVersion?: number): Promise<PublishOperation> {
+  async authorizeWrite(op: PublishOperation, remoteVersion?: number, authoritativeTargetVersion?: number,
+    targetContentHash?: string): Promise<PublishOperation> {
     return this.database.transaction(async sql => {
       const approved = (await sql.query(`SELECT r.payload FROM gpt_review_state r JOIN gpt_jobs j ON j.id=r.job_id WHERE j.id=$1 AND j.status='REVIEW_READY' FOR UPDATE OF j,r`, [op.jobId])).rows[0];
       const review = approved ? reviewSchema.safeParse(JSON.parse(String(approved.payload))) : null;
@@ -146,7 +183,12 @@ export class SeoPublishRepository {
       if (!review?.success || review.data.updatedAt !== Number(row.review_revision) || reviewFingerprint(review.data) !== row.review_fingerprint) throw new SeoWorkerError("REVIEW_CHANGED");
       let fields = op.fields;
       let targetVersion: number | null = null;
-      if (remoteVersion !== undefined) {
+      if (authoritativeTargetVersion !== undefined) {
+        if (!Number.isSafeInteger(authoritativeTargetVersion) || authoritativeTargetVersion < 1) throw new SeoWorkerError("INVALID_SEO_VERSION");
+        targetVersion = authoritativeTargetVersion;
+        fields = { ...fields, metafields: [...(fields.metafields ?? []).filter(field => !(field.namespace === "custom" && field.key === "seo_version")),
+          { namespace: "custom", key: "seo_version", type: "number_integer", value: String(targetVersion) }] };
+      } else if (remoteVersion !== undefined) {
         if (!Number.isSafeInteger(remoteVersion) || remoteVersion < 0) throw new SeoWorkerError("INVALID_SEO_VERSION");
         const highest = Number((await sql.query("SELECT COALESCE(max(version),0) AS version FROM seo_publish_versions WHERE store_id=$1 AND product_id=$2", [op.storeId, op.productId])).rows[0].version);
         targetVersion = Math.max(remoteVersion, Number(row.baseline_version), highest) + 1;
@@ -154,7 +196,8 @@ export class SeoPublishRepository {
         fields = { ...fields, metafields: [...(fields.metafields ?? []).filter(field => !(field.namespace === "custom" && field.key === "seo_version")),
           { namespace: "custom", key: "seo_version", type: "number_integer", value: String(targetVersion) }] };
       }
-      const updated = (await sql.query("UPDATE seo_publish_operations SET state='WRITING',has_write_intent=true,updated_at=$2,fields=$3::jsonb,target_version=$4 WHERE id=$1 RETURNING *", [op.id, this.now(), JSON.stringify(fields), targetVersion])).rows[0];
+      const updated = (await sql.query("UPDATE seo_publish_operations SET state='WRITING',has_write_intent=true,updated_at=$2,fields=$3::jsonb,target_version=$4,target_content_hash=$5 WHERE id=$1 RETURNING *",
+        [op.id, this.now(), JSON.stringify(fields), targetVersion, targetContentHash ?? null])).rows[0];
       return operation(updated);
     });
   }
@@ -175,16 +218,57 @@ export class SeoPublishRepository {
   }
 
   async confirm(op: PublishOperation): Promise<void> {
+    await this.confirmWithSnapshot(op);
+  }
+
+  async confirmWithSnapshot(op: PublishOperation, snapshot?: SeoContentSnapshot): Promise<void> {
     await this.database.transaction(async sql => {
       const row = (await sql.query("SELECT * FROM seo_publish_operations WHERE id=$1 AND lease_id=$2 AND lease_until>$3 AND state IN ('WRITING','UNCERTAIN') FOR UPDATE", [op.id, op.leaseId, this.now()])).rows[0];
       if (!row) throw new SeoWorkerError("STALE_PUBLISH_LEASE");
-      const highest = Number((await sql.query("SELECT COALESCE(max(version),0) AS version FROM seo_publish_versions WHERE store_id=$1 AND product_id=$2", [op.storeId, op.productId])).rows[0].version);
-      const version = row.target_version === null ? Math.max(Number(row.baseline_version), highest) + 1 : Number(row.target_version);
-      await sql.query("INSERT INTO seo_publish_versions(operation_id,store_id,product_id,version,confirmed_at) VALUES ($1,$2,$3,$4,$5)", [op.id, op.storeId, op.productId, version, this.now()]);
+      const confirmedAt = this.now();
+      let seoVersionId: string | null = null;
+      let version: number;
+      if (row.based_on_version_id !== null) {
+        if (!this.versioning || !snapshot) throw new SeoWorkerError("SEO_VERSION_SNAPSHOT_REQUIRED");
+        const committed = await this.versioning.commit(sql, operation(row), snapshot, confirmedAt);
+        if (committed.outcome !== "COMMITTED") throw new SeoWorkerError("SEO_VERSION_COMMIT_MISMATCH");
+        version = committed.versionNumber;
+        seoVersionId = committed.versionId;
+      } else {
+        const highest = Number((await sql.query("SELECT COALESCE(max(version),0) AS version FROM seo_publish_versions WHERE store_id=$1 AND product_id=$2", [op.storeId, op.productId])).rows[0].version);
+        version = row.target_version === null ? Math.max(Number(row.baseline_version), highest) + 1 : Number(row.target_version);
+      }
+      if (row.target_version !== null && Number(row.target_version) !== version) throw new SeoWorkerError("SEO_VERSION_COMMIT_MISMATCH");
+      await sql.query("INSERT INTO seo_publish_versions(operation_id,store_id,product_id,version,confirmed_at,seo_version_id) VALUES ($1,$2,$3,$4,$5,$6)",
+        [op.id, op.storeId, op.productId, version, confirmedAt, seoVersionId]);
       await sql.query("UPDATE seo_publish_operations SET state='SUCCEEDED',seo_version=$2,error_code=NULL,lease_id=NULL,lease_until=NULL,updated_at=$3 WHERE id=$1", [op.id, version, this.now()]);
       await sql.query("UPDATE gpt_sync SET status='SYNCED' WHERE job_id=$1 AND token=$2", [op.jobId, op.id]);
       await sql.query(`UPDATE gpt_review_state SET payload=(payload::jsonb || jsonb_build_object('shopifySyncStatus','synced','seoVersion',$2::bigint,'shopifySyncedAt',$3::bigint))::text WHERE job_id=$1`, [op.jobId, version, this.now()]);
       await sql.query("UPDATE seo_worker_jobs SET state='CLOSED',pipeline_active=false,updated_at=$2 WHERE job_id=$1 AND lease_id IS NULL", [op.jobId, this.now()]);
+    });
+  }
+
+  async confirmNoChange(op: PublishOperation, snapshot: SeoContentSnapshot): Promise<void> {
+    await this.database.transaction(async sql => {
+      const approved = (await sql.query(`SELECT r.payload FROM gpt_review_state r JOIN gpt_jobs j ON j.id=r.job_id
+        WHERE j.id=$1 AND j.status='REVIEW_READY' FOR UPDATE OF j,r`, [op.jobId])).rows[0];
+      const review = approved ? reviewSchema.safeParse(JSON.parse(String(approved.payload))) : null;
+      const row = (await sql.query("SELECT * FROM seo_publish_operations WHERE id=$1 AND lease_id=$2 AND state='CHECKING' AND lease_until>$3 FOR UPDATE",
+        [op.id, op.leaseId, this.now()])).rows[0];
+      if (!row) throw new SeoWorkerError("STALE_PUBLISH_LEASE");
+      if (!review?.success || review.data.updatedAt !== Number(row.review_revision) || reviewFingerprint(review.data) !== row.review_fingerprint) {
+        throw new SeoWorkerError("REVIEW_CHANGED");
+      }
+      if (!this.versioning || row.based_on_version_id === null) throw new SeoWorkerError("SEO_DRAFT_BASE_REQUIRED");
+      const confirmedAt = this.now();
+      const committed = await this.versioning.commit(sql, operation(row), snapshot, confirmedAt);
+      if (committed.outcome !== "NO_CHANGE") throw new SeoWorkerError("SEO_VERSION_COMMIT_MISMATCH");
+      await sql.query("UPDATE seo_publish_operations SET state='SUCCEEDED',seo_version=$2,error_code='NO_CHANGE',lease_id=NULL,lease_until=NULL,updated_at=$3 WHERE id=$1",
+        [op.id, committed.versionNumber, confirmedAt]);
+      await sql.query("UPDATE gpt_sync SET status='SYNCED' WHERE job_id=$1 AND token=$2", [op.jobId, op.id]);
+      await sql.query(`UPDATE gpt_review_state SET payload=(payload::jsonb || jsonb_build_object('shopifySyncStatus','no_change','seoVersion',$2::bigint,'shopifySyncedAt',$3::bigint))::text WHERE job_id=$1`,
+        [op.jobId, committed.versionNumber, confirmedAt]);
+      await sql.query("UPDATE seo_worker_jobs SET state='CLOSED',pipeline_active=false,updated_at=$2 WHERE job_id=$1 AND lease_id IS NULL", [op.jobId, confirmedAt]);
     });
   }
 }

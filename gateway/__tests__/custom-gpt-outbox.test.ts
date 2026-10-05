@@ -9,8 +9,8 @@ import type { AutoSeoPostgresBackup } from "../auto-seo-postgres-repository";
 
 function pendingBackup(): AutoSeoPostgresBackup {
   return {
-    id: "1", backupId: randomUUID(), workflowId: "workflow", storeId: "capozen",
-    shopDomain: "example.myshopify.com", productId: "gid://shopify/Product/123",
+    id: "1", backupId: randomUUID(), workflowId: "workflow", storeId: "jeminise",
+    shopDomain: "b6-theme-test.myshopify.com", productId: "gid://shopify/Product/123",
     productHandle: "cotton-rug", productTitle: "Cotton rug", shopifyUpdatedAt: null,
     snapshotJson: JSON.stringify({ id: "gid://shopify/Product/123", title: "Cotton rug", handle: "cotton-rug", description: "Cotton", images: [{ id: "front", url: "https://example.com/image.jpg" }] }),
     snapshotSha256: "a".repeat(64), gptSettingsJson: JSON.stringify({ provider: "custom_gpt", batchSize: 5, language: "en-US" }),
@@ -23,25 +23,25 @@ test("backup outbox enqueues from repository before acknowledging and preserves 
   const queueDb = new DatabaseSync(":memory:");
   try {
     const queue = new CustomGptQueue(queueDb);
-    queue.configure("capozen", { provider: "gemini", batchSize: 10, language: "vi-VN" });
+    queue.configure("jeminise", { provider: "gemini", batchSize: 10, language: "vi-VN" });
     const backup = pendingBackup();
     let status = "NOT_SENT";
     const repository = {
       async findPendingBackups() { return status === "NOT_SENT" ? [backup] : []; },
       async acknowledgePendingHandoff(backupId: string) {
         assert.equal(backupId, backup.backupId);
-        assert.equal(queue.list("capozen").length, 1);
+        assert.equal(queue.list("jeminise").length, 1);
         status = "SENT";
       },
       async failPendingHandoff() { assert.fail("handoff should succeed"); },
     };
     await recoverAutoSeoHandoffs(repository, queue);
     assert.equal(status, "SENT");
-    assert.equal(queue.list("capozen")[0]?.settings.provider, "custom_gpt");
-    assert.equal(queue.list("capozen")[0]?.settings.language, "en-US");
-    assert.equal(queue.list("capozen")[0]?.input.productId, "123");
+    assert.equal(queue.list("jeminise")[0]?.settings.provider, "custom_gpt");
+    assert.equal(queue.list("jeminise")[0]?.settings.language, "en-US");
+    assert.equal(queue.list("jeminise")[0]?.execution.productId, "123");
     await recoverAutoSeoHandoffs(repository, queue);
-    assert.equal(queue.list("capozen").length, 1);
+    assert.equal(queue.list("jeminise").length, 1);
   } finally { queueDb.close(); }
 });
 
@@ -57,7 +57,7 @@ test("failed handoff marks backup failed", async () => {
       async failPendingHandoff(backupId) { failedId = backupId; },
     }, queue);
     assert.equal(failedId, backup.backupId);
-    assert.equal(queue.list("capozen").length, 0);
+    assert.equal(queue.list("jeminise").length, 0);
   } finally { queueDb.close(); }
 });
 
@@ -65,7 +65,7 @@ test("backup outbox preserves a Codex MCP provider snapshot", async () => {
   const queueDb = new DatabaseSync(":memory:");
   try {
     const queue = new CustomGptQueue(queueDb);
-    const settings = queue.configure("capozen", { provider: "codex_mcp", batchSize: 5, language: "en-US" });
+    const settings = queue.configure("jeminise", { provider: "codex_mcp", batchSize: 5, language: "en-US" });
     const backup = {
       ...pendingBackup(),
       productId: "gid://shopify/Product/456",
@@ -73,7 +73,7 @@ test("backup outbox preserves a Codex MCP provider snapshot", async () => {
       gptSettingsJson: JSON.stringify(settings),
     };
     let acknowledgedId = "";
-    queue.configure("capozen", { provider: "gemini", batchSize: 5 });
+    queue.configure("jeminise", { provider: "gemini", batchSize: 5 });
 
     await recoverAutoSeoHandoffs({
       async findPendingBackups() { return [backup]; },
@@ -81,10 +81,10 @@ test("backup outbox preserves a Codex MCP provider snapshot", async () => {
       async failPendingHandoff() { assert.fail("handoff should succeed"); },
     }, queue);
 
-    const queuedJob = queue.list("capozen")[0];
+    const queuedJob = queue.list("jeminise")[0];
     assert.equal(acknowledgedId, backup.backupId);
     assert.equal(queuedJob?.settings.provider, "codex_mcp");
-    assert.equal(queue.claim("capozen", "codex-auto-seo", "codex_mcp", "codex_mcp:default").jobs[0]?.id, queuedJob?.id);
+    assert.equal(queue.claim("jeminise", "codex-auto-seo", "codex_mcp", "codex_mcp:default").jobs[0]?.id, queuedJob?.id);
   } finally {
     queueDb.close();
   }

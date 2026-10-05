@@ -44,6 +44,7 @@ pinterest_oauth_tokens.json
 # Amazon Distributed Crawler & Local Data Artifacts
 # Crawler & Gateway runtime/data
 .runtime/
+.codex/
 exports/
 client-data/
 .local-data/

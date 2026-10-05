@@ -12,6 +12,7 @@ import { createCodexSeoMcpServer } from "../custom-gpt-seo/mcp-server";
 import { processCustomGptJob } from "../custom-gpt-seo/finalizer";
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import { createExternalSeoWorkflow } from "../custom-gpt-seo/workflow";
+import { createTestEnqueue } from "./seo-v2-fixtures";
 
 function object(value: unknown): Record<string, unknown> {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
@@ -20,18 +21,8 @@ function object(value: unknown): Record<string, unknown> {
 
 function enqueueProduct(queue: CustomGptQueue, provider: "custom_gpt" | "codex_mcp", sourceIdentity: string, batchSize = 5) {
   return queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity,
-    input: {
-      productId: sourceIdentity,
-      title: `${provider} product`,
-      description: "Grounded source description",
-      handle: `${provider}-product`,
-      niche: "home",
-      images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }],
-    },
-    original: { sourceIdentity },
+    ...createTestEnqueue({ storeId: "capozen", sourceIdentity, productId: sourceIdentity,
+      original: { sourceIdentity, handle: `${provider}-product` }, input: { niche: "home", images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }] } }),
     settings: {
       provider,
       batchSize,
@@ -64,7 +55,7 @@ test("Codex SEO MCP initializes and publishes the complete safe tool surface", a
   const { client, server } = await connectClient(queue);
 
   try {
-    assert.match(client.getInstructions() || "", /untrusted/i);
+    assert.match(client.getInstructions() || "", /only source of product-specific facts/i);
     assert.match(client.getInstructions() || "", /every image/i);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map(tool => tool.name).sort(), [
@@ -132,19 +123,8 @@ test("Streamable HTTP MCP authenticates bearer tokens and isolates their stores"
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   enqueueProduct(queue, "codex_mcp", "capozen-job");
-  queue.enqueue({
-    storeId: "wrydeco",
-    source: "auto_seo",
-    sourceIdentity: "wrydeco-job",
-    input: {
-      productId: "wrydeco-job",
-      title: "Wrydeco product",
-      description: "Description",
-      handle: "wrydeco-product",
-      niche: "home",
-      images: [],
-    },
-    original: {},
+  const wrydecoJob = queue.enqueue({
+    ...createTestEnqueue({ storeId: "wrydeco", sourceIdentity: "wrydeco-job", input: { niche: "home", images: [] } }),
     settings: {
       provider: "codex_mcp",
       batchSize: 5,
@@ -185,8 +165,8 @@ test("Streamable HTTP MCP authenticates bearer tokens and isolates their stores"
     const work = await client.callTool({ name: "get_seo_work", arguments: {} });
     assert.match(JSON.stringify(work.structuredContent), /"PENDING":1/);
     const claim = await client.callTool({ name: "claim_seo_batch", arguments: { requestId: "wrydeco-claim" } });
-    assert.match(JSON.stringify(claim.structuredContent), /Wrydeco product/);
-    assert.doesNotMatch(JSON.stringify(claim.structuredContent), /codex_mcp product/);
+    assert.match(JSON.stringify(claim.structuredContent), new RegExp(wrydecoJob.id));
+    assert.doesNotMatch(JSON.stringify(claim.structuredContent), /capozen-job/);
     await client.close();
   } finally {
     httpServer.closeAllConnections();
@@ -254,7 +234,7 @@ test("Codex MCP completes every checkpoint and finalizes a review-ready draft", 
   const workflow = createExternalSeoWorkflow({
     queue,
     research: async seeds => Object.fromEntries(seeds.map(seed => [seed, [`${seed} decor`]])),
-    checkKeywords: async (_input, keywords) => ({
+    checkKeywords: async keywords => ({
       revision: 3,
       previousKeywords: [],
       conflicts: keywords.map(keyword => ({ keyword, matches: [] })),
@@ -283,6 +263,10 @@ test("Codex MCP completes every checkpoint and finalizes a review-ready draft", 
           physicalProductIdentity: "decor product",
           visualEntities: "visible geometric detail",
           sceneContext: "plain background",
+          identityCandidates: ["decor product"],
+          excludedSceneEntities: [],
+          confidence: 0.9,
+          reviewRequired: false,
           typography: { visibleTexts: [], styleSummary: "no visible text" },
           shoppingContext: {
             targetAudience: ["home decorators"],
@@ -367,7 +351,7 @@ test("Codex MCP completes every checkpoint and finalizes a review-ready draft", 
         productDescription: "Grounded description",
         productSeoTitle: "Geometric home decor",
         productSeoDescription: "Grounded description",
-        productHandle: input.handle,
+        productHandle: "",
         aeo_quick_summary: "Grounded AEO summary",
         aeo_faq: [
           { question: "What is visible?", answer: "A geometric detail." },
@@ -407,7 +391,7 @@ test("keyword conflicts are not saved and fence changed payloads by request ID",
   const workflow = createExternalSeoWorkflow({
     queue,
     research: async () => ({ decor: ["decor product"] }),
-    checkKeywords: async (_input, keywords) => ({
+    checkKeywords: async keywords => ({
       revision: 1,
       previousKeywords: [],
       conflicts: keywords.map(keyword => ({ keyword, matches: [{ url: "https://example.test/owned", primaryKeyword: "owned keyword" }] })),
@@ -420,6 +404,7 @@ test("keyword conflicts are not saved and fence changed payloads by request ID",
     physicalProductIdentity: "decor product",
     visualEntities: "geometric detail",
     sceneContext: "plain background",
+    identityCandidates: ["decor product"], excludedSceneEntities: [], confidence: 0.9, reviewRequired: false,
     typography: { visibleTexts: [], styleSummary: "no visible text" },
     shoppingContext: { targetAudience: [], suitableOccasions: [], useCases: [], buyerIntentKeywords: [] },
     evidence: [{ imageId: "front", observation: "Geometric detail" }],

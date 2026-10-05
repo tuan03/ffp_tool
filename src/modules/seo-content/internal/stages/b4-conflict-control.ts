@@ -24,13 +24,14 @@ import type {
   SeoPipelineContext,
   SeoPipelineStage,
 } from "../domain-types";
-import type { SeoContentInput } from "../../types";
+import type { SeoExecutionEnvelope } from "../../types";
 
 export interface B4ConflictControlDependencies {
   readonly requestOptions?: ProviderRequestOptions;
   readonly analyzer?: KeywordConflictAnalyzer;
   readonly conflictAnalyzer?: KeywordConflictAnalyzer;
   readonly conflictCorpus?: SeoConflictCorpus;
+  readonly execution?: SeoExecutionEnvelope;
 }
 
 /**
@@ -136,7 +137,20 @@ export function createB4ConflictControlStage(
         searchResearch: context.searchResearch,
         productUnderstanding: context.productUnderstanding,
         shoppingContext: context.shoppingContext,
-        source: { ...context.source, niche: context.effectiveNiche ?? context.source.niche },
+        source: {
+          niche: context.effectiveNiche ?? context.source.niche,
+          title: [
+            context.productUnderstanding?.physicalProductIdentity,
+            context.productUnderstanding?.visualEntities,
+          ].filter(Boolean).join(" - "),
+          description: [
+            context.productUnderstanding?.typography.styleSummary,
+            ...(context.productUnderstanding?.typography.visibleTexts ?? []),
+          ].filter(Boolean).join(". "),
+          storeId: dependencies?.execution?.storeId,
+          productId: dependencies?.execution?.productId,
+          url: dependencies?.execution?.sourceIdentity,
+        },
       });
 
       return evolveContext(context, { conflictResult });
@@ -172,7 +186,7 @@ export interface RegisterProductKeywordsOptions {
  */
 export async function registerProductKeywords(
   corpus: SeoConflictCorpus,
-  product: SeoContentInput,
+  execution: SeoExecutionEnvelope,
   approvedKeywords: readonly string[],
   options?: RegisterProductKeywordsOptions,
 ): Promise<{ revision: number }> {
@@ -181,10 +195,9 @@ export async function registerProductKeywords(
   }
 
   const identity: SeoProductIdentity = {
-    storeId: product.storeId,
-    productId: product.productId,
-    handle: product.handle,
-    url: product.url ?? (product.handle ? `/products/${product.handle}` : undefined),
+    storeId: execution.storeId,
+    productId: execution.productId,
+    url: execution.sourceIdentity,
   };
 
   const embeddingsMap =
@@ -200,7 +213,7 @@ export async function registerProductKeywords(
 
   return corpus.upsertProduct({
     identity,
-    title: options?.title ?? product.title,
+    title: options?.title,
     approvedKeywords: registeredKeywords,
     expectedRevision,
   });

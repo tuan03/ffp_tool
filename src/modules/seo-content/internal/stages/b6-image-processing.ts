@@ -35,9 +35,8 @@ export function createB6ImageProcessingStage(
 export function buildImageProcessingInput(context: SeoPipelineContext): ImageProcessingInput {
   return {
     images: context.source.images,
-    sourceTitle: context.source.title,
-    productTitle: context.contentResult?.productTitle ?? context.source.title ?? "",
-    productHandle: context.contentResult?.productHandle ?? context.source.handle ?? "",
+    productTitle: context.contentResult?.productTitle ?? context.productUnderstanding?.physicalProductIdentity ?? "",
+    productHandle: "",
     primaryKeyword: context.contentGenerationMetadata?.primaryKeyword,
     secondaryKeywords: context.contentGenerationMetadata?.secondaryKeywords,
     physicalProductIdentity: context.productUnderstanding?.physicalProductIdentity,

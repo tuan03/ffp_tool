@@ -1,8 +1,7 @@
 import type { SeoContentInput } from "../../types";
 import type { ProductUnderstanding, SeoPipelineContext } from "../domain-types";
 import type { ContentFactSheet } from "./content-generation-types";
-import { resolveStoreProfile } from "../store-profiles";
-import { summarizeVariants } from "../variant-summarizer";
+import { projectStoreContentProfile } from "../store-profiles/types";
 
 const PERSONALIZATION_PATTERN =
   /\b(personalized|personalised|personalization|personalisation|custom\s+name|your\s+name|custom\s+text|custom\s+photo|upload\s+photo|custom\s+image|monogram|initials|customizable|customisable|engraved|engraving|custom\s+song|custom\s+spotify)\b/i;
@@ -26,20 +25,12 @@ export function sanitizeFactText(text?: string): string | undefined {
  * based on verified source text, OCR text, and niche.
  */
 export function detectPersonalizationEvidence(
-  source: SeoContentInput,
+  _source: SeoContentInput,
   understanding?: ProductUnderstanding,
 ): boolean {
-  if (PERSONALIZATION_PATTERN.test(source.title)) return true;
-  if (PERSONALIZATION_PATTERN.test(source.description)) return true;
-  if (PERSONALIZATION_PATTERN.test(source.niche)) return true;
-  if (source.handle && PERSONALIZATION_PATTERN.test(source.handle)) return true;
-
-  if (understanding?.typography.visibleTexts) {
-    for (const ocr of understanding.typography.visibleTexts) {
-      if (PERSONALIZATION_PATTERN.test(ocr)) return true;
-    }
-  }
-
+  // Visible names/initials prove typography, not configurable personalization.
+  // V2 requires an explicit applicable store policy for such a claim.
+  void understanding;
   return false;
 }
 
@@ -52,39 +43,19 @@ export function buildContentFactSheet(
 ): ContentFactSheet {
   const { source, productUnderstanding, shoppingContext } = context;
 
-  const variantSummary =
-    source.variantSummary ??
-    (source.variants && source.variants.length > 0 ? summarizeVariants(source.variants) : undefined);
-
-  let storeProfile =
-    context.storeProfile ??
-    resolveStoreProfile({
-      storeId: source.storeId,
-      siteDomain: source.siteDomain ?? source.url,
-    });
-
-  const variantEvidence = variantSummary?.sampleVariants.flatMap((variant) => [
-    variant.title,
-    ...Object.entries(variant.options ?? {}).flatMap(([name, value]) => [name, value]),
-  ]).join(" ") ?? "";
-  const beddingStyleEvidence = `${source.title} ${source.description} ${source.variantLabel ?? ""} ${variantEvidence}`;
-  const hasCompleteBeddingStyleEvidence = ["Comforter", "Quilt", "Duvet Cover"].every((style) =>
-    new RegExp(`\\b${style.replace(" ", "\\s+")}s?\\b`, "i").test(beddingStyleEvidence),
+  const effectiveNiche = context.effectiveNiche ?? source.niche;
+  const storeProfile = projectStoreContentProfile(
+    source.storeProfile,
+    productUnderstanding?.physicalProductIdentity,
+    effectiveNiche,
+    productUnderstanding?.confidence,
   );
-
-  if (storeProfile?.bedding && !hasCompleteBeddingStyleEvidence) {
-    // Store identity alone is not product evidence. Fleece/Sherpa blankets and
-    // unrelated products must never inherit the three-style bedding contract.
-    const { bedding, descriptionGuidelines, seoDescriptionGuidelines, ...generalProfile } = storeProfile;
-    storeProfile = generalProfile;
-  }
 
   const personalizationSupported = detectPersonalizationEvidence(
     source,
     productUnderstanding,
   );
 
-  const effectiveNiche = context.effectiveNiche ?? (storeProfile?.bedding ? storeProfile.niche : undefined) ?? source.niche;
   const sanitizedNiche = sanitizeFactText(effectiveNiche);
   const sanitizedProductIdentity =
     sanitizeFactText(productUnderstanding?.physicalProductIdentity) ||
@@ -92,9 +63,13 @@ export function buildContentFactSheet(
     "product";
 
   return {
-    originalTitle: source.title.trim(),
-    originalDescription: source.description.trim(),
-    existingHandle: source.handle,
+    originalTitle: [sanitizedProductIdentity, sanitizeFactText(productUnderstanding?.visualEntities)]
+      .filter(Boolean).join(" - "),
+    originalDescription: [
+      sanitizeFactText(productUnderstanding?.visualEntities),
+      sanitizeFactText(productUnderstanding?.typography.styleSummary),
+      ...(productUnderstanding?.typography.visibleTexts ?? []),
+    ].filter(Boolean).join(". "),
     niche: sanitizedNiche,
     physicalProductIdentity: sanitizedProductIdentity,
     typographyVisibleTexts: (productUnderstanding?.typography.visibleTexts ?? [])
@@ -106,8 +81,6 @@ export function buildContentFactSheet(
     occasions: shoppingContext?.suitableOccasions ?? [],
     useCases: shoppingContext?.useCases ?? [],
     personalizationSupported,
-    variantLabel: sanitizeFactText(source.variantLabel),
-    variantSummary,
     storeProfile,
   };
 }

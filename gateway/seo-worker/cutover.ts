@@ -3,6 +3,7 @@ import { canonicalizeJson } from "../canonical-json";
 import type { GptSeoJob } from "../../src/modules/custom-gpt-seo";
 import type { WorkerDatabase, WorkerSql } from "./database";
 import { getWorkerProductKey, SeoWorkerError } from "./protocol";
+import { migrateLegacyWorkerJob, validateFailedLegacyWorkerJob } from "./job-migration";
 
 export class SeoCutoverRepository {
   constructor(private readonly database: WorkerDatabase, private readonly enable: (storeId: string) => Promise<{ imported: number }>, private readonly now: () => number = Date.now, private readonly recoverExpired: (storeId: string) => Promise<void> = async () => {}) {}
@@ -19,9 +20,19 @@ export class SeoCutoverRepository {
     for (const row of jobs) {
       if (row.status === "CANCELLED" || row.sync === "SYNCED" || (row.review && JSON.parse(String(row.review)).reviewDecision === "rejected")) continue;
       const job = JSON.parse(String(row.payload)) as GptSeoJob;
-      try { const key = getWorkerProductKey(job); identities.set(key, [...(identities.get(key) ?? []), String(row.id)]); }
-      catch { blocked.push({ jobId: String(row.id), code: "INVALID_SOURCE" }); }
-      if (row.provider === "codex_mcp" && ["IN_PROGRESS", "VALIDATING", "NEEDS_CHANGES"].includes(String(row.status))) blocked.push({ jobId: String(row.id), code: "LEGACY_JOB_NOT_DRAINED" });
+      if (row.status === "REVIEW_READY") continue;
+      if (row.status === "FAILED") {
+        try { validateFailedLegacyWorkerJob(job); }
+        catch (error) { blocked.push({ jobId: String(row.id), code: error instanceof SeoWorkerError ? error.code : "JOB_MIGRATION_FAILED" }); }
+        continue;
+      }
+      try {
+        const migrated = migrateLegacyWorkerJob(job).job;
+        const key = getWorkerProductKey(migrated.execution);
+        identities.set(key, [...(identities.get(key) ?? []), String(row.id)]);
+      } catch (error) {
+        blocked.push({ jobId: String(row.id), code: error instanceof SeoWorkerError ? error.code : "JOB_MIGRATION_FAILED" });
+      }
       if (["SYNCING", "UNKNOWN"].includes(String(row.sync))) blocked.push({ jobId: String(row.id), code: "SYNC_UNRESOLVED" });
     }
     const audit = (await sql.query("SELECT count(*) AS count,max(id) AS last FROM gpt_audit WHERE store_id=$1", [storeId])).rows;

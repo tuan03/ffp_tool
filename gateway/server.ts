@@ -5,6 +5,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { createSeoPublishTransport } from "./seo-worker/publish-transport";
+import {
+  createDispatcherMediaPageSource,
+  createSeoBaselineService,
+  createShopifySeoSnapshotReader,
+} from "./seo-versioning";
 import { configurePerformanceRuntime, getPerformanceService, closePerformanceRuntime } from "./seo-performance/runtime";
 import { handlePerformanceHttp } from "./seo-performance/http-handler";
 import { configureAdsGateway, handleAdsIntelligenceHttpRequest, handleAdsMcpHttpRequest } from "./ads-intelligence";
@@ -154,7 +159,10 @@ export function startGatewayServer(
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
   const isBackendPublishEnabled = (process.env.SEO_WORKER_PUBLISH_ENABLED ?? env.SEO_WORKER_PUBLISH_ENABLED) === "true" && Boolean(operatorUsername) && Boolean(getAutoSeoDatabaseUrl());
-  if (isBackendPublishEnabled) getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher));
+  if (isBackendPublishEnabled) {
+    const snapshotReader = createShopifySeoSnapshotReader(dispatcher, createDispatcherMediaPageSource(dispatcher));
+    getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher, snapshotReader));
+  }
   configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
   if (getAutoSeoDatabaseUrl()) {
     void (async () => {
@@ -219,7 +227,10 @@ export function startGatewayServer(
         const runtime = getCustomGptRuntime(); await runtime.initialize();
         await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, {
           checkSource: createWorkerSourceGuard(dispatcher),
-          performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(job.storeId, job.input.productId ?? job.sourceIdentity) ?? { status: "disabled" },
+          performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(
+            job.execution.storeId,
+            job.execution.productId ?? job.execution.sourceIdentity,
+          ) ?? { status: "disabled" },
         }), getPerformanceService);
       } catch { if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: { code: "WORKER_UNAVAILABLE" } })); } }
       return;
@@ -252,6 +263,26 @@ export function startGatewayServer(
         publisher: isBackendPublishEnabled ? async () => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.publisher; } : undefined,
         createRevision: async request => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return createSeoRevision(runtime.queue, dispatcher, request); },
         history: async (storeId, jobId, offset) => { const runtime = getCustomGptRuntime(); await runtime.initialize(); return runtime.queue.workerHistory.list(storeId, jobId, offset); },
+        versioning: {
+          repository: async () => {
+            const runtime = getCustomGptRuntime();
+            await runtime.initialize();
+            return runtime.queue.versioning;
+          },
+          observeProduct: async (storeId, productGid) => {
+            const runtime = getCustomGptRuntime();
+            await runtime.initialize();
+            return createSeoBaselineService({
+              dispatcher,
+              repository: runtime.queue.versioning,
+            }).observeProduct({
+              storeId,
+              shopifyProductGid: productGid,
+              observedAt: Date.now(),
+            });
+          },
+          isPublishEnabled: isBackendPublishEnabled,
+        },
       });
       return;
     }
