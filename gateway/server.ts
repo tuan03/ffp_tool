@@ -185,7 +185,7 @@ export function startGatewayServer(
       await getCustomGptRuntime().mcpHandler(req, res);
       return;
     }
-    if (hasOperatorAuthentication && !url.startsWith("/api/") && !isAuthenticatedOperator) {
+    if (hasOperatorAuthentication && !url.startsWith("/api/") && !url.startsWith("/mcp/") && !isAuthenticatedOperator) {
       requestOperatorAuthentication(res);
       return;
     }
