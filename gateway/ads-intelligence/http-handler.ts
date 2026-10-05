@@ -1,3 +1,5 @@
+import { spyJobs, spyStartSchema } from "./spy-jobs";
+import { detectSpyRunners } from "./spy-runner";
 import { listAdsGatewayStores } from "./gateway-connection";
 import { ShopifyOrdersClient } from "./shopify-client";
 /**
@@ -5,6 +7,7 @@ import { ShopifyOrdersClient } from "./shopify-client";
  * Handles `/api/ads-intelligence/*` endpoints for React client and MCP tools.
  */
 import type http from "node:http";
+import { readCompetitorResearch, publishCompetitorResearch, competitorResearchSchema } from "./competitor-research";
 import { adsIntelligenceService } from "./service";
 import { adsIntelligenceCache } from "./cache";
 import { formatBriefMarkdown } from "./brief-generator";
@@ -69,6 +72,55 @@ export async function handleAdsIntelligenceHttpRequest(
   const forceRefresh = parsedUrl.searchParams.get("refresh") === "true";
 
   try {
+    if (pathname.startsWith("/api/ads-intelligence/spy/")) {
+      try {
+        if (pathname === "/api/ads-intelligence/spy/capabilities" && req.method === "GET") {
+          sendJson(res, 200, await detectSpyRunners()); return true;
+        }
+        const explicitStoreId = parsedUrl.searchParams.get("storeId");
+        if (!explicitStoreId || !spyStartSchema.shape.storeId.safeParse(explicitStoreId).success) {
+          sendJson(res, 400, { error: { code: "SPY_STORE_REQUIRED" } }); return true;
+        }
+        if (pathname === "/api/ads-intelligence/spy/jobs" && req.method === "GET") {
+          sendJson(res, 200, { job: await spyJobs.get(explicitStoreId) }, { "Cache-Control": "no-store" }); return true;
+        }
+        if (pathname === "/api/ads-intelligence/spy/jobs" && req.method === "POST") {
+          const parsed = spyStartSchema.safeParse(await readJsonBody<unknown>(req));
+          if (!parsed.success || parsed.data.storeId !== explicitStoreId) {
+            sendJson(res, 400, { error: { code: "SPY_REQUEST_INVALID" } }); return true;
+          }
+          sendJson(res, 202, { job: await spyJobs.start(parsed.data) }); return true;
+        }
+        const cancelMatch = pathname.match(/^\/api\/ads-intelligence\/spy\/jobs\/([a-f0-9-]{36})\/cancel$/);
+        if (cancelMatch?.[1] && req.method === "POST") {
+          sendJson(res, 200, { job: await spyJobs.cancel(explicitStoreId, cancelMatch[1]) }); return true;
+        }
+        sendJson(res, 404, { error: { code: "SPY_JOB_NOT_FOUND" } }); return true;
+      } catch (error) {
+        const code = error instanceof Error && /^(SPY|ADS)_[A-Z_]+$/.test(error.message) ? error.message : "SPY_REQUEST_FAILED";
+        sendJson(res, code === "SPY_ALREADY_RUNNING" ? 409 : 400, { error: { code } }); return true;
+      }
+    }
+    if (pathname === "/api/ads-intelligence/competitor-research") {
+      const explicitStoreId = parsedUrl.searchParams.get("storeId");
+      if (!explicitStoreId) {
+        sendJson(res, 400, { error: { code: "RESEARCH_STORE_REQUIRED" } });
+        return true;
+      }
+      if (req.method === "GET") {
+        sendJson(res, 200, { research: await readCompetitorResearch(explicitStoreId) }, { "Cache-Control": "no-store" });
+        return true;
+      }
+      if (req.method === "POST") {
+        const parsed = competitorResearchSchema.safeParse(await readJsonBody<unknown>(req));
+        if (!parsed.success || parsed.data.storeId !== explicitStoreId) {
+          sendJson(res, 400, { error: { code: "RESEARCH_INVALID" } });
+          return true;
+        }
+        sendJson(res, 200, { research: await publishCompetitorResearch(parsed.data) });
+        return true;
+      }
+    }
     if (pathname === "/api/ads-intelligence/stores" && req.method === "GET") {
       sendJson(res, 200, await listAdsGatewayStores());
       return true;
@@ -97,7 +149,7 @@ export async function handleAdsIntelligenceHttpRequest(
           mcpStreamableHttp: "/mcp/ads",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 32,
+        toolsCount: 37,
       });
       return true;
     }

@@ -1,20 +1,25 @@
 import React, { useState } from "react";
-import type { CompetitorIntelligenceReport } from "../../types";
+import { SpyRunPanel } from "../components/SpyRunPanel";
+import { CompetitorAdMedia } from "../components/CompetitorAdMedia";
+import { CompetitorResearchPanel } from "../components/CompetitorResearchPanel";
+import type { AdsIntelligenceClient, CompetitorIntelligenceReport } from "../../types";
 
 export interface CompetitorsTabProps {
+  readonly storeId: string;
+  readonly client: AdsIntelligenceClient;
   readonly competitorReport: CompetitorIntelligenceReport | null;
   readonly onCreateBriefFromGap: (gapId: string) => void;
 }
 
 export function CompetitorsTab({
+  storeId,
+  client,
   competitorReport,
   onCreateBriefFromGap,
 }: CompetitorsTabProps): React.JSX.Element {
   const [formatFilter, setFormatFilter] = useState<string>("ALL");
 
-  if (!competitorReport) return <p role="status" className="p-4 text-slate-400">Chưa có dữ liệu đối thủ xác minh. Kiểm tra nguồn kết nối; không dùng quảng cáo mẫu thay thế.</p>;
-
-  const ads = competitorReport.ads;
+  const ads = competitorReport?.ads ?? [];
   const filteredAds = ads.filter((ad) => {
     if (formatFilter === "ALL") return true;
     return ad.mediaType === formatFilter;
@@ -24,6 +29,7 @@ export function CompetitorsTab({
 
   return (
     <div className="space-y-6">
+      <SpyRunPanel key={storeId} client={client} storeId={storeId} />
       {/* 1. Header & Summary Stats */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5 space-y-4 shadow-lg">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
@@ -36,14 +42,14 @@ export function CompetitorsTab({
             </p>
           </div>
           <div className="text-xs text-slate-400 font-mono">
-            Provider: <strong className="text-cyan-300">{competitorReport.provider}</strong>
+            Provider: <strong className="text-cyan-300">{competitorReport?.provider ?? "Chưa kết nối được nguồn"}</strong>
           </div>
         </div>
 
         {/* Watchlist Chips & Distribution */}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-slate-400 font-medium">Đối thủ theo dõi:</span>
+            <span className="text-slate-400 font-medium">Page trong kết quả:</span>
             {competitorReport?.watchlist.map((w) => (
               <span
                 key={w.pageId}
@@ -57,10 +63,12 @@ export function CompetitorsTab({
 
           <div className="flex items-center gap-1.5">
             <span className="text-slate-400 text-xs">Tổng số ads:</span>
-            <span className="font-mono font-bold text-emerald-400">{competitorReport.activeAds} đang chạy</span>
+            <span className="font-mono font-bold text-emerald-400">{competitorReport ? `${competitorReport.activeAds} đang chạy` : "Chưa xác định"}</span>
           </div>
         </div>
       </div>
+
+      {competitorReport?.transparencyDisclaimer && <p className="text-xs text-slate-400">{competitorReport.transparencyDisclaimer}</p>}
 
       {/* 2. Format Filter Bar */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -86,6 +94,9 @@ export function CompetitorsTab({
         </div>
       </div>
 
+      {!competitorReport && <p role="status" className="rounded-lg border border-amber-900 p-4 text-sm text-amber-200">Chưa tải được nguồn quảng cáo. Kiểm tra kết nối; danh sách nghiên cứu bên dưới vẫn được tải riêng.</p>}
+      {competitorReport && filteredAds.length === 0 && <p role="status" className="rounded-lg border border-slate-700 p-4 text-sm text-slate-400">{ads.length === 0 ? "Nguồn quảng cáo chưa trả mẫu nào cho watchlist hiện tại. Danh sách thương hiệu đã nghiên cứu bên dưới chưa đồng nghĩa với việc đã lấy quảng cáo của họ." : "Không có quảng cáo thuộc định dạng đang chọn. Hãy chọn Tất cả định dạng."}</p>}
+
       {/* 3. Visual Ad Card Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredAds.map((ad) => {
@@ -99,23 +110,10 @@ export function CompetitorsTab({
               <div>
                 {/* Media Thumbnail Preview */}
                 <div className="relative h-44 bg-slate-950 flex items-center justify-center overflow-hidden border-b border-slate-800">
-                  {ad.thumbnailUrl ? (
-                    <img
-                      src={ad.thumbnailUrl}
-                      alt={ad.headline || ad.pageName}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center gap-1.5 text-slate-600">
-                      <span className="text-3xl">
-                        {ad.mediaType === "VIDEO" ? "🎬" : ad.mediaType === "CAROUSEL" ? "📑" : "🖼️"}
-                      </span>
-                      <span className="text-[11px] font-mono">{ad.mediaType} PREVIEW</span>
-                    </div>
-                  )}
+                  <CompetitorAdMedia ad={ad} />
 
                   {/* Badges on Thumbnail */}
-                  <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                  <div className="pointer-events-none absolute top-2 left-2 flex items-center gap-1.5">
                     <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase bg-slate-950/80 text-cyan-300 border border-slate-700">
                       {ad.mediaType}
                     </span>
@@ -145,6 +143,13 @@ export function CompetitorsTab({
                     {ad.copy || "Không có nội dung văn bản mở rộng."}
                   </p>
 
+                  <div className="flex flex-wrap gap-3 text-xs text-cyan-300">
+                    {/^\d+$/.test(ad.archiveAdId) && <a href={`https://www.facebook.com/ads/library/?id=${ad.archiveAdId}`} target="_blank" rel="noreferrer" className="underline">Mở quảng cáo gốc</a>}
+                    {/^https?:\/\//.test(ad.landingUrl) && <a href={ad.landingUrl} target="_blank" rel="noreferrer" className="underline">Xem sản phẩm</a>}
+                  </div>
+                  <p className="text-[11px] text-slate-400">Trạng thái tại lúc thu thập: {ad.status === "ACTIVE" ? "Đang hoạt động" : "Đã ngừng hoạt động"}</p>
+                  <p className="text-[11px] text-slate-500">Mức kiểm tra: {ad.inspectionLevel === "SAMPLED_FRAMES" ? "Đã xem khung hình mẫu; chưa đánh giá toàn bộ âm thanh" : ad.inspectionLevel === "IMAGE_REVIEWED" ? "Đã xem ảnh" : ad.inspectionLevel}</p>
+
                   {/* Taxonomy Tags */}
                   <div className="flex flex-wrap gap-1 pt-1">
                     <span className="text-[10px] px-2 py-0.5 rounded bg-slate-950 text-indigo-300 border border-indigo-900/50">
@@ -164,7 +169,8 @@ export function CompetitorsTab({
                 </span>
                 <button
                   type="button"
-                  onClick={() => onCreateBriefFromGap(gaps[0]?.id || "gap-rug-1")}
+                  disabled={!gaps.length}
+                  onClick={() => { if (gaps[0]) onCreateBriefFromGap(gaps[0].id); }}
                   className="px-2.5 py-1 rounded-lg border border-purple-600/60 bg-purple-950/50 text-purple-200 hover:bg-purple-900/60 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
                 >
                   <span>✨</span>
@@ -222,6 +228,7 @@ export function CompetitorsTab({
           </div>
         </div>
       )}
+      <CompetitorResearchPanel storeId={storeId} client={client} />
     </div>
   );
 }

@@ -179,6 +179,21 @@ export function generateAdsOpenApiSpec(serverBaseUrl = "http://localhost:3001"):
           },
         },
       },
+      "/api/ads-intelligence/competitor-research": {
+        get: {
+          operationId: "getCompetitorResearch",
+          summary: "Read persisted product-qualified research independently of ads",
+          parameters: [{ name: "storeId", in: "query", required: true, schema: { type: "string" } }],
+          responses: { "200": { description: "Research object, or research: null when no run has been saved" } },
+        },
+        post: {
+          operationId: "publishCompetitorResearch",
+          summary: "Persist research for a registered store without changing advertising watchlists",
+          parameters: [{ name: "storeId", in: "query", required: true, schema: { type: "string" } }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: true, required: ["storeId", "shopDomain", "storeDomain", "observedAt", "scope", "selected", "limitations", "websiteDerivedHypotheses"] } } } },
+          responses: { "200": { description: "Persisted research" }, "400": { description: "Invalid research or mismatched store" }, "503": { description: "Store mapping or persistence unavailable" } },
+        },
+      },
       "/api/ads-intelligence/competitors": {
         get: {
           operationId: "getCompetitorIntelligence",

@@ -523,6 +523,11 @@ export interface AdsIntelligenceClient {
   getStoreSummary(storeId?: string): Promise<AdsStoreSummary>;
   getCampaignHierarchy(storeId?: string): Promise<readonly AdsHierarchyCampaign[]>;
   getDataHealth(storeId?: string): Promise<AdsDataHealth>;
+  getSpyCapabilities?(): Promise<SpyCapabilities>;
+  getSpyJob?(storeId: string): Promise<{ job: SpyJob | null }>;
+  startSpyJob?(input: { storeId: string; runner: "codex" | "agy"; model: string }): Promise<{ job: SpyJob }>;
+  cancelSpyJob?(storeId: string, jobId: string): Promise<{ job: SpyJob }>;
+  getCompetitorResearch?(storeId: string): Promise<{ research: CompetitorResearch | null }>;
   getCompetitorAds(storeId?: string): Promise<readonly CompetitorAdCard[]>;
   getReconciliationReport?(storeId?: string): Promise<AdsReconciliationReport>;
   syncNow?(storeId?: string): Promise<{ success: boolean; refreshedAt: string; message: string }>;
@@ -569,4 +574,42 @@ export interface Ga4MetaPaidSummary {
   readonly currency: string | null;
   readonly warnings: readonly string[];
   readonly scope: string;
+}
+
+export interface CompetitorResearch {
+  readonly storeId: string;
+  readonly shopDomain: string;
+  readonly storeDomain: string;
+  readonly observedAt: string;
+  readonly scope: { readonly products: readonly string[]; readonly market: string; readonly currency: string; readonly excluded: readonly string[] };
+  readonly selected: readonly {
+    readonly name: string; readonly domain: string; readonly productGroup: string; readonly score: number;
+    readonly scoreBreakdown: { readonly product: number; readonly customizationModel: number; readonly audience: number; readonly price: number; readonly themes: number };
+    readonly confidence: "high" | "medium";
+    readonly evidence: readonly { readonly url: string; readonly note: string }[];
+    readonly adStatus: string;
+  }[];
+  readonly adCollection?: readonly {
+    readonly brandDomain: string; readonly pageIds: readonly string[]; readonly identityEvidence: readonly string[];
+    readonly status: "identity_unresolved" | "source_error" | "fetched_empty" | "fetched_no_match" | "verified_ads";
+    readonly retrievedCount: number; readonly matchedCount: number; readonly note: string;
+  }[];
+  readonly adInsights?: readonly { readonly title: string; readonly observation: string; readonly sourceAdIds: readonly string[]; readonly originalTest: string }[];
+  readonly limitations: readonly string[];
+  readonly websiteDerivedHypotheses: readonly { readonly title: string; readonly basis: string; readonly hypothesis: string }[];
+}
+
+export interface SpyCapabilities {
+  readonly skillAvailable?: boolean;
+  readonly runners: readonly { readonly id: "codex" | "agy"; readonly name: string; readonly available: boolean; readonly models: readonly string[]; readonly defaultModel: string }[];
+}
+export interface SpyLogEvent {
+  readonly id: string; readonly at: string; readonly level: "info" | "success" | "error"; readonly message: string;
+}
+export interface SpyJob {
+  readonly events?: readonly SpyLogEvent[];
+  readonly id: string; readonly storeId: string; readonly shopDomain: string; readonly runner: "codex" | "agy"; readonly model: string;
+  readonly status: "running" | "completed" | "partial" | "failed" | "cancelled" | "interrupted";
+  readonly startedAt: string; readonly finishedAt?: string; readonly phase: string; readonly errorCode?: string;
+  readonly published?: boolean; readonly selectedCount?: number; readonly adCount?: number; readonly brandsWithAds?: number;
 }

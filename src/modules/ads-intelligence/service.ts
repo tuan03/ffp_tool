@@ -17,6 +17,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "object" && payload.error !== null && "code" in payload.error && typeof payload.error.code === "string" && /^[A-Z0-9_]+$/.test(payload.error.code)) code = payload.error.code;
     } catch { /* A proxy may return a non-JSON error. */ }
     const messages: Readonly<Record<string, string>> = {
+      SPY_ALREADY_RUNNING: "Store này đang có một lượt Spy chạy. Hãy xem tiến độ hoặc dừng lượt hiện tại.",
+      SPY_MODEL_UNAVAILABLE: "Model không còn trong danh sách của CLI. Hãy tải lại công cụ và chọn lại.",
+      SPY_RUNNER_UNAVAILABLE: "Chưa tìm thấy CLI trên máy chạy backend.",
+      SPY_SKILL_MISSING: "Chưa cài skill spy-competitors trên máy chạy backend.",
+      SPY_REQUEST_FAILED: "Không khởi tạo được lượt Spy. Kết quả cũ vẫn được giữ nguyên.",
       ADS_PROFILE_NOT_CONFIGURED: "Store đã có Shopify trong Gateway; chưa cấu hình riêng Meta/GA4 cho Ads Intelligence.",
       ADS_STORE_MAPPING_MISMATCH: "Domain trong Ads profile khác kết nối Gateway. Cần xác minh mapping Meta/GA4 cho shop đang chọn.",
       ADS_STORE_NOT_REGISTERED: "Store không còn trong Gateway. Hãy tải lại danh sách cửa hàng.",
@@ -51,6 +56,11 @@ export function createAdsIntelligenceClient(): AdsIntelligenceClient {
   return {
     dataMode: "live",
     getStores: () => request("stores"),
+    getSpyCapabilities: () => request("spy/capabilities"),
+    getSpyJob: storeId => request(`spy/jobs?${storeQuery(storeId)}`),
+    startSpyJob: input => request(`spy/jobs?${storeQuery(input.storeId)}`, jsonRequest("POST", input)),
+    cancelSpyJob: (storeId, jobId) => request(`spy/jobs/${encodeURIComponent(jobId)}/cancel?${storeQuery(storeId)}`, { method: "POST" }),
+    getCompetitorResearch: storeId => request(`competitor-research?${storeQuery(storeId)}`),
     getShopifySummary: storeId => request(`shopify?${storeQuery(storeId)}`),
     getStoreSummary: store => request(`summary?${storeQuery(store)}`),
     getCampaignHierarchy: store => request(`campaigns?${storeQuery(store)}`),

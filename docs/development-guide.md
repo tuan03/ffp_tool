@@ -256,3 +256,43 @@ npm run build:mock
 ```
 
 A handoff should include the exact commands run and whether they passed, plus any unfinished real integration TODOs.
+
+## Competitor research dashboard
+
+The Spy Competitors tab reads product-qualified research separately from the ad-provider report. A failed or empty ad source does not hide the researched brands. The panel polls every 15 seconds while mounted and supports manual refresh.
+
+Publish a completed run through `ads_publish_competitor_research({ research })`; verify persistence with `ads_get_competitor_research({ storeId })`. The equivalent HTTP routes are `POST` and `GET /api/ads-intelligence/competitor-research?storeId=<id>` under the existing Gateway authentication. Both require an explicit store ID. Publish requires the exact registered `shopDomain`, the public `storeDomain`, observation timestamp, scope, qualified candidates, limitations and website-derived hypotheses. See `gateway/ads-intelligence/competitor-research.ts` for the validated schema.
+
+Research is atomically persisted per connection in `.runtime/ads-intelligence/competitor-research/` (ignored by Git). Preserve/mount this directory across deployment replacements. Empty results return `research: null`; invalid saved data returns an error rather than sample data. Older observation timestamps cannot replace a newer report. The local repository serializes writes within one Gateway process; shared multi-process deployment requires a database-backed repository before concurrent publishing.
+
+Research publishing does not change the advertising watchlist, run campaigns, or invent ad evidence. A brand's website qualification and advertisement availability are distinct states. The personal `spy-competitors` skill publishes after analysis; unregistered stores and failed publications remain local reports and must be reported as such.
+
+
+Research ad collection uses three additional MCP tools: `ads_discover_advertisers` (provider Page lookup), `ads_fetch_competitor_page` (explicit Page/country with cursor), and `ads_search_live_library` (live keyword search outside the static watchlist). Provider responses are leads; the skill verifies destination products and media before publishing `verifiedAds`, `adCollection`, and `adInsights`. The publisher validates selected-brand membership, source URLs, numeric ad/Page IDs, coverage counts and insight references. When collection coverage exists, `/competitors` serves the persisted qualified snapshot instead of fetching unrelated legacy watchlists. Re-reading this snapshot is free of provider requests; fresh collection is explicit. Empty or unresolved coverage is retained per brand. Receiving media URLs never implies video/audio review.
+
+Competitor collection tools also accept `activeStatus` (`ACTIVE`, `ALL`, `INACTIVE`; default `ACTIVE`) and `country=ALL` for explicit expanded coverage. Research entries can specify `selectedCardIndices` for verified product cards inside a mixed carousel; the saved original remains intact while the library displays only those cards with their original positions. An ALL-country result must not be reported as verified US delivery.
+
+### Run competitor research from the dashboard
+
+The **Spy Đối thủ** tab provides a store-scoped **Spy đối thủ** action with a CLI/model selector, progress and cancellation. It uses the CLI installed on the **gateway machine** (macOS/Linux PATH or Windows executable locations), not the user's browser computer. Codex models come from its local `models_cache.json`; AGY models come from `agy models`. Login remains managed by the CLI. `ADS_SPY_CODEX_MODELS` can supply a comma-separated operator-maintained catalog when the Codex cache is unavailable. `ADS_SPY_SKILL_DIR` can override the default `$CODEX_HOME/skills/spy-competitors` path. No API keys are sent to the browser.
+
+Endpoints (under the existing gateway authentication boundary):
+
+- `GET /api/ads-intelligence/spy/capabilities`
+- `GET /api/ads-intelligence/spy/jobs?storeId=...`
+- `POST /api/ads-intelligence/spy/jobs?storeId=...` with `{storeId, runner, model}`
+- `POST /api/ads-intelligence/spy/jobs/:jobId/cancel?storeId=...`
+
+The selected store and model are snapshotted when starting. The gateway permits one running job per store, runs the agent in a scratch workspace, loads the skill and its qualification/collection/publication references, and exposes a store-scoped MCP helper. That helper blocks campaign/experiment writes and stages research rather than publishing directly. After a successful agent exit, the gateway validates store identity, freshness and coverage for every selected competitor before publishing. A report with gaps is `partial`, never a false ten-brand completion; an empty refresh cannot replace an existing non-empty ad library. Browser refresh/navigation does not stop the job. Gateway restart marks unfinished work `interrupted`; a watchdog terminates orphan CLI processes. Jobs have a 90-minute upper limit and cancellation terminates the process tree. No automatic retries or paid research occur during frontend polling.
+
+State is stored in ignored `.runtime/ads-intelligence/spy-jobs/`. Progress stages are agent-reported, not verified percentages; only validated published result counts are final. CLI/tool output is drained without saving raw secrets or content to browser logs. No automatic Git operations are performed.
+
+AGY headless runs require command permission for the MCP helper. `--mode accept-edits` alone does not grant it. AGY can return exit code zero and `status: SUCCESS` alongside `denied_actions`; the runner maps this to `SPY_PERMISSION_REQUIRED`, preserving the existing library. Configure narrowly scoped permissions through AGY's supported settings before retrying; the application does not modify global permissions or disable CLI safeguards. A normal CLI exit without staged research is reported separately as `SPY_RESEARCH_MISSING`.
+
+For the current helper invocation, the operator can authorize `command(node ffp-tools.mjs)` in `~/.gemini/antigravity-cli/settings.json` under `permissions.allow`. AGY uses its normal permission engine rather than the forced `--sandbox` flag: that flag prevents the helper from reading the host TypeScript loader and MCP configuration. Do not add `--dangerously-skip-permissions`. Other tool permissions remain subject to the operator's settings. Back up settings before changing them.
+
+AGY runs directly inside the per-job directory with `ffp-tools.mjs` already present; do not give it a competing `--add-dir` workspace. The helper CLI automatically saves schemas to `mcp-tools.json` and call responses to `mcp-result.json`, returning a file pointer for the agent to read in sections. No shell redirection is needed. This avoids truncated terminal output, helper copying and repository inspection by the research agent.
+
+Spy job snapshots now include optional `events` (latest 200 operational events). AGY uses `stream-json`; Codex uses its JSON event stream. The server records allowlisted tool labels, MCP completion/failure, phase changes and publication/cancellation outcomes in per-job `events.jsonl`. Raw commands, credentials, tool bodies and agent reasoning are not relayed to the UI. Logs survive reload; older `calls.jsonl` completion records are shown explicitly as legacy events. Missing `events` means the gateway still runs an older version; restart only after active jobs have finished. The UI polls every 2.5 seconds and provides elapsed time, last activity, timestamps and an error filter. No new route or environment variable is required.
+
+Spy captures normalized ad records returned by MCP into per-job `source-ad-<archiveId>.json` files. During staging it restores provider fields (including signed media URLs, card order and source dates) from those records; agent annotations and inspection labels remain separate. This prevents URL corruption when a model retypes an existing ad. Publication still validates store identity, evidence, collection counts and media inspection. A successful CLI exit alone is not successful publication.

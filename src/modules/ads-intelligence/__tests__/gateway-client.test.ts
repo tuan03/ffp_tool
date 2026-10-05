@@ -39,7 +39,48 @@ test("KPI ribbon preserves zero eligible orders and does not invent a click-to-s
 
 test("missing competitor data renders unavailable without fake counts or provider claims", async () => {
   const { CompetitorsTab } = await import("../ui/tabs/CompetitorsTab");
-  const html = renderToStaticMarkup(createElement(CompetitorsTab, { competitorReport: null, onCreateBriefFromGap() {} }));
-  assert.match(html, /Chưa có dữ liệu đối thủ xác minh/);
+  const html = renderToStaticMarkup(createElement(CompetitorsTab, { storeId: "new-store", client: createAdsIntelligenceClient(), competitorReport: null, onCreateBriefFromGap() {} }));
+  assert.match(html, /Đối thủ đã xác minh/);
+  for (const label of ["Tất cả định dạng", "VIDEO", "IMAGE", "CAROUSEL"]) assert.ok(html.includes(label));
+  assert.ok(html.indexOf("Tất cả định dạng") < html.indexOf("Đối thủ đã xác minh"));
   assert.doesNotMatch(html, /210|0.0658|ScrapeCreators/);
+});
+
+test("research client requests the selected store independently of ad provider", async context => {
+  context.mock.method(globalThis, "fetch", async (url: string) => {
+    assert.equal(url, "/api/ads-intelligence/competitor-research?storeId=new-store");
+    return Response.json({ research: null });
+  });
+  const client = createAdsIntelligenceClient();
+  assert.ok(client.getCompetitorResearch);
+  assert.deepEqual(await client.getCompetitorResearch("new-store"), { research: null });
+});
+
+test("ad media preserves playable video, images and carousel rather than replacing them with research text", async () => {
+  const { CompetitorAdMedia } = await import("../ui/components/CompetitorAdMedia");
+  const base = { pageName: "Synthetic test brand", headline: "Test blanket", archiveAdId: "123456", thumbnailUrl: "https://example.com/preview.jpg", mediaUrls: ["https://example.com/clip.mp4"] };
+  const video = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...base, mediaType: "VIDEO" } }));
+  assert.match(video, /<video/);
+  assert.match(video, /controls=""/);
+  assert.match(video, /clip.mp4/);
+  assert.doesNotMatch(video, /autoPlay/);
+  const image = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...base, mediaType: "IMAGE", mediaUrls: [] } }));
+  assert.match(image, /<img/);
+  assert.match(image, /preview.jpg/);
+  const carousel = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...base, mediaType: "CAROUSEL", cards: [{ mediaUrl: "https://example.com/one.jpg" }, { mediaUrl: "https://example.com/two.jpg" }] } }));
+  assert.match(carousel, /one.jpg/); assert.match(carousel, /two.jpg/);
+  const missing = renderToStaticMarkup(createElement(CompetitorAdMedia, { ad: { ...base, mediaType: "VIDEO", thumbnailUrl: "", mediaUrls: [] } }));
+  assert.match(missing, /Nguồn chưa cung cấp/);
+  assert.match(missing, /facebook.com\/ads\/library/);
+});
+
+test("Spy start and cancellation carry the selected store, runner and model", async context => {
+  const requests: { url: string; init?: RequestInit }[] = [];
+  context.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => { requests.push({ url, init }); return Response.json({ job: { id: "job-one" } }); });
+  const client = createAdsIntelligenceClient();
+  await client.startSpyJob?.({ storeId: "another-store", runner: "agy", model: "chosen-model" });
+  await client.cancelSpyJob?.("another-store", "job-one");
+  assert.equal(requests[0]?.url, "/api/ads-intelligence/spy/jobs?storeId=another-store");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), { storeId: "another-store", runner: "agy", model: "chosen-model" });
+  assert.equal(requests[1]?.url, "/api/ads-intelligence/spy/jobs/job-one/cancel?storeId=another-store");
 });

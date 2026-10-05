@@ -1,3 +1,5 @@
+import { competitorResearchRepository } from "./competitor-research";
+import { createResearchAdReport } from "./competitor-ad-research";
 import { assertAdsStoreDomain } from "./gateway-connection";
 /**
  * FFP Ads Intelligence — Service Orchestrator
@@ -529,10 +531,10 @@ export class AdsIntelligenceService {
       }
     }
 
-    const [summary, reconciliation, profile] = await Promise.all([
+    const profile = loadStoreAdsProfile(storeId);
+    const [summary, reconciliation] = await Promise.all([
       this.getStoreSummary(storeId, forceRefresh),
       this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
-      Promise.resolve(loadStoreAdsProfile(storeId)),
     ]);
 
     let campaigns: readonly AdsHierarchyCampaign[] = [];
@@ -568,11 +570,11 @@ export class AdsIntelligenceService {
       }
     }
 
-    const [summary, reconciliation, decisionCards, profile, competitorReport] = await Promise.all([
+    const profile = loadStoreAdsProfile(storeId);
+    const [summary, reconciliation, decisionCards, competitorReport] = await Promise.all([
       this.getStoreSummary(storeId, forceRefresh),
       this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
       this.getDecisionCards(storeId, forceRefresh),
-      Promise.resolve(loadStoreAdsProfile(storeId)),
       this.getCompetitorIntelligence(storeId, forceRefresh).catch(() => null),
     ]);
 
@@ -603,6 +605,11 @@ export class AdsIntelligenceService {
     forceRefresh = false,
     filters?: { pageId?: string; format?: string; hookType?: string }
   ): Promise<CompetitorIntelligenceReport> {
+    const research = await competitorResearchRepository.get(storeId);
+    if (research?.adCollection) {
+      await assertAdsStoreDomain(storeId, research.shopDomain);
+      return createResearchAdReport({ storeId, observedAt: research.observedAt, verifiedAds: research.verifiedAds ?? [], filters });
+    }
     const cacheKey = `${storeId}:competitors`;
     if (!forceRefresh) {
       const cached = adsIntelligenceCache.get<CompetitorIntelligenceReport>(cacheKey);
@@ -898,6 +905,21 @@ export class AdsIntelligenceService {
       };
     }
     return ga4.getReport(propertyId, recipe, options);
+  }
+
+  async searchLiveCompetitorAds(query: string, options: { country: string; cursor?: string; activeStatus?: "ACTIVE" | "ALL" | "INACTIVE" }): Promise<{ ads: readonly CompetitorAd[]; nextCursor?: string }> {
+    ensureEnvLoaded();
+    return new DefaultCompetitorClient().searchLiveAds(query, options);
+  }
+
+  async discoverCompetitorAdvertisers(query: string): Promise<readonly { pageId: string; pageName: string; pageAlias: string }[]> {
+    ensureEnvLoaded();
+    return new DefaultCompetitorClient().searchCompanies(query);
+  }
+
+  async fetchCompetitorPage(pageId: string, options: { country: string; cursor?: string; activeStatus?: "ACTIVE" | "ALL" | "INACTIVE" }): Promise<import("./competitor-client").ListAdsResult> {
+    ensureEnvLoaded();
+    return new DefaultCompetitorClient().listAds(pageId, { country: options.country, activeStatus: options.activeStatus ?? "ACTIVE", limit: 100 }, options.cursor);
   }
 
   async searchCompetitorAds(

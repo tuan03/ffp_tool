@@ -149,6 +149,24 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
     return () => { generation.current++; };
   }, [currentStoreId]);
 
+  useEffect(() => {
+    if (activeTab !== "competitors" || !client.getCompetitorIntelligence) return;
+    let isDisposed = false;
+    let isFetching = false;
+    const refreshAds = async () => {
+      if (isFetching || !client.getCompetitorIntelligence) return;
+      isFetching = true;
+      try {
+        const report = await client.getCompetitorIntelligence(currentStoreId);
+        if (!isDisposed && report.storeId === currentStoreId) setCompetitorReport(report);
+      } catch { /* Preserve the last successfully loaded report; source errors are shown by loadData. */ }
+      finally { isFetching = false; }
+    };
+    void refreshAds();
+    const timer = window.setInterval(() => { void refreshAds(); }, 15000);
+    return () => { isDisposed = true; window.clearInterval(timer); };
+  }, [activeTab, client, currentStoreId]);
+
   // Actions
   const handleSync = async () => {
     setSyncing(true);
@@ -349,7 +367,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
           { id: "decisions", label: "🎯 Gợi ý theo quy tắc & AI", badge: loading || sourceErrors["Quyết định"] ? null : decisions.length },
           { id: "hierarchy", label: "📊 Chiến dịch & Ads", badge: loading || sourceErrors["Chiến dịch"] ? null : campaigns.length },
           { id: "funnel", label: "🔄 Phễu & Đối soát", badge: null },
-          { id: "competitors", label: "🕵️ Spy Đối thủ", badge: competitorReport?.activeAds ?? null },
+          { id: "competitors", label: "🕵️ Spy Đối thủ", badge: null },
           { id: "experiments", label: "🧪 Briefs & Thử nghiệm", badge: loading || sourceErrors["Briefs"] ? null : briefs.length },
           { id: "health", label: "🛡️ Kết nối & Hệ thống", badge: null },
         ].map((tab) => (
@@ -395,6 +413,9 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
 
           {activeTab === "competitors" && (
             <CompetitorsTab
+              key={currentStoreId}
+              storeId={currentStoreId}
+              client={client}
               competitorReport={competitorReport}
               onCreateBriefFromGap={handleCreateBriefFromGap}
             />

@@ -1,3 +1,4 @@
+import { competitorResearchRepository } from "../ads-intelligence/competitor-research";
 import { beforeEach, afterEach, mock } from "node:test";
 import { adsIntelligenceService } from "../ads-intelligence/service";
 import { loadStoreAdsProfile } from "../ads-intelligence/store-profile";
@@ -19,6 +20,7 @@ const reconciliation: AdsReconciliationReport = {
  gaps: {purchaseDiscrepancy: 19,revenueDiscrepancy: "1311.50",clickDropPct: "34.0%",notes: ["Test fixture"]},
 };
 beforeEach(async () => {
+ mock.method(competitorResearchRepository, "get", async () => null);
  adsIntelligenceCache.invalidate();
  mock.method(adsIntelligenceService, "getStoreSummary", async (storeId = "chillgen") => ({...summary,storeId}));
  mock.method(adsIntelligenceService, "getCampaignHierarchy", async (storeId = "chillgen") => fixtureHierarchy(storeId));
