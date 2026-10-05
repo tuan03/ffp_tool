@@ -370,6 +370,13 @@ export class SeoWorkerRepository {
     });
   }
 
+  async enableStoreRaw(storeId: string): Promise<void> {
+    requireLabel(storeId);
+    await this.database.transaction(async sql => {
+      await sql.query("INSERT INTO seo_worker_stores(store_id,enabled) VALUES ($1,true) ON CONFLICT(store_id) DO UPDATE SET enabled=true", [storeId]);
+    });
+  }
+
   async claim(token: string, sessionId: string, runId: string, requestId: string): Promise<{ lease: WorkerLease | null; stopReason?: string }> {
     return this.database.transaction(async sql => {
       const principal = await this.authenticate(sql, token);

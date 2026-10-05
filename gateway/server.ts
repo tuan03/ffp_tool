@@ -156,6 +156,27 @@ export function startGatewayServer(
   const isBackendPublishEnabled = (process.env.SEO_WORKER_PUBLISH_ENABLED ?? env.SEO_WORKER_PUBLISH_ENABLED) === "true" && Boolean(operatorUsername) && Boolean(getAutoSeoDatabaseUrl());
   if (isBackendPublishEnabled) getCustomGptRuntime().configurePublisher(createSeoPublishTransport(dispatcher));
   configurePerformanceRuntime(dispatcher, () => getCustomGptRuntime().queue);
+  if (getAutoSeoDatabaseUrl()) {
+    void (async () => {
+      try {
+        const runtime = getCustomGptRuntime();
+        await runtime.initialize();
+        for (const store of stores) {
+          try {
+            await runtime.queue.workers.enableStore(store.storeId);
+          } catch {
+            try {
+              await runtime.queue.workers.enableStoreRaw(store.storeId);
+            } catch {
+              // ignore background bootstrap failure
+            }
+          }
+        }
+      } catch {
+        // ignore background bootstrap failure
+      }
+    })();
+  }
   const httpHandler = createGatewayHttpHandler(dispatcher, { authToken, maxBodyBytes });
   const storeControlPlane = new StoreControlPlane({
     storeRegistry,

@@ -73,10 +73,31 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     finally { setIsBusy(false); }
   }
 
+  async function handleToggleClaims(enabled: boolean, allStores = false): Promise<void> {
+    setIsBusy(true); setError(""); setNotice("");
+    try {
+      if (enabled) {
+        await client.enableClaims(storeId, allStores);
+        setNotice(allStores ? "Đã bật nhận việc cho tất cả store." : `Đã bật nhận việc cho store ${storeId}.`);
+      } else {
+        await client.disableClaims(storeId, allStores);
+        setNotice(allStores ? "Đã tắt nhận việc cho tất cả store." : `Đã tắt nhận việc cho store ${storeId}.`);
+      }
+      setRefresh(value => value + 1);
+    } catch {
+      setError("Không thể cập nhật trạng thái nhận việc. Kiểm tra quyền quản trị và thử lại.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   return <section className="space-y-5 pt-5" aria-label="Agent Access">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="font-semibold text-white">Máy xử lý SEO</h2><p className="mt-1 text-sm text-slate-400">{storeId} · Một kết nối: xử lý SEO + đánh giá GSC. Không tự duyệt hoặc đồng bộ Shopify.</p></div>
-      {view !== "metrics" && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => setRefresh(value => value + 1)}>Làm mới</button>}
+      <div className="flex items-center gap-2">
+        {access && access.claimsEnabled && <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-700/60 bg-emerald-950/40 px-2.5 py-1 text-xs font-medium text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>Đang nhận việc</span>}
+        {view !== "metrics" && <button type="button" className={BUTTON} disabled={isBusy} onClick={() => setRefresh(value => value + 1)}>Làm mới</button>}
+      </div>
     </div>
     <nav aria-label="Quản lý máy SEO" className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">
       {VIEWS.map(entry => <button key={entry.id} type="button" aria-pressed={view === entry.id} className={view === entry.id ? PRIMARY : BUTTON} onClick={() => { setView(entry.id); setNotice(""); setError(""); }}>{entry.label}</button>)}
@@ -84,7 +105,17 @@ export function AgentAccessPanel({ client, storeId }: { readonly client: CustomG
     {error && <p role="alert" className="rounded-lg bg-rose-950/40 p-3 text-sm text-rose-300">{error}</p>}
     {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
     {view !== "metrics" && !access && !error && <p role="status" className="text-sm text-slate-400">Đang tải…</p>}
-    {access && !access.claimsEnabled && view !== "metrics" && <p className="rounded-lg border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">Store chưa bật nhận việc. Nhờ quản trị viên chuyển Queue sang Worker trước khi chạy SEO.</p>}
+    {access && !access.claimsEnabled && view !== "metrics" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">
+      <span>Store chưa bật nhận việc. Bạn có thể bật để các máy con (Codex/Worker) nhận việc xử lý SEO.</span>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={PRIMARY} disabled={isBusy} onClick={() => void handleToggleClaims(true, false)}>
+          {isBusy ? "Đang xử lý…" : "Bật nhận việc cho store này"}
+        </button>
+        <button type="button" className={BUTTON} disabled={isBusy} onClick={() => void handleToggleClaims(true, true)}>
+          {isBusy ? "Đang xử lý…" : "Bật cho tất cả store"}
+        </button>
+      </div>
+    </div>}
 
     {view === "connect" && access && <>
       <div className="flex flex-wrap items-center justify-between gap-3">
