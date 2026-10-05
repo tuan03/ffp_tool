@@ -66,10 +66,10 @@ export function ConnectionsSyncView({
         {/* GOOGLE SEARCH CONSOLE */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-bold text-slate-100">Google Search Console</span>
+            <div className="flex items-center gap-2.5">
+              <span className="text-base font-bold text-slate-100 whitespace-nowrap">Google Search Console</span>
               <span
-                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                   data.gsc.status === "CONNECTED"
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
                     : "bg-amber-950 text-amber-300 border border-amber-800"
@@ -77,14 +77,6 @@ export function ConnectionsSyncView({
               >
                 {data.gsc.status}
               </span>
-              {data.gsc.status === "CONNECTED" && data.gsc.stale && (
-                <span
-                  className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-950/80 text-amber-300 border border-amber-800"
-                  title={data.gsc.staleReason === "NEVER_SYNCED" ? "Chưa thực hiện đồng bộ dữ liệu lần nào" : "Dữ liệu đã quá 4 ngày chưa cập nhật"}
-                >
-                  {data.gsc.staleReason === "NEVER_SYNCED" ? "Chưa đồng bộ" : "Dữ liệu cũ"}
-                </span>
-              )}
             </div>
             <button
               type="button"
@@ -106,12 +98,30 @@ export function ConnectionsSyncView({
               <span className="text-slate-200">{data.gsc.origin ?? "—"}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
+              <span className="text-slate-400">Trạng thái dữ liệu:</span>
+              <span className="text-slate-200">
+                {data.gsc.staleReason === "NEVER_SYNCED"
+                  ? "Chưa đồng bộ"
+                  : data.gsc.stale
+                  ? "Dữ liệu cũ (cần đồng bộ lại)"
+                  : "Mới nhất"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Dữ liệu hoàn tất tới:</span>
-              <span className="font-semibold text-slate-200">{data.gsc.dataThroughDate ?? "Chưa có"}</span>
+              <span className="font-semibold text-slate-200">
+                {data.gsc.staleReason === "NEVER_SYNCED" || !data.gsc.dataThroughDate
+                  ? "Chưa có"
+                  : data.gsc.dataThroughDate}
+              </span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Đồng bộ thành công gần nhất:</span>
-              <span className="text-slate-200">{displayDate(data.gsc.lastSuccessfulSync)}</span>
+              <span className="text-slate-200">
+                {data.gsc.staleReason === "NEVER_SYNCED" || !data.gsc.lastSuccessfulSync
+                  ? "Chưa đồng bộ"
+                  : displayDate(data.gsc.lastSuccessfulSync)}
+              </span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Hạn mức API Quota:</span>
@@ -168,10 +178,10 @@ export function ConnectionsSyncView({
         {/* GOOGLE ANALYTICS 4 */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-bold text-slate-100">Google Analytics 4</span>
+            <div className="flex items-center gap-2.5">
+              <span className="text-base font-bold text-slate-100 whitespace-nowrap">Google Analytics 4</span>
               <span
-                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                   data.ga4.status === "CONNECTED"
                     ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
                     : "bg-amber-950 text-amber-300 border border-amber-800"
@@ -179,32 +189,25 @@ export function ConnectionsSyncView({
               >
                 {data.ga4.status}
               </span>
-              {data.ga4.status === "CONNECTED" && data.ga4.stale && (
-                <span
-                  className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-950/80 text-amber-300 border border-amber-800"
-                  title={data.ga4.staleReason === "NEVER_SYNCED" ? "Chưa thực hiện đồng bộ dữ liệu lần nào" : "Dữ liệu đã quá 4 ngày chưa cập nhật"}
-                >
-                  {data.ga4.staleReason === "NEVER_SYNCED" ? "Chưa đồng bộ" : "Dữ liệu cũ"}
-                </span>
-              )}
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-400">Stream: {data.ga4.streamId ?? "Web"}</span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => runAction(onReconnect, "Đang chuyển hướng kết nối lại Google...")}
-                className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 hover:text-white transition shadow-sm disabled:opacity-40"
-              >
-                🔗 Kết nối lại Google
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => runAction(onReconnect, "Đang chuyển hướng kết nối lại Google...")}
+              className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 hover:text-white transition shadow-sm disabled:opacity-40"
+            >
+              🔗 Kết nối lại Google
+            </button>
           </div>
 
           <div className="space-y-2 text-xs text-slate-300">
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">GA4 Property ID:</span>
               <code className="text-cyan-300">{data.ga4.propertyId ?? "Chưa cấu hình"}</code>
+            </div>
+            <div className="flex justify-between py-1 border-b border-slate-800/60">
+              <span className="text-slate-400">Stream ID:</span>
+              <span className="text-slate-200">{data.ga4.streamId ?? "Web"}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Hostname Scope:</span>
@@ -217,12 +220,30 @@ export function ConnectionsSyncView({
               </span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
+              <span className="text-slate-400">Trạng thái dữ liệu:</span>
+              <span className="text-slate-200">
+                {data.ga4.staleReason === "NEVER_SYNCED"
+                  ? "Chưa đồng bộ"
+                  : data.ga4.stale
+                  ? "Dữ liệu cũ (cần đồng bộ lại)"
+                  : "Mới nhất"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Dữ liệu hoàn tất tới:</span>
-              <span className="font-semibold text-slate-200">{data.ga4.dataThroughDate ?? "Chưa có"}</span>
+              <span className="font-semibold text-slate-200">
+                {data.ga4.staleReason === "NEVER_SYNCED" || !data.ga4.dataThroughDate
+                  ? "Chưa có"
+                  : data.ga4.dataThroughDate}
+              </span>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Đồng bộ thành công gần nhất:</span>
-              <span className="text-slate-200">{displayDate(data.ga4.lastSuccessfulSync)}</span>
+              <span className="text-slate-200">
+                {data.ga4.staleReason === "NEVER_SYNCED" || !data.ga4.lastSuccessfulSync
+                  ? "Chưa đồng bộ"
+                  : displayDate(data.ga4.lastSuccessfulSync)}
+              </span>
             </div>
             <div>
               <span className="text-slate-400">Quyền Scopes đã cấp:</span>
