@@ -127,8 +127,9 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isStoreDelete = req.url && (req.url === "/api/stores/delete" || req.url.startsWith("/api/stores/delete?"));
         const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
+        const isSeoPerformance = req.url && (req.url === "/api/seo-performance" || req.url.startsWith("/api/seo-performance/"));
 
-        const isKnownApi = isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+        const isKnownApi = isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck || isSeoPerformance;
 
         if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
           if (!req.headers["x-gateway-key"]) {
