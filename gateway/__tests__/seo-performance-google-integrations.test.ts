@@ -21,7 +21,7 @@ async function databaseFixture(): Promise<{ readonly database: PGlite; readonly 
   const adapter: PerformanceDatabase = {
     query: connection().query,
     connect: async () => connection(),
-    end: async () => database.close(),
+    end: async () => {},
   };
   await applyPerformanceMigrations(adapter);
   return { database, adapter };
@@ -47,33 +47,29 @@ test("store OAuth binds sources and session, encrypts grants and preserves an ex
     generateAuthUrl: input => { state = input.state; return `https://accounts.example/consent?state=${input.state}`; },
     getToken: async () => ({ tokens: tokenResponse }),
   }));
-  try {
-    const first = await client.connectStore({ session: "admin-session", storeId: "jeminise", sources: ["GSC", "GA4"] });
-    await assert.rejects(
-      client.callback({ state, code: "code", session: "other-session", cookie: first.cookie }),
-      /INVALID_OAUTH_STATE/,
-    );
-    await client.callback({ state, code: "code", session: "admin-session", cookie: first.cookie });
+  const first = await client.connectStore({ session: "admin-session", storeId: "jeminise", sources: ["GSC", "GA4"] });
+  await assert.rejects(
+    client.callback({ state, code: "code", session: "other-session", cookie: first.cookie }),
+    /INVALID_OAUTH_STATE/,
+  );
+  await client.callback({ state, code: "code", session: "admin-session", cookie: first.cookie });
 
-    const connection = (await fixture.database.query<{
-      id: string; encrypted_refresh_token: string; granted_scopes: string[]; status: string;
-    }>("SELECT id,encrypted_refresh_token,granted_scopes,status FROM sp_google_connections")).rows[0];
-    assert.notEqual(connection.encrypted_refresh_token, "refresh-secret");
-    assert.equal(decryptSecret(connection.encrypted_refresh_token, Buffer.from(config.encryptionKey, "hex")), "refresh-secret");
-    assert.equal(connection.status, "CONNECTED");
-    assert.equal(connection.granted_scopes.length, 2);
+  const connection = (await fixture.database.query<{
+    id: string; encrypted_refresh_token: string; granted_scopes: string[]; status: string;
+  }>("SELECT id,encrypted_refresh_token,granted_scopes,status FROM sp_google_connections")).rows[0];
+  assert.notEqual(connection.encrypted_refresh_token, "refresh-secret");
+  assert.equal(decryptSecret(connection.encrypted_refresh_token, Buffer.from(config.encryptionKey, "hex")), "refresh-secret");
+  assert.equal(connection.status, "CONNECTED");
+  assert.equal(connection.granted_scopes.length, 2);
 
-    tokenResponse = { scope: tokenResponse.scope };
-    const second = await client.connectStore({ session: "admin-session", storeId: "jeminise", sources: ["GSC", "GA4"], connectionId: connection.id });
-    await client.callback({ state, code: "code-2", session: "admin-session", cookie: second.cookie });
-    const preserved = (await fixture.database.query<{ encrypted_refresh_token: string }>(
-      "SELECT encrypted_refresh_token FROM sp_google_connections WHERE id=$1",
-      [connection.id],
-    )).rows[0];
-    assert.equal(decryptSecret(preserved.encrypted_refresh_token, Buffer.from(config.encryptionKey, "hex")), "refresh-secret");
-  } finally {
-    await fixture.adapter.end();
-  }
+  tokenResponse = { scope: tokenResponse.scope };
+  const second = await client.connectStore({ session: "admin-session", storeId: "jeminise", sources: ["GSC", "GA4"], connectionId: connection.id });
+  await client.callback({ state, code: "code-2", session: "admin-session", cookie: second.cookie });
+  const preserved = (await fixture.database.query<{ encrypted_refresh_token: string }>(
+    "SELECT encrypted_refresh_token FROM sp_google_connections WHERE id=$1",
+    [connection.id],
+  )).rows[0];
+  assert.equal(decryptSecret(preserved.encrypted_refresh_token, Buffer.from(config.encryptionKey, "hex")), "refresh-secret");
 });
 
 test("GA4 consent fails closed when analytics.readonly is not granted", async () => {
@@ -83,15 +79,11 @@ test("GA4 consent fails closed when analytics.readonly is not granted", async ()
     generateAuthUrl: input => { state = input.state; return `https://accounts.example/consent?state=${input.state}`; },
     getToken: async () => ({ tokens: { refresh_token: "refresh-secret", scope: "https://www.googleapis.com/auth/webmasters.readonly" } }),
   }));
-  try {
-    const start = await client.connectStore({ session: "admin-session", storeId: "jeminise", sources: ["GSC", "GA4"] });
-    await assert.rejects(
-      client.callback({ state, code: "code", session: "admin-session", cookie: start.cookie }),
-      /GOOGLE_RECONSENT_REQUIRED/,
-    );
-    const count = await fixture.database.query<{ count: number }>("SELECT count(*)::int AS count FROM sp_google_connections");
-    assert.equal(count.rows[0].count, 0);
-  } finally {
-    await fixture.adapter.end();
-  }
+  const start = await client.connectStore({ session: "admin-session", storeId: "jeminise", sources: ["GSC", "GA4"] });
+  await assert.rejects(
+    client.callback({ state, code: "code", session: "admin-session", cookie: start.cookie }),
+    /GOOGLE_RECONSENT_REQUIRED/,
+  );
+  const count = await fixture.database.query<{ count: number }>("SELECT count(*)::int AS count FROM sp_google_connections");
+  assert.equal(count.rows[0].count, 0);
 });
