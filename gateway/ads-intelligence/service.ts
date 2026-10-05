@@ -148,6 +148,26 @@ export class AdsIntelligenceService {
     };
   }
 
+  async listMetaAccounts(): Promise<readonly { id: string; name: string; currency: string; timezone: string; status: number }[]> {
+    ensureEnvLoaded();
+    const token = process.env.META_ACCESS_TOKEN?.trim();
+    if (!token) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
+    const proxyUrl = process.env.META_PROXY_URL?.trim();
+    const meta = new MetaClient({
+      accessToken: token,
+      proxyUrl,
+      apiVersion: "v26.0",
+    });
+    const accounts = await meta.getAdAccounts();
+    return accounts.map((acc) => ({
+      id: acc.id,
+      name: acc.name,
+      currency: acc.currency,
+      timezone: acc.timezone_name,
+      status: acc.account_status,
+    }));
+  }
+
   async testGa4PropertyConnection(propertyId: string): Promise<{ success: boolean; propertyId: string; sessions: number; currency: string }> {
     ensureEnvLoaded();
     const ga4 = this.getGa4Client();

@@ -114,6 +114,14 @@ export class MetaClient {
     });
   }
 
+  async getAdAccounts(): Promise<readonly MetaAccountRaw[]> {
+    const res = await this.request<{ data?: readonly MetaAccountRaw[] }>("me/adaccounts", {
+      fields: "id,name,account_status,currency,timezone_name",
+      limit: "100",
+    });
+    return res.data ?? [];
+  }
+
   async getAccountInsights(accountId: string, datePreset = "maximum"): Promise<readonly MetaInsightRaw[]> {
     const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
     const res = await this.request<{ data?: readonly MetaInsightRaw[] }>(`${normalizedId}/insights`, {

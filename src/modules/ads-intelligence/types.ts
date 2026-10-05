@@ -548,11 +548,20 @@ export interface AdsIntelligenceClient {
   testGa4Connection?(propertyId: string): Promise<{ success: boolean; propertyId?: string; sessions?: number; currency?: string; error?: string }>;
   proposeGuardedWrite?(storeId: string, decisionIdOrEntityId: string): Promise<GuardedWriteProposal>;
   executeGuardedWrite?(proposalId: string, options?: { operatorConfirmText?: string; forceAllowV3?: boolean }): Promise<GuardedWriteExecutionResult>;
+  listMetaAdAccounts?(): Promise<{ success: boolean; accounts?: readonly MetaAdAccountInfo[]; error?: string }>;
   listMcpUsers?(): Promise<{ users: readonly McpUserToken[] }>;
   createMcpUser?(payload: { name: string; allowedStores: string[]; role?: string }): Promise<{ success: boolean; user: McpUserToken }>;
   revokeMcpUser?(id: string): Promise<{ success: boolean }>;
   deleteMcpUser?(id: string): Promise<{ success: boolean }>;
   getMcpAuditLogs?(limit?: number): Promise<{ auditLogs: readonly McpAuditLog[] }>;
+}
+
+export interface MetaAdAccountInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly account_status: number;
+  readonly currency: string;
+  readonly timezone_name: string;
 }
 
 export interface LocalAiRunnerInfo {
