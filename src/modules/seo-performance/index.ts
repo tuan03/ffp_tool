@@ -2,8 +2,12 @@ export type { PageKind, SearchMetrics, PerformanceDataSource, PerformanceIntegra
   PerformanceStoreIntegrationMapping, PerformanceIntegrationFreshness, GscIntegrationSummary, Ga4IntegrationSummary,
   PerformanceIntegrationSummary, PerformanceMapping, PageAudit, AuditFinding, PerformancePage, RecommendationInput,
   SeoRecommendation, PerformanceJob, PerformanceOverview, PerformanceFilters, PerformanceList, PerformanceEvent,
-  SeoPerformanceClient } from "./types";
+  SeoPerformanceClient, SearchReport, SearchReportFilters, SearchReportView, SearchReportRow, SearchReportDimension,
+  BenchmarkProductItem, BenchmarkSummaryKpis, BenchmarkFilters, ProductSeoDetailData, BatchDetailData, ConnectionsSyncData,
+  ProductVersionHistoryItem, ProductFieldDiff, ProductMediaAltDiff, ProductQueryItem, ProductGa4Data,
+  BenchmarkComparisonMode, BenchmarkDataStatus, BenchmarkMeasurementStatus, BenchmarkPerformanceStatus,
+} from "./types";
 export { createSeoPerformanceClient } from "./service";
 export { getSeoPerformanceClient } from "./runtime";
 export { createSeoPerformanceRoutes } from "./routes";
-export type { SearchReport, SearchReportFilters, SearchReportView, SearchReportRow, SearchReportDimension } from "./types";
+

@@ -6,6 +6,12 @@ import { isGatewayAuthorized } from "../http-server";
 import type { PerformanceService } from "./service";
 import { filtersSchema } from "./service";
 import { loadSearchReport, reportFiltersSchema, reportViewSchema } from "./report";
+import {
+  loadBatchDetail,
+  loadBenchmarkProducts,
+  loadConnectionsSync,
+  loadProductSeoDetail,
+} from "./benchmark-handler";
 
 function send(res: ServerResponse, status: number, value: unknown): void {
   res.statusCode = status; res.setHeader("Content-Type", "application/json; charset=utf-8"); res.setHeader("Cache-Control", "no-store"); res.end(JSON.stringify(value));
@@ -74,6 +80,10 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
         case "evidence": send(res, 200, await service.evidence(storeId, z.string().url().parse(url.searchParams.get("url")))); return;
         case "recommendations": send(res, 200, await service.repository.recommendations(storeId, filters.offset)); return;
         case "history": send(res, 200, await service.repository.history(storeId, filters.offset)); return;
+        case "benchmark/products": send(res, 200, await loadBenchmarkProducts(service, storeId, url.searchParams)); return;
+        case "benchmark/product": send(res, 200, await loadProductSeoDetail(service, storeId, url.searchParams.get("productId") ?? "")); return;
+        case "benchmark/batch": send(res, 200, await loadBatchDetail(service, storeId, url.searchParams.get("batchId") ?? "")); return;
+        case "connections-sync": send(res, 200, await loadConnectionsSync(service, storeId)); return;
       }
     } else {
       const payload = await body(req);
@@ -84,6 +94,11 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
         case "inspection": { const input = z.object({ url: z.string().url() }).strict().parse(payload); send(res, 202, await service.inspect(storeId, input.url)); return; }
         case "revise": { const input = z.object({ recommendationId: z.string().uuid() }).strict().parse(payload); send(res, 202, await service.revise(storeId, input.recommendationId, "operator")); return; }
         case "dismiss": { const input = z.object({ recommendationId: z.string().uuid() }).strict().parse(payload); await service.dismiss(storeId, input.recommendationId, "operator"); send(res, 200, { ok: true }); return; }
+        case "backfill": {
+          const input = z.object({ source: z.enum(["gsc", "ga4"]), days: z.number().int().min(1).max(90).default(28) }).strict().parse(payload);
+          send(res, 202, await service.start(storeId, input.source === "gsc" ? "gsc_sync" : "ga4_sync"));
+          return;
+        }
       }
     }
     send(res, 404, { error: { code: "NOT_FOUND" } });
