@@ -36,7 +36,12 @@ export class GoogleSearchClient {
     private readonly oauthFactory: OAuthFactory = () => new OAuth2Client(config.clientId, config.clientSecret, config.redirectUri),
   ) {}
   get configured(): boolean {
-    try { return Boolean(this.config.clientId && this.config.clientSecret && new URL(this.config.redirectUri).protocol === "https:" && /^[a-f0-9]{64}$/i.test(this.config.encryptionKey)); } catch { return false; }
+    try {
+      const url = new URL(this.config.redirectUri);
+      const isHttps = url.protocol === "https:";
+      const isLocalHttp = url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+      return Boolean(this.config.clientId && this.config.clientSecret && (isHttps || isLocalHttp) && /^[a-f0-9]{64}$/i.test(this.config.encryptionKey));
+    } catch { return false; }
   }
   private key(): Buffer { if (!this.configured) throw new Error("GSC_CONFIGURATION_REQUIRED"); return Buffer.from(this.config.encryptionKey, "hex"); }
   async connect(session: string): Promise<{ url: string; cookie: string }> {

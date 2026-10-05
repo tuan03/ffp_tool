@@ -41,7 +41,9 @@ function value(env: Readonly<Record<string, string | undefined>>, primary: strin
 function isValidRedirectUri(valueToValidate: string): boolean {
   try {
     const url = new URL(valueToValidate);
-    return url.protocol === "https:" && !url.username && !url.password && !url.hash;
+    const isHttps = url.protocol === "https:";
+    const isLocalHttp = url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+    return (isHttps || isLocalHttp) && !url.username && !url.password && !url.hash;
   } catch {
     return false;
   }
