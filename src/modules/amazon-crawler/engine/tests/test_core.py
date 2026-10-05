@@ -13,7 +13,14 @@ from engine.cache import CACHE_SCHEMA_VERSION, RawFamilyCache
 from engine.crawler_core import AmazonCrawler, CrawlFetchError, CrawlSettings, HttpFetcher, NormalizedInput, classify_crawl_failure, effective_product_threads, normalize_amazon_input, parse_product_html
 from engine.customization_converter import apply_preaurem_size_profile, expand_paid_variants, money, normalize_customization, remove_option_choosers
 from engine.proxy_profiles import ProxyAssignment
-from engine.variant_presets import PRESET_ID, build_jeminise_variants
+from engine.variant_presets import (
+    BEDDING_PRESET_ID,
+    BLANKET_PRESET_ID,
+    PRESET_ID,
+    build_jeminise_blanket_variants,
+    build_jeminise_preset_variants,
+    build_jeminise_variants,
+)
 
 
 PRODUCT_HTML = """
@@ -1245,6 +1252,55 @@ class CoreTests(unittest.TestCase):
         variants = build_jeminise_variants("B012345678")
         self.assertEqual(len(variants), 47)
         self.assertEqual(len({variant["sku"] for variant in variants}), 47)
+        # Verify standardized option names matching store
+        self.assertEqual(set(variants[0]["options"].keys()), {"Bedding Type", "Size", "Set Options"})
+        # Verify sample values
+        option_types = {v["options"]["Bedding Type"] for v in variants}
+        self.assertEqual(option_types, {"Duvet Cover", "Quilt", "Comforter"})
+        pillow_options = {v["options"]["Set Options"] for v in variants}
+        self.assertIn("No Pillowcases", pillow_options)
+        self.assertIn("2 Pillowcases + 1 Sheet", pillow_options)
+
+    def test_jeminise_blanket_preset_is_exactly_8_variants(self) -> None:
+        variants = build_jeminise_blanket_variants("B0BB96K6H8")
+        self.assertEqual(len(variants), 8)
+        self.assertEqual(len({variant["sku"] for variant in variants}), 8)
+        # Verify standardized option names
+        self.assertEqual(set(variants[0]["options"].keys()), {"Material", "Size"})
+        materials = {v["options"]["Material"] for v in variants}
+        self.assertEqual(materials, {"Fleece", "Sherpa"})
+        sizes = {v["options"]["Size"] for v in variants}
+        self.assertEqual(sizes, {'40" x 30"', '50" x 40"', '60" x 50"', '80" x 60"'})
+        # Verify SKU format matches sample
+        skus = [v["sku"] for v in variants]
+        self.assertIn("AMZ-B0BB96K6H8-BL-FL-4030", skus)
+        self.assertIn("AMZ-B0BB96K6H8-BL-SH-8060", skus)
+        # Verify prices match sample
+        fleece_4030 = next(v for v in variants if v["sku"] == "AMZ-B0BB96K6H8-BL-FL-4030")
+        self.assertEqual(fleece_4030["price"]["amount"], 24.90)
+        sherpa_8060 = next(v for v in variants if v["sku"] == "AMZ-B0BB96K6H8-BL-SH-8060")
+        self.assertEqual(sherpa_8060["price"]["amount"], 69.90)
+
+    def test_jeminise_preset_dispatch_by_product_type_and_title(self) -> None:
+        # 1. Product type Blanket -> 8 variants
+        blanket_v, b_id = build_jeminise_preset_variants("ASIN1", product_type="Blanket")
+        self.assertEqual(len(blanket_v), 8)
+        self.assertEqual(b_id, BLANKET_PRESET_ID)
+
+        # 2. Product type Bedding -> 47 variants
+        bedding_v, d_id = build_jeminise_preset_variants("ASIN2", product_type="Bedding")
+        self.assertEqual(len(bedding_v), 47)
+        self.assertEqual(d_id, BEDDING_PRESET_ID)
+
+        # 3. Title with Blanket -> 8 variants
+        t_blanket_v, tb_id = build_jeminise_preset_variants("ASIN3", title="Custom Fleece Throw Blanket")
+        self.assertEqual(len(t_blanket_v), 8)
+        self.assertEqual(tb_id, BLANKET_PRESET_ID)
+
+        # 4. Title with Quilt Bedding -> 47 variants
+        t_bedding_v, td_id = build_jeminise_preset_variants("ASIN4", title="Vintage Gothic Witch Quilt Bedding")
+        self.assertEqual(len(t_bedding_v), 47)
+        self.assertEqual(td_id, BEDDING_PRESET_ID)
 
     def test_versioned_cache_invalidates_incomplete_matrix(self) -> None:
         family = cache_family()

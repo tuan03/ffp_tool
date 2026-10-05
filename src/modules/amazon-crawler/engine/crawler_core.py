@@ -32,7 +32,14 @@ from .customization_converter import apply_preaurem_size_profile, expand_paid_va
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
 from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
 from .retry_policy import FetchFailure, RETRY_FIELDS, response_failure, retry_delay
-from .variant_presets import PRESET_ID, build_jeminise_variants
+from .variant_presets import (
+    BEDDING_PRESET_ID,
+    BLANKET_PRESET_ID,
+    PRESET_ID,
+    build_jeminise_blanket_variants,
+    build_jeminise_preset_variants,
+    build_jeminise_variants,
+)
 from .timeouts import CrawlTimeout, TIMEOUT_FIELDS, acquire_slot, bounded_method, check_deadline, remaining_seconds, timeout_scope, transport_context, wait_blocking
 from .observability import asin_scope, emit_event, mark_captcha, observe_attempt, observed_stage, redact, trace_fields, trace_scope, write_log
 
@@ -2135,9 +2142,13 @@ class AmazonCrawler:
                     "metadata": {"priceInference": deepcopy(variant.get("priceInference"))},
                 })
             if self.settings.profile_slug == "jeminise" and self.settings.apply_jeminise_preset:
-                final_variants = build_jeminise_variants(group_key)
+                final_variants, preset = build_jeminise_preset_variants(
+                    group_key,
+                    product_type=self.settings.product_type,
+                    title=title,
+                    categories=categories,
+                )
                 customization = remove_option_choosers(customization)
-                preset = PRESET_ID
             else:
                 final_variants = expand_paid_variants(
                     base_variants,
