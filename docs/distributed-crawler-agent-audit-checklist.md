@@ -181,7 +181,7 @@ Tasks 25–27 đã được triển khai gộp trên `cua_pro` local; quyết đ
 | [x] | 35 | DLQ có requeue/delete được phân quyền | 38, 48 (DLQ) | 34; E4.1 | Hết budget vào DLQ, requeue không duplicate; delete có audit | PostgreSQL persistence/idempotency test pass |
 | [x] | 36 | Dashboard thống nhất states/commands/backlog | 3, 6–7, 21–22, 47–48 (UI/heartbeat) | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Code QA tự động pass; xem báo cáo Task 36 |
 | [x] | 37 | Regression consumers chung và runtime | 49, 56 (regression; thêm ràng buộc FFP) | 36; G3/G4 | Amazon Reviews/Pinterest/Review Studio/pipeline/internal routes; đúng ba container | Automated regression + local runtime smoke pass; giới hạn ghi trong báo cáo Task 37 |
-| [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Xem báo cáo + demo, phân biệt giả và máy thật |
+| [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Chưa đạt: audit hai agent pass nhưng chưa chứng minh fleet 20 agent; xem [báo cáo Task 38](audits/distributed-crawler/task-38-mvp-fault-acceptance.md) |
 
 Tasks 33–35 đã pass code QA và được người dùng cho phép tiếp tục sau khi chạy PostgreSQL isolated; policy D9 là xóa terminal attempt sau 7 ngày và archive sau 7 ngày kể từ lúc archive. Task 36 đã hoàn tất; tiếp theo là Task 37.
 

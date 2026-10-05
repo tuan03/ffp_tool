@@ -114,6 +114,11 @@ async def verify_reliability(engine, run_number):
             with store.sessions.begin() as session:
                 session.get(CrawlTask, first["taskId"]).lease_expires_at = utc_now() - timedelta(seconds=1)
             store.reap_expired()
+            store.clear_negative_cache()
+            with store.sessions.begin() as session:
+                task = session.get(CrawlTask, first["taskId"])
+                task.next_retry_at = utc_now() - timedelta(seconds=1)
+                task.last_error = None
             second = store.lease_tasks(b.client_id, 1)[0]
             require(second["taskId"] == first["taskId"] and second["leaseId"] != first["leaseId"], "Reassignment failed")
             b.store.save_assignment(second)

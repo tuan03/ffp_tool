@@ -23,10 +23,11 @@ from sqlalchemy.engine import URL
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src/modules/amazon-crawler"))
 
 from engine.distributed.coordinator_models import (  # noqa: E402
-    Base, CrawlTask, CrawlProductItem, TaskAttempt, TaskResult, create_session_factory,
+    Base, ClientRecord, CrawlTask, CrawlProductItem, TaskAttempt, TaskResult, create_session_factory,
 )
 from engine.distributed.coordinator_store import CoordinatorStore  # noqa: E402
 from engine.distributed.protocol import payload_checksum, utc_now  # noqa: E402
+from engine.distributed.coordinator_migrations import MIGRATIONS, migrate_coordinator  # noqa: E402
 
 
 def require(condition: bool, message: str) -> None:
@@ -53,6 +54,16 @@ def local_test_url() -> URL:
     )
 
 
+def reset_audit_schema(engine) -> None:
+    with engine.connect() as connection:
+        schema = connection.execute(text("SELECT current_schema()")).scalar()
+    require(isinstance(schema, str) and re.fullmatch(r"ffp_audit01_[0-9a-f]{32}", schema) is not None,
+            "Refuse to reset outside this audit's disposable PostgreSQL schema")
+    Base.metadata.drop_all(engine)
+    MIGRATIONS.drop(engine, checkfirst=True)
+    migrate_coordinator(engine)
+
+
 def characterize(engine, run_number: int, expectation: str) -> None:
     sessions = create_session_factory(engine)
     store = CoordinatorStore(sessions)
@@ -63,7 +74,12 @@ def characterize(engine, run_number: int, expectation: str) -> None:
             "availableSlots": 1, "maxConcurrentInputs": 1,
             "capabilities": {"amazon": True},
         })
-    first = store.lease_tasks("audit-a", 1)[0]
+    first_leases = store.lease_tasks("audit-a", 1)
+    if not first_leases:
+        with sessions() as session:
+            task_states = list(session.scalars(select(CrawlTask.status)))
+        raise RuntimeError(f"Audit fixture did not lease: gate={store.get_global_admission_gate()}, taskStates={task_states}")
+    first = first_leases[0]
     with sessions.begin() as session:
         task = session.get(CrawlTask, first["taskId"])
         require(task is not None and task.assigned_client_id == "audit-a", "A must own first lease")
@@ -77,7 +93,20 @@ def characterize(engine, run_number: int, expectation: str) -> None:
         print(f"RUN {run_number}: expired A before reaper=stale")
     reaped = store.reap_expired()
     require(reaped["requeuedTasks"] == 1, "Exactly one expired task must be requeued")
-    second = store.lease_tasks("audit-b", 1)[0]
+    store.clear_negative_cache()
+    with sessions.begin() as session:
+        task = session.get(CrawlTask, first["taskId"])
+        task.next_retry_at = utc_now() - timedelta(seconds=1)
+        task.last_error = None
+    second_leases = store.lease_tasks("audit-b", 1)
+    if not second_leases:
+        with sessions() as session:
+            task = session.get(CrawlTask, first["taskId"])
+            client = session.get(ClientRecord, "audit-b")
+            details = (task.status, task.failure_count, task.next_retry_at, task.last_error,
+                       client.status, client.global_admission_gate_revision, client.global_admission_gate_state)
+        raise RuntimeError(f"Requeued audit lease unavailable: {details}")
+    second = second_leases[0]
     require(first["taskId"] == second["taskId"], "B must receive the same task")
     require(first["leaseId"] != second["leaseId"], "B must receive a new lease")
     with sessions() as session:
@@ -153,7 +182,7 @@ def main() -> None:
                     require(connection.execute(text("SELECT current_schema()")).scalar() == schema, "Wrong schema")
                     print("backend=postgresql; search_path excludes public")
                 require(not inspect(engine).get_table_names(), "Test schema must start empty")
-                Base.metadata.create_all(engine)
+                migrate_coordinator(engine)
                 if arguments.operator_auth or arguments.agent_keys or arguments.identity or arguments.proxy_auth:
                     from engine.tests.test_operator_authorization import OperatorAuthorizationTests
                     from engine.tests.test_agent_keys import AgentKeyTests
@@ -169,15 +198,12 @@ def main() -> None:
                 elif arguments.reliability:
                     verify_mutations(engine, run_number)
                     verify_mutations(engine, run_number, receipts=True)
-                    Base.metadata.drop_all(engine)
-                    Base.metadata.create_all(engine)
+                    reset_audit_schema(engine)
                     verify_streaming(engine, run_number)
-                    Base.metadata.drop_all(engine)
-                    Base.metadata.create_all(engine)
+                    reset_audit_schema(engine)
                     from reliability_scenario import verify_claim_race, verify_reliability
                     verify_claim_race(engine)
-                    Base.metadata.drop_all(engine)
-                    Base.metadata.create_all(engine)
+                    reset_audit_schema(engine)
                     asyncio.run(verify_reliability(engine, run_number))
                 elif arguments.mutations or arguments.receipts:
                     verify_mutations(engine, run_number, receipts=arguments.receipts)
@@ -254,7 +280,12 @@ def verify_streaming(engine, run_number: int) -> None:
     for client_id in ("audit-a", "audit-b"):
         store.register_client({"clientId": client_id, "displayName": client_id,
                                "availableSlots": 1, "maxConcurrentInputs": 1})
-    first = store.lease_tasks("audit-a", 1)[0]
+    first_leases = store.lease_tasks("audit-a", 1)
+    if not first_leases:
+        with sessions() as session:
+            task_states = list(session.scalars(select(CrawlTask.status)))
+        raise RuntimeError(f"Audit fixture did not lease: gate={store.get_global_admission_gate()}, taskStates={task_states}")
+    first = first_leases[0]
     payload = {"jobId": job["id"], "product": {"id": "fixture-product", "title": "Current B"}}
 
     def upload(lease, client_id):
@@ -265,6 +296,11 @@ def verify_streaming(engine, run_number: int) -> None:
         session.get(CrawlTask, first["taskId"]).lease_expires_at = utc_now() - timedelta(seconds=1)
     require(upload(first, "audit-a")["status"] == "stale", "Expired A must not stream before reaper")
     store.reap_expired()
+    store.clear_negative_cache()
+    with sessions.begin() as session:
+        task = session.get(CrawlTask, first["taskId"])
+        task.next_retry_at = utc_now() - timedelta(seconds=1)
+        task.last_error = None
     second = store.lease_tasks("audit-b", 1)[0]
     require(upload(first, "audit-a")["status"] == "stale", "Reassigned A must not stream")
     with sessions() as session:
