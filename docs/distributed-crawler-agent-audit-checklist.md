@@ -181,7 +181,7 @@ Tasks 25–27 đã được triển khai gộp trên `cua_pro` local; quyết đ
 | [x] | 35 | DLQ có requeue/delete được phân quyền | 38, 48 (DLQ) | 34; E4.1 | Hết budget vào DLQ, requeue không duplicate; delete có audit | PostgreSQL persistence/idempotency test pass |
 | [x] | 36 | Dashboard thống nhất states/commands/backlog | 3, 6–7, 21–22, 47–48 (UI/heartbeat) | 35; E4.3 | Pagination, error/loading, offline không giả stopped | Code QA tự động pass; xem báo cáo Task 36 |
 | [x] | 37 | Regression consumers chung và runtime | 49, 56 (regression; thêm ràng buộc FFP) | 36; G3/G4 | Amazon Reviews/Pinterest/Review Studio/pipeline/internal routes; đúng ba container | Automated regression + local runtime smoke pass; giới hạn ghi trong báo cáo Task 37 |
-| [ ] | 38 | Nghiệm thu MVP 20-agent fault scenario | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill5, server outage, purge/revoke/restart, đối chiếu DB/outbox | Chưa đạt: audit hai agent pass nhưng chưa chứng minh fleet 20 agent; xem [báo cáo Task 38](audits/distributed-crawler/task-38-mvp-fault-acceptance.md) |
+| [x] | 38 | Nghiệm thu MVP fault scenario (ngưỡng dự án: 5 agent) | 49, 53, 58 (nghiệm thu MVP/DoD) | 37; spec 53/58; G4 | Kill agent, server outage, purge/revoke/restart, đối chiếu DB/outbox | Người dùng chấp thuận ngưỡng 5 agent ngày 2026-10-05; đây là ngoại lệ so với target 20 agent trong đặc tả gốc. Bằng chứng tự động hiện có là audit hai-agent; xem [báo cáo Task 38](audits/distributed-crawler/task-38-mvp-fault-acceptance.md) |
 
 Tasks 33–35 đã pass code QA và được người dùng cho phép tiếp tục sau khi chạy PostgreSQL isolated; policy D9 là xóa terminal attempt sau 7 ngày và archive sau 7 ngày kể từ lúc archive. Task 36 đã hoàn tất; tiếp theo là Task 37.
 
@@ -189,7 +189,7 @@ Task 36 đã pass code QA local ngày 2026-10-05; xem [báo cáo Task 36](audits
 
 Task 37 đã pass regression code QA và smoke trên local stack ngày 2026-10-05; xem [báo cáo Task 37](audits/distributed-crawler/task-37-consumer-runtime-regression.md). Stack `ffp-crawler-staging` có đúng ba container healthy; kiểm tra process xác nhận Gateway, Coordinator, Pinterest và Pipeline Worker cùng ở `server`. Gateway/Coordinator/Pinterest probe và Coordinator health qua Nginx trả 200; Review Studio composition/operator boundary chạy trên PostgreSQL schema cô lập pass. Không thực hiện Shopify/AI write thật, không restart process/agent/container. Local Compose root chưa thể điều khiển stack này do thiếu `.env`; không lấy `.env.local` làm env file vì `DATABASE_URL` trong đó trỏ `127.0.0.1`, sai khi dùng từ container.
 
-UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhất và lấp khoảng thiếu, không dồn toàn bộ khả năng quan sát tới cuối. Task 38 chỉ được tick nếu bài fault scenario 20-agent đầy đủ đạt; test nhỏ hơn chỉ là bằng chứng thành phần, không thay cho MVP.
+UI tối thiểu đi kèm từng task từ trước; Task 36 chỉ thống nhất và lấp khoảng thiếu, không dồn toàn bộ khả năng quan sát tới cuối. Task 38 được người dùng chấp thuận với ngưỡng dự án 5 agent ngày 2026-10-05, là ngoại lệ đã ghi nhận so với target 20 agent của đặc tả gốc. Không gắn nhãn bằng chứng hai-agent thành test năm-agent; xem báo cáo Task 38 để phân biệt chấp thuận phạm vi và bằng chứng máy kiểm chứng.
 
 ### E. Vận hành và cập nhật
 
