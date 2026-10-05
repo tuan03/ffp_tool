@@ -5,7 +5,7 @@ import { Pool } from "pg";
 import type { PageAudit, PerformanceMapping, PerformanceFilters, PerformanceList, PerformancePage, SearchMetrics, SeoRecommendation, RecommendationInput, PerformanceEvent, PerformanceJob } from "../../src/modules/seo-performance";
 import { aggregateMetrics, opportunityReasons, pacificDate, shiftDate } from "./analytics";
 import { digest } from "./google-client";
-import { PERFORMANCE_SCHEMA_SQL } from "./schema";
+import { applyPerformanceMigrations } from "./migrations";
 import { normalizePageUrl, pageKind } from "./url-policy";
 
 export interface PageRecord { store_id: string; url: string; kind: PerformancePage["kind"]; product_id: string | null; source: Record<string, unknown> | null; snapshot_id: string | null; checked_at: Date | null; audit: PageAudit | null; inspection: unknown; inspected_at: Date | null }
@@ -26,7 +26,7 @@ export class PerformanceRepository {
   private initialization?: Promise<void>;
   constructor(databaseUrl: string, database?: PerformanceDatabase) { this.pool = database ?? new Pool({ connectionString: databaseUrl, max: 4, connectionTimeoutMillis: 5000, statement_timeout: 30000 }); }
   async initialize(): Promise<void> {
-    if (!this.initialization) this.initialization = this.transaction(async client => { await client.query("SELECT pg_advisory_xact_lock(hashtext('ffp-seo-performance-schema'))"); await client.query(PERFORMANCE_SCHEMA_SQL); }).catch(error => { this.initialization = undefined; throw error; });
+    if (!this.initialization) this.initialization = applyPerformanceMigrations(this.pool).catch(error => { this.initialization = undefined; throw error; });
     return this.initialization;
   }
   async transaction<T>(run: (client: PerformanceConnection) => Promise<T>): Promise<T> {
