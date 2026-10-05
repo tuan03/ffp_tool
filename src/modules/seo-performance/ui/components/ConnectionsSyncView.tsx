@@ -82,9 +82,9 @@ export function ConnectionsSyncView({
               type="button"
               disabled={busy}
               onClick={() => runAction(onReconnect, "Đang chuyển hướng kết nối lại Google...")}
-              className="text-xs text-cyan-400 hover:underline"
+              className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 hover:text-white transition shadow-sm disabled:opacity-40"
             >
-              Kết nối lại
+              🔗 Kết nối lại Google
             </button>
           </div>
 
@@ -172,7 +172,17 @@ export function ConnectionsSyncView({
                 {data.ga4.status}
               </span>
             </div>
-            <span className="text-xs text-slate-400">Stream: {data.ga4.streamId ?? "Web"}</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-400">Stream: {data.ga4.streamId ?? "Web"}</span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction(onReconnect, "Đang chuyển hướng kết nối lại Google...")}
+                className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 hover:text-white transition shadow-sm disabled:opacity-40"
+              >
+                🔗 Kết nối lại Google
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2 text-xs text-slate-300">
