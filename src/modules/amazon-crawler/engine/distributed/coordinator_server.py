@@ -822,16 +822,28 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if security is None:
             raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
         command_payload_value: dict[str, Any] | None = None
-        if payload.type == "PURGE_PENDING_TASKS":
-            if not payload.taskIds or len(set(payload.taskIds)) != len(payload.taskIds):
-                raise HTTPException(status_code=422, detail="Purge requires a non-empty unique taskIds scope.")
+        if payload.type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
+            is_purge_all = payload.type == "PURGE_ALL_LOCAL_TASKS"
+            if is_purge_all and payload.includeRunning:
+                raise HTTPException(status_code=422, detail="Running-task cancellation is not enabled for purge-all.")
+            if (is_purge_all and payload.taskIds) or (not is_purge_all and (not payload.taskIds or len(set(payload.taskIds)) != len(payload.taskIds))):
+                raise HTTPException(status_code=422, detail="Purge requires a valid, explicit task scope.")
+            if is_purge_all and not payload.dryRun and (payload.expectedPendingCount is None or not payload.confirmation):
+                raise HTTPException(status_code=422, detail="Purge-all requires a count and explicit confirmation.")
             purge_payload = {
                 "taskIds": list(payload.taskIds),
+                "scope": "all-local" if is_purge_all else "pending",
+                "includeRunning": payload.includeRunning,
                 "expectedPendingCount": payload.expectedPendingCount,
                 "reason": payload.reason.strip() if payload.reason else "",
             }
             existing = await asyncio.to_thread(command_ledger.request_snapshot, client_id, payload.requestId.hex)
             if existing is not None:
+                if is_purge_all:
+                    existing_payload = existing.get("payload") or {}
+                    if existing_payload.get("reason") != purge_payload["reason"]:
+                        raise HTTPException(status_code=409, detail="Request ID was already used for a different purge reason.")
+                    purge_payload = existing_payload
                 command = await asyncio.to_thread(
                     command_ledger.submit, client_id, payload.requestId.hex,
                     payload.type, payload.expiresInSeconds, purge_payload,
@@ -842,22 +854,30 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 raise HTTPException(status_code=409, detail="Pause the agent and wait for PAUSED acknowledgement before purging pending assignments.")
             runtime = await manager.runtime_snapshot()
             executing_task_ids = set((runtime.get(client_id) or {}).get("executingTaskIds") or [])
-            preview = await asyncio.to_thread(store.preview_pending_tasks, client_id, payload.taskIds, executing_task_ids)
+            preview = await asyncio.to_thread(
+                store.preview_all_local_pending_tasks if is_purge_all else store.preview_pending_tasks,
+                client_id, *( (executing_task_ids,) if is_purge_all else (payload.taskIds, executing_task_ids) ),
+            )
+            if preview.get("overflow"):
+                raise HTTPException(status_code=409, detail="Purge-all scope exceeds the 500-task safety limit; use explicit task IDs.")
             if payload.dryRun:
                 return JSONResponse(status_code=200, content={"dryRun": True, **preview})
-            confirmation = f"PURGE_PENDING_TASKS:{payload.expectedPendingCount}"
+            confirmation = f"{payload.type}:{payload.expectedPendingCount}"
             if (payload.expectedPendingCount != preview["pendingCount"]
-                    or preview["ineligibleCount"] != 0
+                    or (preview["ineligibleCount"] != 0 and not is_purge_all)
                     or payload.confirmation != confirmation
                     or not payload.reason or len(payload.reason.strip()) < 10):
                 raise HTTPException(status_code=409, detail={
                     "message": "Purge confirmation does not match the current pending scope.",
-                    "scope": "pending", "beforeCount": preview["pendingCount"],
+                    "scope": "all-local" if is_purge_all else "pending", "beforeCount": preview["pendingCount"],
                     "ineligibleCount": preview["ineligibleCount"],
                 })
+            if is_purge_all:
+                purge_payload["taskIds"] = list(preview["eligibleTaskIds"])
             runtime = await manager.runtime_snapshot()
             executing_task_ids = set((runtime.get(client_id) or {}).get("executingTaskIds") or [])
-            fenced = await asyncio.to_thread(store.cancel_pending_tasks, client_id, payload.taskIds, executing_task_ids)
+            fenced = await asyncio.to_thread(store.cancel_pending_tasks, client_id,
+                preview["eligibleTaskIds"] if is_purge_all else payload.taskIds, executing_task_ids)
             if fenced is None:
                 raise HTTPException(status_code=409, detail="Pending assignments changed during confirmation; run dry-run again.")
             for assignment in fenced:

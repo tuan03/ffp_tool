@@ -463,6 +463,29 @@ export function createAmazonCrawlerCommandController({
       });
       await readJson(response);
     },
+    async previewPurgeAllLocal(agentId): Promise<AmazonCrawlerPendingPurgePreview> {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_ALL_LOCAL_TASKS", includeRunning: false, dryRun: true }),
+      });
+      const payload: unknown = await readJson(response);
+      if (!isRecord(payload) || payload.scope !== "all-local" || !Array.isArray(payload.eligibleTaskIds)
+          || typeof payload.pendingCount !== "number" || typeof payload.ineligibleCount !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid purge-all preview.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { scope: "all-local", requestedCount: typeof payload.requestedCount === "number" ? payload.requestedCount : 0,
+        pendingCount: payload.pendingCount, ineligibleCount: payload.ineligibleCount,
+        eligibleTaskIds: payload.eligibleTaskIds.filter((taskId): taskId is string => typeof taskId === "string") };
+    },
+    async purgeAllLocal(agentId, expectedPendingCount, reason) {
+      const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), type: "PURGE_ALL_LOCAL_TASKS",
+          includeRunning: false, expectedPendingCount,
+          confirmation: `PURGE_ALL_LOCAL_TASKS:${expectedPendingCount}`, reason }),
+      });
+      await readJson(response);
+    },
     async history(agentId) {
       const response = await fetchImplementation(`${baseUrl}/api/v1/clients/${encodeURIComponent(agentId)}/commands?limit=20`);
       const payload: unknown = await readJson(response);
@@ -473,7 +496,8 @@ export function createAmazonCrawlerCommandController({
         commandId: typeof entry.commandId === "string" ? entry.commandId : "",
         sequence: typeof entry.sequence === "number" ? entry.sequence : 0,
         type: entry.type === "PAUSE" ? "PAUSE" as const
-          : entry.type === "PURGE_PENDING_TASKS" ? "PURGE_PENDING_TASKS" as const : "RESUME" as const,
+          : entry.type === "PURGE_PENDING_TASKS" ? "PURGE_PENDING_TASKS" as const
+          : entry.type === "PURGE_ALL_LOCAL_TASKS" ? "PURGE_ALL_LOCAL_TASKS" as const : "RESUME" as const,
         status: typeof entry.status === "string" ? entry.status : "UNKNOWN",
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
         error: typeof entry.error === "string" ? entry.error : null,

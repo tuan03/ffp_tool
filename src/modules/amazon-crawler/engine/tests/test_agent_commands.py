@@ -311,6 +311,31 @@ class AgentCommandWebSocketTests(unittest.TestCase):
             self.assertEqual(repeated.status_code, 202, repeated.text)
             self.assertEqual(repeated.json()["commandId"], accepted.json()["commandId"])
 
+            all_job = app.state.store.create_job({"urls": ["B0FR4MSS3H"]})
+            all_task_id = app.state.store.lease_tasks(agent_id, 1)[0]["taskId"]
+            all_preview = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json={
+                "requestId": uuid.uuid4().hex, "type": "PURGE_ALL_LOCAL_TASKS", "dryRun": True,
+            })
+            self.assertEqual(all_preview.status_code, 200, all_preview.text)
+            self.assertEqual(all_preview.json()["scope"], "all-local")
+            self.assertEqual(all_preview.json()["eligibleTaskIds"], [all_task_id])
+            all_request_id = uuid.uuid4().hex
+            all_body = {"requestId": all_request_id, "type": "PURGE_ALL_LOCAL_TASKS",
+                "expectedPendingCount": 1, "confirmation": "PURGE_ALL_LOCAL_TASKS:1",
+                "reason": "Clear all queued assignments for test"}
+            all_rejected = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth,
+                json={**all_body, "confirmation": "PURGE_ALL_LOCAL_TASKS:2", "expectedPendingCount": 2})
+            self.assertEqual(all_rejected.status_code, 409, all_rejected.text)
+            all_accepted = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json=all_body)
+            self.assertEqual(all_accepted.status_code, 202, all_accepted.text)
+            self.assertEqual(all_accepted.json()["type"], "PURGE_ALL_LOCAL_TASKS")
+            self.assertEqual(all_accepted.json()["payload"]["taskIds"], [all_task_id])
+            with app.state.store.sessions() as session:
+                self.assertEqual(session.get(CrawlTask, all_task_id).status, "cancelled")
+            all_repeated = client.post(f"/api/v1/clients/{agent_id}/commands", auth=auth, json=all_body)
+            self.assertEqual(all_repeated.status_code, 202, all_repeated.text)
+            self.assertEqual(all_repeated.json()["commandId"], all_accepted.json()["commandId"])
+
     def test_offline_command_is_replayed_before_secure_agent_can_become_ready(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

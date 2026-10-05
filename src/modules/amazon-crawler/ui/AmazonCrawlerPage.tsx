@@ -479,16 +479,32 @@ export function AmazonCrawlerPage({
     }
   }
 
+  async function handlePurgeAllLocalPreview(client: AmazonCrawlerClientSummary): Promise<void> {
+    if (!amazonCrawlerCommands || commandBusyClientId) return;
+    setCommandBusyClientId(client.id);
+    setCommandError(null);
+    try {
+      const preview = await amazonCrawlerCommands.previewPurgeAllLocal(client.id);
+      setPurgePreviews((current) => ({ ...current, [client.id]: preview }));
+    } catch (error: unknown) {
+      setCommandError(error instanceof Error ? error.message : "Không kiểm tra được phạm vi purge-all.");
+    } finally {
+      setCommandBusyClientId(null);
+    }
+  }
+
   async function handlePendingPurge(client: AmazonCrawlerClientSummary): Promise<void> {
     if (!amazonCrawlerCommands || commandBusyClientId) return;
     const preview = purgePreviews[client.id];
     const reason = (purgeReasons[client.id] ?? "").trim();
     if (!preview || preview.ineligibleCount !== 0 || preview.pendingCount < 1 || reason.length < 10) return;
-    if (!window.confirm(`Xóa ${preview.pendingCount} assignment chưa chạy của agent này? Task đang chạy và outbox được giữ nguyên.`)) return;
+    const isPurgeAll = preview.scope === "all-local";
+    if (!window.confirm(`Xóa ${preview.pendingCount} assignment chưa chạy${isPurgeAll ? " trong toàn agent" : ""}? Task đang chạy và outbox được giữ nguyên.`)) return;
     setCommandBusyClientId(client.id);
     setCommandError(null);
     try {
-      await amazonCrawlerCommands.purgePending(client.id, preview.eligibleTaskIds, preview.pendingCount, reason);
+      if (isPurgeAll) await amazonCrawlerCommands.purgeAllLocal(client.id, preview.pendingCount, reason);
+      else await amazonCrawlerCommands.purgePending(client.id, preview.eligibleTaskIds, preview.pendingCount, reason);
       const history = await amazonCrawlerCommands.history(client.id);
       setPurgePreviews((current) => {
         const next = { ...current };
@@ -1484,13 +1500,21 @@ export function AmazonCrawlerPage({
                         className="rounded border border-amber-700 px-2 py-1 text-[11px] text-amber-200 disabled:opacity-50">
                         {commandBusyClientId === client.id ? "Đang kiểm tra…" : "Kiểm tra phạm vi"}
                       </button>
+                      <button type="button" disabled={commandBusyClientId !== null || client.appliedExecutionState !== "PAUSED"}
+                        onClick={() => void handlePurgeAllLocalPreview(client)}
+                        className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                        Preview purge-all
+                      </button>
                       {purgePreviews[client.id] ? <span className="text-[11px] text-slate-300">
+                        {purgePreviews[client.id].scope === "all-local" ? "Toàn agent: " : "Scope IDs: "}
                         {purgePreviews[client.id].pendingCount} pending · {purgePreviews[client.id].ineligibleCount} không hợp lệ
                       </span> : null}
                       {purgePreviews[client.id]?.pendingCount && purgePreviews[client.id]?.ineligibleCount === 0 ?
                         <button type="button" disabled={commandBusyClientId !== null || (purgeReasons[client.id] ?? "").trim().length < 10}
                           onClick={() => void handlePendingPurge(client)}
-                          className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">Purge pending</button> : null}
+                        className="rounded border border-rose-800 px-2 py-1 text-[11px] text-rose-200 disabled:opacity-50">
+                          {purgePreviews[client.id].scope === "all-local" ? "Purge all local" : "Purge pending"}
+                        </button> : null}
                     </div>
                     <p className="text-[10px] text-slate-500">Chỉ thao tác khi agent PAUSED; task đang chạy và outbox không bị xóa.</p>
                   </div>
@@ -1498,7 +1522,8 @@ export function AmazonCrawlerPage({
                     const result = command.events.map((event) => event.detail.result).find((value): value is Record<string, unknown> =>
                       typeof value === "object" && value !== null && !Array.isArray(value));
                     return <div key={command.commandId} className="mt-2 text-[11px] text-slate-400">
-                      #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục" : "Purge pending"} — {command.status}
+                      #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục"
+                        : command.type === "PURGE_ALL_LOCAL_TASKS" ? "Purge all local" : "Purge pending"} — {command.status}
                       {command.events.length ? <span> · {command.events.map((event) => event.status).join(" → ")}</span> : null}
                       {result && typeof result.beforeCount === "number" ? <p>Trước {result.beforeCount} · đã purge {typeof result.purgedCount === "number" ? result.purgedCount : 0} · còn {typeof result.afterCount === "number" ? result.afterCount : 0}</p> : null}
                       {command.error ? <p className="text-rose-300">{command.error}</p> : null}

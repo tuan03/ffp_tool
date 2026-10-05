@@ -2597,6 +2597,21 @@ class CoordinatorStore(CoordinatorObservability):
                     "pendingCount": len(eligible), "eligibleTaskIds": sorted(eligible),
                     "ineligibleCount": len(task_ids) - len(eligible)}
 
+    def preview_all_local_pending_tasks(self, client_id: str,
+                                        executing_task_ids: set[str] | None = None) -> dict[str, Any]:
+        """Snapshot every unstarted lease owned by this agent, with a hard protocol bound."""
+        with self.sessions() as session:
+            tasks = list(session.scalars(select(CrawlTask).where(
+                CrawlTask.assigned_client_id == client_id,
+                CrawlTask.status == "leased",
+            ).order_by(CrawlTask.id).limit(501)))
+            eligible = [task.id for task in tasks if task.lease_id
+                        and task.id not in (executing_task_ids or set())]
+            overflow = len(tasks) > 500
+            return {"scope": "all-local", "requestedCount": len(tasks),
+                    "pendingCount": len(eligible), "eligibleTaskIds": sorted(eligible) if not overflow else [],
+                    "ineligibleCount": len(tasks) - len(eligible), "overflow": overflow}
+
     def acknowledge_stop_cleanup(
         self,
         client_id: str,

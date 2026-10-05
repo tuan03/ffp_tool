@@ -1750,6 +1750,21 @@ class CoordinatorStoreTests(unittest.TestCase):
             self.assertEqual(session.get(CrawlTask, pending["taskId"]).status, "cancelled")
             self.assertEqual(session.get(CrawlTask, running["taskId"]).status, "leased")
 
+    def test_purge_all_local_preview_excludes_executing_assignment(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H", "B0FR4MSS3H"]})
+        self.store.register_client(client_hello(slots=2))
+        leases = self.store.lease_tasks("client-a", 2)
+        executing_id = leases[0]["taskId"]
+        pending_id = leases[1]["taskId"]
+
+        preview = self.store.preview_all_local_pending_tasks("client-a", {executing_id})
+
+        self.assertEqual(preview["scope"], "all-local")
+        self.assertEqual(preview["pendingCount"], 1)
+        self.assertEqual(preview["eligibleTaskIds"], [pending_id])
+        self.assertEqual(preview["ineligibleCount"], 1)
+        self.assertFalse(preview["overflow"])
+
     def test_heartbeat_renews_queued_lease_without_marking_it_running(self) -> None:
         self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))

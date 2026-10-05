@@ -665,7 +665,7 @@ export interface AmazonCrawlerAgentCommandEvent {
 export interface AmazonCrawlerAgentCommandSummary {
   commandId: string;
   sequence: number;
-  type: "PAUSE" | "RESUME" | "PURGE_PENDING_TASKS";
+  type: "PAUSE" | "RESUME" | "PURGE_PENDING_TASKS" | "PURGE_ALL_LOCAL_TASKS";
   status: string;
   createdAt: string | null;
   error: string | null;
@@ -676,11 +676,13 @@ export interface AmazonCrawlerCommandController {
   submit(agentId: string, type: "PAUSE" | "RESUME"): Promise<void>;
   previewPendingPurge(agentId: string, taskIds: readonly string[]): Promise<AmazonCrawlerPendingPurgePreview>;
   purgePending(agentId: string, taskIds: readonly string[], expectedPendingCount: number, reason: string): Promise<void>;
+  previewPurgeAllLocal(agentId: string): Promise<AmazonCrawlerPendingPurgePreview>;
+  purgeAllLocal(agentId: string, expectedPendingCount: number, reason: string): Promise<void>;
   history(agentId: string): Promise<readonly AmazonCrawlerAgentCommandSummary[]>;
 }
 
 export interface AmazonCrawlerPendingPurgePreview {
-  scope: "pending";
+  scope: "pending" | "all-local";
   requestedCount: number;
   pendingCount: number;
   eligibleTaskIds: readonly string[];

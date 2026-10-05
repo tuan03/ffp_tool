@@ -345,6 +345,28 @@ test("pending purge controller previews and sends exact scoped confirmation", as
   assert.match(requests[1]?.body ?? "", /"reason":"remove test assignment"/);
 });
 
+test("purge-all controller confirms the agent-wide pending scope", async () => {
+  const requests: Array<{ body: string }> = [];
+  const controller = createAmazonCrawlerCommandController({
+    engineUrl: "https://coordinator.test",
+    fetchImplementation: async (_input, init) => {
+      requests.push({ body: String(init?.body ?? "") });
+      return jsonResponse(requests.length === 1
+        ? { dryRun: true, scope: "all-local", requestedCount: 2, pendingCount: 2,
+          eligibleTaskIds: ["task-1", "task-2"], ineligibleCount: 0 }
+        : { commandId: "purge-all-command" }, requests.length === 1 ? 200 : 202);
+    },
+  });
+  const preview = await controller.previewPurgeAllLocal("agent-1");
+  assert.equal(preview.scope, "all-local");
+  assert.deepEqual(preview.eligibleTaskIds, ["task-1", "task-2"]);
+  await controller.purgeAllLocal("agent-1", preview.pendingCount, "clear test agent assignments");
+  assert.match(requests[0]?.body ?? "", /"type":"PURGE_ALL_LOCAL_TASKS"/);
+  assert.match(requests[0]?.body ?? "", /"dryRun":true/);
+  assert.match(requests[1]?.body ?? "", /"confirmation":"PURGE_ALL_LOCAL_TASKS:2"/);
+  assert.match(requests[1]?.body ?? "", /"reason":"clear test agent assignments"/);
+});
+
 test("global admission controller loads and changes only the crawler gate", async () => {
   const requests: Array<{ url: string; method: string; body: string }> = [];
   const controller = createAmazonCrawlerAdmissionGateController({

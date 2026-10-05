@@ -16,7 +16,7 @@ from .protocol import utc_now
 
 
 JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
-COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "PURGE_PENDING_TASKS": 5}
+COMMAND_PRIORITY = {"PAUSE": 4, "RESUME": 4, "PURGE_PENDING_TASKS": 5, "PURGE_ALL_LOCAL_TASKS": 5}
 TERMINAL_STATUSES = {"SUCCESS", "FAILED", "EXPIRED"}
 ALLOWED_UPDATES = {"ACKED", "RUNNING", "SUCCESS", "FAILED", "EXPIRED"}
 
@@ -25,9 +25,10 @@ class AgentCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requestId: uuid.UUID
-    type: Literal["PAUSE", "RESUME", "PURGE_PENDING_TASKS"]
+    type: Literal["PAUSE", "RESUME", "PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"]
     expiresInSeconds: int = Field(default=86400, strict=True, ge=5, le=86400)
-    taskIds: list[str] = Field(default_factory=list, min_length=1, max_length=500)
+    taskIds: list[str] = Field(default_factory=list, max_length=500)
+    includeRunning: bool = Field(default=False, strict=True)
     expectedPendingCount: int | None = Field(default=None, strict=True, ge=1, le=500)
     confirmation: str | None = Field(default=None, min_length=1, max_length=80)
     reason: str | None = Field(default=None, min_length=10, max_length=500)
@@ -115,7 +116,7 @@ class AgentCommandLedger:
             if existing is not None:
                 if existing.command_type != command_type:
                     raise HTTPException(409, detail="Command requestId was reused with a different command.")
-                if command_type == "PURGE_PENDING_TASKS" and existing.payload != (command_payload_value or {}):
+                if command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"} and existing.payload != (command_payload_value or {}):
                     raise HTTPException(409, detail="Command requestId was reused with a different purge scope.")
                 return self._snapshot(session, existing)
             agent = session.get(ClientRecord,
@@ -127,7 +128,7 @@ class AgentCommandLedger:
             command = AgentCommand(
                 id=uuid.uuid4().hex, agent_id=agent_id, request_id=request_id,
                 sequence=sequence, command_type=command_type,
-                payload=(dict(command_payload_value or {}) if command_type == "PURGE_PENDING_TASKS"
+                payload=(dict(command_payload_value or {}) if command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}
                          else {"desiredExecutionState": target_state}),
                 priority=COMMAND_PRIORITY[command_type], status="PENDING",
                 created_at=now, expires_at=now + timedelta(seconds=expires_in_seconds),
@@ -236,11 +237,11 @@ class AgentCommandLedger:
             if status in {"SUCCESS", "FAILED", "EXPIRED"} and sequence != agent.last_processed_command_sequence + 1:
                 raise HTTPException(409, detail="Agent command acknowledgement has a sequence gap.")
             detail = str(update.get("error") or "")[:500] if status == "FAILED" else ""
-            result = update.get("result") if command.command_type == "PURGE_PENDING_TASKS" else None
+            result = update.get("result") if command.command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"} else None
             event_detail = {"error": detail} if detail else {}
             if isinstance(result, dict):
                 event_detail["result"] = {
-                    "scope": "pending",
+                    "scope": "all-local" if command.command_type == "PURGE_ALL_LOCAL_TASKS" else "pending",
                     "beforeCount": _bounded_count(result.get("beforeCount")),
                     "purgedCount": _bounded_count(result.get("purgedCount")),
                     "afterCount": _bounded_count(result.get("afterCount")),

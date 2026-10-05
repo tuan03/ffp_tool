@@ -517,11 +517,12 @@ class DistributedCrawlerAgent:
             payload = command.get("payload")
             command_type = str(command.get("type") or "")
             desired_state = "PAUSED" if command_type == "PAUSE" else "RUNNING"
-            if command_type == "PURGE_PENDING_TASKS":
+            if command_type in {"PURGE_PENDING_TASKS", "PURGE_ALL_LOCAL_TASKS"}:
                 await asyncio.to_thread(self.store.set_server_command_running, command_id)
                 await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
                     "sequence": sequence, "status": "RUNNING"})
-                result, error = await self._purge_pending_assignments(command.get("payload"))
+                result, error = await self._purge_pending_assignments(command.get("payload"),
+                    scope="all-local" if command_type == "PURGE_ALL_LOCAL_TASKS" else "pending")
                 if error:
                     await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
                     await self.outbound_queue.put({"type": "command_update", "commandId": command_id,
@@ -570,7 +571,7 @@ class DistributedCrawlerAgent:
         self._command_recovery_complete = True
         self._command_recovery_event.set()
 
-    async def _purge_pending_assignments(self, payload: Any) -> tuple[dict[str, int] | None, str | None]:
+    async def _purge_pending_assignments(self, payload: Any, *, scope: str = "pending") -> tuple[dict[str, Any] | None, str | None]:
         if not isinstance(payload, dict) or not isinstance(payload.get("taskIds"), list):
             return None, "Purge command scope is malformed."
         task_ids = [str(value) for value in payload["taskIds"]]
@@ -599,7 +600,7 @@ class DistributedCrawlerAgent:
             await self.outbound_queue.put({"type": "cancel_ack", "taskId": task_id,
                 "leaseId": str((assignment or local_task).get("leaseId") or "")})
             purged_count += 1
-        return {"beforeCount": before_count, "purgedCount": purged_count,
+        return {"scope": scope, "beforeCount": before_count, "purgedCount": purged_count,
                 "afterCount": before_count - purged_count}, None
 
     async def _recovery_gate_loop(self) -> None:
