@@ -1,4 +1,5 @@
 import type {
+  AutoSeoResult,
   BatchDetailData,
   BenchmarkFilters,
   BenchmarkProductItem,
@@ -131,5 +132,8 @@ export function createSeoPerformanceClient(fetcher: typeof fetch = fetch): SeoPe
 
     backfill: (storeId: string, source: "gsc" | "ga4", days = 28) =>
       request<{ readonly jobId: string }>("backfill", storeId, { source, days }),
+
+    createAutoSeo: (storeId: string, productId: string) =>
+      request<AutoSeoResult>("benchmark/auto-seo", storeId, { productId }),
   };
 }

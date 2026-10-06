@@ -128,6 +128,13 @@ export interface SeoPerformanceClient {
   batchDetail(storeId: string, batchId: string): Promise<BatchDetailData>;
   connectionsSync(storeId: string): Promise<ConnectionsSyncData>;
   backfill(storeId: string, source: "gsc" | "ga4", days?: number): Promise<{ readonly jobId: string }>;
+  createAutoSeo(storeId: string, productId: string): Promise<AutoSeoResult>;
+}
+
+export interface AutoSeoResult {
+  readonly jobId: string;
+  readonly isExisting?: boolean;
+  readonly message?: string;
 }
 
 export type SearchReportDimension = "total" | "date" | "query" | "page" | "country" | "device";

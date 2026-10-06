@@ -39,6 +39,7 @@ interface BenchmarkTableProps {
   readonly onSelectProduct: (product: BenchmarkProductItem) => void;
   readonly onSelectBatch?: (batchId: string) => void;
   readonly onSendToAutoSeo?: (product: BenchmarkProductItem) => void;
+  readonly onAutoSeo?: (product: BenchmarkProductItem) => void;
 }
 
 export function BenchmarkTable({
@@ -50,6 +51,7 @@ export function BenchmarkTable({
   onSelectProduct,
   onSelectBatch,
   onSendToAutoSeo,
+  onAutoSeo,
 }: BenchmarkTableProps): React.JSX.Element {
   const renderSortIndicator = (column: string): React.JSX.Element | null => {
     if (sortBy !== column) return null;
@@ -432,10 +434,12 @@ export function BenchmarkTable({
                       ) : item.action.type === "AUTO_SEO" ? (
                         <button
                           type="button"
-                          onClick={() => onSelectProduct(item)}
-                          className="rounded-lg border border-indigo-500 bg-indigo-950/60 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-900"
+                          onClick={() => (onAutoSeo ? onAutoSeo(item) : onSelectProduct(item))}
+                          disabled={!item.action.enabled}
+                          className="rounded-lg border border-indigo-500 bg-indigo-950/60 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-900 disabled:opacity-40"
+                          title={item.action.disabledReason ?? "Tạo Auto-SEO cho sản phẩm baseline v0"}
                         >
-                          Tạo Auto-SEO
+                          {item.action.label}
                         </button>
                       ) : (
                         <button

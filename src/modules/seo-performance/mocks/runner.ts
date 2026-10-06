@@ -1,4 +1,5 @@
 import type {
+  AutoSeoResult,
   BenchmarkFilters,
   BenchmarkProductItem,
   BenchmarkSummaryKpis,
@@ -17,6 +18,7 @@ import {
 
 export function createMockSeoPerformanceClient(): SeoPerformanceClient {
   let connected = true;
+  const mockAutoSeoJobs = new Map<string, string>();
   function list<T>(items: readonly T[], offset = 0): PerformanceList<T> {
     return {
       items: structuredClone(items.slice(offset, offset + 50)),
@@ -204,7 +206,23 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
 
       const offset = filters.offset ?? 0;
       const limit = filters.limit ?? 50;
-      const paginated = filtered.slice(offset, offset + limit);
+      const paginated = filtered.slice(offset, offset + limit).map(item => {
+        if (
+          mockAutoSeoJobs.has(`${_storeId}:${item.productId}`) ||
+          mockAutoSeoJobs.has(`${_storeId}:${item.shopifyProductGid}`)
+        ) {
+          return {
+            ...item,
+            action: {
+              ...item.action,
+              label: "Đang Auto-SEO",
+              enabled: false,
+              disabledReason: "Yêu cầu Auto-SEO đang được xử lý trong hàng đợi",
+            },
+          };
+        }
+        return item;
+      });
 
       const baseKpis = structuredClone(MOCK_SUMMARY_KPIS);
       const kpis: BenchmarkSummaryKpis = filters.query
@@ -262,6 +280,25 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
     backfill: async (_storeId, source, days = 28) => {
       return {
         jobId: `job-backfill-${source}-${days}d-${Date.now()}`,
+      };
+    },
+
+    createAutoSeo: async (storeId, productId) => {
+      const key = `${storeId}:${productId}`;
+      const existing = mockAutoSeoJobs.get(key);
+      if (existing) {
+        return {
+          jobId: existing,
+          isExisting: true,
+          message: "Sản phẩm đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi.",
+        };
+      }
+      const jobId = `job-auto-seo-${Date.now()}`;
+      mockAutoSeoJobs.set(key, jobId);
+      return {
+        jobId,
+        isExisting: false,
+        message: "Đã tạo yêu cầu Auto-SEO thành công.",
       };
     },
   };
