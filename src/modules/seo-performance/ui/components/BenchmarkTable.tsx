@@ -39,6 +39,7 @@ interface BenchmarkTableProps {
   readonly onSelectProduct: (product: BenchmarkProductItem) => void;
   readonly onSelectBatch?: (batchId: string) => void;
   readonly onSendToAutoSeo?: (product: BenchmarkProductItem) => void;
+  readonly onAutoSeo?: (product: BenchmarkProductItem) => void;
 }
 
 export function BenchmarkTable({
@@ -50,6 +51,7 @@ export function BenchmarkTable({
   onSelectProduct,
   onSelectBatch,
   onSendToAutoSeo,
+  onAutoSeo,
 }: BenchmarkTableProps): React.JSX.Element {
   const renderSortIndicator = (column: string): React.JSX.Element | null => {
     if (sortBy !== column) return null;
@@ -423,7 +425,7 @@ export function BenchmarkTable({
                         <button
                           type="button"
                           onClick={() => onSendToAutoSeo?.(item)}
-                          disabled={!item.action.enabled}
+                          disabled={!item.action.enabled || loading}
                           className="rounded-lg border border-cyan-500 bg-cyan-950/60 px-2.5 py-1.5 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo draft yêu cầu Auto-SEO qua checkpoint"}
                         >
@@ -432,16 +434,19 @@ export function BenchmarkTable({
                       ) : item.action.type === "AUTO_SEO" ? (
                         <button
                           type="button"
-                          onClick={() => onSelectProduct(item)}
-                          className="rounded-lg border border-indigo-500 bg-indigo-950/60 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-900"
+                          onClick={() => (onAutoSeo ? onAutoSeo(item) : onSelectProduct(item))}
+                          disabled={!item.action.enabled || loading}
+                          className="rounded-lg border border-indigo-500 bg-indigo-950/60 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-900 disabled:opacity-40"
+                          title={item.action.disabledReason ?? "Tạo Auto-SEO cho sản phẩm baseline v0"}
                         >
-                          Tạo Auto-SEO
+                          {item.action.label}
                         </button>
                       ) : (
                         <button
                           type="button"
                           onClick={() => onSelectProduct(item)}
-                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-white"
+                          disabled={loading}
+                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-white disabled:opacity-40"
                         >
                           {item.action.label}
                         </button>
