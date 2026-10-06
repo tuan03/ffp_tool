@@ -1,13 +1,15 @@
 import { z } from "zod";
 
 import type { GatewayDispatcher } from "../dispatcher";
+import type { ShopifySeoSnapshotReader } from "../seo-versioning/shopify-snapshot-reader";
 
 import { SeoWorkerError } from "./protocol";
 import type { SeoPublishTransport } from "./publish-worker";
 
-export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "dispatch">): SeoPublishTransport {
+export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "dispatch">,
+  snapshotReader?: ShopifySeoSnapshotReader, now: () => Date = () => new Date()): SeoPublishTransport {
   return {
-    async read(op) {
+    async read(op, phase = "BEFORE") {
       const id = `gid://shopify/Product/${op.productId}`;
       const response = await dispatcher.dispatch({ storeId: op.storeId, operation: "products.get", payload: { id } });
       if (!response.success) throw new SeoWorkerError("SOURCE_UNAVAILABLE");
@@ -27,7 +29,13 @@ export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "d
         const actual = z.object({ value: z.string().nullable(), type: z.string().optional() }).parse(field.data);
         return { ...expected, type: actual.type ?? "", value: actual.value ?? "" };
       })) : undefined;
-      return { version: product.updatedAt, seoVersion, fields: { title: product.title, descriptionHtml: product.descriptionHtml ?? "",
+      const snapshot = op.basedOnVersionId == null ? undefined : await snapshotReader?.readSnapshot({
+        storeId: op.storeId,
+        shopifyProductGid: id,
+        capturedAtUtc: now().toISOString(),
+        source: phase === "AFTER" ? "POST_PUBLISH" : "PRE_PUBLISH",
+      });
+      return { version: product.updatedAt, seoVersion, ...(snapshot ? { snapshot } : {}), fields: { title: product.title, descriptionHtml: product.descriptionHtml ?? "",
         seo: { title: product.seo?.title ?? "", description: product.seo?.description ?? "" },
         ...(op.fields.images ? { images: op.fields.images.map(expected => {
           const image = product.images?.find(image => image.id === expected.id);

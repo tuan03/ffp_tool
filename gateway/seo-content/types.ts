@@ -20,7 +20,8 @@ export interface AutoSeoProductPayload {
   readonly [key: string]: unknown;
 }
 
-export interface SeoContentInput {
+/** Operational batch request. Product generation input is SeoContentInput in the SEO Content module. */
+export interface GatewaySeoContentRequest {
   readonly workflowId: string;
   readonly storeId: string;
   readonly shopDomain: string;
@@ -46,6 +47,6 @@ export interface GatewaySeoContentOptions {
 }
 
 export type SeoContentRunner = (
-  input: SeoContentInput,
+  input: GatewaySeoContentRequest,
   options?: GatewaySeoContentOptions,
 ) => Promise<SeoContentResult>;

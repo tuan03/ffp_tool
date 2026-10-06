@@ -7,6 +7,8 @@ import { Pool } from "pg";
 import { z } from "zod";
 import { PostgresCustomGptQueue } from "../custom-gpt-seo/postgres-queue";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
 test("two HTTP processes fence crashed leases and revoked tokens on real PostgreSQL", { skip: !databaseUrl, timeout: 60_000 }, async () => {
   assert.ok(databaseUrl);
@@ -28,7 +30,7 @@ test("two HTTP processes fence crashed leases and revoked tokens on real Postgre
   try {
     await queue.initialize();
     await queue.configure("demo", { provider: "codex_mcp", batchSize: 1 });
-    for (const id of ["1", "2"]) await queue.enqueue({ storeId: "demo", source: "auto_seo", sourceIdentity: id, input: { productId: id, title: "Synthetic blanket", description: "", handle: "test", niche: "blankets", images: [] }, original: {} });
+    for (const id of ["1", "2"]) await queue.enqueue(createTestEnqueue({ storeId: "demo", productId: id, input: { images: [{ id: `front-${id}`, url: `https://cdn.shopify.com/${id}.png` }], niche: "blankets" } }));
     await queue.workers.enableStore("demo");
     const [first, second] = await Promise.all([start(), start()]);
     const workers = await Promise.all([first, second].map(async (server, index) => {

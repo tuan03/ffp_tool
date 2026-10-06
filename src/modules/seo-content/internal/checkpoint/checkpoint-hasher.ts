@@ -1,34 +1,28 @@
 import { createHash } from "node:crypto";
 
 import type { SeoContentInput } from "../../types";
-import { summarizeVariants } from "../variant-summarizer";
-
 interface CanonicalImageFingerprint {
   readonly id: string;
   readonly url: string;
-  readonly alt: string;
-  readonly localFilePath: string;
   readonly contentFingerprint: string;
 }
 
 export interface CanonicalProductIdentity {
-  readonly storeId: string;
-  readonly siteDomain: string;
-  readonly productId: string;
-  readonly sourceUrl: string;
-  readonly sourceVersion: string;
-  readonly shopifyUpdatedAt: string;
-  readonly providerId: string;
-  readonly pipelineVersion: string;
-  readonly handle: string;
-  readonly title: string;
-  readonly description: string;
   readonly niche: string;
-  readonly variantLabel: string;
-  readonly variantSummary: ReturnType<typeof summarizeVariants>;
-  readonly existingPrimaryKeyword: string;
-  readonly existingKeywords: readonly string[];
+  readonly storeProfile: SeoContentInput["storeProfile"];
   readonly images: readonly CanonicalImageFingerprint[];
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, stableJsonValue(entry)]),
+    );
+  }
+  return value;
 }
 
 /**
@@ -37,59 +31,20 @@ export interface CanonicalProductIdentity {
  * the first image is semantically the hero image in alt-only processing.
  */
 export function computeProductInputHash(input: SeoContentInput): string {
-  const variantSummary = input.variantSummary ?? summarizeVariants(input.variants);
   const normalized: CanonicalProductIdentity = {
-    storeId: (input.storeId ?? "").trim().toLowerCase(),
-    siteDomain: (input.siteDomain ?? "").trim().toLowerCase(),
-    productId: (input.productId ?? "").trim(),
-    sourceUrl: (input.url ?? "").trim(),
-    sourceVersion: (input.sourceVersion ?? "").trim(),
-    shopifyUpdatedAt: (input.shopifyUpdatedAt ?? "").trim(),
-    providerId: (input.providerId ?? "gemini").trim().toLowerCase(),
-    pipelineVersion: (input.pipelineVersion ?? "seo-b1-b6-v1").trim().toLowerCase(),
-    handle: (input.handle ?? "").trim().toLowerCase(),
-    title: (input.title ?? "").trim(),
-    description: (input.description ?? "").trim(),
     niche: (input.niche ?? "").trim().toLowerCase(),
-    variantLabel: (input.variantLabel ?? "").trim(),
-    variantSummary: {
-      variantCount: variantSummary.variantCount,
-      optionNames: [...variantSummary.optionNames].map((name) => name.trim()).sort(),
-      sampleVariants: variantSummary.sampleVariants.map((variant) => ({
-        title: variant.title.trim(),
-        ...(variant.price ? { price: variant.price.trim() } : {}),
-        ...(variant.sku ? { sku: variant.sku.trim() } : {}),
-        ...(variant.options ? {
-          options: Object.fromEntries(
-            Object.entries(variant.options)
-              .map(([key, value]) => [key.trim(), value.trim()] as const)
-              .sort(([left], [right]) => left.localeCompare(right)),
-          ),
-        } : {}),
-      })),
-      minPrice: variantSummary.minPrice,
-      maxPrice: variantSummary.maxPrice,
-    },
-    existingPrimaryKeyword: (input.existingPrimaryKeyword ?? "").trim().toLowerCase(),
-    existingKeywords: Object.freeze(
-      [...(input.existingKeywords ?? [])]
-        .map((keyword) => keyword.trim().toLowerCase())
-        .filter(Boolean)
-        .sort(),
-    ),
+    storeProfile: input.storeProfile,
     images: Object.freeze(
       (input.images ?? [])
         .map((image) => ({
           id: (image?.id ?? "").trim(),
           url: (image?.url ?? "").trim(),
-          alt: (image?.alt ?? "").trim(),
-          localFilePath: (image?.localFilePath ?? "").trim(),
           contentFingerprint: (image?.contentFingerprint ?? "").trim(),
         }))
     ),
   };
 
-  const payload = JSON.stringify(normalized);
+  const payload = JSON.stringify(stableJsonValue(normalized));
   return createHash("sha256").update(payload).digest("hex");
 }
 

@@ -192,10 +192,7 @@ export function validateFinalContent(
   }
 
   // 3. Handle slug format check
-  if (
-    result.productHandle.trim().length > 0 &&
-    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(result.productHandle.trim())
-  ) {
+  if (result.productHandle && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(result.productHandle.trim())) {
     throw new ContentGenerationSchemaError(
       `Product handle is not a valid kebab-case slug: '${result.productHandle}'`,
     );

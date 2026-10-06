@@ -9,6 +9,8 @@ import { SeoWorkerRepository } from "../seo-worker/repository";
 import type { WorkerDatabase } from "../seo-worker/database";
 import { WORKER_DEFAULTS } from "../seo-worker/protocol";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 async function fixture() {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
@@ -19,8 +21,9 @@ async function fixture() {
   })) };
   const repository = new SeoWorkerRepository(db, () => now, () => 0);
   async function enqueue(id: string, storeId = "store-a", status = "PENDING", productId = id) {
+    const request = createTestEnqueue({ storeId, productId });
     const payload = { id, storeId, status, source: "auto_seo", sourceIdentity: productId,
-      input: { title: "Test blanket", productId }, original: {}, checkpoints: {}, settings: { provider: "codex_mcp" }, createdAt: now };
+      input: request.input, execution: request.execution, original: request.execution.originalSnapshot, checkpoints: {}, settings: { provider: "codex_mcp" }, createdAt: now };
     await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ($1,$2,$1,$3,$4,$5,'codex_mcp')", [id, storeId, status, JSON.stringify(payload), now]);
   }
   async function worker(workerId: string, target = 2, storeId = "store-a") {
@@ -35,6 +38,48 @@ async function fixture() {
   }
   return { pg, repository, enqueue, worker, deliver, advance: (ms: number) => { now += ms; } };
 }
+
+test("cutover rehydrates eligible V1 jobs, clears checkpoints and preserves completed review history", async () => {
+  const f = await fixture();
+  const legacy = {
+    id: "legacy-pending", storeId: "jeminise", status: "WAITING_INPUT", source: "auto_seo", sourceIdentity: "123",
+    input: { productId: "123", title: "Legacy title", niche: "Bedding", images: [{ id: "front", url: "https://cdn.shopify.com/front.png", alt: "Legacy alt" }] },
+    original: { updatedAt: "v1", handle: "legacy-handle" }, checkpoints: { analysis: { legacyTitle: "Legacy title" } },
+    settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "en-US", instructions: "legacy" }, createdAt: 1, updatedAt: 1,
+  };
+  const review = { ...legacy, id: "legacy-review", sourceIdentity: "456", status: "REVIEW_READY", result: { output: { productTitle: "Approved history" } } };
+  try {
+    await f.pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('legacy-pending','jeminise','p','WAITING_INPUT',$1,1,'codex_mcp'),('legacy-review','jeminise','r','REVIEW_READY',$2,2,'codex_mcp')", [JSON.stringify(legacy), JSON.stringify(review)]);
+    assert.deepEqual(await f.repository.enableStore("jeminise"), { imported: 1 });
+    const migrated = JSON.parse(String((await f.pg.query<{ payload: string }>("SELECT payload FROM gpt_jobs WHERE id='legacy-pending'")).rows[0].payload)) as Record<string, unknown>;
+    assert.equal(migrated.status, "PENDING");
+    assert.deepEqual(Object.keys(migrated.input as Record<string, unknown>).sort(), ["images", "niche", "storeProfile"]);
+    assert.deepEqual(migrated.checkpoints, {});
+    assert.equal((migrated.execution as Record<string, unknown>).productId, "123");
+    assert.equal((migrated.execution as Record<string, unknown>).pipelineVersion, "seo-content-input-v2:2.0.0");
+    assert.deepEqual(JSON.parse(String((await f.pg.query<{ payload: string }>("SELECT payload FROM gpt_jobs WHERE id='legacy-review'")).rows[0].payload)), review);
+    assert.deepEqual(await f.repository.enableStore("jeminise"), { imported: 0 });
+    const lateLegacy = { ...legacy, id: "late-legacy", sourceIdentity: "789", status: "PENDING", input: { ...legacy.input, productId: "789" } };
+    await f.pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('late-legacy','jeminise','late','PENDING',$1,3,'codex_mcp')", [JSON.stringify(lateLegacy)]);
+    assert.deepEqual(await f.repository.enableStore("jeminise"), { imported: 1 });
+    assert.equal(Number((await f.pg.query<{ count: string }>("SELECT count(*) FROM seo_worker_jobs WHERE store_id='jeminise'")).rows[0].count), 2);
+  } finally { await f.pg.close(); }
+});
+
+test("cutover fails with explicit migration errors for active jobs and unknown profiles", async () => {
+  for (const scenario of ["active", "profile"] as const) {
+    const f = await fixture();
+    const storeId = scenario === "active" ? "jeminise" : "unknown-store";
+    const status = scenario === "active" ? "IN_PROGRESS" : "PENDING";
+    const legacy = { id: scenario, storeId, status, source: "auto_seo", sourceIdentity: "123",
+      input: { niche: "Bedding", images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }] }, original: {}, checkpoints: {},
+      settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "en-US", instructions: "legacy" }, createdAt: 1, updatedAt: 1 };
+    try {
+      await f.pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ($1,$2,$1,$3,$4,1,'codex_mcp')", [scenario, storeId, status, JSON.stringify(legacy)]);
+      await assert.rejects(f.repository.enableStore(storeId), scenario === "active" ? /LEGACY_JOB_NOT_DRAINED/ : /JOB_MIGRATION_PROFILE_REQUIRED/);
+    } finally { await f.pg.close(); }
+  }
+});
 
 test("multi-store credentials switch only while idle, fence old sessions and revoke all grants", async () => {
   const f = await fixture();
@@ -324,6 +369,7 @@ test("worker checkpoints are fenced, ordered and submission receipts survive del
     assert.ok(lease);
     await assert.rejects(f.repository.saveCheckpoint(worker.token, lease, { requestId: "early", stage: "submission", payload: {}, expectedCheckpoints: {} }), /CHECKPOINT_REQUIRED/);
     for (const stage of ["analysis", "research", "keywords"] as const) {
+      if (stage === "analysis") await f.repository.recordImage(worker.token, lease, "front", "a".repeat(64));
       const job = await f.repository.readJob(worker.token, lease);
       await f.repository.saveCheckpoint(worker.token, lease, { requestId: stage, stage, payload: { stage }, expectedCheckpoints: job.checkpoints });
     }

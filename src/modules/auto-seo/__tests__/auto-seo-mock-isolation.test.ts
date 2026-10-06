@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { handoverAutoSeoToSeo } from "../../orchestrator";
 import { createAutoSeoModuleApiClient } from "../../orchestrator/auto-seo-module-api-client";
-import { getSeoContentRunner } from "../../seo-content";
+import { getSeoContentRunner, JEMINISE_BEDDING_PROFILE } from "../../seo-content";
 import { MockAutoSeoClient } from "../mocks/runner";
 import { getAutoSeoClient } from "../runtime";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
@@ -96,6 +96,7 @@ test("mock-isolation: full mock flow (load -> run -> handover) completes in-memo
       {
         products: [selectedProduct] as unknown as AutoSeoSourceProduct[],
         storeId: storeInfo.storeId,
+        storeProfile: JEMINISE_BEDDING_PROFILE,
       },
       { seoRunner },
     );

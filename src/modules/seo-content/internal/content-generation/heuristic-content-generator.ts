@@ -35,12 +35,11 @@ export function buildHeuristicAiQuickSummary(
   productTitle: string,
 ): string {
   if (facts.storeProfile?.bedding) {
-    const variantClause = facts.variantLabel ? ` in the ${facts.variantLabel} design` : "";
     const visualText = isMeaningfulText(facts.visualEntities)
       ? ` featuring ${facts.visualEntities.trim()}`
       : "";
     const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "bedding and home decor enthusiasts";
-    return `The ${productTitle} is a premium bedding collection${variantClause}${visualText} designed for ${audience}. Available in three distinct style options—plush Comforter, lightweight classic Quilt, or convenient zippered Duvet Cover—it features ultra-soft brushed microfiber and vibrant dye-sublimation print for all-season comfort and easy care.`;
+    return `The ${productTitle} is a premium bedding collection${visualText} designed for ${audience}. Available in three distinct style options—plush Comforter, lightweight classic Quilt, or convenient zippered Duvet Cover—it features ultra-soft brushed microfiber and vibrant dye-sublimation print for all-season comfort and easy care.`;
   }
 
   const identity = isMeaningfulText(facts.physicalProductIdentity)
@@ -58,9 +57,7 @@ export function buildHeuristicAiQuickSummary(
   const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "home and lifestyle enthusiasts";
   const useCase = facts.useCases.length > 0 ? facts.useCases[0] : "daily decorative and functional use";
   const occasion = facts.occasions.length > 0 ? ` or special ${facts.occasions[0]} gifting` : "";
-  const variantClause = facts.variantLabel ? ` in the exclusive ${facts.variantLabel} edition` : "";
-
-  return `The ${productTitle} is a distinctive ${identity}${variantClause} crafted for ${audience}. Carefully engineered ${stylePart ? `${stylePart}, ` : ""}it combines durable construction with distinctive themed artwork. Ideal for ${useCase}${occasion}, offering balanced performance, easy maintenance, and standout visual appeal for modern spaces.`;
+  return `The ${productTitle} is a distinctive ${identity} crafted for ${audience}. Carefully engineered ${stylePart ? `${stylePart}, ` : ""}it combines durable construction with distinctive themed artwork. Ideal for ${useCase}${occasion}, offering balanced performance, easy maintenance, and standout visual appeal for modern spaces.`;
 }
 
 /**
@@ -91,13 +88,12 @@ export function buildHeuristicFaq(
       a3 = `${facts.storeProfile.bedding.careGuidance}. Crafted from ${facts.storeProfile.bedding.fabricMaterial}, the thermal dye-sublimation print maintains vibrant, fade-resistant color wash after wash.`;
     }
 
-    const variantTag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
-    const q4 = `What makes this ${facts.physicalProductIdentity || "bedding set"}${variantTag} unique?`;
+    const q4 = `What makes this ${facts.physicalProductIdentity || "bedding set"} unique?`;
     const visualText =
       facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
         ? `detailed ${facts.visualEntities.trim()}`
         : "original graphic composition";
-    const a4 = `Unlike generic mass-market bedding, this edition features ${visualText}${facts.variantLabel ? ` in the signature ${facts.variantLabel} design` : ""}, paired with verified materials and focused craftsmanship for long-term appeal.`;
+    const a4 = `Unlike generic mass-market bedding, this edition features ${visualText}, paired with verified materials and focused craftsmanship for long-term appeal.`;
 
     return [
       { question: q1, answer: a1 },
@@ -154,12 +150,11 @@ export function buildHeuristicFaq(
   }
 
   // Q4: USP Differentiation
-  const variantTag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
-  const q4 = `What makes this ${catName}${variantTag} different from similar products?`;
+  const q4 = `What makes this ${catName} different from similar products?`;
   const visualText = facts.visualEntities && !/^(unknown|none|n\/a|not applicable)[\s.]*$/i.test(facts.visualEntities.trim())
     ? `detailed ${facts.visualEntities.trim()}`
     : "original graphic composition";
-  const a4 = `Unlike generic mass-market alternatives, this edition features ${visualText}${facts.variantLabel ? ` in the signature ${facts.variantLabel} design` : ""}, paired with verified materials and focused craftsmanship for long-term appeal.`;
+  const a4 = `Unlike generic mass-market alternatives, this edition features ${visualText}, paired with verified materials and focused craftsmanship for long-term appeal.`;
 
   return [
     { question: q1, answer: a1 },
@@ -430,14 +425,6 @@ export class HeuristicContentGenerator implements ContentGenerator {
       });
     }
 
-    // Bullet: Variant / Option (if present)
-    if (facts.variantLabel && bullets.length < constraints.maxBullets) {
-      bullets.push({
-        label: "Option",
-        text: `Features the distinct "${facts.variantLabel}" style and artwork.`,
-      });
-    }
-
     // Bullet: Made for / Audience & Occasions
     const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "enthusiasts";
     const occasion = facts.occasions.length > 0 ? ` during ${facts.occasions[0]}` : "";
@@ -496,10 +483,6 @@ export class HeuristicContentGenerator implements ContentGenerator {
         }
         distinctiveSuffix = firstPart || undefined;
       }
-      if (!distinctiveSuffix) {
-        distinctiveSuffix = facts.variantLabel;
-      }
-
       if (
         distinctiveSuffix &&
         !primaryTitle.toLowerCase().includes(distinctiveSuffix.toLowerCase())
@@ -534,8 +517,7 @@ export class HeuristicContentGenerator implements ContentGenerator {
       const primaryFrag = groundedKeywords.primary
         ? groundedKeywords.primary
         : productTitle.toLowerCase();
-      const variantFrag = facts.variantLabel ? ` (${facts.variantLabel})` : "";
-      const rawSeoDesc = `Discover this ${primaryFrag}${variantFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
+      const rawSeoDesc = `Discover this ${primaryFrag}${audienceFrag}. Distinctive design, premium look, and everyday functionality. Shop now!`;
       productSeoDescription = fitSeoDescription(rawSeoDesc, constraints.maxSeoDescriptionLength);
     }
 

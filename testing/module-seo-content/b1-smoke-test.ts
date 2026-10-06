@@ -2,6 +2,7 @@ import { createDefaultProductImageAnalyzer } from "../../src/modules/seo-content
 import type { SeoContentInput } from "../../src/modules/seo-content/types";
 import { createInitialContext } from "../../src/modules/seo-content/internal/pipeline-context";
 import { createB1ProductUnderstandingStage } from "../../src/modules/seo-content/internal/stages/b1-product-understanding";
+import { SMOKE_TEST_STORE_PROFILE } from "./e2e-smoke-helpers";
 
 /**
  * Standalone Node.js smoke test for B1 Product Understanding.
@@ -21,14 +22,12 @@ async function main(): Promise<void> {
   console.log(`Target Image: ${targetImage}`);
 
   const sampleInput: SeoContentInput = {
-    title: "Vintage Halloween Black Cat T-Shirt",
-    description: "Soft cotton t-shirt with vintage black cat graphic and retro text.",
     niche: "halloween",
-    handle: "vintage-halloween-black-cat-t-shirt",
+    storeProfile: SMOKE_TEST_STORE_PROFILE,
     images: [
       {
+        id: "image-1",
         url: targetImage,
-        alt: "Vintage Halloween Black Cat T-Shirt",
       },
     ],
   };

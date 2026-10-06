@@ -31,6 +31,16 @@ export function adaptCustomGptReview(job: GptSeoJob, saved: Record<string, unkno
   if (job.source !== "auto_seo" || job.status !== "REVIEW_READY") throw new Error("Only completed Auto SEO jobs use this review adapter");
   const result = job.result as SeoContentDetailedOutput;
   if (!result?.output?.productTitle) throw new Error("Missing GPT SEO output");
-  const product = adaptAutoSeoItemToViewModel({ productId: job.input.productId || job.sourceIdentity, storeId: job.storeId, handle: job.input.handle, sourceProduct: job.original as AutoSeoSourceProduct, seoInput: { ...job.input, storeId: job.storeId }, seoOutput: result.output, success: true }, job.storeId);
+  const sourceProduct = job.original as AutoSeoSourceProduct;
+  const sourceHandle = typeof sourceProduct.handle === "string" ? sourceProduct.handle : "";
+  const product = adaptAutoSeoItemToViewModel({
+    productId: job.execution?.productId || job.sourceIdentity,
+    storeId: job.storeId,
+    handle: sourceHandle,
+    sourceProduct,
+    seoInput: job.input,
+    seoOutput: result.output,
+    success: true,
+  }, job.storeId);
   return { ...product, ...saved, id: `gpt-${job.id}`, gptJobId: job.id, storeId: job.storeId, sourceOrigin: "auto_seo" } as SeoProductUiViewModel;
 }

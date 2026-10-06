@@ -2,6 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { z } from "zod";
 
+import { handleSeoVersionHttp } from "../seo-versioning/http-handler";
+import type { SeoVersionHttpDependencies } from "../seo-versioning/http-handler";
+
 import { SeoWorkerError } from "./protocol";
 import type { SeoWorkerRepository } from "./repository";
 import type { SeoPublishRepository } from "./publish-repository";
@@ -30,6 +33,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
   readonly publisher?: () => Promise<Pick<SeoPublishRepository, "status" | "enqueue" | "requestReconciliation">>;
   readonly createRevision?: (request: import("./revision-repository").RevisionRequest) => Promise<{ jobId: string; previousJobId: string }>;
   readonly history?: (storeId: string, jobId: string, offset: number) => Promise<import("../../src/modules/custom-gpt-seo").WorkerReviewHistory>;
+  readonly versioning?: SeoVersionHttpDependencies;
 }): Promise<void> {
   if (!options.operator) { send(res, 401, { error: { code: "OPERATOR_REQUIRED" } }); return; }
   if (req.method !== "GET" && req.method !== "POST") { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
@@ -42,6 +46,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
     const url = new URL(req.url ?? "/", "http://localhost");
     const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(url.searchParams.get("storeId"));
     if (!options.hasStore(storeId)) { send(res, 404, { error: { code: "STORE_NOT_FOUND" } }); return; }
+    if (options.versioning && await handleSeoVersionHttp(req, res, { url, storeId, operator: options.operator, dependencies: options.versioning })) return;
     if (url.pathname === "/api/seo-agent/metrics" && req.method === "GET") {
       const hours = z.coerce.number().refine(value => [24, 168, 720].includes(value)).parse(url.searchParams.get("hours") ?? 24);
       const repository = await options.repository();
@@ -93,6 +98,28 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
       if (url.pathname === "/api/seo-agent/delete-token") {
         const input = z.object({ tokenId: z.string().uuid() }).strict().parse(body);
         await repository.deleteRevokedToken(storeId, input.tokenId); send(res, 200, { deleted: true }); return;
+      }
+      if (url.pathname === "/api/seo-agent/enable-claims") {
+        const input = z.object({ allStores: z.boolean().optional() }).nullish().parse(body);
+        const targetStoreIds = input?.allStores && options.listStoreIds ? options.listStoreIds() : [storeId];
+        const results: { storeId: string; imported: number }[] = [];
+        for (const id of targetStoreIds) {
+          try {
+            results.push({ storeId: id, ...await repository.enableStore(id) });
+          } catch {
+            await repository.enableStoreRaw(id);
+            results.push({ storeId: id, imported: 0 });
+          }
+        }
+        send(res, 200, { enabled: true, results }); return;
+      }
+      if (url.pathname === "/api/seo-agent/disable-claims") {
+        const input = z.object({ allStores: z.boolean().optional() }).nullish().parse(body);
+        const targetStoreIds = input?.allStores && options.listStoreIds ? options.listStoreIds() : [storeId];
+        for (const id of targetStoreIds) {
+          await repository.disableClaims(id);
+        }
+        send(res, 200, { enabled: false, storeIds: targetStoreIds }); return;
       }
     }
     send(res, 404, { error: { code: "NOT_FOUND" } });

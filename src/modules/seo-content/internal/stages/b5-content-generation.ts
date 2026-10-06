@@ -9,7 +9,6 @@ import type {
 import { buildContentFactSheet } from "../content-generation/content-fact-sheet";
 import { allocateKeywords } from "../content-generation/keyword-allocator";
 import { formatProductDescriptionHtml } from "../content-generation/html-description-formatter";
-import { generateProductHandle } from "../content-generation/slug-utils";
 import {
   fitProductTitle,
   fitSeoDescription,
@@ -39,7 +38,7 @@ const DEFAULT_CONSTRAINTS: ContentConstraints = {
   maxSeoDescriptionLength: 160,
   maxHandleLength: 80,
   maxBullets: 5,
-  preserveExistingHandle: true,
+  preserveExistingHandle: false,
 };
 
 export function createDefaultB5Generator(options?: ProviderRequestOptions & {
@@ -85,10 +84,6 @@ export function buildB5ContentInput(context: SeoPipelineContext, options: B5Cont
   // 1. Build verified fact sheet from context
   const facts = buildContentFactSheet(context);
 
-  const existingPrimaryKeyword =
-    context.source.existingPrimaryKeyword ??
-    context.source.existingKeywords?.[0];
-
   const comparatorContext = {
     physicalProductIdentity: facts.physicalProductIdentity,
     visualEntities: facts.visualEntities,
@@ -100,9 +95,6 @@ export function buildB5ContentInput(context: SeoPipelineContext, options: B5Cont
     suggestions: context.searchResearch?.suggestedQueries,
     knownConflicts: context.conflictResult?.discardedKeywords,
     conflictDetails: context.conflictResult?.conflictDetails,
-    storeId: context.source.storeId,
-    productId: context.source.productId,
-    handle: context.source.handle,
   };
 
   // 2. Allocate keywords into primary, secondary, and supporting tiers
@@ -117,8 +109,6 @@ export function buildB5ContentInput(context: SeoPipelineContext, options: B5Cont
       suitableOccasions: facts.occasions,
       useCases: facts.useCases,
     },
-    existingPrimaryKeyword,
-    existingKeywords: context.source.existingKeywords,
     comparatorContext,
   });
 
@@ -202,18 +192,11 @@ export async function executeB5ContentGeneration(
   }
 
   const productDescription = formatProductDescriptionHtml(draft);
-  const productHandle = generateProductHandle(keywords.primary || productTitle, {
-    existingHandle: facts.existingHandle,
-    preserveExisting: constraints.preserveExistingHandle,
-    maxLength: constraints.maxHandleLength,
-  });
-
   const contentResult: ContentResult = {
     productTitle,
     productDescription,
     productSeoTitle,
     productSeoDescription,
-    productHandle,
     aeo_quick_summary: draft.aeo_quick_summary,
     aeo_faq: draft.aeo_faq,
     aeo_json_ld: buildJsonLdSchema({

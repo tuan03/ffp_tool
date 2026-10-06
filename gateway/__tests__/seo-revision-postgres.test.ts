@@ -7,6 +7,8 @@ import { Pool } from "pg";
 import { PostgresCustomGptQueue } from "../custom-gpt-seo/postgres-queue";
 import { createSeoRevision } from "../seo-worker/revision-service";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
 
 test("PostgreSQL revision preserves history, reads live source, replays once and fences old review", { skip: !databaseUrl }, async () => {
@@ -16,21 +18,22 @@ test("PostgreSQL revision preserves history, reads live source, replays once and
   const pool = new Pool({ connectionString: databaseUrl });
   try {
     await queue.initialize();
-    const pending = await queue.enqueue({ storeId: "demo", source: "auto_seo", sourceIdentity: "123", input: { productId: "123", title: "Old", description: "Old", handle: "old", niche: "blanket", images: [] }, original: { updatedAt: "v1" }, settings: { provider: "codex_mcp", batchSize: 1, language: "en-US", version: 1, instructions: "Grounded only" } });
+    const pending = await queue.enqueue(createTestEnqueue({ storeId: "demo", productId: "123", original: { updatedAt: "v1", title: "Old", description: "Old", handle: "old" }, input: { images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }], niche: "blanket" }, settings: { provider: "codex_mcp", batchSize: 1, language: "en-US", version: 1, instructions: "Grounded only" } }));
     const parent = { ...pending, status: "REVIEW_READY" as const };
     await pool.query(`UPDATE "${schema}".gpt_jobs SET status='REVIEW_READY',payload=$2 WHERE id=$1`, [parent.id, JSON.stringify(parent)]);
     await pool.query(`INSERT INTO "${schema}".gpt_review_state VALUES ($1,$2)`, [parent.id, JSON.stringify({ reviewDecision: "pending", updatedAt: 1 })]);
     await pool.query(`INSERT INTO "${schema}".seo_worker_stores VALUES ('demo',true)`);
     await pool.query(`INSERT INTO "${schema}".seo_worker_jobs(job_id,store_id,product_key,state,updated_at) VALUES ($1,'demo','shopify:123','READY_FOR_REVIEW',1)`, [parent.id]);
     const request = { storeId: "demo", jobId: parent.id, requestId: randomUUID(), operator: "test", instructions: "Improve summary" };
-    const dispatcher = { dispatch: async () => ({ success: true as const, storeId: "demo", operation: "products.get" as const, data: { product: { id: "gid://shopify/Product/123", title: "Live", descriptionHtml: "Live HTML", handle: "live", updatedAt: "v2", images: [], variants: [{ title: "Blanket" }] } } }) };
+    const dispatcher = { dispatch: async () => ({ success: true as const, storeId: "demo", operation: "products.get" as const, data: { product: { id: "gid://shopify/Product/123", title: "Live", descriptionHtml: "Live HTML", handle: "live", updatedAt: "v2", images: [{ id: "gid://shopify/ProductImage/456", url: "https://cdn.shopify.com/live-blanket.png" }], variants: [{ title: "Blanket" }] } } }) };
     const receipts = await Promise.all([createSeoRevision(queue, dispatcher, request), createSeoRevision(queue, dispatcher, request)]);
     assert.equal(receipts[0].jobId, receipts[1].jobId);
     assert.notEqual(receipts[0].jobId, parent.id);
-    assert.deepEqual(await queue.get("demo", parent.id), parent);
+    assert.deepEqual(await queue.get("demo", parent.id), JSON.parse(JSON.stringify(parent)) as typeof parent);
     const next = await queue.get("demo", receipts[0].jobId);
     assert.equal(next.status, "PENDING");
-    assert.equal(next.input.title, "Live");
+    assert.deepEqual(Object.keys(next.input).sort(), ["images", "niche", "storeProfile"]);
+    assert.equal((next.original as { title: string }).title, "Live");
     assert.equal((next.original as { updatedAt: string }).updatedAt, "v2");
     assert.match(next.settings.instructions, /Grounded only/);
     assert.deepEqual(next.checkpoints, {});
@@ -55,7 +58,7 @@ test("PostgreSQL revision preserves history, reads live source, replays once and
     const secondRevision = await createSeoRevision(queue, dispatcher, secondRequest);
     assert.equal((await pool.query(`SELECT superseded_by FROM "${schema}".seo_publish_operations WHERE id=$1`, [publish.id])).rows[0].superseded_by, secondRevision.jobId);
     assert.equal((await queue.publisher.get("demo", publish.id)).state, "BLOCKED");
-    assert.deepEqual(await queue.get("demo", parent.id), parent);
+    assert.deepEqual(await queue.get("demo", parent.id), JSON.parse(JSON.stringify(parent)) as typeof parent);
     assert.deepEqual(await queue.get("demo", next.id), nextReady);
     const history = await queue.workerHistory.list("demo", next.id, 0);
     assert.equal(history.total, 3);

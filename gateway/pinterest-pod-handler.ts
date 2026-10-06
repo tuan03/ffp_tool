@@ -8,6 +8,7 @@ import { handoverPinterestToSeo } from "../src/modules/orchestrator";
 import type { PinterestPodDeliverables, PodDeliverableItem } from "../src/modules/pinterest-pod";
 import { adaptPinterestPodItemToViewModel } from "../src/pages/seo-review/seo-content-ui-adapter";
 import type { SeoProductUiViewModel } from "../src/pages/seo-review/types";
+import { resolveStoreProfile } from "../src/modules/seo-content";
 import type { SeoContentInput, SeoContentOutput, PinterestPodSeoItemResult } from "../src/modules/seo-content";
 
 export interface PinterestPodSeoHandlerOptions {
@@ -199,11 +200,16 @@ export async function handlePinterestPodSeoHttpRequest(
       (firstItem as PodDeliverableItem | undefined)?.productType ||
       payload.productType ||
       "home decor";
+    const storeProfile = resolveStoreProfile({ storeId: payload.storeId });
+    if (!storeProfile) {
+      throw new Error("STORE_PROFILE_REQUIRED");
+    }
 
     const handoverResult = await handoverPinterestToSeo(
       {
         workflowId,
         deliverables: payload,
+        storeProfile,
         defaultNiche,
       },
       {

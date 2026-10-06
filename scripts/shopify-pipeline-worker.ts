@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
 import type { GptSeoJob, GptSeoSettings } from "../src/modules/custom-gpt-seo";
-import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
+import type { SeoContentDetailedOutput, SeoExecutionEnvelope } from "../src/modules/seo-content";
 import { bindExternalSeoProduct } from "../src/modules/seo-content";
 import { PostgresSeoContentRuntime } from "../src/modules/seo-content/server";
 
@@ -36,6 +36,7 @@ import {
   createSeoContentPipelineSummary,
   fromCustomizationProduct,
   registerSeoContentKeywords,
+  resolveStoreProfile,
   runSeoContentDetailed,
   createSeoContentSession,
   SeoCorpusCommitCoordinator,
@@ -510,10 +511,25 @@ async function processClaim(
         ? await gptRequest<GptSeoSettings>("settings")
         : { provider: "gemini" as const };
       if (claim.externalSeo || settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
+        const targetStoreConfig = configuredStores.find((store) => store.storeId === targetStore);
+        const storeProfile = resolveStoreProfile({ storeId: targetStore, siteDomain: targetStoreConfig?.shopDomain });
+        if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
         if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
         const externalJob = claim.externalSeo
           ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)
-          : await gptRequest<GptSeoJob>("enqueue", { storeId: targetStore, source: "amazon", sourceIdentity: claim.sourceKey, sourceRevision: claim.checksum, input: { ...fromCustomizationProduct(baseNormalizedProduct), productId: claim.existingShopify?.productId || `amazon:${claim.sourceKey}` }, original: baseNormalizedProduct });
+          : await gptRequest<GptSeoJob>("enqueue", {
+              input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
+              execution: {
+                storeId: targetStore,
+                productId: claim.existingShopify?.productId,
+                source: "amazon",
+                sourceIdentity: claim.sourceKey,
+                sourceRevision: claim.checksum,
+                providerId: settings.provider,
+                pipelineVersion: "seo-content-input-v2",
+                originalSnapshot: baseNormalizedProduct,
+              },
+            });
         if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
           await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
           return;
@@ -568,6 +584,8 @@ async function processClaim(
       configuredStores = loadBootstrappedStores({ env: loadLocalEnv() });
       claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     }
+    const storeProfile = resolveStoreProfile({ storeId: claimStoreId, siteDomain: claimStoreConfig?.shopDomain });
+    if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
     const claimAdminHandle = claimStoreConfig?.shopDomain
       ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
       : claimStoreId;
@@ -665,15 +683,19 @@ async function processClaim(
       }
       const persistence = getSeoPersistence();
       const conflictCorpus = persistence.conflictCorpus(claimStoreId);
-      const seoInput = {
-        ...fromCustomizationProduct(baseNormalizedProduct),
-        siteDomain: claimStoreConfig?.shopDomain,
+      const seoInput = fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile);
+      const seoExecutionEnvelope: SeoExecutionEnvelope = {
         storeId: claimStoreId,
-        sourceVersion: claim.checksum,
+        productId: claim.existingShopify?.productId,
+        source: "amazon",
+        sourceIdentity: claim.sourceKey,
+        sourceRevision: claim.checksum,
         providerId: env.SEO_CONTENT_PROVIDER?.trim() || "gemini",
+        pipelineVersion: "seo-content-input-v2",
+        originalSnapshot: baseNormalizedProduct,
       };
       const seoSession = externalSeoExecution ? undefined : createSeoContentSession(seoInput, {
-        imageMode: "alt_only", signal: cancellationController.signal,
+        imageMode: "alt_only", signal: cancellationController.signal, execution: seoExecutionEnvelope,
         dependencies: {
           conflictCorpus,
           checkpointManager: persistence.checkpointManager,
@@ -701,13 +723,7 @@ async function processClaim(
             );
             const finalHandle = String(product.handle || execution.output.productHandle);
             return {
-              input: {
-                ...fromCustomizationProduct(product),
-                siteDomain: claimStoreConfig?.shopDomain,
-                storeId: claimStoreId,
-                sourceVersion: claim.checksum,
-                providerId: env.SEO_CONTENT_PROVIDER?.trim() || "gemini",
-              },
+              input: fromCustomizationProduct(product, storeProfile.niche, storeProfile),
               execution: {
                 ...execution,
                 output: { ...execution.output, productHandle: finalHandle },
@@ -715,7 +731,10 @@ async function processClaim(
               product,
             };
           },
-          register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution, conflictCorpus),
+          register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution, {
+            execution: seoExecutionEnvelope,
+            conflictCorpus,
+          }),
         });
         reservedSeo = {
           input: prepared.execution.input,
@@ -724,7 +743,10 @@ async function processClaim(
         const reservation = reservedSeo;
         if (!externalSeoExecution) {
           seoReservation = new SeoCorpusReservation(
-            () => unregisterSeoContentKeywords(reservation.input, reservation.execution, conflictCorpus),
+            () => unregisterSeoContentKeywords(reservation.input, reservation.execution, {
+              execution: seoExecutionEnvelope,
+              conflictCorpus,
+            }),
           );
         }
         throwIfCancelled();

@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import { amazonCrawlerCoordinatorUrl, environment } from "../../config/environment";
 import { agentInstallServerUrl } from "../../config/agent-install-url";
 import { createSeoPerformanceRoutes, getSeoPerformanceClient } from "../../modules/seo-performance";
+import { createAdsIntelligenceRoutes, getAdsIntelligenceClient } from "../../modules/ads-intelligence";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
 import { amazonCrawlerRoutes } from "../../modules/amazon-crawler";
@@ -42,7 +43,7 @@ import type {
 import { createPinterestPodRoutes, getPinterestPodClient } from "../../modules/pinterest-pod";
 import type { PinterestPodDeliverables } from "../../modules/pinterest-pod";
 import { createReviewImageClient } from "../../modules/review-image";
-import { getBrowserSeoContentRunner } from "../../modules/seo-content/browser";
+import { getBrowserSeoContentRunner, resolveStoreProfile } from "../../modules/seo-content/browser";
 import { HomePage } from "../../pages/home/HomePage";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
 import { ReviewStudioPage } from "../../pages/review-studio/ReviewStudioPage";
@@ -116,10 +117,13 @@ export function AppRoutes({
           storeId: vm.storeId || payload.storeId,
         }));
       } else {
+        const storeProfile = resolveStoreProfile({ storeId: payload.storeId });
+        if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
         const result = await handoverPinterestToSeo(
           {
             deliverables: payload,
             defaultNiche: payload.items[0]?.trendKeywords?.[0] || payload.productType || "home decor",
+            storeProfile,
           },
           {
             seoRunner,
@@ -180,6 +184,8 @@ export function AppRoutes({
       const effectiveStoreId =
         storeId ||
         shopifyProducts.find((p) => p.storeId)?.storeId;
+      const storeProfile = resolveStoreProfile({ storeId: effectiveStoreId });
+      if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
 
       if (environment !== "mock" && effectiveStoreId) {
         const settings = await createCustomGptClient().settings(effectiveStoreId);
@@ -191,6 +197,7 @@ export function AppRoutes({
         {
           products: shopifyProducts as unknown as AutoSeoSourceProduct[],
           storeId: effectiveStoreId,
+          storeProfile,
         },
         {
           seoRunner,
@@ -557,6 +564,7 @@ export function AppRoutes({
           { path: "review-images", element: <Navigate to="/review-studio" replace /> },
           ...customizationRoutes,
           ...createSeoPerformanceRoutes(getSeoPerformanceClient(environment)),
+          ...createAdsIntelligenceRoutes(getAdsIntelligenceClient(environment)),
           {
             path: "seo-review",
             element: (

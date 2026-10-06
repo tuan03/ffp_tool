@@ -1,13 +1,18 @@
-import { fromAutoSeoProduct, runAutoSeoPipeline, runMockSeoContent } from "../../src/modules/seo-content";
+import {
+  fromAutoSeoProduct,
+  resolveStoreProfile,
+  runAutoSeoPipeline,
+  runMockSeoContent,
+} from "../../src/modules/seo-content";
 import { runSeoContent as runServerSeoContent } from "../../src/modules/seo-content/server";
 import { getCustomGptRuntime } from "../custom-gpt-seo/runtime";
-import type { GatewaySeoContentOptions, SeoContentInput, SeoContentResult } from "./types";
+import type { GatewaySeoContentOptions, GatewaySeoContentRequest, SeoContentResult } from "./types";
 
 /**
  * Executes the real SEO Content Pipeline (B1 -> B6) for products handed off by Auto SEO.
  */
 export async function runSeoContent(
-  input: SeoContentInput,
+  input: GatewaySeoContentRequest,
   options?: GatewaySeoContentOptions,
 ): Promise<SeoContentResult> {
   const isTestOrMock =
@@ -16,6 +21,11 @@ export async function runSeoContent(
     process.env.VITE_APP_ENV === "mock";
   const defaultRunner = isTestOrMock ? runMockSeoContent : undefined;
   const runner = options?.runner ?? defaultRunner;
+  const storeProfile = resolveStoreProfile({ storeId: input.storeId, siteDomain: input.shopDomain });
+
+  if (!storeProfile) {
+    throw new Error("STORE_PROFILE_REQUIRED");
+  }
 
   if (!runner) {
     const queue = getCustomGptRuntime().queue;
@@ -23,8 +33,23 @@ export async function runSeoContent(
     if (settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
       const jobIds: string[] = [];
       for (const product of input.products) {
-        const seoInput = fromAutoSeoProduct(product);
-        const job = (await queue.enqueue({ storeId: input.storeId, source: "auto_seo", sourceIdentity: String(seoInput.productId || seoInput.handle), input: { ...seoInput, siteDomain: input.shopDomain }, original: product, settings }));
+        const productId = product.id.replace(/^gid:\/\/shopify\/Product\//, "");
+        const seoInput = fromAutoSeoProduct(product, storeProfile.niche, storeProfile);
+        const job = await queue.enqueue({
+          input: seoInput,
+          execution: {
+            storeId: input.storeId,
+            productId,
+            source: "auto_seo",
+            sourceIdentity: productId,
+            sourceRevision: product.updatedAt,
+            shopifyUpdatedAt: product.updatedAt,
+            providerId: settings.provider,
+            pipelineVersion: "seo-content-input-v2",
+            originalSnapshot: product,
+          },
+          settings,
+        });
         jobIds.push(job.id);
       }
       return {
@@ -41,7 +66,7 @@ export async function runSeoContent(
 
   const result = await runAutoSeoPipeline(input.products, {
     runner: runner ?? runServerSeoContent,
-    siteDomain: input.shopDomain,
+    storeProfile,
   });
 
   const isSuccess = result.successful > 0 || result.total === 0;

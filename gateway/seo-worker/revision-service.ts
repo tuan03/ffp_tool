@@ -11,7 +11,7 @@ export async function createSeoRevision(queue: Pick<PostgresCustomGptQueue, "get
   const parent = await queue.get(request.storeId, request.jobId);
   const receipt = await queue.revisions.receipt(request);
   if (receipt) return receipt;
-  const productId = parent.input.productId?.replace(/^gid:\/\/shopify\/Product\//, "");
+  const productId = parent.execution.productId?.replace(/^gid:\/\/shopify\/Product\//, "");
   if (!productId || !/^\d+$/.test(productId)) throw new SeoWorkerError("REVISION_PRODUCT_REQUIRED");
   const response = await dispatcher.dispatch({ storeId: request.storeId, operation: "products.get", payload: { id: `gid://shopify/Product/${productId}` } });
   if (!response.success) throw new SeoWorkerError("SOURCE_UNAVAILABLE");
@@ -21,7 +21,9 @@ export async function createSeoRevision(queue: Pick<PostgresCustomGptQueue, "get
   const product = parsed.data.product;
   if (!product) throw new SeoWorkerError("PRODUCT_DELETED");
   if (product.id.replace(/^gid:\/\/shopify\/Product\//, "") !== productId) throw new SeoWorkerError("SOURCE_MISMATCH");
-  return queue.revisions.create(request, parent, { original: product, input: { ...parent.input, productId,
-    title: product.title, description: product.descriptionHtml, handle: product.handle,
-    images: product.images.map(image => ({ id: image.id, url: image.url, alt: image.altText })) } });
+  return queue.revisions.create(request, parent, {
+    input: { ...parent.input, images: product.images.map(image => ({ id: image.id, url: image.url })) },
+    execution: { ...parent.execution, productId, sourceRevision: `revision:${parent.id}:${request.requestId}`,
+      shopifyUpdatedAt: product.updatedAt, originalSnapshot: product },
+  });
 }

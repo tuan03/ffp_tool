@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { summarizeVariants } from "../internal/variant-summarizer";
 import { buildContentFactSheet } from "../internal/content-generation/content-fact-sheet";
+import { JEMINISE_BEDDING_PROFILE } from "../service";
 import type { SeoPipelineContext } from "../internal/domain-types";
 
 test("summarizeVariants handles undefined, null, or empty array safely", () => {
@@ -190,26 +191,26 @@ test("summarizeVariants compacts large 100+ variant matrix into exactly 3 repres
   assert.equal(summary.sampleVariants[2].sku, "SKU-120");
 });
 
-test("buildContentFactSheet incorporates variantSummary from raw variants in source", () => {
+test("buildContentFactSheet derives facts from V2 visual understanding and store profile", () => {
   const context: SeoPipelineContext = {
     source: {
-      title: "Artistic Quilt Set",
-      description: "Beautiful quilt with matching shams.",
-      handle: "artistic-quilt-set",
       niche: "Bedding",
-      images: [{ url: "https://example.com/quilt.jpg" }],
-      variants: [
-        { title: "Twin", price: 59.99, sku: "Q-TWIN" },
-        { title: "Queen", price: 79.99, sku: "Q-QUEEN" },
-        { title: "King", price: 99.99, sku: "Q-KING" },
-      ],
+      images: [{ id: "hero", url: "https://example.com/quilt.jpg" }],
+      storeProfile: JEMINISE_BEDDING_PROFILE,
+    },
+    storeProfile: JEMINISE_BEDDING_PROFILE,
+    productUnderstanding: {
+      physicalProductIdentity: "quilt bedding set",
+      typography: { visibleTexts: [], styleSummary: "stitched geometric pattern" },
+      visualEntities: "quilt with matching pillow shams",
+      sceneContext: "bedroom",
+      confidence: 0.95,
     },
   };
 
   const facts = buildContentFactSheet(context);
-  assert.ok(facts.variantSummary);
-  assert.equal(facts.variantSummary.variantCount, 3);
-  assert.equal(facts.variantSummary.minPrice, 59.99);
-  assert.equal(facts.variantSummary.maxPrice, 99.99);
-  assert.equal(facts.variantSummary.sampleVariants.length, 3);
+  assert.equal(facts.physicalProductIdentity, "quilt bedding set");
+  assert.equal(facts.visualEntities, "quilt with matching pillow shams");
+  assert.equal(facts.storeProfile?.profileId, "jeminise-bedding");
+  assert.equal("variantSummary" in facts, false);
 });

@@ -16,6 +16,10 @@ test("B1 accepts only product-anchored evidence groups and rejects legacy visual
       "Media player interface with play, pause, shuffle, repeat, volume and progress controls; a surreal black-and-white cloud-head portrait.",
     sceneContext: "Home studio with audio-producer desk, guitars, vinyl shelf and monitor speakers.",
     physicalProductIdentity: "area rug",
+    identityCandidates: ["area rug"],
+    excludedSceneEntities: ["desk", "guitars", "monitor speakers"],
+    confidence: 0.97,
+    reviewRequired: false,
   }));
 
   assert.deepEqual(parsed, {
@@ -27,6 +31,10 @@ test("B1 accepts only product-anchored evidence groups and rejects legacy visual
       "Media player interface with play, pause, shuffle, repeat, volume and progress controls; a surreal black-and-white cloud-head portrait.",
     sceneContext: "Home studio with audio-producer desk, guitars, vinyl shelf and monitor speakers.",
     physicalProductIdentity: "area rug",
+    identityCandidates: ["area rug"],
+    excludedSceneEntities: ["desk", "guitars", "monitor speakers"],
+    confidence: 0.97,
+    reviewRequired: false,
   });
 
   assert.throws(

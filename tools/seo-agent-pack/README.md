@@ -23,6 +23,23 @@ For updated guidance, replace the installed `.agents/skills/ffp-seo/SKILL.md` wi
 the ZIP's `skill/SKILL.md` after reviewing any local customizations. Do not rerun
 setup over an existing configuration or overwrite other MCP entries.
 
+### Quickstart (Tự động 1-click)
+
+1. **Windows**: Click đúp vào file `cai-dat.bat` (hoặc `setup.bat`).
+2. **macOS / Linux**: Mở terminal, chạy `bash cai-dat.sh` (hoặc `bash setup.sh`).
+
+Script sẽ tự động:
+- Kiểm tra Python 3.11+.
+- Khởi tạo môi trường ảo `.venv` và cài đặt `requirements.txt`.
+- Đăng nhập lưu token vào kho mật khẩu bảo mật của hệ điều hành (Windows Credential Manager / macOS Keychain / Linux Secret Service).
+- Tự động thêm MCP server và Skill vào Codex Workspace.
+
+---
+
+### Manual Install (Thủ công từng bước)
+
+Dành cho người muốn kiểm soát từng bước bằng lệnh terminal:
+
 Use Python 3.11+ in a dedicated virtual environment. Keep this extracted folder
 at a stable absolute path; Codex configuration references it.
 
@@ -63,7 +80,10 @@ Retry a mutation with the exact same requestId and payload, not a new requestId.
 Transport retries are limited to three attempts for replayable requests. HTTP 401
 is not retried. Retry-After above 120 seconds stops safely for a later resume.
 Read `ffp://seo-worker/contracts` for current schemas/rules; `resources/` contains
-the matching build-time copies. Current job context supplies store-specific rules.
+the matching build-time copies. V2 job context exposes only image IDs, niche and a
+versioned store profile. Fetch every image with `job_get_image`; source titles,
+descriptions, handles, variants, URLs, old alt text and performance facts are not
+generation inputs.
 
 Use `status` to check the token and `logout` to remove its local vault entry.
 Logout does not revoke other copies: use Agent Access → Revoke for that.

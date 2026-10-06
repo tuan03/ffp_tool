@@ -10,7 +10,7 @@ import {
   handleAutoSeoRun,
   type AutoSeoProductPayload,
   type AutoSeoRunRequest,
-  type SeoContentInput,
+  type GatewaySeoContentRequest,
   type SeoContentRunner,
 } from "../auto-seo-handler";
 import { runSeoContent } from "../seo-content";
@@ -52,10 +52,10 @@ function createMockSeoContentRunner(options?: {
   success?: boolean;
   resultMessage?: string;
 }) {
-  const calls: SeoContentInput[] = [];
+  const calls: GatewaySeoContentRequest[] = [];
   let callOrder = 0;
 
-  const runner: SeoContentRunner = async (input: SeoContentInput) => {
+  const runner: SeoContentRunner = async (input: GatewaySeoContentRequest) => {
     callOrder++;
     calls.push(input);
     if (options?.shouldThrow) {
@@ -98,8 +98,8 @@ test("1. one product -> one INSERT in SQLite", async () => {
 
   const req: AutoSeoRunRequest = {
     workflowId: "wf-1",
-    storeId: "store-1",
-    shopDomain: "test.myshopify.com",
+    storeId: "jeminise",
+    shopDomain: "b6-theme-test.myshopify.com",
     products: [createMockProduct({ id: "prod-1" })],
   };
 
@@ -208,8 +208,8 @@ test("5. snapshot_json contains exact full product object", async () => {
   await handleAutoSeoRun(
     {
       workflowId: "wf-exact",
-      storeId: "store-1",
-      shopDomain: "test.myshopify.com",
+      storeId: "jeminise",
+      shopDomain: "b6-theme-test.myshopify.com",
       products: [product],
     },
     { db, seoContentRunner: mockRunner.runner },
@@ -354,7 +354,7 @@ test("10. runner executes only after SQLite commit", async () => {
   let rowStatusDuringRunnerCall: string | null = null;
   let rowCountDuringRunnerCall = 0;
 
-  const runner: SeoContentRunner = async (input: SeoContentInput) => {
+  const runner: SeoContentRunner = async (input: GatewaySeoContentRequest) => {
     // When runner is called, the database transaction has already committed!
     const rows = db.prepare("SELECT * FROM auto_seo_product_backups WHERE workflow_id = ?").all("wf-order") as unknown as BackupRow[];
     rowCountDuringRunnerCall = rows.length;
@@ -385,9 +385,9 @@ test("10. runner executes only after SQLite commit", async () => {
 
 test("11. SEO runner receives exact full products", async () => {
   const db = createTestDb();
-  let receivedInput: SeoContentInput | null = null;
+  let receivedInput: GatewaySeoContentRequest | null = null;
 
-  const runner: SeoContentRunner = async (input: SeoContentInput) => {
+  const runner: SeoContentRunner = async (input: GatewaySeoContentRequest) => {
     receivedInput = input;
     return { success: true, processedCount: input.products.length };
   };
@@ -407,7 +407,7 @@ test("11. SEO runner receives exact full products", async () => {
   );
 
   assert.ok(receivedInput);
-  const input = receivedInput as SeoContentInput;
+  const input = receivedInput as GatewaySeoContentRequest;
   assert.equal(input.workflowId, "wf-same-products");
   assert.equal(input.storeId, "store-xyz");
   assert.equal(input.shopDomain, "shop.myshopify.com");
@@ -588,8 +588,8 @@ test("18. explicitly configured mock runner returns success without runtime stor
   const { runMockSeoContent } = await import("../../src/modules/seo-content");
   const res = await runSeoContent({
     workflowId: "wf-default",
-    storeId: "store-1",
-    shopDomain: "test.myshopify.com",
+    storeId: "jeminise",
+    shopDomain: "b6-theme-test.myshopify.com",
     products: [createMockProduct({ id: "p1" })],
   }, { runner: runMockSeoContent });
   assert.equal(res.success, true);
@@ -597,12 +597,40 @@ test("18. explicitly configured mock runner returns success without runtime stor
   assert.ok(res.message);
 });
 
+test("18a. runSeoContent hands Capozen products to the V2 contract with its rug profile", async () => {
+  const res = await runSeoContent(
+    {
+      workflowId: "wf-capozen-profile",
+      storeId: "capozen",
+      shopDomain: "capozen.myshopify.com",
+      products: [createMockProduct({ id: "p1" })],
+    },
+    {
+      runner: async (input) => {
+        assert.deepEqual(Object.keys(input).sort(), ["images", "niche", "storeProfile"]);
+        assert.equal(input.niche, "Rugs & Doormats");
+        assert.equal(input.storeProfile.profileId, "capozen-rugs");
+        return {
+          productTitle: "Image-grounded rug",
+          productDescription: "<p>Image-grounded rug description.</p>",
+          productSeoTitle: "Image-grounded rug",
+          productSeoDescription: "Image-grounded rug description.",
+          images: [],
+        };
+      },
+    },
+  );
+
+  assert.equal(res.success, true);
+  assert.equal(res.processedCount, 1);
+});
+
 test("18b. runSeoContent exposes the first item failure for server diagnostics", async () => {
   const res = await runSeoContent(
     {
       workflowId: "wf-item-failure",
-      storeId: "store-1",
-      shopDomain: "test.myshopify.com",
+      storeId: "jeminise",
+      shopDomain: "b6-theme-test.myshopify.com",
       products: [createMockProduct({ id: "p1" })],
     },
     {

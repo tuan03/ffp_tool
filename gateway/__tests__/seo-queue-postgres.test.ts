@@ -18,6 +18,8 @@ import { migrateAutoSeoReviewsLocal } from "../auto-seo-review-migration";
 import { bootstrapAutoSeoSchema } from "../auto-seo-startup";
 import { requireAutoSeoMigrationDatabase } from "../auto-seo-postgres-repository";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
 const integrationTest = databaseUrl ? test : test.skip;
 
@@ -42,7 +44,7 @@ integrationTest("PostgreSQL queue fences concurrent claims, preserves checkpoint
     await queue.initialize();
     await other.initialize();
     await queue.configure("test-store", { provider: "codex_mcp", batchSize: 1 });
-    const input = { storeId: "test-store", source: "auto_seo" as const, sourceIdentity: "123", input: { title: "Grounded test blanket", description: "", handle: "test-blanket", niche: "blanket", productId: "123", images: [] }, original: { updatedAt: "2026-01-01T00:00:00Z" } };
+    const input = createTestEnqueue({ storeId: "test-store", productId: "123", original: { updatedAt: "2026-01-01T00:00:00Z" }, input: { images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }], niche: "blanket" } });
     const [first, duplicate] = await Promise.all([queue.enqueue(input), other.enqueue(input)]);
     assert.equal(first.id, duplicate.id);
     assert.equal((await queue.counts("test-store")).PENDING, 1);
@@ -86,8 +88,8 @@ integrationTest("worker finalization commits a Review receipt and completes its 
   try {
     await queue.initialize();
     await queue.configure("test-store", { provider: "codex_mcp", batchSize: 1 });
-    const job = await queue.enqueue({ storeId: "test-store", source: "auto_seo", sourceIdentity: "123",
-      input: { productId: "123", title: "Test blanket", description: "", handle: "test", niche: "blanket", images: [] }, original: {} });
+    const job = await queue.enqueue(createTestEnqueue({ storeId: "test-store", productId: "123",
+      input: { images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }], niche: "blanket" } }));
     await queue.workers.enableStore("test-store");
     const { token } = await queue.workers.issueToken({ storeId: "test-store", workerId: "test", createdBy: "test" });
     const { sessionId } = await queue.workers.register(token, "register");
@@ -120,19 +122,19 @@ integrationTest("offline import preserves all queue tables, AEO, leases and sync
   const sourcePath = join(directory, "queue.sqlite3");
   const source = new DatabaseSync(sourcePath);
   const legacy = new CustomGptQueue(source, () => 1000);
-  const input = { storeId: "test-store", source: "auto_seo" as const, sourceIdentity: "123", input: { title: "Test blanket", description: "", handle: "test-blanket", niche: "blanket", productId: "123", images: [] }, original: { updatedAt: "2026-01-01" } };
-  legacy.configure(input.storeId, { provider: "codex_mcp", batchSize: 1 });
+  const input = createTestEnqueue({ storeId: "test-store", productId: "123", original: { updatedAt: "2026-01-01" }, input: { images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }], niche: "blanket" } });
+  legacy.configure(input.execution.storeId, { provider: "codex_mcp", batchSize: 1 });
   const job = legacy.enqueue(input);
-  const lease = legacy.claim(input.storeId, "claim-1", "codex_mcp", "test-worker");
+  const lease = legacy.claim(input.execution.storeId, "claim-1", "codex_mcp", "test-worker");
   const aeo = { summary: "Grounded blanket facts", faq: [{ question: "What is included?", answer: "One blanket." }], schema: { "@graph": [{ "@type": "Product" }] } };
-  legacy.checkpoint(input.storeId, job.id, { batchId: lease.id, leaseToken: lease.leaseToken, requestId: "submission-1", stage: "submission", payload: aeo });
-  legacy.finish(input.storeId, job.id, { output: aeo });
-  legacy.saveReviewState(input.storeId, job.id, { reviewDecision: "approved", updatedAt: 1000 });
-  const token = legacy.beginSync(input.storeId, job.id);
-  legacy.finishSync(input.storeId, job.id, token, "UNKNOWN");
+  legacy.checkpoint(input.execution.storeId, job.id, { batchId: lease.id, leaseToken: lease.leaseToken, requestId: "submission-1", stage: "submission", payload: aeo });
+  legacy.finish(input.execution.storeId, job.id, { output: aeo });
+  legacy.saveReviewState(input.execution.storeId, job.id, { reviewDecision: "approved", updatedAt: 1000 });
+  const token = legacy.beginSync(input.execution.storeId, job.id);
+  legacy.finishSync(input.execution.storeId, job.id, token, "UNKNOWN");
   legacy.rememberMutation(job.id, "remember-1", { id: 1 }, { preserved: true });
-  const pending = legacy.enqueue({ ...input, sourceIdentity: "456", input: { ...input.input, productId: "456" } });
-  const leased = legacy.claim(input.storeId, "claim-2", "codex_mcp", "second-worker");
+  const pending = legacy.enqueue(createTestEnqueue({ storeId: "test-store", productId: "456", input: input.input }));
+  const leased = legacy.claim(input.execution.storeId, "claim-2", "codex_mcp", "second-worker");
   source.close();
   const originalBytes = readFileSync(sourcePath);
   let queue = new PostgresCustomGptQueue({ databaseUrl, schema }, () => 1000);
@@ -145,22 +147,22 @@ integrationTest("offline import preserves all queue tables, AEO, leases and sync
     assert.equal(report.counts.gpt_jobs, 2);
     assert.equal((await migrateSeoQueue({ databaseUrl, schema, sourcePath })).alreadyImported, true);
     assert.deepEqual(readFileSync(sourcePath), originalBytes);
-    assert.deepEqual((await queue.get(input.storeId, job.id)).result, { output: aeo });
-    assert.deepEqual((await queue.get(input.storeId, job.id)).checkpoints.submission, aeo);
+    assert.deepEqual((await queue.get(input.execution.storeId, job.id)).result, { output: aeo });
+    assert.deepEqual((await queue.get(input.execution.storeId, job.id)).checkpoints.submission, aeo);
     assert.deepEqual(await queue.replayMutation(job.id, "remember-1", { id: 1 }), { payload: { preserved: true } });
-    assert.deepEqual(await queue.syncState(input.storeId, job.id), { token, status: "UNKNOWN" });
-    await assert.rejects(queue.beginSync(input.storeId, job.id), /already started/);
-    assert.equal((await queue.activeBatch(input.storeId, "second-worker"))?.leaseToken, leased.leaseToken);
+    assert.deepEqual(await queue.syncState(input.execution.storeId, job.id), { token, status: "UNKNOWN" });
+    await assert.rejects(queue.beginSync(input.execution.storeId, job.id), /already started/);
+    assert.equal((await queue.activeBatch(input.execution.storeId, "second-worker"))?.leaseToken, leased.leaseToken);
     await queue.close();
     queue = new PostgresCustomGptQueue({ databaseUrl, schema, legacySourcePath: sourcePath }, () => 1000);
-    assert.equal((await queue.get(input.storeId, pending.id)).status, "IN_PROGRESS");
-    await queue.assertLease(input.storeId, leased.id, leased.leaseToken, pending.id);
-    await queue.release(input.storeId, leased.id, leased.leaseToken);
-    await queue.configure(input.storeId, { provider: "custom_gpt", batchSize: 1 });
-    const newer = await queue.enqueue({ ...input, sourceIdentity: "789", input: { ...input.input, productId: "789" } });
-    const customClaim = await queue.claim(input.storeId, "custom-claim", "custom_gpt", "custom-worker");
+    assert.equal((await queue.get(input.execution.storeId, pending.id)).status, "IN_PROGRESS");
+    await queue.assertLease(input.execution.storeId, leased.id, leased.leaseToken, pending.id);
+    await queue.release(input.execution.storeId, leased.id, leased.leaseToken);
+    await queue.configure(input.execution.storeId, { provider: "custom_gpt", batchSize: 1 });
+    const newer = await queue.enqueue(createTestEnqueue({ storeId: "test-store", productId: "789", input: input.input }));
+    const customClaim = await queue.claim(input.execution.storeId, "custom-claim", "custom_gpt", "custom-worker");
     assert.equal(customClaim.jobs[0]?.id, newer.id);
-    assert.equal((await queue.findLatestSourceJobs(input.storeId, "auto_seo", ["123", "456", "789"])).size, 3);
+    assert.equal((await queue.findLatestSourceJobs(input.execution.storeId, "auto_seo", ["123", "456", "789"])).size, 3);
   } finally {
     await queue.close();
     const cleanup = new Pool({ connectionString: databaseUrl });

@@ -6,6 +6,7 @@ import {
 import type { ExternalSeoProvider, GptSeoJob } from "../../src/modules/custom-gpt-seo";
 
 import { downloadProductImage } from "./images";
+import { assertV2WorkerJob, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import type { SeoQueue } from "./queue-contract";
 
 export interface ExternalSeoWorkflowOptions {
@@ -46,25 +47,14 @@ async function assertBatchProvider(
 }
 
 function publicJob(job: GptSeoJob) {
+  assertV2WorkerJob(job);
   return {
     jobId: job.id,
-    source: job.source,
-    sourceIdentity: job.sourceIdentity,
-    sourceRevision: job.sourceRevision,
     status: job.status,
-    input: {
-      productId: job.input.productId,
-      title: job.input.title,
-      description: job.input.description,
-      handle: job.input.handle,
-      niche: job.input.niche,
-      siteDomain: job.input.siteDomain,
-      url: job.input.url,
-    },
+    input: { images: job.input.images.map(image => ({ id: image.id })), niche: job.input.niche, storeProfile: job.input.storeProfile },
     checkpoints: job.checkpoints,
     imageIds: job.input.images.map((_, index) => imageId(job, index)),
-    instructions: job.settings.instructions,
-    language: job.settings.language,
+    schemaVersion: SEO_WORKER_SCHEMA_VERSION,
   };
 }
 
@@ -104,10 +94,8 @@ export function createExternalSeoWorkflow(options: ExternalSeoWorkflowOptions) {
       const job = (await getProviderJob(storeId, provider, jobId));
       return {
         jobId,
-        images: job.input.images.slice(offset, offset + 5).map((image, localIndex) => ({
+        images: job.input.images.slice(offset, offset + 5).map((_, localIndex) => ({
           id: imageId(job, offset + localIndex),
-          url: image.url,
-          alt: image.alt,
         })),
         nextOffset: offset + 5 < job.input.images.length ? offset + 5 : null,
       };
@@ -133,7 +121,18 @@ export function createExternalSeoWorkflow(options: ExternalSeoWorkflowOptions) {
 
     async saveAnalysis(storeId: string, provider: ExternalSeoProvider, input: MutationInput & { readonly analysis: unknown }) {
       const job = (await getProviderJob(storeId, provider, input.jobId));
-      validateExternalSeoAnalysis({ ...job.input, storeId }, input.analysis);
+      assertV2WorkerJob(job);
+      const validated = validateExternalSeoAnalysis(job.input, input.analysis);
+      const candidate = input.analysis && typeof input.analysis === "object" && !Array.isArray(input.analysis)
+        ? input.analysis as Record<string, unknown>
+        : {};
+      if (candidate.reviewRequired !== false || typeof candidate.confidence !== "number"
+        || candidate.confidence < 0.6 || candidate.confidence > 1
+        || !Array.isArray(candidate.identityCandidates) || !Array.isArray(candidate.excludedSceneEntities)
+        || !validated.understanding.physicalProductIdentity.trim()
+        || validated.understanding.physicalProductIdentity.trim().toLowerCase() === "unknown") {
+        throw new Error("PRODUCT_IDENTITY_AMBIGUOUS");
+      }
       return (await queue.checkpoint(storeId, input.jobId, {
         ...input,
         stage: "analysis",
@@ -170,7 +169,7 @@ export function createExternalSeoWorkflow(options: ExternalSeoWorkflowOptions) {
           : {};
         return { saved: !Object.hasOwn(replayPayload, "saved") || replayPayload.saved === true, ...replayPayload };
       }
-      const check = await (options.checkKeywords ?? checkExternalSeoKeywords)({ ...job.input, storeId }, [...input.keywords]);
+      const check = await (options.checkKeywords ?? checkExternalSeoKeywords)([...input.keywords], { execution: job.execution });
       if (check.conflicts.some(conflict => conflict.matches.length)) {
         const payload = { saved: false, check };
         (await queue.rememberMutation(input.jobId, input.requestId, requestPayload, payload));
@@ -186,7 +185,7 @@ export function createExternalSeoWorkflow(options: ExternalSeoWorkflowOptions) {
       (await queue.assertLease(storeId, input.batchId, input.leaseToken, input.jobId));
       if (!job.checkpoints.research) throw new Error("Complete research first");
       if (!input.keywords.length || input.keywords.length > 10 || input.keywords.some(keyword => !keyword.trim() || keyword.length > 120)) throw new Error("Invalid keywords");
-      return (options.checkKeywords ?? checkExternalSeoKeywords)({ ...job.input, storeId }, [...input.keywords]);
+      return (options.checkKeywords ?? checkExternalSeoKeywords)([...input.keywords], { execution: job.execution });
     },
 
     async submit(storeId: string, provider: ExternalSeoProvider, input: MutationInput & { readonly submission: unknown }) {
@@ -217,10 +216,6 @@ export function createExternalSeoWorkflow(options: ExternalSeoWorkflowOptions) {
       return {
         jobs: jobs.map(job => ({
           jobId: job.id,
-          source: job.source,
-          productId: job.input.productId,
-          title: job.input.title,
-          handle: job.input.handle,
           status: job.status,
           imageCount: job.input.images.length,
           issue: job.error,

@@ -17,9 +17,17 @@ export function getSeoPublishSchemaSql(schema: string): string {
   CREATE UNIQUE INDEX IF NOT EXISTS seo_publish_active_product_v2 ON ${p}seo_publish_operations(store_id,product_id) WHERE state!='SUCCEEDED' AND superseded_by IS NULL;
   ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS has_write_intent BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS target_version BIGINT;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS target_content_hash TEXT;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS based_on_version_id TEXT;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS based_on_snapshot_id TEXT;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS based_on_content_hash TEXT;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS based_on_version_number BIGINT;
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS version_source TEXT NOT NULL DEFAULT 'AUTO_SEO';
+  ALTER TABLE ${p}seo_publish_operations ADD COLUMN IF NOT EXISTS restored_from_version_id TEXT;
   CREATE TABLE IF NOT EXISTS ${p}seo_publish_versions (
     operation_id TEXT PRIMARY KEY REFERENCES ${p}seo_publish_operations(id),
     store_id TEXT NOT NULL, product_id TEXT NOT NULL, version BIGINT NOT NULL,
     confirmed_at BIGINT NOT NULL, UNIQUE(store_id,product_id,version)
-  );`;
+  );
+  ALTER TABLE ${p}seo_publish_versions ADD COLUMN IF NOT EXISTS seo_version_id TEXT;`;
 }

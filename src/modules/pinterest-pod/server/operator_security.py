@@ -11,8 +11,8 @@ from urllib.parse import urlsplit
 
 
 def operator_credentials():
-    username = os.getenv("PINTEREST_OPERATOR_USERNAME", "")
-    password = os.getenv("PINTEREST_OPERATOR_PASSWORD", "")
+    username = os.getenv("PINTEREST_OPERATOR_USERNAME") or os.getenv("FFP_OPERATOR_USERNAME", "")
+    password = os.getenv("PINTEREST_OPERATOR_PASSWORD") or os.getenv("FFP_OPERATOR_PASSWORD", "")
     if not username and not password:
         return None
     if not username or not password or ":" in username:

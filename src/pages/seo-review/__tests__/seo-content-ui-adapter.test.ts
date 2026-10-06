@@ -5,6 +5,7 @@ import type {
   AutoSeoItemResult,
   CustomizationSeoItemResult,
   PinterestPodSeoItemResult,
+  SeoContentInput,
   SeoContentOutput,
 } from "../../../modules/seo-content";
 import type { AmazonCrawlerReviewItem } from "../../../modules/amazon-crawler";
@@ -23,6 +24,28 @@ import {
 } from "../seo-content-ui-adapter";
 import { hasWritableChanges } from "../../../modules/orchestrator";
 import type { SeoProductUiViewModel } from "../types";
+
+const TEST_STORE_PROFILE: SeoContentInput["storeProfile"] = {
+  profileId: "review-test",
+  profileVersion: "2",
+  storeId: "review-test",
+  storeName: "Review Test",
+  locale: "en-US",
+  language: "en",
+  niche: "Test Products",
+  brandVoice: ["clear"],
+  contentRules: ["Use image evidence only"],
+  prohibitedClaims: ["Unsupported product facts"],
+  seoConstraints: {
+    maxTitleCharacters: 70,
+    maxDescriptionCharacters: 160,
+    maxAltCharacters: 125,
+  },
+};
+
+function createSeoInput(niche = "Test Products"): SeoContentInput {
+  return { images: [], niche, storeProfile: TEST_STORE_PROFILE };
+}
 
 test("adaptAmazonCrawlerReviewToViewModel: preserves durable review and sync state", () => {
   const review: AmazonCrawlerReviewItem = {
@@ -233,13 +256,7 @@ test("adaptCustomizationItemToViewModel: adapts batch item results for success a
       title: "Custom Mug",
       categories: ["Kitchen"],
     },
-    seoInput: {
-      title: "Custom Mug",
-      description: "Coffee mug",
-      niche: "Kitchen",
-      handle: "custom-mug",
-      images: [],
-    },
+    seoInput: createSeoInput("Kitchen"),
     seoOutput: {
       productTitle: "Personalized Ceramic Coffee Mug",
       productDescription: "<p>Durable white ceramic</p>",
@@ -265,13 +282,7 @@ test("adaptCustomizationItemToViewModel: adapts batch item results for success a
       id: "prod-999",
       title: "Broken Item",
     },
-    seoInput: {
-      title: "Broken Item",
-      description: "",
-      niche: "",
-      handle: "",
-      images: [],
-    },
+    seoInput: createSeoInput(),
     success: false,
     error: "External API rate limit reached",
   };
@@ -314,13 +325,7 @@ test("adaptAutoSeoItemToViewModel: successfully adapts AutoSeoItemResult to SeoP
         },
       ],
     },
-    seoInput: {
-      title: "Gothic Wall Art Print",
-      description: "Beautiful gothic canvas",
-      niche: "Home Décor",
-      handle: "gothic-wall-art",
-      images: [],
-    },
+    seoInput: createSeoInput("Home Décor"),
     seoOutput: {
       productTitle: "Enchanted Gothic Wall Art Canvas Print",
       productDescription: "<p>Premium gothic wall decor</p>",
@@ -363,13 +368,7 @@ test("adaptAutoSeoItemToViewModel: handles failed AutoSeoItemResult and records 
       title: "Failed Product",
       handle: "failed-product",
     },
-    seoInput: {
-      title: "Failed Product",
-      description: "",
-      niche: "General",
-      handle: "failed-product",
-      images: [],
-    },
+    seoInput: createSeoInput("General"),
     success: false,
     error: "SEO Content Generation timed out after 30s",
   };
@@ -389,7 +388,7 @@ test("adaptAutoSeoItemToViewModel: preserves storeId from sourceProduct, item, o
       title: "Store 1 Product",
       storeId: "store-alpha",
     },
-    seoInput: { title: "P1", description: "", niche: "", handle: "p1-handle", images: [] },
+    seoInput: createSeoInput(),
     success: true,
   };
   const vm1 = adaptAutoSeoItemToViewModel(itemWithSourceStore);
@@ -403,7 +402,7 @@ test("adaptAutoSeoItemToViewModel: preserves storeId from sourceProduct, item, o
       id: "gid://shopify/Product/222",
       title: "Store 2 Product",
     },
-    seoInput: { title: "P2", description: "", niche: "", handle: "p2-handle", images: [] },
+    seoInput: createSeoInput(),
     success: true,
   };
   const vm2 = adaptAutoSeoItemToViewModel(itemWithItemStore);
@@ -416,7 +415,7 @@ test("adaptAutoSeoItemToViewModel: preserves storeId from sourceProduct, item, o
       id: "gid://shopify/Product/333",
       title: "Fallback Product",
     },
-    seoInput: { title: "P3", description: "", niche: "", handle: "p3-handle", images: [] },
+    seoInput: createSeoInput(),
     success: true,
   };
   const vm3 = adaptAutoSeoItemToViewModel(itemWithoutStore, "store-fallback");
@@ -430,7 +429,7 @@ test("adaptCustomizationItemToViewModel: preserves storeId from fallbackStoreId"
       id: "gid://shopify/Product/444",
       title: "Customization Product",
     },
-    seoInput: { title: "CP", description: "", niche: "", handle: "", images: [] },
+    seoInput: createSeoInput(),
     success: true,
   };
 
@@ -438,14 +437,14 @@ test("adaptCustomizationItemToViewModel: preserves storeId from fallbackStoreId"
   assert.equal(vm.storeId, "store-gamma");
 });
 
-test("adaptViewModelToApprovedUpdate: correctly extracts patch with title, descriptionHtml, handle, and seo", () => {
+test("adaptViewModelToApprovedUpdate: extracts SEO fields without making handle writable", () => {
   const sample = getInitialSampleViewModels()[0];
   const update = adaptViewModelToApprovedUpdate(sample);
 
   assert.equal(update.productId, sample.productId);
   assert.equal(update.patch.title, sample.productTitle.value);
   assert.equal(update.patch.descriptionHtml, sample.productDescription.value);
-  assert.equal(update.patch.handle, sample.handle.value);
+  assert.equal(update.patch.handle, undefined);
   assert.equal(update.patch.seo?.title, sample.seoTitle.value);
   assert.equal(update.patch.seo?.description, sample.seoDescription.value);
 });
@@ -468,7 +467,7 @@ test("adaptViewModelToApprovedUpdate: handles omitted/whitespace fields cleanly 
   const update = adaptViewModelToApprovedUpdate(sparseVm);
   assert.equal(update.productId, "gid://shopify/Product/555");
   assert.equal(update.patch.title, "Sparse Title");
-  assert.equal(update.patch.handle, "sparse-handle");
+  assert.equal(update.patch.handle, undefined);
   assert.equal(update.patch.descriptionHtml, undefined);
   assert.equal(update.patch.seo?.title, "Sparse SEO Title");
   assert.equal(update.patch.seo?.description, undefined);
@@ -498,7 +497,7 @@ test("adaptCustomizationItemToViewModel: extracts storeId and productId from sou
         },
       },
     },
-    seoInput: { title: "CCP", description: "", niche: "", handle: "", images: [] },
+    seoInput: createSeoInput(),
     success: true,
   };
 
@@ -662,13 +661,7 @@ test("adaptAutoSeoItemToViewModel: preserves original product data in originalBa
       seoDescription: "Store Meta Description",
       tags: ["clothing", "tee"],
     },
-    seoInput: {
-      title: "Store Original T-Shirt",
-      description: "Original 100% cotton tee",
-      niche: "Apparel",
-      handle: "store-original-t-shirt",
-      images: [],
-    },
+    seoInput: createSeoInput("Apparel"),
     seoOutput: {
       productTitle: "Optimized Vintage Graphic T-Shirt",
       productDescription: "<p>Ultra-soft vintage apparel</p>",
@@ -777,13 +770,7 @@ test("adaptAutoSeoItemToViewModel: preserves empty description cleanly without c
       descriptionHtml: "",
       handle: "clean-minimalist-tee",
     },
-    seoInput: {
-      title: "Clean Minimalist Tee",
-      description: "",
-      handle: "empty-desc-tee",
-      niche: "Apparel",
-      images: [],
-    },
+    seoInput: createSeoInput("Apparel"),
     seoOutput: {
       productTitle: "Optimized Clean Minimalist Tee",
       productDescription: "<p>Generated 500 words description</p>",
@@ -813,13 +800,7 @@ test("adaptAutoSeoItemToViewModel: extracts sourceSeoTitle and sourceSeoDescript
       sourceSeoTitle: "Source SEO Title",
       sourceSeoDescription: "Source SEO Desc",
     },
-    seoInput: {
-      title: "Vintage Hat",
-      description: "Cool hat",
-      handle: "hat-vintage",
-      niche: "Accessories",
-      images: [],
-    },
+    seoInput: createSeoInput("Accessories"),
     success: true,
   };
 
@@ -852,13 +833,7 @@ test("adaptPinterestPodItemToViewModel: preserves completed POD output and sourc
         dpi: 300,
       },
     },
-    seoInput: {
-      title: "Cozy Aesthetic Cloud Fleece Blanket",
-      description: "Rich description with scene details",
-      niche: "cloud aesthetic",
-      handle: "cozy-aesthetic-cloud-fleece-blanket",
-      images: [],
-    },
+    seoInput: createSeoInput("cloud aesthetic"),
     seoOutput: {
       productTitle: "Cozy Aesthetic Cloud Fleece Blanket | Premium Ultra-Soft Throw",
       productDescription: "<p>Wrap yourself in ethereal warmth.</p>",
@@ -891,13 +866,7 @@ test("adaptPinterestPodItemToViewModel: records a failed POD handoff", () => {
       composedMockups: [],
       printMaster: { rgbUrl: "", cmykUrl: "", widthPx: 0, heightPx: 0, dpi: 300 },
     },
-    seoInput: {
-      title: "Broken Rug Item",
-      description: "",
-      niche: "rug",
-      handle: "broken-rug-item",
-      images: [],
-    },
+    seoInput: createSeoInput("rug"),
     success: false,
     error: "AI model rate limit exceeded",
   };
@@ -916,13 +885,7 @@ test("adaptCustomizationItemToViewModel: ensures unique IDs for different varian
       title: "Christian Handbag Set",
       splitContext: { attribute: "Color", value: "Pink Faith" },
     },
-    seoInput: {
-      title: "Christian Handbag Set - Pink Faith",
-      description: "Description",
-      niche: "Handbags",
-      handle: "handbag-pink-faith",
-      images: [],
-    },
+    seoInput: createSeoInput("Handbags"),
     seoOutput: {
       productTitle: "Christian Handbag Set - Pink Faith",
       productDescription: "Desc",
@@ -941,13 +904,7 @@ test("adaptCustomizationItemToViewModel: ensures unique IDs for different varian
       title: "Christian Handbag Set",
       splitContext: { attribute: "Color", value: "Purple Faith" },
     },
-    seoInput: {
-      title: "Christian Handbag Set - Purple Faith",
-      description: "Description",
-      niche: "Handbags",
-      handle: "handbag-purple-faith",
-      images: [],
-    },
+    seoInput: createSeoInput("Handbags"),
     seoOutput: {
       productTitle: "Christian Handbag Set - Purple Faith",
       productDescription: "Desc",

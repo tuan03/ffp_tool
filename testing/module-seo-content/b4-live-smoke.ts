@@ -7,14 +7,13 @@ import {
 } from "../../src/modules/seo-content/internal/conflict-control/keyword-relevance-evaluator";
 import type { SeoContentInput } from "../../src/modules/seo-content/types";
 import type { ProductUnderstanding, ShoppingContext } from "../../src/modules/seo-content/internal/domain-types";
+import { SMOKE_TEST_STORE_PROFILE } from "./e2e-smoke-helpers";
 
 async function main() {
   const sampleProduct: SeoContentInput = {
-    title: "Vintage Black Cat Halloween T-Shirt",
-    description: "Retro spooky black cat graphic apparel for Halloween party and cat lovers.",
     niche: "halloween cat t-shirt",
-    handle: "vintage-black-cat-halloween-t-shirt",
-    images: [{ url: "https://example.com/cat.jpg", alt: "Black Cat T-Shirt" }],
+    storeProfile: SMOKE_TEST_STORE_PROFILE,
+    images: [{ id: "image-1", url: "https://example.com/cat.jpg" }],
   };
 
   const productUnderstanding: ProductUnderstanding = {

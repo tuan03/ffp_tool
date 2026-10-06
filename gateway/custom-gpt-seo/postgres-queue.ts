@@ -7,11 +7,14 @@ import type { QueueListFilters } from "./queue";
 import type { ClearQueueResult, ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
 import { getWorkerProductKey, SeoWorkerError } from "../seo-worker/protocol";
+import type { WorkerDatabase } from "../seo-worker/database";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { SeoPublishRepository } from "../seo-worker/publish-repository";
 import { SeoRevisionRepository } from "../seo-worker/revision-repository";
 import { SeoCutoverRepository } from "../seo-worker/cutover";
 import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
+import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
+import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -30,10 +33,15 @@ export class PostgresCustomGptQueue implements SeoQueue {
   readonly revisions: SeoRevisionRepository;
   readonly cutover: SeoCutoverRepository;
   readonly workerHistory: SeoReviewHistoryRepository;
+  readonly versioning: SeoVersionRepository;
+  readonly publishVersioning: SeoPublishVersioningIntegration;
   constructor(options: SeoQueuePostgresOptions, private readonly now: () => number = Date.now) {
     this.db = new PostgresQueueDatabase(options);
-    this.workers = new SeoWorkerRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
-    this.publisher = new SeoPublishRepository({ transaction: operation => this.db.withClientTransaction(operation) }, now);
+    const workerDatabase: WorkerDatabase = { transaction: operation => this.db.withClientTransaction(operation) };
+    this.versioning = new SeoVersionRepository(workerDatabase, this.db.schema);
+    this.publishVersioning = new SeoPublishVersioningIntegration(this.versioning);
+    this.workers = new SeoWorkerRepository(workerDatabase, now);
+    this.publisher = new SeoPublishRepository(workerDatabase, now, this.publishVersioning);
     this.revisions = new SeoRevisionRepository({ transaction: operation => this.db.withClientTransaction(operation) }, (input, previousJobId) => this.enqueueRevision(input, previousJobId), now);
     this.cutover = new SeoCutoverRepository({ transaction: operation => this.db.withClientTransaction(operation) }, storeId => this.workers.enableStore(storeId), now, storeId => this.expire(storeId, "codex_mcp"));
     this.workerHistory = new SeoReviewHistoryRepository({ transaction: operation => this.db.withClientTransaction(operation) });
@@ -57,23 +65,23 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return this.enqueueRevision(rawInput);
   }
   private async enqueueRevision(rawInput: GptSeoEnqueue, previousJobId?: string): Promise<GptSeoJob> {
-    const input: GptSeoEnqueue = { ...rawInput, sourceIdentity: rawInput.source === "auto_seo" ? rawInput.sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "") : rawInput.sourceIdentity, input: { ...rawInput.input, productId: rawInput.input.productId?.replace(/^gid:\/\/shopify\/Product\//, "") } };
-    if (!input.storeId || !input.sourceIdentity || !input.input.title) throw new Error("Missing source identity or title");
-    const inputHash = hash({ input: input.input, original: input.original, revision: input.sourceRevision });
-    const dedup = hash({ source: input.source, identity: input.sourceIdentity, inputHash });
+    const input = normalizeSeoEnqueue(rawInput);
+    const { execution } = input;
+    const inputHash = hash(input.input);
+    const dedup = hash({ source: execution.source, identity: execution.sourceIdentity, revision: execution.sourceRevision, inputHash });
     return (await this.transaction(async () => {
-      const existing = (await this.db.prepare("SELECT id,payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(input.storeId, dedup));
+      const existing = (await this.db.prepare("SELECT id,payload FROM gpt_jobs WHERE store_id=? AND dedup=?").get(execution.storeId, dedup));
       if (existing) {
         const existingJob = json(existing.payload) as GptSeoJob;
         if (existingJob.status !== "CANCELLED") return existingJob;
         await this.db.prepare("UPDATE gpt_jobs SET dedup=dedup || ':cancelled:' || id WHERE id=?").run(String(existing.id));
       }
-      const workerMode = await this.db.prepare("SELECT enabled FROM seo_worker_stores WHERE store_id=?").get(input.storeId);
+      const workerMode = await this.db.prepare("SELECT enabled FROM seo_worker_stores WHERE store_id=?").get(execution.storeId);
       if (workerMode) {
-        const active = await this.db.prepare("SELECT job_id FROM seo_worker_jobs WHERE store_id=? AND product_key=? AND pipeline_active=true").get(input.storeId, getWorkerProductKey(input));
+        const active = await this.db.prepare("SELECT job_id FROM seo_worker_jobs WHERE store_id=? AND product_key=? AND pipeline_active=true").get(execution.storeId, getWorkerProductKey(execution));
         if (active) throw new SeoWorkerError("ALREADY_IN_SEO_PIPELINE");
       }
-      const olderJobs = (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(input.storeId, input.source, input.sourceIdentity));
+      const olderJobs = (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(execution.storeId, execution.source, execution.sourceIdentity));
       for (const row of olderJobs) {
         const olderJob = json(row.payload) as GptSeoJob;
         // Explicit revisions preserve the entire ancestry, not only the immediate parent.
@@ -82,10 +90,23 @@ export class PostgresCustomGptQueue implements SeoQueue {
         if (input.performanceRecommendationId && olderJob.status === "REVIEW_READY") continue;
         await this.write({ ...olderJob, status: "CANCELLED", error: "Superseded by a newer source revision" });
       }
-      const job: GptSeoJob = { ...input, id: randomUUID(), inputHash, settings: input.settings ?? (await this.settings(input.storeId)), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
+      const job: GptSeoJob = { ...input, id: randomUUID(), storeId: execution.storeId, source: execution.source,
+        sourceIdentity: execution.sourceIdentity, sourceRevision: execution.sourceRevision, original: execution.originalSnapshot,
+        inputHash, settings: input.settings ?? (await this.settings(execution.storeId)), status: "PENDING", checkpoints: {}, createdAt: this.now(), updatedAt: this.now() };
       (await this.db.prepare("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES (?,?,?,?,?,?,?)").run(job.id, job.storeId, dedup, job.status, JSON.stringify(job), job.createdAt, job.settings.provider));
+      const versioningFlags = await this.versioning.getStoreFlags(job.storeId);
+      if (versioningFlags.readEnabled && execution.productId) {
+        await this.versioning.recordDraftBase({
+          jobId: job.id,
+          storeId: job.storeId,
+          shopifyProductGid: `gid://shopify/Product/${execution.productId}`,
+          inputContractVersion: SEO_WORKER_SCHEMA_VERSION,
+          storeProfileVersion: input.input.storeProfile.profileVersion,
+          createdAt: job.createdAt,
+        });
+      }
       if (workerMode) {
-        await this.db.prepare("INSERT INTO seo_worker_jobs(job_id,store_id,product_key,state,updated_at) VALUES (?,?,?,'READY',?)").run(job.id, job.storeId, getWorkerProductKey(job), this.now());
+        await this.db.prepare("INSERT INTO seo_worker_jobs(job_id,store_id,product_key,state,updated_at) VALUES (?,?,?,'READY',?)").run(job.id, job.storeId, getWorkerProductKey(job.execution), this.now());
       }
       (await this.audit(job.storeId, job.id, "ENQUEUED"));
       return job;
@@ -219,7 +240,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async batch(storeId: string, batchId: string): Promise<GptSeoBatch> {
     const row = (await this.db.prepare("SELECT * FROM gpt_batches WHERE store_id=? AND id=?").get(storeId, batchId));
     if (!row) throw new Error("Batch not found");
-    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, ownerId: String(row.owner_id), leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId)).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: job.input.title, status: job.status }; }) };
+    return { id: batchId, provider: String(row.provider) as ExternalSeoProvider, ownerId: String(row.owner_id), leaseToken: String(row.token), expiresAt: Number(row.expires_at), jobs: (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE batch_id=? ORDER BY created_at,id").all(batchId)).map(entry => { const job = json(entry.payload) as GptSeoJob; return { id: job.id, title: `SEO job ${job.id}`, status: job.status }; }) };
   }
   async activeBatch(storeId: string, ownerId: string): Promise<GptSeoBatch | null> {
     const row = (await this.db.prepare("SELECT id FROM gpt_batches WHERE store_id=? AND owner_id=? AND active=1 AND expires_at>? ORDER BY rowid LIMIT 1").get(storeId, ownerId, this.now()));
@@ -515,6 +536,9 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
       if (job.status !== "REVIEW_READY") throw new Error("Sync requires a ready review");
+      if ((await this.versioning.getStoreFlags(storeId)).writeEnabled) {
+        throw new Error("BACKEND_PUBLISH_REQUIRED: versioning-enabled stores cannot use the browser publisher");
+      }
       if ((await this.publisher.status(storeId, jobId)).managed) throw new Error("BACKEND_PUBLISH_REQUIRED: use the operator publish endpoint");
       const newer = (await this.db.prepare("SELECT 1 FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND rowid>(SELECT rowid FROM gpt_jobs WHERE id=?) LIMIT 1").get(storeId, job.source, job.sourceIdentity, jobId));
       if (newer) throw new Error("Sync conflict: a newer source revision exists");

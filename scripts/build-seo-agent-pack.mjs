@@ -10,7 +10,17 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = join(root, 'tools', 'seo-agent-pack');
 const destination = join(root, 'dist', 'seo-agent-pack');
 const contracts = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', 'scripts/export-seo-worker-contracts.ts'], { cwd: root, encoding: 'utf8' }));
-const files = ['ffp_worker.py', 'test_vault_live.py', 'requirements.txt', 'README.md', 'skill/SKILL.md'].map(name => {
+const files = [
+  'cai-dat.bat',
+  'cai-dat.sh',
+  'setup.bat',
+  'setup.sh',
+  'ffp_worker.py',
+  'test_vault_live.py',
+  'requirements.txt',
+  'README.md',
+  'skill/SKILL.md',
+].map(name => {
   const path = join(source, name);
   if (!lstatSync(path).isFile()) throw new Error('PACK_INPUT_MUST_BE_REGULAR_FILE');
   return { name, content: readFileSync(path) };

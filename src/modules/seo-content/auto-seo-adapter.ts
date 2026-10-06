@@ -5,6 +5,7 @@ import type {
   SeoContentImageInput,
   SeoContentInput,
   SeoContentOutput,
+  SeoStoreProfile,
 } from "./types";
 
 /**
@@ -51,8 +52,8 @@ export interface AutoSeoAdapterOptions {
   readonly concurrency?: number;
   /** Niche mặc định khi sản phẩm không có productType hoặc tags (mặc định: "General") */
   readonly defaultNiche?: string;
-  /** Storefront domain shared by the batch, supplied by Gateway when available. */
-  readonly siteDomain?: string;
+  /** Explicit, versioned configuration resolved before entering SEO Content. */
+  readonly storeProfile: SeoStoreProfile;
   /** Callback phát sự kiện ngay khi một sản phẩm hoàn tất xử lý */
   readonly onItemCompleted?: (itemResult: AutoSeoItemResult) => void;
   /** Callback phát sự kiện ngay khi một sản phẩm xử lý thất bại */
@@ -88,6 +89,15 @@ export interface AutoSeoBatchResult {
   readonly seoOutputs: readonly SeoContentOutput[];
 }
 
+function stableImageId(url: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < url.length; index += 1) {
+    hash ^= url.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `image-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 /**
  * Chuyển đổi một sản phẩm từ module Auto SEO sang chuẩn `SeoContentInput` cho Pipeline SEO (B1 → B6).
  *
@@ -97,52 +107,11 @@ export interface AutoSeoBatchResult {
  */
 export function fromAutoSeoProduct(
   product: AutoSeoSourceProduct,
-  defaultNiche = "General",
+  niche: string,
+  storeProfile: SeoStoreProfile,
 ): SeoContentInput {
-  // 1. Xác định ID và Handle
-  const rawId = typeof product.productId === "string" && product.productId.trim().length > 0
-    ? product.productId
-    : typeof product.id === "string" && product.id.trim().length > 0
-      ? product.id
-      : "";
-  const productId = rawId.trim();
-  const handle = (typeof product.handle === "string" ? product.handle : "").trim();
-
-  // 2. Xác định Tiêu đề gốc
-  const rawTitle = typeof product.sourceTitle === "string" && product.sourceTitle.trim().length > 0
-    ? product.sourceTitle
-    : typeof product.title === "string" && product.title.trim().length > 0
-      ? product.title
-      : "";
-  const title = rawTitle.trim() || "Untitled Product";
-
-  // 3. Xác định Mô tả gốc (HTML hoặc Plain text)
-  let description = "";
-  if (typeof product.sourceDescriptionHtml === "string" && product.sourceDescriptionHtml.trim().length > 0) {
-    description = product.sourceDescriptionHtml.trim();
-  } else if (typeof product.descriptionHtml === "string" && product.descriptionHtml.trim().length > 0) {
-    description = product.descriptionHtml.trim();
-  } else if (typeof product.description === "string" && product.description.trim().length > 0) {
-    description = product.description.trim();
-  }
-  if (!description) {
-    description = title;
-  }
-
-  // 4. Xác định Niche (Ưu tiên productType -> tags đầu tiên -> defaultNiche)
-  let niche = defaultNiche;
-  if (typeof product.productType === "string" && product.productType.trim().length > 0) {
-    niche = product.productType.trim();
-  } else if (Array.isArray(product.tags) && product.tags.length > 0) {
-    const validTag = product.tags.find(
-      (t: unknown): t is string => typeof t === "string" && t.trim().length > 0,
-    );
-    if (validTag) {
-      niche = validTag.trim();
-    }
-  }
-
-  // 5. Trích xuất danh sách ảnh (Khử trùng lặp URL và chuẩn hóa alt text)
+  // Image pixels are the sole product-specific evidence. Ignore title,
+  // description, handle, variants, tags, product type and old alt text.
   const images: SeoContentImageInput[] = [];
   const seenUrls = new Set<string>();
 
@@ -161,18 +130,11 @@ export function fromAutoSeoProduct(
 
     if (trimmedUrl && !seenUrls.has(trimmedUrl)) {
       seenUrls.add(trimmedUrl);
-      const rawAlt = typeof imgObj.altText === "string"
-        ? imgObj.altText
-        : typeof imgObj.alt === "string"
-          ? imgObj.alt
-          : undefined;
-      const alt = rawAlt ? rawAlt.trim() : undefined;
       const rawImgId = typeof imgObj.id === "string" ? imgObj.id.trim() : undefined;
 
       images.push({
+        id: rawImgId || stableImageId(trimmedUrl),
         url: trimmedUrl,
-        ...(alt ? { alt } : {}),
-        ...(rawImgId ? { id: rawImgId } : {}),
       });
     }
   }
@@ -186,30 +148,17 @@ export function fromAutoSeoProduct(
         ? feat.src.trim()
         : "";
     if (featUrl && !seenUrls.has(featUrl)) {
-      const featAlt = typeof feat.altText === "string"
-        ? feat.altText.trim()
-        : typeof feat.alt === "string"
-          ? feat.alt.trim()
-          : undefined;
       images.push({
+        id: typeof feat.id === "string" && feat.id.trim() ? feat.id.trim() : stableImageId(featUrl),
         url: featUrl,
-        ...(featAlt ? { alt: featAlt } : {}),
       });
     }
   }
 
   return {
-    ...(typeof product.onlineStoreUrl === "string" && product.onlineStoreUrl.trim()
-      ? { siteDomain: product.onlineStoreUrl.trim() }
-      : {}),
-    title,
-    description,
-    niche,
-    handle,
     images,
-    ...(productId ? { productId } : {}),
-    ...(typeof product.onlineStoreUrl === "string" && product.onlineStoreUrl ? { url: product.onlineStoreUrl } : {}),
-    ...(Array.isArray(product.variants) ? { variants: product.variants } : {}),
+    niche: niche.trim() || storeProfile.niche,
+    storeProfile,
   };
 }
 
@@ -222,9 +171,10 @@ export function fromAutoSeoProduct(
  */
 export function fromAutoSeoBatch(
   products: readonly AutoSeoSourceProduct[],
-  defaultNiche = "General",
+  niche: string,
+  storeProfile: SeoStoreProfile,
 ): readonly SeoContentInput[] {
-  return products.map((p) => fromAutoSeoProduct(p, defaultNiche));
+  return products.map((p) => fromAutoSeoProduct(p, niche, storeProfile));
 }
 
 /**
@@ -238,7 +188,7 @@ export function fromAutoSeoBatch(
  */
 export async function runAutoSeoPipeline(
   products: readonly AutoSeoSourceProduct[],
-  options: AutoSeoAdapterOptions = {},
+  options: AutoSeoAdapterOptions,
 ): Promise<AutoSeoBatchResult> {
   if (products.length === 0) {
     return {
@@ -269,11 +219,11 @@ export async function runAutoSeoPipeline(
     onItemCompleted: (item, seoOutput) => {
       const product = item.source as AutoSeoSourceProduct;
       const itemResult: AutoSeoItemResult = {
-        productId: item.seoInput.productId ?? "",
+        productId: typeof product.productId === "string" ? product.productId : typeof product.id === "string" ? product.id : "",
         storeId: typeof product.storeId === "string" && product.storeId.trim().length > 0
           ? product.storeId.trim()
           : undefined,
-        handle: item.seoInput.handle,
+        handle: typeof product.handle === "string" ? product.handle : "",
         sourceProduct: product,
         seoInput: item.seoInput,
         seoOutput,
@@ -285,11 +235,11 @@ export async function runAutoSeoPipeline(
     onItemFailed: (item, error) => {
       const product = item.source as AutoSeoSourceProduct;
       const itemResult: AutoSeoItemResult = {
-        productId: item.seoInput.productId ?? "",
+        productId: typeof product.productId === "string" ? product.productId : typeof product.id === "string" ? product.id : "",
         storeId: typeof product.storeId === "string" && product.storeId.trim().length > 0
           ? product.storeId.trim()
           : undefined,
-        handle: item.seoInput.handle,
+        handle: typeof product.handle === "string" ? product.handle : "",
         sourceProduct: product,
         seoInput: item.seoInput,
         success: false,
@@ -305,10 +255,7 @@ export async function runAutoSeoPipeline(
   });
 
   const inputs = products.map((product) => {
-    const mapped = fromAutoSeoProduct(product, options.defaultNiche);
-    return options.siteDomain?.trim()
-      ? { ...mapped, siteDomain: options.siteDomain.trim() }
-      : mapped;
+    return fromAutoSeoProduct(product, options.defaultNiche ?? options.storeProfile.niche, options.storeProfile);
   });
 
   queue.enqueue(inputs, products);

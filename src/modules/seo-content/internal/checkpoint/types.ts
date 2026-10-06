@@ -40,7 +40,7 @@ export interface SeoStageCheckpoint<T = unknown> {
 export const SEO_CHECKPOINT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (604,800,000 ms)
 
 export interface SeoCheckpoint {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly inputHash: string;
   readonly storeId?: string;
   readonly productId?: string;

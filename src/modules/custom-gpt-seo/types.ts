@@ -1,3 +1,8 @@
+import type {
+  SeoContentGenerationInput,
+  SeoExecutionEnvelope,
+} from "../../shared/seo-content-contract";
+
 export type SeoProvider = "gemini" | "custom_gpt" | "codex_mcp";
 export interface WorkerMetrics {
   readonly generatedAt: number; readonly start: number; readonly end: number; readonly eventCoverageSince: number;
@@ -38,6 +43,53 @@ export interface SeoPublishReceipt {
   readonly errorCode: string | null;
   readonly seoVersion: number | null;
 }
+export interface ProductSeoVersionDto {
+  readonly id: string;
+  readonly storeId: string;
+  readonly productId: string;
+  readonly versionNumber: number;
+  readonly snapshotId: string;
+  readonly beforeSnapshotId: string | null;
+  readonly predecessorVersionId: string | null;
+  readonly source: "BASELINE" | "AUTO_SEO" | "ROLLBACK" | "IMPORTED";
+  readonly publishOperationId: string | null;
+  readonly restoredFromVersionId: string | null;
+  readonly appliedAt: number;
+  readonly publicEffectiveAt: number | null;
+}
+export interface SeoVersionCapability {
+  readonly enabled: boolean;
+  readonly reasonCode: string | null;
+}
+export interface SeoProductLifecycleDto {
+  readonly flags: { readonly storeId: string; readonly readEnabled: boolean; readonly writeEnabled: boolean };
+  readonly current: null | {
+    readonly storeId: string; readonly shopifyProductGid: string; readonly currentVersion: ProductSeoVersionDto;
+    readonly currentSnapshotId: string; readonly currentContentHash: string; readonly state: "ACTIVE" | "DIRTY" | "ARCHIVED" | "DELETED";
+    readonly shopifyStatus: string; readonly currentUrl: string | null; readonly lastSeenAt: number; readonly hasExternalChanges: boolean;
+  };
+  readonly capabilities: Readonly<Record<"baselineRefresh" | "rollbackDraft" | "publish" | "reconcile", SeoVersionCapability>>;
+}
+export interface SeoVersionPageDto {
+  readonly entries: readonly ProductSeoVersionDto[];
+  readonly total: number;
+  readonly nextOffset: number | null;
+}
+export type SeoVersionDiffValueDto = { readonly presence: "MISSING" } | { readonly presence: "VALUE"; readonly value: string | number | null };
+export interface SeoVersionDiffDto {
+  readonly fromVersion: ProductSeoVersionDto;
+  readonly toVersion: ProductSeoVersionDto;
+  readonly fields: readonly { readonly field: string; readonly before: SeoVersionDiffValueDto; readonly after: SeoVersionDiffValueDto }[];
+  readonly images: readonly { readonly mediaGid: string; readonly change: "ADDED" | "REMOVED" | "CHANGED";
+    readonly fields: readonly { readonly field: string; readonly before: SeoVersionDiffValueDto; readonly after: SeoVersionDiffValueDto }[] }[];
+  readonly hasChanges: boolean;
+}
+export interface SeoRollbackDraftRequestDto {
+  readonly id: string; readonly requestId: string; readonly storeId: string; readonly shopifyProductGid: string;
+  readonly basedOnVersionId: string; readonly basedOnSnapshotId: string; readonly basedOnContentHash: string;
+  readonly restoredFromVersionId: string; readonly restoredFromSnapshotId: string; readonly status: "REQUESTED";
+  readonly requestedBy: string; readonly createdAt: number;
+}
 export interface AgentAccessToken {
   readonly id: string;
   readonly storeIds?: readonly string[];
@@ -69,16 +121,7 @@ export interface AgentRunPage {
 export type ExternalSeoProvider = Exclude<SeoProvider, "gemini">;
 export type GptJobStatus = "PENDING" | "IN_PROGRESS" | "WAITING_INPUT" | "VALIDATING" | "NEEDS_CHANGES" | "REVIEW_READY" | "FAILED" | "CANCELLED";
 export type GptStage = "analysis" | "research" | "keywords" | "submission";
-export interface GptSeoInput {
-  readonly title: string;
-  readonly description: string;
-  readonly handle: string;
-  readonly niche: string;
-  readonly productId?: string;
-  readonly siteDomain?: string;
-  readonly url?: string;
-  readonly images: readonly { readonly id?: string; readonly url: string; readonly alt?: string }[];
-}
+export type GptSeoInput = SeoContentGenerationInput;
 export interface GptSeoSettings {
   readonly provider: SeoProvider;
   readonly batchSize: number;
@@ -87,17 +130,19 @@ export interface GptSeoSettings {
   readonly instructions: string;
 }
 export interface GptSeoEnqueue {
-  readonly storeId: string;
-  readonly source: "amazon" | "auto_seo";
-  readonly sourceIdentity: string;
-  readonly sourceRevision?: string;
   readonly performanceRecommendationId?: string;
   readonly input: GptSeoInput;
-  readonly original: unknown;
+  readonly execution: SeoExecutionEnvelope;
   readonly settings?: GptSeoSettings;
 }
 export interface GptSeoJob extends GptSeoEnqueue {
   readonly id: string;
+  /** Persisted operational columns retained for queue/query compatibility. */
+  readonly storeId: string;
+  readonly source: "amazon" | "auto_seo";
+  readonly sourceIdentity: string;
+  readonly sourceRevision?: string;
+  readonly original: unknown;
   readonly inputHash: string;
   readonly settings: GptSeoSettings;
   readonly status: GptJobStatus;

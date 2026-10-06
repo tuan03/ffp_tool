@@ -19,6 +19,8 @@ Tool_crawer_New_update/
 .DS_Store
 stores.local.json
 stores.config.json
+credentials/
+*credentials*.json
 *zip
 
 # Python & Local Server Artifacts
@@ -42,6 +44,7 @@ pinterest_oauth_tokens.json
 # Amazon Distributed Crawler & Local Data Artifacts
 # Crawler & Gateway runtime/data
 .runtime/
+.codex/
 exports/
 client-data/
 .local-data/
@@ -56,6 +59,7 @@ config/amazon-crawler-agent.json
 
 #=== [start] - module SEO Content - Lth Loi ===
 .agents
+.codex
 compress-src.cmd
 dev.cmd
 .compressignore

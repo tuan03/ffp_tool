@@ -47,6 +47,7 @@ COPY gateway ./gateway
 COPY src ./src
 COPY scripts ./scripts
 COPY config ./config
+COPY skills ./skills
 COPY tsconfig.json tsconfig.gateway.json tsconfig.pipeline.json ./
 COPY deploy/server/entrypoint.sh /app/entrypoint.sh
 COPY deploy/server/supervisord.conf /app/deploy/server/supervisord.conf
