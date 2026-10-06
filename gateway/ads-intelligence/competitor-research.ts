@@ -83,9 +83,16 @@ export function createCompetitorResearchRepository(
     }
 
     if (runtimeReport && seedReport) {
-      return Date.parse(runtimeReport.observedAt) >= Date.parse(seedReport.observedAt)
-        ? runtimeReport
-        : seedReport;
+      const runtimeTime = Date.parse(runtimeReport.observedAt);
+      const seedTime = Date.parse(seedReport.observedAt);
+      if (seedTime > runtimeTime) {
+        try {
+          const target = pathFor(storeId);
+          await writeFile(target, JSON.stringify(seedReport, null, 2), { mode: 0o600 });
+        } catch { /* ignore cache sync error */ }
+        return seedReport;
+      }
+      return runtimeReport;
     }
     return runtimeReport ?? seedReport;
   };
