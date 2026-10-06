@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   CAPOZEN_RUG_PROFILE,
   JEMINISE_BEDDING_PROFILE,
+  PREAUREUM_HANDBAG_PROFILE,
   normalizeDomain,
   resolveStoreProfile,
 } from "../internal/store-profiles";
@@ -24,6 +25,16 @@ test("registry resolves the Capozen rug profile by store ID and Shopify domain",
   assert.equal(resolveStoreProfile({ siteDomain: "capozen.myshopify.com" }), CAPOZEN_RUG_PROFILE);
   assert.equal(CAPOZEN_RUG_PROFILE.niche, "Rugs & Doormats");
   assert.equal(CAPOZEN_RUG_PROFILE.catalogPolicies, undefined);
+});
+
+test("registry resolves the Preaureum handbag profile by store ID and Shopify domain", () => {
+  assert.equal(resolveStoreProfile({ storeId: "preaureum" }), PREAUREUM_HANDBAG_PROFILE);
+  assert.equal(
+    resolveStoreProfile({ siteDomain: "leatherbag-3anqqbf8.myshopify.com" }),
+    PREAUREUM_HANDBAG_PROFILE,
+  );
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.niche, "Personalized Handbags & Wallets");
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.catalogPolicies, undefined);
 });
 
 test("Jeminise V2 profile is versioned and declares three structured offerings", () => {

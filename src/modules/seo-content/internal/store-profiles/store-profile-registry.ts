@@ -1,15 +1,18 @@
 import type { SeoStoreProfile } from "../../types";
 import { CAPOZEN_RUG_PROFILE } from "./capozen-rug-profile";
 import { JEMINISE_BEDDING_PROFILE } from "./jeminise-bedding-profile";
+import { PREAUREUM_HANDBAG_PROFILE } from "./preaureum-handbag-profile";
 
 export const STORE_PROFILES_REGISTRY: readonly SeoStoreProfile[] = Object.freeze([
   CAPOZEN_RUG_PROFILE,
   JEMINISE_BEDDING_PROFILE,
+  PREAUREUM_HANDBAG_PROFILE,
 ]);
 
 const STORE_DOMAIN_ALIASES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   capozen: Object.freeze(["capozen.myshopify.com"]),
   jeminise: Object.freeze(["jeminise.com", "b6-theme-test.myshopify.com", "f4hgwc-hu.myshopify.com"]),
+  preaureum: Object.freeze(["leatherbag-3anqqbf8.myshopify.com"]),
 });
 
 export interface StoreProfileQuery {
