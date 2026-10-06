@@ -128,6 +128,7 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
     connect: async () => { connected = true; return { url: "/seo-performance?storeId=jeminise" }; },
     disconnect: async () => { connected = false; },
     map: async () => {},
+    mapGa4: async () => ({ ok: true }),
     start: async () => ({ jobId: "demo-job" }),
     pages: async (_store, filters) => list(
       MOCK_PAGES.filter(page => (!filters?.kind || page.kind === filters.kind) && (!filters?.search || page.url.includes(filters.search))),

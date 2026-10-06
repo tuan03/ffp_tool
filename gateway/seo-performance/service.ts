@@ -65,6 +65,49 @@ export class PerformanceService {
     await this.repository.event(storeId, "PROPERTY_CONNECTED", { property, origin: normalized.origin });
     await this.repository.startJob(storeId, "sync", `initial:${property}`);
   }
+  async mapGa4(storeId: string, input: {
+    readonly propertyId: string;
+    readonly origin?: string;
+    readonly streamId?: string;
+    readonly hostnameScope?: string;
+    readonly timeZone?: string;
+    readonly currencyCode?: string;
+  }): Promise<void> {
+    await this.ready();
+    const cleanPropertyId = input.propertyId.trim();
+    if (!/^\d+$/.test(cleanPropertyId)) throw new Error("GA4_PROPERTY_ID_INVALID");
+    let connectionId: string | undefined;
+    try {
+      connectionId = await this.repository.connectionFor(storeId, "GA4");
+    } catch {
+      try { connectionId = await this.repository.connectionFor(storeId, "GSC"); } catch { /* no connection */ }
+    }
+    if (!connectionId) throw new Error("GOOGLE_CONNECTION_REQUIRED");
+
+    let origin = input.origin?.trim();
+    if (!origin) {
+      const gscMapping = await this.repository.integrations(storeId);
+      const gsc = gscMapping.find(i => i.source === "gsc");
+      origin = gsc?.origin ?? `https://${input.hostnameScope ?? "example.com"}`;
+    }
+
+    const hostnameScope = input.hostnameScope?.trim() || (new URL(origin).hostname.replace(/^www\./, ""));
+    const timeZone = input.timeZone?.trim() || "America/Los_Angeles";
+    const currencyCode = input.currencyCode?.trim() || "USD";
+
+    await this.repository.mapIntegration({
+      storeId,
+      source: "GA4",
+      connectionId,
+      origin,
+      ga4PropertyId: cleanPropertyId,
+      streamId: input.streamId?.trim() || "Web",
+      hostnameScope,
+      timeZone,
+      currencyCode,
+    });
+    await this.repository.event(storeId, "GA4_PROPERTY_CONNECTED", { propertyId: cleanPropertyId, origin });
+  }
   async evidence(storeId: string, url: string, queryOffset = 0): Promise<unknown> {
     const page = await this.repository.page(storeId, url);
     const settings = await this.bridge.settings(storeId);

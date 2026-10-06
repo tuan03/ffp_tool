@@ -115,6 +115,7 @@ export interface SeoPerformanceClient {
   connect(storeId: string, sources?: readonly PerformanceDataSource[]): Promise<{ readonly url: string }>;
   disconnect(storeId: string): Promise<void>;
   map(storeId: string, property: string, origin: string): Promise<void>;
+  mapGa4(storeId: string, input: { readonly propertyId: string; readonly hostnameScope?: string; readonly streamId?: string; readonly timeZone?: string; readonly currencyCode?: string }): Promise<{ readonly ok: boolean }>;
   start(storeId: string, kind: "sync" | "gsc_sync" | "ga4_sync" | "crawl"): Promise<{ readonly jobId: string }>;
   pages(storeId: string, filters?: PerformanceFilters): Promise<PerformanceList<PerformancePage>>;
   queries(storeId: string, url: string, filters?: PerformanceFilters): Promise<PerformanceList<{ readonly query: string; readonly metrics: SearchMetrics }>>;

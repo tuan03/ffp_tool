@@ -112,7 +112,13 @@ export class GoogleSearchClient {
     );
     for (const source of state.requested_sources) {
       await this.pool.query(
-        "UPDATE sp_store_integrations SET connection_id=$3,status='NOT_CONFIGURED' WHERE store_id=$1 AND source=$2 AND is_current",
+        `UPDATE sp_store_integrations
+         SET connection_id=$3,
+             status=CASE
+               WHEN (source='GSC' AND gsc_property_raw IS NOT NULL) OR (source='GA4' AND ga4_property_id IS NOT NULL) THEN 'CONNECTED'
+               ELSE 'NOT_CONFIGURED'
+             END
+         WHERE store_id=$1 AND source=$2 AND is_current`,
         [state.store_id, source, connectionId],
       );
     }

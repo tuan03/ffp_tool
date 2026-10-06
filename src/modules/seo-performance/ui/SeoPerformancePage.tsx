@@ -275,6 +275,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
       setRefresh(value => value + 1);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Thao tác không thành công.");
+      throw failure;
     } finally {
       setBusy(false);
     }
@@ -768,6 +769,9 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
               storeId={storeId}
               onSyncGsc={() => action(() => client.start(storeId, "gsc_sync"), "Đã bắt đầu đồng bộ Google Search Console.")}
               onSyncGa4={() => action(() => client.start(storeId, "ga4_sync"), "Đã bắt đầu đồng bộ Google Analytics 4.")}
+              onMapGa4={input =>
+                action(() => client.mapGa4(storeId, input), "Đã lưu cấu hình Google Analytics 4 thành công.")
+              }
               onBackfill={(source, days) =>
                 action(() => client.backfill(storeId, source, days), `Đã khởi động tác vụ Backfill ${source.toUpperCase()} ${days} ngày.`)
               }

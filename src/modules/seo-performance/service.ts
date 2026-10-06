@@ -84,6 +84,16 @@ export function createSeoPerformanceClient(fetcher: typeof fetch = fetch): SeoPe
     disconnect: (storeId: string) => request("disconnect", storeId, {}),
     map: (storeId: string, property: string, origin: string) =>
       request("mapping", storeId, { property, origin, confirmed: true }),
+    mapGa4: (
+      storeId: string,
+      input: {
+        readonly propertyId: string;
+        readonly hostnameScope?: string;
+        readonly streamId?: string;
+        readonly timeZone?: string;
+        readonly currencyCode?: string;
+      },
+    ) => request<{ readonly ok: boolean }>("mapping/ga4", storeId, input),
     start: (storeId: string, kind: "sync" | "gsc_sync" | "ga4_sync" | "crawl") =>
       request("jobs", storeId, { kind }),
     pages: (storeId: string, filters?: PerformanceFilters) =>
