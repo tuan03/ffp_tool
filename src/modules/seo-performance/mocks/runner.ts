@@ -203,7 +203,7 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
       }
 
       const offset = filters.offset ?? 0;
-      const limit = filters.limit ?? 20;
+      const limit = filters.limit ?? 50;
       const paginated = filtered.slice(offset, offset + limit);
 
       const baseKpis = structuredClone(MOCK_SUMMARY_KPIS);

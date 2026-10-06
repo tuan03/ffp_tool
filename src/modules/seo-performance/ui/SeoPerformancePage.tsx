@@ -25,6 +25,7 @@ import { BenchmarkTable } from "./components/BenchmarkTable";
 import { ProductSeoDetailModal } from "./components/ProductSeoDetailModal";
 import { BatchDetailModal } from "./components/BatchDetailModal";
 import { ConnectionsSyncView } from "./components/ConnectionsSyncView";
+import { BenchmarkPagination } from "./components/BenchmarkPagination";
 import { displayDate, JOB_LABELS } from "./presentation";
 
 const control = "rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-40";
@@ -88,6 +89,8 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
     comparisonMode: "version",
     sortBy: "clicks",
     sortDir: "desc",
+    offset: 0,
+    limit: 50,
   });
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
 
@@ -427,8 +430,21 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             onSendToAutoSeo={product => void handleSendToAutoSeoFromTable(product)}
           />
 
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Hiển thị {benchmarkItems.length} trên tổng số {benchmarkTotal} sản phẩm.</span>
+          <BenchmarkPagination
+            total={benchmarkTotal}
+            offset={benchmarkFilters.offset ?? 0}
+            limit={benchmarkFilters.limit ?? 50}
+            isLoading={benchmarkLoading}
+            onChange={(newOffset, newLimit) => {
+              setBenchmarkFilters(prev => ({
+                ...prev,
+                offset: newOffset,
+                ...(newLimit !== undefined ? { limit: newLimit } : {}),
+              }));
+            }}
+          />
+
+          <div className="flex items-center justify-end text-xs text-slate-500">
             <span>Quy chuẩn công thức: V1.0 Benchmark Spec (Rule 12.7 & 15.3).</span>
           </div>
         </section>
