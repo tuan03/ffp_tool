@@ -141,3 +141,48 @@ test("Media Proxy: serves cached file with HTTP 200 and HTTP 206 Range", async (
     await fs.rm(metaPath, { force: true });
   }
 });
+
+test("Media Proxy: normalizes &amp; entities and finds cached file", async () => {
+  const cleanUrl = "https://video.xx.fbcdn.net/v/t42.1790-2/fake_video_amp.mp4?cat=1&sid=2";
+  const encodedUrl = "https://video.xx.fbcdn.net/v/t42.1790-2/fake_video_amp.mp4?cat=1&amp;sid=2";
+
+  // Hashes should match because &amp; is normalized to &
+  assert.equal(computeMediaHash(cleanUrl), computeMediaHash(encodedUrl));
+
+  const hash = computeMediaHash(cleanUrl);
+  await fs.mkdir(MEDIA_CACHE_DIR, { recursive: true });
+  const fakeContent = Buffer.from("VIDEO_DATA_WITH_AMP_PARAMS");
+  const videoPath = join(MEDIA_CACHE_DIR, `${hash}.mp4`);
+  const metaPath = join(MEDIA_CACHE_DIR, `${hash}.meta.json`);
+
+  await fs.writeFile(videoPath, fakeContent);
+  await fs.writeFile(
+    metaPath,
+    JSON.stringify({
+      originalUrl: cleanUrl,
+      contentType: "video/mp4",
+      size: fakeContent.length,
+      cachedAt: new Date().toISOString(),
+    })
+  );
+
+  const server = http.createServer(async (req, res) => {
+    await handleMediaProxy(req, res);
+  });
+  await new Promise<void>((resolveServer) => server.listen(0, resolveServer));
+  const port = (server.address() as { port: number }).port;
+
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/ads-intelligence/media-proxy?url=${encodeURIComponent(encodedUrl)}`
+    );
+    assert.equal(res.status, 200);
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.deepEqual(body, fakeContent);
+  } finally {
+    server.close();
+    await fs.rm(videoPath, { force: true });
+    await fs.rm(metaPath, { force: true });
+  }
+});
+

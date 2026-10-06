@@ -71,7 +71,8 @@ function getExtFromMimeType(mime: string): string {
 }
 
 export function computeMediaHash(targetUrl: string): string {
-  return createHash("sha256").update(targetUrl).digest("hex").slice(0, 32);
+  const clean = targetUrl.replace(/&amp;/g, "&");
+  return createHash("sha256").update(clean).digest("hex").slice(0, 32);
 }
 
 function ensureCacheDir(): void {
@@ -83,6 +84,7 @@ function ensureCacheDir(): void {
 interface CacheMetadata {
   readonly originalUrl: string;
   readonly contentType: string;
+  readonly ext?: string;
   readonly size: number;
   readonly cachedAt: string;
 }
@@ -95,8 +97,17 @@ async function findCachedFile(hash: string): Promise<{ filePath: string; meta: C
   try {
     const metaRaw = await fs.readFile(metaPath, "utf-8");
     const meta = JSON.parse(metaRaw) as CacheMetadata;
-    const ext = getExtFromMimeType(meta.contentType);
-    const filePath = join(MEDIA_CACHE_DIR, `${hash}${ext}`);
+    const ext = meta.ext || getExtFromMimeType(meta.contentType);
+    let filePath = join(MEDIA_CACHE_DIR, `${hash}${ext}`);
+    if (!existsSync(filePath)) {
+      for (const altExt of [".mp4", ".jpg", ".png", ".webp", ".webm", ".bin"]) {
+        const altPath = join(MEDIA_CACHE_DIR, `${hash}${altExt}`);
+        if (existsSync(altPath)) {
+          filePath = altPath;
+          break;
+        }
+      }
+    }
     if (existsSync(filePath)) {
       const stat = await fs.stat(filePath);
       if (stat.size > 0) {
@@ -118,29 +129,40 @@ async function downloadAndCacheMedia(targetUrl: string, hash: string): Promise<b
   const downloadPromise = (async (): Promise<boolean> => {
     ensureCacheDir();
     try {
-      const response = await fetch(targetUrl, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-          Accept: "*/*",
-          "Accept-Encoding": "identity",
-        },
+      const cleanUrl = targetUrl.replace(/&amp;/g, "&");
+      const headers: Record<string, string> = {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+        Accept: "*/*",
+        "Accept-Encoding": "identity",
+      };
+
+      if (cleanUrl.includes("fbcdn.net") || cleanUrl.includes("facebook.com") || cleanUrl.includes("fbsbx.com")) {
+        headers["Referer"] = "https://www.facebook.com/";
+      } else if (cleanUrl.includes("cdninstagram.com") || cleanUrl.includes("instagram.com")) {
+        headers["Referer"] = "https://www.instagram.com/";
+      }
+
+      const response = await fetch(cleanUrl, {
+        headers,
         redirect: "follow",
       });
 
       if (!response.ok || !response.body) {
-        console.warn(`[MediaProxy] Upstream returned status ${response.status} for ${targetUrl}`);
+        console.warn(`[MediaProxy] Upstream returned status ${response.status} for ${cleanUrl}`);
         return false;
       }
 
       const rawContentType = response.headers.get("content-type") || "application/octet-stream";
+      let effectiveContentType = rawContentType;
       let ext = getExtFromMimeType(rawContentType);
       if (ext === ".bin") {
         try {
-          const parsed = new URL(targetUrl);
+          const parsed = new URL(cleanUrl);
           const pathExt = extname(parsed.pathname).toLowerCase();
-          if (pathExt && [".mp4", ".webm", ".jpg", ".jpeg", ".png", ".webp"].includes(pathExt)) {
+          if (pathExt && [".mp4", ".webm", ".mov", ".jpg", ".jpeg", ".png", ".webp"].includes(pathExt)) {
             ext = pathExt === ".jpeg" ? ".jpg" : pathExt;
+            effectiveContentType = getMimeType(ext);
           }
         } catch {
           // ignore url parse error
@@ -172,7 +194,8 @@ async function downloadAndCacheMedia(targetUrl: string, hash: string): Promise<b
 
       const meta: CacheMetadata = {
         originalUrl: targetUrl,
-        contentType: rawContentType,
+        contentType: effectiveContentType,
+        ext,
         size: downloadedBytes,
         cachedAt: new Date().toISOString(),
       };
@@ -223,9 +246,11 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
     return true;
   }
 
+  const targetUrl = rawTargetUrl.replace(/&amp;/g, "&");
+
   let parsedTarget: URL;
   try {
-    parsedTarget = new URL(rawTargetUrl);
+    parsedTarget = new URL(targetUrl);
   } catch {
     res.statusCode = 400;
     res.setHeader("Content-Type", "application/json");
@@ -241,14 +266,14 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
   }
 
   // SSRF Protection: Block loopback, RFC1918 private IPs, AWS/GCP metadata endpoints
-  if (isLocalOrPrivateUrl(rawTargetUrl)) {
+  if (isLocalOrPrivateUrl(targetUrl)) {
     res.statusCode = 403;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ error: { code: "SSRF_PROTECTED", message: "Local or private network targets are prohibited" } }));
     return true;
   }
 
-  const hash = computeMediaHash(rawTargetUrl);
+  const hash = computeMediaHash(targetUrl);
 
   // 1. Check if media is already in disk cache
   let cached = await findCachedFile(hash);
@@ -256,7 +281,7 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
 
   // 2. If not cached, trigger on-demand download & cache
   if (!cached) {
-    const success = await downloadAndCacheMedia(rawTargetUrl, hash);
+    const success = await downloadAndCacheMedia(targetUrl, hash);
     if (!success) {
       res.statusCode = 502;
       res.setHeader("Content-Type", "application/json");
@@ -356,8 +381,9 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
  * Automatically downloads and caches media files in the background so they are ready before the user clicks.
  */
 export function prefetchCompetitorMedia(urls: readonly string[]): void {
-  for (const url of urls) {
-    if (!url || !/^https?:\/\//i.test(url)) continue;
+  for (const rawUrl of urls) {
+    if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) continue;
+    const url = rawUrl.replace(/&amp;/g, "&");
     if (isLocalOrPrivateUrl(url)) continue;
     const hash = computeMediaHash(url);
     void findCachedFile(hash).then((cached) => {
