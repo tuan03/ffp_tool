@@ -101,10 +101,13 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isStoreDelete = req.url && (req.url === "/api/stores/delete" || req.url.startsWith("/api/stores/delete?"));
         const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
+        const isSeoPerformance = req.url && (req.url === "/api/seo-performance" || req.url.startsWith("/api/seo-performance/"));
 
-        const isKnownApi = req.url?.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck;
+        const isKnownApi = req.url?.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck || isSeoPerformance;
 
-        if (authToken && isKnownApi && isSameOriginRequest(req.headers)) {
+        const isOauthCallback = req.url && req.url.startsWith("/api/seo-performance/oauth/callback");
+
+        if (authToken && ((isKnownApi && isSameOriginRequest(req.headers)) || isOauthCallback)) {
           if (!req.headers["x-gateway-key"]) {
             req.headers["x-gateway-key"] = authToken;
           }

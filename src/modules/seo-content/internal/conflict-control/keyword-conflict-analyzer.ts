@@ -42,13 +42,13 @@ import type {
   SearchResearchResult,
   ShoppingContext,
 } from "../domain-types";
-import type { SeoContentInput } from "../../types";
+import type { SeoConflictSource } from "./product-reference-builder";
 
 export interface KeywordConflictAnalysisInput {
   readonly searchResearch?: SearchResearchResult;
   readonly productUnderstanding?: ProductUnderstanding;
   readonly shoppingContext?: ShoppingContext;
-  readonly source: SeoContentInput;
+  readonly source: SeoConflictSource;
 }
 
 export interface KeywordConflictAnalyzerConfig {

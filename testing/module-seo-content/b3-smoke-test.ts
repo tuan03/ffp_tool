@@ -3,6 +3,7 @@ import { createInitialContext, evolveContext } from "../../src/modules/seo-conte
 import { GoogleSearchSuggestionsCollector } from "../../src/modules/seo-content/internal/search-suggestions/google-search-suggestions-collector";
 import { UnofficialGoogleSuggestClient } from "../../src/modules/seo-content/internal/search-suggestions/google-suggest-client";
 import { createB3SearchSuggestionsStage } from "../../src/modules/seo-content/internal/stages/b3-search-suggestions";
+import { SMOKE_TEST_STORE_PROFILE } from "./e2e-smoke-helpers";
 
 /**
  * Standalone Node.js live smoke test for B3 Search Suggestions.
@@ -18,11 +19,9 @@ async function main(): Promise<void> {
   console.log(`  SEO_SEARCH_COUNTRY: ${process.env.SEO_SEARCH_COUNTRY ?? "us (default)"}`);
 
   const sampleInput: SeoContentInput = {
-    title: "Vintage Halloween Black Cat T-Shirt",
-    description: "Soft cotton t-shirt with vintage black cat graphic for spooky season.",
     niche: "halloween",
-    handle: "vintage-halloween-black-cat-t-shirt",
-    images: [],
+    storeProfile: SMOKE_TEST_STORE_PROFILE,
+    images: [{ id: "image-1", url: "https://example.com/black-cat-shirt.webp" }],
   };
 
   const initialContext = createInitialContext(sampleInput);

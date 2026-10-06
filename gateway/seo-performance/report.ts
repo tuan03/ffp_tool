@@ -53,9 +53,24 @@ export function compareReportRows(current: readonly MetricRow[], previous: reado
 export async function loadSearchReport(repository: PerformanceRepository, storeId: string, rawFilters: unknown, rawView: unknown): Promise<SearchReport> {
   const filters = normalizeReportFilters(rawFilters); const view = reportViewSchema.parse(rawView);
   const mapping = await repository.requireMapping(storeId);
-  const connection = (await repository.pool.query<{ generation: string; reconnect: boolean }>("SELECT generation,reconnect FROM sp_connection WHERE id=1")).rows[0];
-  if (!connection || connection.reconnect) throw new Error("GSC_RECONNECT_REQUIRED");
-  const fingerprint = digest(JSON.stringify({ property: mapping.property, filters, generation: connection.generation }));
+  let generation: string | undefined;
+  if (mapping.gscConnectionId) {
+    const googleConn = (await repository.pool.query<{ generation: string; status: string }>(
+      "SELECT generation, status FROM sp_google_connections WHERE id=$1",
+      [mapping.gscConnectionId],
+    )).rows[0];
+    if (googleConn && googleConn.status === "CONNECTED") {
+      generation = googleConn.generation;
+    }
+  }
+  if (!generation) {
+    const legacyConn = (await repository.pool.query<{ generation: string; reconnect: boolean }>(
+      "SELECT generation, reconnect FROM sp_connection WHERE id=1",
+    )).rows[0];
+    if (!legacyConn || legacyConn.reconnect) throw new Error("GSC_RECONNECT_REQUIRED");
+    generation = legacyConn.generation;
+  }
+  const fingerprint = digest(JSON.stringify({ property: mapping.property, filters, generation }));
   const job = await repository.transaction(async client => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`sp-report:${storeId}`]);
     const existing = (await client.query<JobRecord>("SELECT * FROM sp_jobs WHERE store_id=$1 AND kind='report' AND payload->>'fingerprint'=$2 AND (status IN ('pending','running') OR (status='done' AND updated_at>now()-interval '24 hours') OR (status='failed' AND updated_at>now()-interval '1 minute')) ORDER BY updated_at DESC LIMIT 1", [storeId, fingerprint])).rows[0];

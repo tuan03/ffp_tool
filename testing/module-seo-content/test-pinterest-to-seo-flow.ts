@@ -15,7 +15,7 @@ import type {
   SeoPipelineContext,
 } from "../../src/modules/seo-content/internal/domain-types";
 import { loadSmokePipelineRuntime } from "./runtime-loader";
-import { serializeSeoOutput } from "./e2e-smoke-helpers";
+import { serializeSeoOutput, SMOKE_TEST_STORE_PROFILE } from "./e2e-smoke-helpers";
 
 const executeFile = promisify(execFile);
 
@@ -738,7 +738,7 @@ function renderHtmlReport(params: {
           <span class="serp-favicon">S</span>
           <div>
             <div>Your Shopify Store</div>
-            <div class="serp-url">https://yourstore.com/products/${escapeHtml(seoOutput.productHandle)}</div>
+            <div class="serp-url">https://yourstore.com/products/${escapeHtml(seoOutput.productHandle ?? "")}</div>
           </div>
         </div>
         <a class="serp-title" href="#serp">${escapeHtml(seoOutput.productSeoTitle)}</a>
@@ -1018,6 +1018,7 @@ async function main(): Promise<void> {
     {
       deliverables,
       concurrency: 1,
+      storeProfile: SMOKE_TEST_STORE_PROFILE,
     },
     {
       seoRunner: async (seoInput) => {

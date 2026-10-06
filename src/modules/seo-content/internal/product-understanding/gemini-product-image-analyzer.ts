@@ -7,7 +7,7 @@ import {
   parseGeminiProductImageAnalysis,
 } from "./gemini-analysis-schema";
 import { prepareProductImagePayload } from "./product-image-payload";
-import type { GeminiContentGenerator } from "./gemini-content-generator";
+import { type GeminiContentGenerator, GeminiGeneratorError } from "./gemini-content-generator";
 import {
   type AsyncSemaphore,
 } from "./async-semaphore";
@@ -22,12 +22,12 @@ Your task is to inspect the supplied product-image batch and return structured e
 
 Rules:
 1. Product anchoring:
-   - Use niche and title to identify the sold product, not incidental objects in its setting.
+   - Use niche only to disambiguate the sold product from incidental objects in its setting.
    - Product/design detail belongs only in typography, visualEntities, and physicalProductIdentity.
    - Background furniture, rooms, people and props belong only in sceneContext.
 2. Typography:
    - typography.visibleTexts contains only text visibly printed, embroidered, or engraved directly on the product/design (e.g. slogan, quotes, names, single words like 'VALHALLA', bible verses, brand names on graphic). Be precise and comprehensive about visible text on the graphic artwork.
-   - Never infer OCR text from title, description, niche, filename or alt text.
+   - Never infer OCR text from niche, URL, filename or alt text.
    - Never correct spelling found in the image.
    - Preserve visible wording, casing and punctuation where possible.
    - Exclude website UI, watermarks, image-editor overlays and unrelated background text unless they are part of the sold product/design.
@@ -39,9 +39,12 @@ Rules:
 5. physicalProductIdentity is the physical blank/object (for example "area rug", "quilt bedding set", "t-shirt"), never Shopify category or product type.
    - Decide it from cross-batch evidence, not the first image or repeated backgrounds.
    - Return "unknown" where evidence is insufficient.
+6. identityCandidates lists every plausible sold-product identity supported across the image batch.
+7. excludedSceneEntities lists visible objects that are context/props rather than the sold product.
+8. confidence is 0..1 confidence that one identity is consistently supported across every supplied image.
+9. reviewRequired is true whenever images disagree, the sold object is ambiguous, or any image is unreadable.
 
-The supplied title, description and niche are contextual hints only.
-They are never evidence for OCR.
+The supplied niche is a disambiguation hint only and is never visual evidence.
 Do not fabricate details that are not visible.`;
 
 export interface GeminiProductImageAnalyzerOptions {
@@ -52,7 +55,6 @@ export interface GeminiProductImageAnalyzerOptions {
   readonly maxOutputTokens?: number;
   readonly timeoutMs?: number;
   readonly maxRetries?: number;
-  readonly maxImages?: number;
   readonly semaphore?: AsyncSemaphore;
   readonly retryOptions?: GeminiRetryOptions;
 }
@@ -90,7 +92,6 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
   private readonly maxOutputTokens: number;
   private readonly timeoutMs?: number;
   private readonly maxRetries?: number;
-  private readonly maxImages?: number;
   private readonly signal?: AbortSignal;
   private readonly semaphore?: AsyncSemaphore;
   private readonly retryOptions?: GeminiRetryOptions;
@@ -102,7 +103,6 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
     this.maxOutputTokens = Math.min(options.maxOutputTokens || 2048, 2048);
     this.timeoutMs = options.timeoutMs;
     this.maxRetries = options.maxRetries;
-    this.maxImages = options.maxImages;
     this.semaphore = options.semaphore;
     this.signal = options.signal;
     this.retryOptions = options.retryOptions;
@@ -110,10 +110,7 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
 
   async analyze(input: ProductImageAnalyzerInput): Promise<ProductImageAnalysis> {
     this.signal?.throwIfAborted();
-    const limit = input.maxImages ?? this.maxImages;
-    const maxPayloads = typeof limit === "number" && Number.isFinite(limit) && limit > 0
-      ? Math.floor(limit)
-      : input.images.length;
+    const maxPayloads = input.images.length;
     const imagePayloads: Awaited<ReturnType<typeof prepareProductImagePayload>>[] = [];
     const failures: string[] = [];
     let nextImageIndex = 0;
@@ -141,21 +138,25 @@ export class GeminiProductImageAnalyzer implements ProductImageAnalyzer {
         `No readable product images were available for B1 analysis (tried ${failures.length} images; reasons: ${reasons}).`,
       );
     }
+    if (imagePayloads.length !== input.images.length || failures.length > 0) {
+      const reasons = [...new Set(failures)].slice(0, 3).join(", ") || "image read failed";
+      throw new GeminiGeneratorError(
+        `Every supplied image must be readable for B1 analysis (${imagePayloads.length}/${input.images.length}; reasons: ${reasons}).`,
+      );
+    }
 
     const prompt = `Analyze this ecommerce product image batch (${imagePayloads.length} readable image${imagePayloads.length === 1 ? "" : "s"} in supplied order).
 
 Product context:
-Title: ${input.title || ""}
-Description: ${input.description || ""}
 Niche: ${input.niche || ""}
 
-Extract exactly the four requested evidence groups.
+Extract exactly the requested evidence groups, including candidates, excluded scene entities, confidence, and reviewRequired.
 Focus closely on the primary product design/artwork:
 - Extract any prominent text or slogan printed on the design into typography.visibleTexts.
 - Describe the key artistic/design entities (symbols, motifs, emblems, illustrations) in visualEntities.
 - Identify the physical product blank in physicalProductIdentity.
 
-Use product context only for disambiguation.
+Use niche only for disambiguation.
 Visual evidence has priority over metadata.`;
 
     const effectiveRetryOptions: GeminiRetryOptions = {

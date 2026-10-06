@@ -1,12 +1,12 @@
 import { useState } from "react";
 
-import { crawlerProductToSeoInput } from "../../service";
-import type { CrawlerProduct, SeoContentInput } from "../../types";
+import { crawlerProductToSeoSource } from "../../service";
+import type { CrawlerProduct, CrawlerSeoHandoffSource } from "../../types";
 
 interface CrawlerHandoffModalProps {
   products: CrawlerProduct[];
   onClose(): void;
-  onSuccess?(payload: SeoContentInput[]): void;
+  onSuccess?(payload: CrawlerSeoHandoffSource[]): void;
 }
 
 export function CrawlerHandoffModal({
@@ -17,7 +17,7 @@ export function CrawlerHandoffModal({
   const [copied, setCopied] = useState(false);
   const [isHandedOff, setIsHandedOff] = useState(false);
 
-  const seoPayload: SeoContentInput[] = products.map(crawlerProductToSeoInput);
+  const seoPayload: CrawlerSeoHandoffSource[] = products.map(crawlerProductToSeoSource);
   const totalImages = seoPayload.reduce((acc, p) => acc + p.images.length, 0);
 
   const handleCopy = (): void => {
@@ -122,7 +122,7 @@ export function CrawlerHandoffModal({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Xem trước Payload Adapter (SeoContentInput[])
+                Xem trước nguồn bàn giao vận hành
               </h3>
               <button
                 type="button"

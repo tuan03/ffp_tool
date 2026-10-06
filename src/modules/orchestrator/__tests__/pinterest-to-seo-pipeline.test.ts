@@ -4,6 +4,7 @@ import test from "node:test";
 import type { PodDeliverableItem, PinterestPodDeliverables } from "../../pinterest-pod";
 import type { SeoContentInput, SeoContentOutput } from "../../seo-content";
 import { handoverPinterestToSeo } from "../pinterest-to-seo-pipeline";
+import { TEST_SEO_STORE_PROFILE } from "./test-seo-store-profile";
 
 function createSamplePodItem(id = "item_1", productType: "rug" | "blanket" = "rug"): PodDeliverableItem {
   return {
@@ -37,6 +38,7 @@ function createSamplePodItem(id = "item_1", productType: "rug" | "blanket" = "ru
 test("handoverPinterestToSeo: returns empty result when input items is empty", async () => {
   const result = await handoverPinterestToSeo({
     deliverables: [],
+    storeProfile: TEST_SEO_STORE_PROFILE,
   });
 
   assert.equal(result.total, 0);
@@ -61,14 +63,14 @@ test("handoverPinterestToSeo: processes deliverables wrapper and preserves workf
 
   const fakeRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
     return {
-      productTitle: `SEO Optimized ${input.title}`,
-      productDescription: `<p>SEO Optimized ${input.description}</p>`,
-      productSeoTitle: `${input.title} - Best Quality`,
-      productSeoDescription: `Shop ${input.title} today. Free shipping.`,
-      productHandle: input.handle || "seo-handle",
+      productTitle: "SEO Optimized Product",
+      productDescription: "<p>SEO content grounded in image evidence</p>",
+      productSeoTitle: "Grounded Product - Best Quality",
+      productSeoDescription: "Shop this image-grounded product today.",
+      productHandle: "grounded-product",
       images: (input.images || []).map((img, i) => ({
         sourceUrl: img.url,
-        alt: `Alt for ${input.title} #${i + 1}`,
+        alt: `Grounded image ${i + 1}`,
         webp: {
           filename: `seo-img-${i + 1}.webp`,
           url: `https://cdn.example.com/seo-img-${i + 1}.webp`,
@@ -78,7 +80,7 @@ test("handoverPinterestToSeo: processes deliverables wrapper and preserves workf
   };
 
   const result = await handoverPinterestToSeo(
-    { deliverables },
+    { deliverables, storeProfile: TEST_SEO_STORE_PROFILE },
     { seoRunner: fakeRunner },
   );
 
@@ -94,7 +96,9 @@ test("handoverPinterestToSeo: processes deliverables wrapper and preserves workf
   assert.equal(firstItem.designId, "design_1");
   assert.equal(firstItem.sourceItem.designId, "design_1");
   assert.equal(firstItem.productType, "rug");
-  assert.ok(firstItem.seoInput.niche.includes("boho"));
+  assert.equal(firstItem.seoInput.niche, "home decor");
+  assert.deepEqual(Object.keys(firstItem.seoInput).sort(), ["images", "niche", "storeProfile"]);
+  assert.equal(firstItem.seoInput.storeProfile, TEST_SEO_STORE_PROFILE);
 });
 
 test("handoverPinterestToSeo: handles partial failures gracefully", async () => {
@@ -108,7 +112,7 @@ test("handoverPinterestToSeo: handles partial failures gracefully", async () => 
       throw new Error("SEO generation service timeout");
     }
     return {
-      productTitle: `SEO ${input.title}`,
+      productTitle: "SEO Grounded Product",
       productDescription: "<p>Content</p>",
       productSeoTitle: "Meta Title",
       productSeoDescription: "Meta Desc",
@@ -120,6 +124,7 @@ test("handoverPinterestToSeo: handles partial failures gracefully", async () => 
   const result = await handoverPinterestToSeo(
     {
       deliverables: [item1, item2],
+      storeProfile: TEST_SEO_STORE_PROFILE,
       concurrency: 1,
     },
     { seoRunner: flakeyRunner },

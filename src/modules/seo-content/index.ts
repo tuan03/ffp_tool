@@ -77,6 +77,10 @@ export type {
   SeoContentDetailedResult,
   SeoContentEngine,
   SeoContentInput,
+  SeoCatalogOffering,
+  SeoCatalogPolicy,
+  SeoExecutionEnvelope,
+  SeoStoreProfile,
   VariantSample,
   VariantSummary,
   SeoContentOutput,
@@ -86,6 +90,7 @@ export type {
   SeoContentRunOptions,
   SeoContentWebpAsset,
 } from "./types";
+export { SEO_CONTENT_INPUT_CONTRACT_VERSION } from "../../shared/seo-content-contract";
 export { summarizeVariants } from "./internal/variant-summarizer";
 export {
   classifyError,

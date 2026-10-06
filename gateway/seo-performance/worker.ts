@@ -1,14 +1,20 @@
+import { randomUUID } from "node:crypto";
+
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
 import type { PerformanceMapping } from "../../src/modules/seo-performance";
 import { pacificDate, shiftDate } from "./analytics";
+import { Ga4DataClient } from "./ga4-client";
+import type { Ga4PanelKind } from "./ga4-contracts";
+import { digest } from "./google-client";
 import type { GoogleSearchClient } from "./google-client";
 import { inspectHtml } from "./page-audit";
 import { crawlDelay, fetchPublicDocument, isCrawlAllowed, loadRobots } from "./public-fetch";
 import type { JobRecord, PerformanceRepository } from "./repository";
 import { normalizePageUrl } from "./url-policy";
 import { runReportStep } from "./report";
+import { deriveInspectionState, normalizeUrlInspection } from "./url-inspection";
 
 export interface PerformanceSourceReader {
   readonly products: (storeId: string, cursor?: string) => Promise<{ products: Record<string, unknown>[]; cursor: string | null }>;
@@ -35,8 +41,11 @@ export class PerformanceWorker {
         if (!job) return;
         await lock.query("UPDATE sp_jobs SET status='running',updated_at=now() WHERE id=$1", [job.id]);
         try {
-          const mapping = await repository.requireMapping(job.store_id);
-          const outcome = job.kind === "report" ? await runReportStep(repository, this.google, job, mapping.property) : job.kind === "sync" ? await this.sync(job, mapping) : job.kind === "crawl" ? await this.crawl(job, mapping) : await this.inspection(job, mapping);
+          const mapping = job.kind === "ga4_sync" ? null : await repository.requireMapping(job.store_id);
+          const outcome = job.kind === "ga4_sync" ? await this.ga4Sync(job)
+            : job.kind === "report" ? await runReportStep(repository, this.google, job, mapping!.property)
+              : job.kind === "sync" || job.kind === "gsc_sync" ? await this.sync(job, mapping!)
+                : job.kind === "crawl" ? await this.crawl(job, mapping!) : await this.inspection(job, mapping!);
           await lock.query("UPDATE sp_jobs SET status=$2,payload=$3,progress=$4,attempts=0,error=NULL,next_at=now()+($5 * interval '1 second'),updated_at=now() WHERE id=$1", [job.id, outcome.done ? "done" : "running", JSON.stringify(outcome.payload), outcome.progress, outcome.delay ?? 1]);
           if (outcome.done) await repository.event(job.store_id, `${job.kind.toUpperCase()}_COMPLETED`, { jobId: job.id, ...outcome.payload });
         } catch (error) {
@@ -56,7 +65,7 @@ export class PerformanceWorker {
     const datasets = ["property", "page", "query"] as const;
     const dataset = datasets[datasetIndex];
     const day = shiftDate(end, -(days - 1) + dayIndex);
-    const rows = await this.google.analytics(mapping.property, day, dataset, startRow);
+    const rows = await this.google.analytics(mapping.property, day, dataset, startRow, mapping.gscConnectionId ?? undefined);
     const capped = startRow + rows.length >= 50000;
     const complete = rows.length < 25000 || capped;
     await this.repository.transaction(async client => {
@@ -75,6 +84,48 @@ export class PerformanceWorker {
     const done = nextDay >= days;
     if (done) await this.repository.pool.query("UPDATE sp_mappings SET last_sync=now() WHERE store_id=$1", [job.store_id]);
     return { done, progress: done ? 100 : Math.floor((nextDay * 3 + nextDataset) / (days * 3) * 100), payload: { end, days, dayIndex: nextDay, datasetIndex: nextDataset, startRow: complete ? 0 : startRow + rows.length } };
+  }
+  private async ga4Sync(job: JobRecord): Promise<StepResult> {
+    const integration = (await this.repository.pool.query<{
+      mapping_revision: number; connection_id: string; ga4_property_id: string; storefront_origin: string;
+      stream_id: string | null; hostname_scope: string; timezone: string; currency: string;
+    }>(`SELECT mapping_revision,connection_id,ga4_property_id,storefront_origin,stream_id,hostname_scope,timezone,currency
+      FROM sp_store_integrations WHERE store_id=$1 AND source='GA4' AND is_current AND status='CONNECTED'`, [job.store_id])).rows[0];
+    if (!integration?.connection_id || !integration.ga4_property_id || !integration.hostname_scope) throw new Error("GA4_MAPPING_REQUIRED");
+    const end = typeof job.payload.end === "string" ? job.payload.end : shiftDate(new Date().toISOString().slice(0, 10), -2);
+    const hasFacts = await this.repository.pool.query("SELECT 1 FROM sp_ga4_facts WHERE store_id=$1 LIMIT 1", [job.store_id]);
+    const days = typeof job.payload.days === "number" ? job.payload.days : hasFacts.rowCount ? 7 : 90;
+    const dayIndex = Number(job.payload.dayIndex ?? 0);
+    const panelIndex = Number(job.payload.panelIndex ?? 0);
+    const panels: readonly Ga4PanelKind[] = ["landing_engagement", "event_activity", "landing_revenue", "item_performance"];
+    const day = shiftDate(end, -(days - 1) + dayIndex);
+    const panelKind = panels[panelIndex];
+    const client = new Ga4DataClient(() => this.google.tokenForConnection(integration.connection_id));
+    const result = await client.panel(panelKind, {
+      propertyId: integration.ga4_property_id,
+      hostnameScope: integration.hostname_scope,
+      streamId: integration.stream_id,
+      startDate: day,
+      endDate: day,
+    });
+    if (result.status === "available") {
+      const dataRevision = digest(JSON.stringify({ day, panelKind, rows: result.rows, quality: result.quality }));
+      await this.repository.transaction(async sql => {
+        await sql.query("DELETE FROM sp_ga4_facts WHERE store_id=$1 AND mapping_revision=$2 AND property_id=$3 AND day=$4 AND dataset=$5", [job.store_id, integration.mapping_revision, integration.ga4_property_id, day, panelKindToDataset(panelKind)]);
+        const facts = result.rows.map(row => ({ dimensionKey: digest(JSON.stringify(row.dimensions)), dimensions: row.dimensions, metrics: row.metrics }));
+        await sql.query(`INSERT INTO sp_ga4_facts(store_id,mapping_revision,property_id,day,dataset,dimension_key,dimensions,metrics,quality,data_revision)
+          SELECT $1,$2,$3,$4,$5,row.dimension_key,row.dimensions,row.metrics,$7,$8
+          FROM jsonb_to_recordset($6::jsonb) AS row(dimension_key text,dimensions jsonb,metrics jsonb)`, [
+          job.store_id, integration.mapping_revision, integration.ga4_property_id, day, panelKindToDataset(panelKind), JSON.stringify(facts.map(fact => ({ dimension_key: fact.dimensionKey, dimensions: fact.dimensions, metrics: fact.metrics }))), JSON.stringify(result.quality), dataRevision,
+        ]);
+      });
+    } else {
+      await this.repository.event(job.store_id, "GA4_PANEL_UNAVAILABLE", { day, panelKind, reason: result.reason });
+    }
+    const nextPanel = (panelIndex + 1) % panels.length;
+    const nextDay = nextPanel === 0 ? dayIndex + 1 : dayIndex;
+    const done = nextDay >= days;
+    return { done, progress: done ? 100 : Math.floor((nextDay * panels.length + nextPanel) / (days * panels.length) * 100), payload: { end, days, dayIndex: nextDay, panelIndex: nextPanel } };
   }
   private async crawl(job: JobRecord, mapping: PerformanceMapping): Promise<StepResult> {
     const state = crawlState.parse(job.payload);
@@ -135,8 +186,33 @@ export class PerformanceWorker {
     if (page.inspected_at && Date.now() - page.inspected_at.getTime() < 86400000) return { done: true, progress: 100, payload: { url, cached: true } };
     const reserved = await this.repository.pool.query("INSERT INTO sp_inspection_quota(property,day,used) VALUES($1,$2,1) ON CONFLICT(property,day) DO UPDATE SET used=sp_inspection_quota.used+1 WHERE sp_inspection_quota.used<100 RETURNING used", [mapping.property, pacificDate(new Date())]);
     if (!reserved.rowCount) throw new Error("INSPECTION_DAILY_LIMIT");
-    const inspection = await this.google.inspect(mapping.property, url);
-    await this.repository.pool.query("UPDATE sp_pages SET inspection=$3,inspected_at=now() WHERE store_id=$1 AND url=$2", [job.store_id, url, JSON.stringify(inspection)]);
+    const inspection = await this.google.inspect(mapping.property, url, mapping.gscConnectionId ?? undefined);
+    const inspectedAt = new Date().toISOString();
+    const evidence = normalizeUrlInspection({ response: inspection, inspectedAt });
+    const versionTables = page.product_id
+      ? (await this.repository.pool.query<{ available: boolean }>("SELECT to_regclass('seo_products') IS NOT NULL AND to_regclass('seo_versions') IS NOT NULL AS available")).rows[0]?.available
+      : false;
+    const version = page.product_id && versionTables ? (await this.repository.pool.query<{ id: string; public_effective_at_utc: number | null }>(
+      `SELECT version.id,version.public_effective_at_utc
+       FROM seo_products product JOIN seo_versions version ON version.id=product.current_version_id
+       WHERE product.store_id=$1 AND product.shopify_product_gid=ANY($2::text[]) LIMIT 1`,
+      [job.store_id, [page.product_id, `gid://shopify/Product/${page.product_id}`]],
+    )).rows[0] : undefined;
+    const publicEffectiveAt = version?.public_effective_at_utc == null ? null : new Date(version.public_effective_at_utc).toISOString();
+    const assessment = deriveInspectionState({ evidence, publicEffectiveAt });
+    await this.repository.transaction(async client => {
+      await client.query("UPDATE sp_pages SET inspection=$3,inspected_at=$4 WHERE store_id=$1 AND url=$2", [job.store_id, url, JSON.stringify(inspection), inspectedAt]);
+      await client.query(`INSERT INTO sp_inspection_history(
+        id,store_id,mapping_revision,url,version_id,verdict,coverage_state,last_crawl_at,fetch_state,
+        robots_state,indexing_state,google_canonical,user_canonical,result_link,derived_state,
+        technical_flags,inspected_at,raw_payload
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, [
+        randomUUID(), job.store_id, mapping.mappingRevision ?? 1, url, version?.id ?? null,
+        evidence.verdict, evidence.coverage, evidence.lastCrawl, evidence.fetch, evidence.robots,
+        evidence.indexing, evidence.googleCanonical, evidence.userCanonical, evidence.resultLink,
+        assessment.state, JSON.stringify(assessment.technicalFlags), inspectedAt, JSON.stringify(inspection),
+      ]);
+    });
     return { done: true, progress: 100, payload: { url } };
   }
 }
@@ -146,3 +222,9 @@ const sitemapEntry = z.object({ loc: z.string().url() });
 const sitemapEntries = z.union([sitemapEntry, z.array(sitemapEntry)]).optional();
 const sitemapDocument = z.object({ sitemapindex: z.object({ sitemap: sitemapEntries }).optional(), urlset: z.object({ url: sitemapEntries }).optional() });
 function toArray<T>(value: T | T[] | undefined): T[] { return value === undefined ? [] : Array.isArray(value) ? value : [value]; }
+function panelKindToDataset(kind: Ga4PanelKind): "LANDING" | "ENGAGEMENT" | "EVENT" | "REVENUE" | "ITEM" {
+  if (kind === "event_activity") return "EVENT";
+  if (kind === "landing_revenue") return "REVENUE";
+  if (kind === "item_performance") return "ITEM";
+  return "LANDING";
+}

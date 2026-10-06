@@ -2,38 +2,36 @@ import assert from "node:assert/strict";
 import test, { describe, it } from "node:test";
 
 import {
-  createSeoContentQueue,
   DEFAULT_OVERALL_TIMEOUT_MS,
   DEFAULT_STAGE_TIMEOUTS_MS,
   getStageTimeoutMs,
-  isSeoTimeoutError,
-  SeoTimeoutError,
-} from "../index";
-import { createSeoPipeline } from "../internal/pipeline";
+  createSeoPipeline,
+} from "../internal/pipeline";
+import { isSeoTimeoutError, SeoTimeoutError } from "../internal/pipeline-errors";
 import { evolveContext } from "../internal/pipeline-context";
+import { createSeoContentQueue } from "../queue";
+import { JEMINISE_BEDDING_PROFILE } from "../service";
 import type { SeoContentInput, SeoContentOutput } from "../types";
 
 function createDummyInput(id = "prod-test"): SeoContentInput {
   return {
-    productId: id,
-    title: `Test Product ${id}`,
-    description: "Detailed test product description",
-    handle: `test-product-${id}`,
     niche: "Home Decor",
-    images: [{ url: `https://example.com/${id}.jpg`, alt: "Test" }],
+    images: [{ id, url: `https://example.com/${id}.jpg` }],
+    storeProfile: JEMINISE_BEDDING_PROFILE,
   };
 }
 
 function createDummyOutput(input: SeoContentInput): SeoContentOutput {
+  const id = input.images[0]?.id ?? "product";
   return {
-    productTitle: `${input.title} - Optimized`,
-    productSeoTitle: `${input.title} | SEO`,
-    productSeoDescription: `Optimized description for ${input.title}.`,
-    productDescription: `<p>Optimized ${input.description}</p>`,
-    productHandle: input.handle || "test-handle",
+    productTitle: `Product ${id} - Optimized`,
+    productSeoTitle: `Product ${id} | SEO`,
+    productSeoDescription: `Optimized description for product ${id}.`,
+    productDescription: `<p>Optimized product ${id}</p>`,
+    productHandle: `product-${id}`,
     images: input.images.map((img) => ({
       sourceUrl: img.url,
-      alt: `${input.title} image`,
+      alt: `Product ${id} image`,
       webp: { filename: "image.webp" },
     })),
   };
@@ -196,8 +194,8 @@ describe("R2: Exact Per-Stage Timeouts & Abort Handling", () => {
     const queue = createSeoContentQueue({
       concurrency: 1,
       runner: async (input, options) => {
-        startLog.push(input.productId || "");
-        if (input.productId === "hung-item") {
+        startLog.push(input.images[0]?.id ?? "");
+        if (input.images[0]?.id === "hung-item") {
           hungStartedPromiseResolve();
           // Simulates a hung task that only terminates if aborted
           return new Promise<SeoContentOutput>((resolve, reject) => {
@@ -209,7 +207,7 @@ describe("R2: Exact Per-Stage Timeouts & Abort Handling", () => {
           });
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
-        finishLog.push(input.productId || "");
+        finishLog.push(input.images[0]?.id ?? "");
         return createDummyOutput(input);
       },
     });
@@ -253,7 +251,7 @@ describe("R2: Exact Per-Stage Timeouts & Abort Handling", () => {
       concurrency: 1,
       itemTimeoutMs: 40,
       runner: async (input, options) => {
-        if (input.productId === "slow-item") {
+        if (input.images[0]?.id === "slow-item") {
           // Deliberately exceeds itemTimeoutMs (40ms)
           return new Promise<SeoContentOutput>((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -298,7 +296,7 @@ describe("R2: Exact Per-Stage Timeouts & Abort Handling", () => {
     const queue = createSeoContentQueue({
       concurrency: 2,
       runner: async (input, options) => {
-        if (input.productId === "p-hung") {
+        if (input.images[0]?.id === "p-hung") {
           return new Promise<SeoContentOutput>((_, reject) => {
             options?.signal?.addEventListener("abort", () => {
               const err = new Error("Cancelled");
@@ -307,7 +305,7 @@ describe("R2: Exact Per-Stage Timeouts & Abort Handling", () => {
             });
           });
         }
-        if (input.productId === "p-wait") {
+        if (input.images[0]?.id === "p-wait") {
           await item2BlockedPromise;
           return createDummyOutput(input);
         }

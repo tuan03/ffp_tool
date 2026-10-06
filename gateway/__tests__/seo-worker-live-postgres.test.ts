@@ -9,6 +9,8 @@ import { Pool } from "pg";
 
 import { PostgresCustomGptQueue } from "../custom-gpt-seo/postgres-queue";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
 
 test("cutover drain lets a legacy lease finish and recovers only expired Codex batches", { skip: !databaseUrl }, async () => {
@@ -19,7 +21,7 @@ test("cutover drain lets a legacy lease finish and recovers only expired Codex b
   try {
     await queue.initialize();
     await queue.configure("demo", { provider: "codex_mcp", batchSize: 1 });
-    const job = await queue.enqueue({ storeId: "demo", source: "auto_seo", sourceIdentity: "1", input: { productId: "1", title: "Test", description: "", handle: "test", niche: "blankets", images: [] }, original: {} });
+    const job = await queue.enqueue(createTestEnqueue({ storeId: "demo", productId: "1", input: { images: [{ id: "front", url: "https://cdn.shopify.com/1.png" }], niche: "blankets" } }));
     const batch = await queue.claim("demo", "legacy", "codex_mcp", "legacy");
     await queue.cutover.drain("demo", "operator");
     await queue.assertLease("demo", batch.id, batch.leaseToken, job.id);
@@ -47,13 +49,13 @@ test("live PostgreSQL worker cutover blocks legacy claims and concurrent clients
   try {
     await first.initialize(); await second.initialize();
     await first.configure("worker-test", { provider: "codex_mcp", batchSize: 10 });
-    const input = { storeId: "worker-test", source: "auto_seo" as const, sourceIdentity: "1",
-      input: { productId: "1", title: "Test blanket", description: "", handle: "test", niche: "blankets", images: [] }, original: {} };
+    const input = createTestEnqueue({ storeId: "worker-test", productId: "1",
+      input: { images: [{ id: "front-1", url: "https://cdn.shopify.com/1.png" }], niche: "blankets" } });
     await first.enqueue(input);
-    await second.enqueue({ ...input, sourceIdentity: "2", input: { ...input.input, productId: "2" } });
+    await second.enqueue(createTestEnqueue({ storeId: "worker-test", productId: "2", input: { ...input.input, images: [{ id: "front-2", url: "https://cdn.shopify.com/2.png" }] } }));
     await first.workers.enableStore("worker-test");
     await assert.rejects(first.claim("worker-test", "legacy", "codex_mcp", "legacy-worker"), /WORKER_CLIENT_UPGRADE_REQUIRED/);
-    await assert.rejects(second.enqueue({ ...input, input: { ...input.input, title: "Changed title" } }), /ALREADY_IN_SEO_PIPELINE/);
+    await assert.rejects(second.enqueue(createTestEnqueue({ storeId: "worker-test", productId: "1", input: { ...input.input, niche: "changed blanket" } })), /ALREADY_IN_SEO_PIPELINE/);
     const [a, b] = await Promise.all([first, second].map(async (queue, index) => {
       const { token } = await queue.workers.issueToken({ storeId: "worker-test", workerId: `worker-${index}`, createdBy: "test" });
       const { sessionId } = await queue.workers.register(token, "register");
@@ -70,7 +72,7 @@ test("live PostgreSQL worker cutover blocks legacy claims and concurrent clients
     const rows = await pool.query(`SELECT count(*) FROM "${schema}".gpt_jobs WHERE status='IN_PROGRESS'`);
     assert.equal(Number(rows.rows[0].count), 2);
     await first.workers.enableStore("worker-test");
-    for (const id of ["3", "4"]) await first.enqueue({ ...input, sourceIdentity: id, input: { ...input.input, productId: id } });
+    for (const id of ["3", "4"]) await first.enqueue(createTestEnqueue({ storeId: "worker-test", productId: id, input: { ...input.input, images: [{ id: `front-${id}`, url: `https://cdn.shopify.com/${id}.png` }] } }));
     const fixture = fileURLToPath(new URL("./fixtures/seo-worker-claim-process.ts", import.meta.url));
     const processes = await Promise.all(["process-a", "process-b"].map(workerId => promisify(execFile)(process.execPath,
       ["--import", "tsx", fixture, schema, workerId], { env: { ...process.env, SEO_QUEUE_TEST_DATABASE_URL: databaseUrl }, timeout: 30_000 })));

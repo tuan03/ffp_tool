@@ -6,6 +6,7 @@ import type { GptJobStatus, GptSeoEnqueue, GptSeoInput, SeoProvider } from "../.
 import type { SeoQueue } from "./queue-contract";
 import { verifyImageSignature, downloadProductImage } from "./images";
 import { createExternalSeoWorkflow } from "./workflow";
+import { parseSeoGenerationInput, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 
 export interface CustomGptHandlerOptions {
   readonly queue: SeoQueue;
@@ -46,20 +47,7 @@ function parseJobFilters(url: URL): { readonly statuses?: readonly GptJobStatus[
   };
 }
 export function parseGptInput(raw: unknown): GptSeoInput {
-  const input = asObject(raw);
-  if (!Array.isArray(input.images) || input.images.length > 100) throw new Error("Invalid images");
-  return {
-    title: required(input.title, "title"), description: typeof input.description === "string" ? input.description.slice(0, 30000) : "",
-    handle: typeof input.handle === "string" ? input.handle : "", niche: required(input.niche, "niche"),
-    productId: typeof input.productId === "string" ? input.productId.replace(/^gid:\/\/shopify\/Product\//, "") : undefined,
-    siteDomain: typeof input.siteDomain === "string" ? input.siteDomain : undefined,
-    url: typeof input.url === "string" ? input.url : undefined,
-    images: input.images.map((rawImage, index) => {
-      const image = asObject(rawImage); const url = new URL(required(image.url, "image url"));
-      if (!["https:", "http:"].includes(url.protocol)) throw new Error("Invalid image protocol");
-      return { id: typeof image.id === "string" ? image.id : `image-${index + 1}`, url: url.href, alt: typeof image.alt === "string" ? image.alt : undefined };
-    }),
-  };
+  return parseSeoGenerationInput(raw);
 }
 async function readBody(req: IncomingMessage, maxBytes: number): Promise<Record<string, unknown>> {
   let size = 0; const chunks: Buffer[] = [];
@@ -235,7 +223,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             queue.listFiltered(storeId, filters, offset),
             queue.countFiltered(storeId, filters),
           ]);
-          result = { jobs: jobs.map(job => ({ ...job, original: null, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: { title: job.input.title.slice(0, 300), description: "", handle: job.input.handle, niche: "", productId: job.input.productId, images: [] } })), counts: (await queue.counts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
+          result = { jobs: jobs.map(job => ({ ...job, original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts: (await queue.counts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
         case "admin/reviews": {
@@ -254,7 +242,13 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           if (provider !== "custom_gpt" && provider !== "codex_mcp") throw new Error("Provider changed; retry the handoff using the current provider");
           const source = body.source;
           if (source !== "amazon" && source !== "auto_seo") throw new Error("Invalid source");
-          const input: GptSeoEnqueue = { storeId, source, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), sourceRevision: typeof body.sourceRevision === "string" ? body.sourceRevision : undefined, input: parseGptInput(body.input), original: body.original };
+          const sourceIdentity = required(body.sourceIdentity, "sourceIdentity");
+          const input: GptSeoEnqueue = { input: parseGptInput(body.input), execution: {
+            storeId, source, sourceIdentity,
+            ...(typeof body.productId === "string" ? { productId: body.productId } : {}),
+            ...(typeof body.sourceRevision === "string" ? { sourceRevision: body.sourceRevision } : {}),
+            providerId: provider, pipelineVersion: SEO_WORKER_SCHEMA_VERSION, originalSnapshot: body.original,
+          } };
           result = (await queue.enqueue(input)); break;
         }
         case "admin/retry": (await queue.retry(storeId, jobId)); result = { status: "PENDING" }; break;

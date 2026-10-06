@@ -25,9 +25,9 @@ export function getRetryDelay(attempt: number, jitter: number): number {
 export function getWorkerProductKey(source: {
   readonly source: string;
   readonly sourceIdentity: string;
-  readonly input: { readonly productId?: string };
+  readonly productId?: string;
 }): string {
-  const id = source.input.productId || (source.source === "auto_seo" ? source.sourceIdentity : "");
+  const id = source.productId || (source.source === "auto_seo" ? source.sourceIdentity : "");
   const normalized = id.replace(/^gid:\/\/shopify\/Product\//, "");
   if (normalized) {
     if (!/^\d+$/.test(normalized)) throw new SeoWorkerError("INVALID_SOURCE");

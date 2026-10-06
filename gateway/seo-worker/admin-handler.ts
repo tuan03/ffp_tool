@@ -2,6 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { z } from "zod";
 
+import { handleSeoVersionHttp } from "../seo-versioning/http-handler";
+import type { SeoVersionHttpDependencies } from "../seo-versioning/http-handler";
+
 import { SeoWorkerError } from "./protocol";
 import type { SeoWorkerRepository } from "./repository";
 import type { SeoPublishRepository } from "./publish-repository";
@@ -30,6 +33,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
   readonly publisher?: () => Promise<Pick<SeoPublishRepository, "status" | "enqueue" | "requestReconciliation">>;
   readonly createRevision?: (request: import("./revision-repository").RevisionRequest) => Promise<{ jobId: string; previousJobId: string }>;
   readonly history?: (storeId: string, jobId: string, offset: number) => Promise<import("../../src/modules/custom-gpt-seo").WorkerReviewHistory>;
+  readonly versioning?: SeoVersionHttpDependencies;
 }): Promise<void> {
   if (!options.operator) { send(res, 401, { error: { code: "OPERATOR_REQUIRED" } }); return; }
   if (req.method !== "GET" && req.method !== "POST") { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
@@ -42,6 +46,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
     const url = new URL(req.url ?? "/", "http://localhost");
     const storeId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(url.searchParams.get("storeId"));
     if (!options.hasStore(storeId)) { send(res, 404, { error: { code: "STORE_NOT_FOUND" } }); return; }
+    if (options.versioning && await handleSeoVersionHttp(req, res, { url, storeId, operator: options.operator, dependencies: options.versioning })) return;
     if (url.pathname === "/api/seo-agent/metrics" && req.method === "GET") {
       const hours = z.coerce.number().refine(value => [24, 168, 720].includes(value)).parse(url.searchParams.get("hours") ?? 24);
       const repository = await options.repository();

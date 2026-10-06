@@ -134,6 +134,22 @@ export interface ProductImageSummary {
   readonly height?: number;
 }
 
+export interface ProductMediaImageSummary {
+  readonly id: string;
+  readonly url: string;
+  readonly altText: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
+export interface ProductMediaPageResult {
+  readonly nodes: readonly ProductMediaImageSummary[];
+  readonly pageInfo: {
+    readonly hasNextPage: boolean;
+    readonly endCursor: string | null;
+  };
+}
+
 export interface ProductCollectionSummary {
   readonly id: string;
   readonly title: string;

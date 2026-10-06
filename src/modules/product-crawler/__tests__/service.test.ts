@@ -11,7 +11,7 @@ import { MockProductCrawlerClient } from "../mocks/runner";
 import { getProductCrawlerClient } from "../runtime";
 import {
   crawlerProductToListItem,
-  crawlerProductToSeoInput,
+  crawlerProductToSeoSource,
   parseInputLines,
   RealProductCrawlerClient,
   validateCrawlerInput,
@@ -146,8 +146,8 @@ test("crawlerProductToListItem transforms product into UI list projection accura
   assert.equal(item4.status, "success");
 });
 
-test("crawlerProductToSeoInput maps CrawlerProduct to SeoContentInput conforming to contract", () => {
-  const seoInput = crawlerProductToSeoInput(mockProduct1Handbag);
+test("crawlerProductToSeoSource maps CrawlerProduct to an operational handoff snapshot", () => {
+  const seoInput = crawlerProductToSeoSource(mockProduct1Handbag);
 
   assert.equal(seoInput.productId, mockProduct1Handbag.id);
   assert.equal(seoInput.title, mockProduct1Handbag.title);

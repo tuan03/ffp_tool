@@ -13,6 +13,24 @@ import {
 } from "../ui/seo-queue-view-model";
 import type { GptSeoJob, GptJobStatus, SeoProvider } from "../types";
 
+const TEST_STORE_PROFILE = {
+  profileId: "capozen-test",
+  profileVersion: "2.0.0",
+  storeId: "capozen",
+  storeName: "Capozen",
+  locale: "en-US",
+  language: "English",
+  niche: "home decor",
+  brandVoice: ["clear"],
+  contentRules: ["Use image-grounded facts."],
+  prohibitedClaims: ["No unsupported claims."],
+  seoConstraints: {
+    maxTitleCharacters: 70,
+    maxDescriptionCharacters: 160,
+    maxAltCharacters: 125,
+  },
+} as const;
+
 function createJob(input: {
   readonly id: string;
   readonly title: string;
@@ -28,13 +46,26 @@ function createJob(input: {
     sourceIdentity: input.id,
     inputHash: `hash-${input.id}`,
     input: {
-      title: input.title,
-      description: "Description",
-      handle: input.handle ?? `handle-${input.id}`,
       niche: "home decor",
+      storeProfile: TEST_STORE_PROFILE,
       images: [],
     },
-    original: {},
+    execution: {
+      storeId: "capozen",
+      productId: input.id,
+      source: "auto_seo",
+      sourceIdentity: input.id,
+      providerId: input.provider ?? "codex_mcp",
+      pipelineVersion: "seo-content-input-v2",
+      originalSnapshot: {
+        title: input.title,
+        handle: input.handle ?? `handle-${input.id}`,
+      },
+    },
+    original: {
+      title: input.title,
+      handle: input.handle ?? `handle-${input.id}`,
+    },
     settings: {
       provider: input.provider ?? "codex_mcp",
       batchSize: 5,

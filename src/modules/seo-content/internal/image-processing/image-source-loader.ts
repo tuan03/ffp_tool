@@ -1,7 +1,3 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-
-import { resolveLocalImageFile } from "./local-image-resolver";
 import type { SeoContentImageInput } from "../../types";
 import type { ImageSourceLoaded } from "./image-processing-types";
 
@@ -145,12 +141,9 @@ export class InMemoryImageSourceLoader implements ImageSourceLoader {
   }
 
   async load(image: SeoContentImageInput): Promise<ImageSourceLoaded> {
-    const key = image.url || image.localFilePath || "";
+    const key = image.url;
     if (this.store.has(key)) {
       return { buffer: this.store.get(key)! };
-    }
-    if (image.localFilePath && this.store.has(image.localFilePath)) {
-      return { buffer: this.store.get(image.localFilePath)! };
     }
 
     // If image has a data: URI
@@ -177,33 +170,9 @@ export class DefaultImageSourceLoader implements ImageSourceLoader {
       throw new Error("Image input is required");
     }
 
-    // 1. localFilePath / disk resolution
-    const localResolved = resolveLocalImageFile(image.localFilePath, image.url);
-    if (localResolved) {
-      try {
-        const stats = await fs.stat(localResolved);
-        if (stats.size > MAX_IMAGE_BYTES) {
-          throw new Error(
-            `Local image exceeds maximum allowed size of 10MB (${stats.size} bytes)`,
-          );
-        }
-        const buffer = await fs.readFile(localResolved);
-        return { buffer };
-      } catch (err) {
-        if (err instanceof Error && err.message.includes("exceeds maximum allowed size")) {
-          throw err;
-        }
-        if (!image.url) {
-          throw new Error(
-            `Failed to read local image '${localResolved}': ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    }
-
     const rawUrl = (image.url || "").trim();
     if (!rawUrl) {
-      throw new Error("Image has neither localFilePath nor url");
+      throw new Error("Image URL is required");
     }
 
     // 2. data:image URI

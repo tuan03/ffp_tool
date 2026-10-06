@@ -1,17 +1,33 @@
-import type { StoreContentProfile } from "./types";
+import type { SeoStoreProfile } from "../../types";
 
-export const JEMINISE_BEDDING_PROFILE: StoreContentProfile = Object.freeze({
+export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
+  profileId: "jeminise-bedding",
+  profileVersion: "2.0.0",
   storeId: "jeminise",
-  storeAliases: Object.freeze(["jeminise-real"]),
   storeName: "Jeminise",
-  domainAliases: Object.freeze([
-    "jeminise.com",
-    "b6-theme-test.myshopify.com",
-    "f4hgwc-hu.myshopify.com",
-  ]),
+  locale: "en-US",
+  language: "English",
   niche: "Bedding & Home Decor",
-  bedding: Object.freeze({
-    options: Object.freeze([
+  brandVoice: Object.freeze(["clear", "warm", "design-led"]),
+  contentRules: Object.freeze([
+    "Ground every product-specific statement in visible image evidence.",
+    "Keep room props and scene context separate from product facts.",
+  ]),
+  prohibitedClaims: Object.freeze([
+    "Do not infer size, materials, care, construction, or personalization from images alone.",
+    "Do not treat store identity as evidence that a catalog policy applies.",
+  ]),
+  seoConstraints: Object.freeze({
+    maxTitleCharacters: 70,
+    maxDescriptionCharacters: 160,
+    maxAltCharacters: 125,
+  }),
+  catalogPolicies: Object.freeze([{
+    policyId: "jeminise-three-bedding-offerings-v2",
+    applicableNiches: Object.freeze(["bedding", "bedroom decor"]),
+    productIdentityTerms: Object.freeze(["bedding", "bed cover", "comforter", "quilt", "duvet cover", "bedding set"]),
+    minimumIdentityConfidence: 0.8,
+    offerings: Object.freeze([
       {
         name: "Comforter",
         shortDescription: "Plush all-season warmth",
@@ -28,17 +44,15 @@ export const JEMINISE_BEDDING_PROFILE: StoreContentProfile = Object.freeze({
         detailedFeatures: "Soft, breathable casing with hidden zipper closure and interior corner ties to securely encase your existing insert.",
       },
     ]),
-    fabricMaterial: "Premium ultra-soft brushed microfiber, breathable and hypoallergenic",
-    printTechnology: "High-definition thermal dye-sublimation for vibrant, fade-resistant color",
-    careGuidance: "Machine washable: machine wash cold on gentle cycle, tumble dry low heat",
-  }),
-  descriptionGuidelines: Object.freeze([
+    allowedClaims: Object.freeze([
+      "material: Premium ultra-soft brushed microfiber, breathable and hypoallergenic",
+      "print: High-definition thermal dye-sublimation for vibrant, fade-resistant color",
+      "care: Machine washable: machine wash cold on gentle cycle, tumble dry low heat",
+    ]),
+    requiredContentRules: Object.freeze([
     "Do NOT force Comforter, Quilt, or Duvet Cover into the product title; title must focus on artwork and variant.",
     "MUST include a dedicated section in product description clearly explaining the 3 available styles (Comforter, Quilt, Duvet Cover).",
     "Highlight premium microfiber fabric, vibrant sublimation print, and easy machine care.",
   ]),
-  seoDescriptionGuidelines: Object.freeze({
-    mandatoryKeywords: Object.freeze(["Comforter", "Quilt", "Duvet Cover"]),
-    maxCharacters: 160,
-  }),
+  }]),
 });

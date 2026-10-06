@@ -139,15 +139,10 @@ export class SeoCheckpointManager {
 
     const createdAt = existing?.createdAt ?? now;
     const updatedCheckpoint: SeoCheckpoint = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       inputHash,
-      storeId: input.storeId,
-      productId: input.productId,
-      handle: input.handle,
-      sourceVersion: input.sourceVersion,
-      shopifyUpdatedAt: input.shopifyUpdatedAt,
-      providerId: input.providerId,
-      pipelineVersion: input.pipelineVersion,
+      storeId: input.storeProfile.storeId,
+      pipelineVersion: `seo-content-input-v2:${input.storeProfile.profileVersion}`,
       createdAt,
       updatedAt: now,
       expiresAt: createdAt + this.ttlMs,
@@ -201,15 +196,10 @@ export class SeoCheckpointManager {
 
     const createdAt = existing?.createdAt ?? now;
     const updatedCheckpoint: SeoCheckpoint = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       inputHash,
-      storeId: input.storeId,
-      productId: input.productId,
-      handle: input.handle,
-      sourceVersion: input.sourceVersion,
-      shopifyUpdatedAt: input.shopifyUpdatedAt,
-      providerId: input.providerId,
-      pipelineVersion: input.pipelineVersion,
+      storeId: input.storeProfile.storeId,
+      pipelineVersion: `seo-content-input-v2:${input.storeProfile.profileVersion}`,
       createdAt,
       updatedAt: now,
       expiresAt: createdAt + this.ttlMs,

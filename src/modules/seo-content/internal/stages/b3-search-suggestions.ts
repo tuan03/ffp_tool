@@ -114,13 +114,14 @@ export function createB3SearchSuggestionsStage(
 
       const source = context.source;
       const niche = context.effectiveNiche ?? source.niche;
+      const understanding = context.productUnderstanding;
 
       const searchResearch = await collector.collect({
         source: {
           niche,
-          title: source.title,
-          description: source.description,
-          handle: source.handle,
+          title: understanding?.physicalProductIdentity,
+          description: understanding?.visualEntities,
+          handle: "",
         },
         productUnderstanding: context.productUnderstanding,
         shoppingContext: context.shoppingContext,

@@ -1,11 +1,19 @@
-export interface SeoContentImageInput {
-  readonly id?: string;
-  readonly url: string;
-  readonly alt?: string;
-  readonly localFilePath?: string;
-  /** Upstream checksum/ETag for bytes when a URL or path may be reused. */
-  readonly contentFingerprint?: string;
-}
+import type {
+  SeoCatalogOffering,
+  SeoCatalogPolicy,
+  SeoContentGenerationInput,
+  SeoContentImageInput,
+  SeoExecutionEnvelope,
+  SeoStoreProfile,
+} from "../../shared/seo-content-contract";
+
+export type {
+  SeoCatalogOffering,
+  SeoCatalogPolicy,
+  SeoContentImageInput,
+  SeoExecutionEnvelope,
+  SeoStoreProfile,
+};
 
 export interface VariantSample {
   readonly title: string;
@@ -22,35 +30,7 @@ export interface VariantSummary {
   readonly maxPrice?: number;
 }
 
-export interface SeoContentInput {
-  readonly images: readonly SeoContentImageInput[];
-  /** Public storefront domain used to infer the workflow niche before B1. */
-  readonly siteDomain?: string;
-  readonly niche: string;
-  readonly title: string;
-  readonly description: string;
-  readonly handle: string;
-  readonly productId?: string;
-  readonly url?: string;
-  readonly storeId?: string;
-  /** Upstream product revision used to invalidate stale SEO checkpoints/results. */
-  readonly sourceVersion?: string;
-  /** Shopify product timestamp captured when this SEO run was requested. */
-  readonly shopifyUpdatedAt?: string;
-  /** Server-side AI provider selected for the common B1-B6 pipeline. */
-  readonly providerId?: string;
-  /** Version of the B1-B6 pipeline contract used to produce this result. */
-  readonly pipelineVersion?: string;
-  readonly variantLabel?: string;
-  /**
-   * @deprecated Accepted at module boundaries for compatibility. The server
-   * converts this value to `variantSummary` and removes it before AI calls.
-   */
-  readonly variants?: readonly unknown[];
-  readonly variantSummary?: VariantSummary;
-  readonly existingPrimaryKeyword?: string;
-  readonly existingKeywords?: readonly string[];
-}
+export interface SeoContentInput extends SeoContentGenerationInput {}
 
 export interface SeoContentWebpAsset {
   readonly filename: string;
@@ -76,7 +56,8 @@ export interface SeoContentOutput {
   readonly productSeoTitle: string;
   readonly productSeoDescription: string;
   readonly images: readonly SeoContentImageOutput[];
-  readonly productHandle: string;
+  /** @deprecated Operational Review compatibility only; generation must not propose handle changes. */
+  readonly productHandle?: string;
   readonly aeo_quick_summary?: string;
   readonly aeo_faq?: readonly GeneratedFaqItem[];
   readonly aeo_json_ld?: string;
@@ -142,7 +123,8 @@ export interface SeoContentAltOnlyOutput {
   readonly productSeoTitle: string;
   readonly productSeoDescription: string;
   readonly images: readonly SeoContentAltOnlyImageOutput[];
-  readonly productHandle: string;
+  /** @deprecated Operational Review compatibility only; generation must not propose handle changes. */
+  readonly productHandle?: string;
   readonly aeo_quick_summary?: string;
   readonly aeo_faq?: readonly GeneratedFaqItem[];
   readonly aeo_json_ld?: string;
@@ -177,6 +159,8 @@ export interface SeoContentDependencies {
 export interface SeoContentRunOptions {
   readonly imageMode?: "full" | "alt_only";
   readonly signal?: AbortSignal;
+  /** Operational identity/version data. It must never be projected into generation prompts. */
+  readonly execution?: SeoExecutionEnvelope;
   readonly dependencies?: SeoContentDependencies;
   readonly stageTimeouts?: Partial<Record<string, number>>;
   readonly overallTimeoutMs?: number;

@@ -2,15 +2,24 @@ import type {
   ProductUnderstanding,
   ShoppingContext,
 } from "../domain-types";
-import type { SeoContentInput } from "../../types";
 
 export interface ProductReferences {
   readonly productIdentityText: string;
   readonly shoppingIntentText: string;
 }
 
+export interface SeoConflictSource {
+  readonly niche: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly storeId?: string;
+  readonly productId?: string;
+  readonly handle?: string;
+  readonly url?: string;
+}
+
 export interface BuildProductReferencesInput {
-  readonly source: SeoContentInput;
+  readonly source: SeoConflictSource;
   readonly productUnderstanding?: ProductUnderstanding;
   readonly shoppingContext?: ShoppingContext;
 }

@@ -1,6 +1,5 @@
-import type { GeneratedFaqItem, SeoContentImageOutput, SeoContentInput } from "../types";
+import type { GeneratedFaqItem, SeoContentImageOutput, SeoContentInput, SeoStoreProfile } from "../types";
 import type { StoredEmbedding } from "./conflict-control/seo-conflict-corpus";
-import type { StoreContentProfile } from "./store-profiles/types";
 import type { KeywordComparisonResult } from "./keyword-comparator";
 
 export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
@@ -14,6 +13,10 @@ export interface ProductUnderstanding {
   readonly visualEntities: string;
   readonly sceneContext: string;
   readonly physicalProductIdentity: string;
+  readonly identityCandidates?: readonly string[];
+  readonly excludedSceneEntities?: readonly string[];
+  readonly confidence?: number;
+  readonly reviewRequired?: boolean;
 }
 
 /** B2: Bối cảnh mua sắm, chân dung khách hàng & dịp sử dụng */
@@ -76,7 +79,7 @@ export interface ContentResult {
   readonly productDescription: string;
   readonly productSeoTitle: string;
   readonly productSeoDescription: string;
-  readonly productHandle: string;
+  readonly productHandle?: string;
   readonly aeo_quick_summary?: string;
   readonly aeo_faq?: readonly GeneratedFaqItem[];
   readonly aeo_json_ld?: string;
@@ -105,7 +108,7 @@ export interface SeoPipelineContext {
   readonly source: SeoContentInput;
   /** Derived from the storefront homepage; source.niche remains the fallback input. */
   readonly effectiveNiche?: string;
-  readonly storeProfile?: StoreContentProfile;
+  readonly storeProfile: SeoStoreProfile;
   readonly productUnderstanding?: ProductUnderstanding;
   readonly shoppingContext?: ShoppingContext;
   readonly searchResearch?: SearchResearchResult;

@@ -19,12 +19,9 @@ export async function runMockSeoContent(input: SeoContentInput): Promise<SeoCont
     answer: item.answer,
   }));
 
-  const trimmedHandle = input.handle.trim();
-
   return {
     ...seoContentMockData,
     images,
     ...(aeo_faq ? { aeo_faq } : {}),
-    productHandle: trimmedHandle ? trimmedHandle : seoContentMockData.productHandle,
   };
 }

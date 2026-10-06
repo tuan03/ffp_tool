@@ -5,6 +5,7 @@ import type {
   SeoContentImageInput,
   SeoContentInput,
   SeoContentOutput,
+  SeoStoreProfile,
 } from "./types";
 
 /**
@@ -74,6 +75,7 @@ export interface PinterestPodAdapterOptions {
   readonly concurrency?: number;
   /** Niche mặc định khi sản phẩm không suy luận được niche (mặc định: "Home Decor") */
   readonly defaultNiche?: string;
+  readonly storeProfile: SeoStoreProfile;
   /** Callback phát sự kiện ngay khi một sản phẩm hoàn tất xử lý */
   readonly onItemCompleted?: (itemResult: PinterestPodSeoItemResult) => void;
   /** Callback phát sự kiện ngay khi một sản phẩm xử lý thất bại */
@@ -203,39 +205,29 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
   const images: SeoContentImageInput[] = [];
   const seenUrls = new Set<string>();
 
-  const addImage = (url: string | undefined, alt: string | undefined, localFilePath?: string): void => {
+  const addImage = (url: string | undefined, explicitId?: string): void => {
     if (!url || typeof url !== "string") return;
     const cleanUrl = url.trim();
     if (cleanUrl.length === 0 || seenUrls.has(cleanUrl)) return;
     seenUrls.add(cleanUrl);
-    images.push({
-      url: cleanUrl,
-      ...(alt ? { alt: alt.trim() } : {}),
-      ...(localFilePath && typeof localFilePath === "string" && localFilePath.trim().length > 0
-        ? { localFilePath: localFilePath.trim() }
-        : {}),
-    });
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < cleanUrl.length; index += 1) {
+      hash ^= cleanUrl.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    images.push({ id: explicitId ?? `image-${(hash >>> 0).toString(16).padStart(8, "0")}`, url: cleanUrl });
   };
-
-  const title = item.originalPinTitle || (item as { title?: string }).title || item.designId;
 
   // 1. Ảnh quảng bá Storefront: CHỈ lấy các ảnh phối cảnh AI Mockup (AI_background) do AI render
   const hasMockups = Array.isArray(item.composedMockups) && item.composedMockups.some((m) => Boolean(m?.mockupUrl));
   if (hasMockups && Array.isArray(item.composedMockups)) {
     for (const mockup of item.composedMockups) {
       if (!mockup?.mockupUrl) continue;
-      const scene = mockup.detectedSceneType || "living room";
-      const desc = mockup.detectedSceneDescription || "";
-      const alt = desc ? `${title} styled in ${scene}: ${desc}` : `${title} in ${scene} setting`;
-      addImage(mockup.mockupUrl, alt, mockup.localFilePath);
+      addImage(mockup.mockupUrl, mockup.referenceImageId);
     }
   } else if (item.cutoutProduct?.whiteBgUrl) {
     // Dự phòng an toàn: nếu chưa có mockup AI nào, lấy tạm ảnh phôi trắng để không bị trống ảnh sản phẩm
-    addImage(
-      item.cutoutProduct.whiteBgUrl,
-      `${title} - Clean White Background Product View`,
-      item.cutoutProduct.localFilePath,
-    );
+    addImage(item.cutoutProduct.whiteBgUrl);
   }
 
   // Chú ý: Ảnh bản in (item.printMaster) được lưu độc quyền vào Shopify Metafields,
@@ -253,29 +245,15 @@ function extractImages(item: PodDeliverableItem): SeoContentImageInput[] {
  */
 export function fromPinterestPodItem(
   item: PodDeliverableItem,
-  defaultNiche = "Home Decor",
+  niche: string,
+  storeProfile: SeoStoreProfile,
 ): SeoContentInput {
-  const designId = (typeof item.designId === "string" ? item.designId : "").trim();
-  const fallbackTitle = (item as { title?: string }).title;
-  const rawTitle =
-    typeof item.originalPinTitle === "string" && item.originalPinTitle.trim().length > 0
-      ? item.originalPinTitle.trim()
-      : typeof fallbackTitle === "string" && fallbackTitle.trim().length > 0
-        ? fallbackTitle.trim()
-        : designId || "Untitled Pinterest POD Item";
-
-  const handle = slugify(rawTitle) || slugify(designId) || "pinterest-pod-product";
-  const niche = inferNiche(item.productType || "", item.trendKeywords, defaultNiche);
-  const description = buildDescription(item);
   const images = extractImages(item);
 
   return {
-    productId: designId || item.sourceCandidateId,
-    title: rawTitle,
-    description,
-    niche,
-    handle,
     images,
+    niche: niche.trim() || storeProfile.niche,
+    storeProfile,
   };
 }
 
@@ -288,12 +266,13 @@ export function fromPinterestPodItem(
  */
 export function fromPinterestPodBatch(
   deliverables: PinterestPodDeliverables,
-  defaultNiche = "Home Decor",
+  niche: string,
+  storeProfile: SeoStoreProfile,
 ): readonly SeoContentInput[] {
   if (!deliverables || !Array.isArray(deliverables.items)) {
     return [];
   }
-  return deliverables.items.map((it) => fromPinterestPodItem(it, defaultNiche));
+  return deliverables.items.map((it) => fromPinterestPodItem(it, niche, storeProfile));
 }
 
 /**
@@ -307,7 +286,7 @@ export function fromPinterestPodBatch(
  */
 export async function runPinterestPodSeoPipeline(
   deliverables: PinterestPodDeliverables | readonly PodDeliverableItem[],
-  options: PinterestPodAdapterOptions = {},
+  options: PinterestPodAdapterOptions,
 ): Promise<PinterestPodSeoBatchResult> {
   const rawItems: readonly PodDeliverableItem[] = Array.isArray(deliverables)
     ? deliverables
@@ -351,7 +330,7 @@ export async function runPinterestPodSeoPipeline(
         designId: deliverableItem.designId || "",
         sourceCandidateId: deliverableItem.sourceCandidateId,
         productType: deliverableItem.productType || "custom",
-        handle: item.seoInput.handle,
+        handle: slugify(deliverableItem.originalPinTitle || deliverableItem.designId),
         deliverableItem,
         sourceItem: deliverableItem,
         seoInput: item.seoInput,
@@ -367,7 +346,7 @@ export async function runPinterestPodSeoPipeline(
         designId: deliverableItem.designId || "",
         sourceCandidateId: deliverableItem.sourceCandidateId,
         productType: deliverableItem.productType || "custom",
-        handle: item.seoInput.handle,
+        handle: slugify(deliverableItem.originalPinTitle || deliverableItem.designId),
         deliverableItem,
         sourceItem: deliverableItem,
         seoInput: item.seoInput,
@@ -383,7 +362,11 @@ export async function runPinterestPodSeoPipeline(
     },
   });
 
-  const inputs = rawItems.map((it) => fromPinterestPodItem(it, options.defaultNiche));
+  const inputs = rawItems.map((it) => fromPinterestPodItem(
+    it,
+    options.defaultNiche ?? options.storeProfile.niche,
+    options.storeProfile,
+  ));
   queue.enqueue(inputs, rawItems);
   await queue.waitForDrain();
 

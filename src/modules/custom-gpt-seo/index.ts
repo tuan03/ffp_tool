@@ -8,3 +8,5 @@ export { getCustomGptClient } from "./runtime";
 export { createCustomGptSeoRoutes } from "./routes";
 export type { CustomGptClient, GptQueuePage, GptReviewPage, SeoQueueStore } from "./service";
 export type { WorkerMetrics } from "./types";
+export type { ProductSeoVersionDto, SeoProductLifecycleDto, SeoRollbackDraftRequestDto, SeoVersionCapability,
+  SeoVersionDiffDto, SeoVersionDiffValueDto, SeoVersionPageDto } from "./types";
