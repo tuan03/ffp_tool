@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
+import path from "node:path";
 import test from "node:test";
 
 import { handleReviewImageHttpRequest } from "../review-image-handler";
@@ -125,10 +126,12 @@ test("review image gateway uploads an approved output to Shopify Files", async (
       fileId: "gid://shopify/MediaImage/1", shopifyCdnUrl: "https://cdn.shopify.com/review.png", fileStatus: "READY",
     } };
   } };
+  const safeOutputDir = process.platform === "win32" ? "D:\\safe\\review-images" : "/safe/review-images";
+  const expectedOutputFile = path.resolve(safeOutputDir, `${"a".repeat(32)}.png`);
   const gateway = createServer((request, response) => {
     void handleReviewImageHttpRequest(request, response, {
       bridgeToken: "bridge-secret", bridgeBaseUrl: upstreamUrl, dispatcher,
-      reviewImageOutputDir: "D:/safe/review-images",
+      reviewImageOutputDir: safeOutputDir,
     });
   });
   const gatewayUrl = await listen(gateway);
@@ -142,7 +145,7 @@ test("review image gateway uploads an approved output to Shopify Files", async (
       storeId: "capozen", operation: "files.create", mode: "apply",
       requestId: `review-image:capozen:${"a".repeat(32)}`,
       payload: {
-        originalSource: `D:\\safe\\review-images\\${"a".repeat(32)}.png`,
+        originalSource: expectedOutputFile,
         filename: `review-${"a".repeat(32)}.png`, alt: "Customer review photo", contentType: "IMAGE",
       },
     });
