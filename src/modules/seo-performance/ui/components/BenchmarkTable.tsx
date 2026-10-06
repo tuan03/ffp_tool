@@ -425,7 +425,7 @@ export function BenchmarkTable({
                         <button
                           type="button"
                           onClick={() => onSendToAutoSeo?.(item)}
-                          disabled={!item.action.enabled}
+                          disabled={!item.action.enabled || loading}
                           className="rounded-lg border border-cyan-500 bg-cyan-950/60 px-2.5 py-1.5 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo draft yêu cầu Auto-SEO qua checkpoint"}
                         >
@@ -435,7 +435,7 @@ export function BenchmarkTable({
                         <button
                           type="button"
                           onClick={() => (onAutoSeo ? onAutoSeo(item) : onSelectProduct(item))}
-                          disabled={!item.action.enabled}
+                          disabled={!item.action.enabled || loading}
                           className="rounded-lg border border-indigo-500 bg-indigo-950/60 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-900 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo Auto-SEO cho sản phẩm baseline v0"}
                         >
@@ -445,7 +445,8 @@ export function BenchmarkTable({
                         <button
                           type="button"
                           onClick={() => onSelectProduct(item)}
-                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-white"
+                          disabled={loading}
+                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-white disabled:opacity-40"
                         >
                           {item.action.label}
                         </button>

@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { createSeoPerformanceClient } from "../service";
 import { createMockSeoPerformanceClient } from "../mocks/runner";
-import { handleAutoSeoEnqueue, MEMORY_ACTIVE_AUTO_SEO_JOBS } from "../../../../gateway/seo-performance/benchmark-handler";
+import {
+  handleAutoSeoEnqueue,
+  loadBenchmarkProducts,
+  MEMORY_ACTIVE_AUTO_SEO_JOBS,
+} from "../../../../gateway/seo-performance/benchmark-handler";
 import type { PerformanceService } from "../../../../gateway/seo-performance/service";
 
 test("Auto-SEO client sends POST request to benchmark/auto-seo with storeId and productId", async () => {
@@ -49,6 +53,24 @@ test("Auto-SEO mock runner creates job and prevents duplicates on second call (d
   assert.match(second.message ?? "", /đã có yêu cầu Auto-SEO/);
 });
 
+test("Mock runner cross-identifier deduplication recognizes prod_02 and gid://shopify/Product/1002 as the same product", async () => {
+  const mockClient = createMockSeoPerformanceClient();
+
+  // First call with GID
+  const first = await mockClient.createAutoSeo("store_test", "gid://shopify/Product/1002");
+  assert.equal(first.isExisting, false);
+
+  // Second call with product ID
+  const second = await mockClient.createAutoSeo("store_test", "prod_02");
+  assert.equal(second.isExisting, true);
+  assert.equal(second.jobId, first.jobId);
+
+  // Third call with clean numeric ID
+  const third = await mockClient.createAutoSeo("store_test", "1002");
+  assert.equal(third.isExisting, true);
+  assert.equal(third.jobId, first.jobId);
+});
+
 test("Auto-SEO mock runner hydrates benchmark products to reflect active queue state", async () => {
   const mockClient = createMockSeoPerformanceClient();
 
@@ -86,9 +108,10 @@ test("Gateway handleAutoSeoEnqueue checks gpt_jobs deduplication and handles dup
         query: async (sql: string, params: unknown[] = []) => {
           // If query checks for active gpt_jobs
           if (sql.includes("SELECT id, status FROM gpt_jobs")) {
-            const cleanId = String(params[1]);
+            const rawCandidates = Array.isArray(params[1]) ? params[1] : [String(params[1])];
+            const candidates = rawCandidates.map(c => String(c).replace(/^gid:\/\/shopify\/Product\//, ""));
             const existing = insertedJobs.find(
-              j => j.store_id === params[0] && j.payload.includes(`"sourceIdentity":"${cleanId}"`),
+              j => j.store_id === params[0] && candidates.some(c => j.payload.includes(`"sourceIdentity":"${c}"`)),
             );
             if (existing) {
               return { rows: [{ id: existing.id, status: "PENDING" }], rowCount: 1 };
@@ -125,4 +148,42 @@ test("Gateway handleAutoSeoEnqueue checks gpt_jobs deduplication and handles dup
   assert.equal(secondRes.jobId, firstRes.jobId);
   // Ensure NO second row was inserted (deduplication)
   assert.equal(insertedJobs.length, 1);
+});
+
+test("Gateway loadBenchmarkProducts dynamically reflects active state without mutating BASELINE_PRODUCTS in place", async () => {
+  MEMORY_ACTIVE_AUTO_SEO_JOBS.clear();
+
+  const fakeService = {
+    ready: async () => {},
+    repository: {
+      pool: {
+        query: async () => ({ rows: [], rowCount: 0 }),
+      },
+    },
+  } as unknown as PerformanceService;
+
+  // 1. Initial load: prod_02 should be enabled "Tạo Auto-SEO"
+  const initial = await loadBenchmarkProducts(fakeService, "store_test", new URLSearchParams());
+  const prodInitial = initial.items.find(p => p.productId === "prod_02");
+  assert.ok(prodInitial);
+  assert.equal(prodInitial.action.enabled, true);
+  assert.equal(prodInitial.action.label, "Tạo Auto-SEO");
+
+  // 2. Enqueue Auto-SEO for prod_02
+  await handleAutoSeoEnqueue(fakeService, "store_test", "prod_02");
+
+  // 3. Next load: prod_02 should be hydrated as disabled "Đang Auto-SEO"
+  const during = await loadBenchmarkProducts(fakeService, "store_test", new URLSearchParams());
+  const prodDuring = during.items.find(p => p.productId === "prod_02");
+  assert.ok(prodDuring);
+  assert.equal(prodDuring.action.enabled, false);
+  assert.equal(prodDuring.action.label, "Đang Auto-SEO");
+
+  // 4. Job is cleared / finished (no active job): should re-enable button without permanent mutation
+  MEMORY_ACTIVE_AUTO_SEO_JOBS.clear();
+  const after = await loadBenchmarkProducts(fakeService, "store_test", new URLSearchParams());
+  const prodAfter = after.items.find(p => p.productId === "prod_02");
+  assert.ok(prodAfter);
+  assert.equal(prodAfter.action.enabled, true);
+  assert.equal(prodAfter.action.label, "Tạo Auto-SEO");
 });

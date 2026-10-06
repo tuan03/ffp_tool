@@ -207,10 +207,14 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
       const offset = filters.offset ?? 0;
       const limit = filters.limit ?? 50;
       const paginated = filtered.slice(offset, offset + limit).map(item => {
-        if (
+        const cleanId = item.productId.replace(/^gid:\/\/shopify\/Product\//, "");
+        const cleanGid = item.shopifyProductGid.replace(/^gid:\/\/shopify\/Product\//, "");
+        const hasActive =
           mockAutoSeoJobs.has(`${_storeId}:${item.productId}`) ||
-          mockAutoSeoJobs.has(`${_storeId}:${item.shopifyProductGid}`)
-        ) {
+          mockAutoSeoJobs.has(`${_storeId}:${cleanId}`) ||
+          mockAutoSeoJobs.has(`${_storeId}:${item.shopifyProductGid}`) ||
+          mockAutoSeoJobs.has(`${_storeId}:${cleanGid}`);
+        if (hasActive) {
           return {
             ...item,
             action: {
@@ -284,17 +288,43 @@ export function createMockSeoPerformanceClient(): SeoPerformanceClient {
     },
 
     createAutoSeo: async (storeId, productId) => {
-      const key = `${storeId}:${productId}`;
-      const existing = mockAutoSeoJobs.get(key);
-      if (existing) {
-        return {
-          jobId: existing,
-          isExisting: true,
-          message: "Sản phẩm đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi.",
-        };
+      const cleanId = productId.trim().replace(/^gid:\/\/shopify\/Product\//, "");
+      const matched = MOCK_BENCHMARK_PRODUCTS.find(
+        p =>
+          p.productId === productId ||
+          p.productId === cleanId ||
+          p.shopifyProductGid === productId ||
+          p.shopifyProductGid.endsWith(`/${cleanId}`),
+      );
+      const idCandidates = Array.from(
+        new Set([
+          productId,
+          cleanId,
+          ...(matched
+            ? [
+                matched.productId,
+                matched.shopifyProductGid,
+                matched.shopifyProductGid.replace(/^gid:\/\/shopify\/Product\//, ""),
+              ]
+            : []),
+        ]),
+      ).filter(Boolean);
+
+      for (const cid of idCandidates) {
+        const existing = mockAutoSeoJobs.get(`${storeId}:${cid}`);
+        if (existing) {
+          return {
+            jobId: existing,
+            isExisting: true,
+            message: "Sản phẩm đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi.",
+          };
+        }
       }
+
       const jobId = `job-auto-seo-${Date.now()}`;
-      mockAutoSeoJobs.set(key, jobId);
+      for (const cid of idCandidates) {
+        mockAutoSeoJobs.set(`${storeId}:${cid}`, jobId);
+      }
       return {
         jobId,
         isExisting: false,
