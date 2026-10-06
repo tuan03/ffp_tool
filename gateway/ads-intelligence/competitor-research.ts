@@ -50,19 +50,44 @@ export interface CompetitorResearchRepository {
   save(input: unknown): Promise<CompetitorResearch>;
 }
 
-export function createCompetitorResearchRepository(root = resolve(".runtime/ads-intelligence/competitor-research")): CompetitorResearchRepository {
+export function createCompetitorResearchRepository(
+  root = resolve(".runtime/ads-intelligence/competitor-research"),
+  seedRoot = resolve("config/competitor-research")
+): CompetitorResearchRepository {
   // Serialize writes in this gateway; atomic rename protects readers from partial JSON.
   let pending: Promise<unknown> = Promise.resolve();
   const pathFor = (storeId: string) => resolve(root, `${storeIdSchema.parse(storeId)}.json`);
+  const seedPathFor = (storeId: string) => resolve(seedRoot, `${storeIdSchema.parse(storeId)}.json`);
+
   const get = async (storeId: string): Promise<CompetitorResearch | null> => {
+    storeIdSchema.parse(storeId);
+    let runtimeReport: CompetitorResearch | null = null;
     try {
       const report = competitorResearchSchema.parse(JSON.parse(await readFile(pathFor(storeId), "utf8")));
       if (report.storeId !== storeId) throw new Error("RESEARCH_STORE_MISMATCH");
-      return report;
+      runtimeReport = report;
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-      throw error;
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        // runtime file not found
+      } else {
+        throw error;
+      }
     }
+
+    let seedReport: CompetitorResearch | null = null;
+    try {
+      const report = competitorResearchSchema.parse(JSON.parse(await readFile(seedPathFor(storeId), "utf8")));
+      if (report.storeId === storeId) seedReport = report;
+    } catch {
+      // seed file not found or invalid, non-fatal
+    }
+
+    if (runtimeReport && seedReport) {
+      return Date.parse(runtimeReport.observedAt) >= Date.parse(seedReport.observedAt)
+        ? runtimeReport
+        : seedReport;
+    }
+    return runtimeReport ?? seedReport;
   };
   return {
     get,

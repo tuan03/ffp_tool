@@ -25,13 +25,26 @@ function toProxyMediaUrl(url: string | undefined): string | undefined {
   return cleanUrl;
 }
 
+function isPlayableVideoUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const clean = url.split("?")[0]?.toLowerCase() ?? "";
+  if (/\.(jpe?g|png|webp|gif|svg)$/i.test(clean)) return false;
+  if (clean.includes("photo-") || clean.includes("unsplash.com")) return false;
+  if (/\.(mp4|webm|mov|m4v)$/i.test(clean)) return true;
+  if (url.includes("video") || url.includes("fbcdn.net/v/") || url.includes("t42.")) return true;
+  return false;
+}
+
 export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "mediaType" | "mediaUrls" | "thumbnailUrl" | "cards" | "headline" | "pageName" | "archiveAdId"> }): React.JSX.Element {
-  const [hasMediaError, setHasMediaError] = useState(false);
+  const [hasVideoError, setHasVideoError] = useState(false);
+  const [hasImageError, setHasImageError] = useState(false);
   const source = toProxyMediaUrl(ad.mediaUrls[0]);
   const thumbnail = toProxyMediaUrl(ad.thumbnailUrl);
   const label = ad.headline || ad.pageName;
 
-  if (!hasMediaError && ad.mediaType === "VIDEO" && source) {
+  const canPlayAsVideo = !hasVideoError && ad.mediaType === "VIDEO" && source && isPlayableVideoUrl(source);
+
+  if (canPlayAsVideo) {
     return (
       <video
         aria-label={`Video quảng cáo ${ad.pageName}`}
@@ -41,14 +54,14 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
         referrerPolicy="no-referrer"
         poster={thumbnail !== source ? thumbnail : undefined}
         src={source}
-        onError={() => setHasMediaError(true)}
+        onError={() => setHasVideoError(true)}
         className="h-full w-full object-contain"
       />
     );
   }
 
   const cards = ad.cards?.map(card => ({ ...card, mediaUrl: toProxyMediaUrl(card.mediaUrl) })).filter(card => Boolean(card.mediaUrl)) ?? [];
-  if (!hasMediaError && ad.mediaType === "CAROUSEL" && cards.length > 0) {
+  if (!hasImageError && ad.mediaType === "CAROUSEL" && cards.length > 0) {
     return (
       <div aria-label={`Ảnh carousel ${ad.pageName}`} className="flex h-full w-full snap-x overflow-x-auto">
         {cards.map((card, index) => (
@@ -58,7 +71,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
             alt={card.headline || `${label} — ${index + 1}`}
             loading="lazy"
             referrerPolicy="no-referrer"
-            onError={() => setHasMediaError(true)}
+            onError={() => setHasImageError(true)}
             className="h-full w-full shrink-0 snap-center object-contain"
           />
         ))}
@@ -66,23 +79,32 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
     );
   }
 
-  const imageSource = thumbnail ?? (ad.mediaType === "IMAGE" ? source : undefined);
-  if (!hasMediaError && imageSource) {
+  const imageSource = thumbnail ?? source;
+  if (!hasImageError && imageSource) {
     return (
-      <img
-        src={imageSource}
-        alt={label}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => setHasMediaError(true)}
-        className="h-full w-full object-contain"
-      />
+      <div className="relative h-full w-full flex items-center justify-center">
+        <img
+          src={imageSource}
+          alt={label}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setHasImageError(true)}
+          className="h-full w-full object-contain"
+        />
+        {ad.mediaType === "VIDEO" && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/25">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-lg backdrop-blur-sm border border-white/20 pl-0.5 text-xs">
+              ▶
+            </span>
+          </div>
+        )}
+      </div>
     );
   }
 
   return (
     <div className="space-y-2 p-4 text-center text-xs text-slate-400">
-      <p>{hasMediaError ? "Không tải được media từ nguồn." : "Nguồn chưa cung cấp ảnh/video."}</p>
+      <p>{hasVideoError || hasImageError ? "Không tải được media từ nguồn." : "Nguồn chưa cung cấp ảnh/video."}</p>
       {/^\d+$/.test(ad.archiveAdId) && (
         <a href={`https://www.facebook.com/ads/library/?id=${ad.archiveAdId}`} target="_blank" rel="noreferrer" className="text-cyan-300 underline">
           Xem trên Meta Ad Library
