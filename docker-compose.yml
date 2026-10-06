@@ -27,9 +27,9 @@ services:
       - ffp_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ffp_tool} -d ${POSTGRES_DB:-ffp_tool}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      interval: 2s
+      timeout: 3s
+      retries: 15
     cpus: "${DATABASE_CPUS:-1.0}"
     mem_limit: ${DATABASE_MEMORY_LIMIT:-1g}
     pids_limit: ${DATABASE_PIDS_LIMIT:-200}
@@ -92,10 +92,10 @@ services:
       - ./credentials:/app/credentials:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/ready >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
     cpus: "${SERVER_CPUS:-2.0}"
     mem_limit: ${SERVER_MEMORY_LIMIT:-3g}
     pids_limit: ${SERVER_PIDS_LIMIT:-512}
@@ -126,9 +126,9 @@ services:
       - "${CLIENT_BIND_ADDRESS:-0.0.0.0}:${CLIENT_PORT:-3010}:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      interval: 2s
+      timeout: 3s
+      retries: 10
     cpus: "${CLIENT_CPUS:-0.5}"
     mem_limit: ${CLIENT_MEMORY_LIMIT:-256m}
     pids_limit: ${CLIENT_PIDS_LIMIT:-100}

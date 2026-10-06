@@ -26,7 +26,7 @@ RUN npm install
 ARG VITE_AGENT_INSTALL_URL=https://ffp.b6-team.site
 ENV VITE_AGENT_INSTALL_URL=${VITE_AGENT_INSTALL_URL}
 COPY . .
-RUN npm run build && \
+RUN npm run build:client && \
     node scripts/package-agent-source.mjs /tmp/ffp-agent-package && \
     tar -czf /tmp/ffp-crawler-agent.tar.gz -C /tmp/ffp-agent-package . && \
     sha256sum /tmp/ffp-crawler-agent.tar.gz > /tmp/ffp-crawler-agent.tar.gz.sha256
