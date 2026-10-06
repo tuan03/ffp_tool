@@ -12,15 +12,17 @@ declare module "react" {
 function toProxyMediaUrl(url: string | undefined): string | undefined {
   if (!url || !/^https?:\/\//i.test(url)) return undefined;
   if (url.startsWith("/api/") || url.startsWith("./") || url.startsWith("/")) return url;
+  const cleanUrl = url.replace(/&amp;/g, "&");
   if (
-    url.includes("fbcdn.net") ||
-    url.includes("facebook.com") ||
-    url.includes("cdninstagram.com") ||
-    url.includes("instagram.com")
+    cleanUrl.includes("fbcdn.net") ||
+    cleanUrl.includes("facebook.com") ||
+    cleanUrl.includes("cdninstagram.com") ||
+    cleanUrl.includes("instagram.com") ||
+    cleanUrl.includes("fbsbx.com")
   ) {
-    return `/api/ads-intelligence/media-proxy?url=${encodeURIComponent(url)}`;
+    return `/api/ads-intelligence/media-proxy?url=${encodeURIComponent(cleanUrl)}`;
   }
-  return url;
+  return cleanUrl;
 }
 
 export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "mediaType" | "mediaUrls" | "thumbnailUrl" | "cards" | "headline" | "pageName" | "archiveAdId"> }): React.JSX.Element {
