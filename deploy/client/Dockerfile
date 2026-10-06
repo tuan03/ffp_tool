@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
 # Copy package.json
 COPY package.json ./
 RUN npm install
