@@ -46,18 +46,67 @@ export class PerformanceService {
   async overview(storeId: string, filters: PerformanceFilters = {}): Promise<PerformanceOverview> {
     await this.ready();
     const mapping = await this.repository.mapping(storeId);
-    const connection = (await this.repository.pool.query<{ reconnect: boolean }>("SELECT reconnect FROM sp_connection WHERE id=1")).rows[0];
+    const integrations = await this.repository.integrations(storeId);
+    const legacyConnection = (await this.repository.pool.query<{ reconnect: boolean }>("SELECT reconnect FROM sp_connection WHERE id=1")).rows[0];
     const range = await this.repository.range(storeId, filters);
     const [current, previous, jobs] = await Promise.all([this.repository.metrics(storeId, range.start, range.end, "property"), this.repository.metrics(storeId, range.previousStart, range.previousEnd, "property"), this.repository.jobs(storeId)]);
-    return { enabled: true, configured: this.google.configured, connected: Boolean(connection), reconnectRequired: connection?.reconnect ?? false, mapping, current, previous, jobs, startDate: range.start, endDate: range.end, notice: "Google Web Search · dữ liệu finalized · ngày America/Los_Angeles. Chỉ tổng hợp khi đủ ngày trong kỳ. Truy vấn có thể bị ẩn hoặc giới hạn; không có dữ liệu không đồng nghĩa không có traffic. Thay đổi hiệu suất không chứng minh quan hệ nhân quả." };
+    const connected = integrations.some(integration => integration.connectionId !== null) || Boolean(legacyConnection);
+    const reconnectRequired = integrations.some(integration => integration.status === "RECONNECT_REQUIRED") || (legacyConnection?.reconnect ?? false);
+    return { enabled: true, configured: this.google.configured, connected, reconnectRequired, mapping, current, previous, jobs, integrations, startDate: range.start, endDate: range.end, notice: "Google Web Search · dữ liệu finalized · ngày America/Los_Angeles. Chỉ tổng hợp khi đủ ngày trong kỳ. Truy vấn có thể bị ẩn hoặc giới hạn; không có dữ liệu không đồng nghĩa không có traffic. Thay đổi hiệu suất không chứng minh quan hệ nhân quả." };
   }
   async map(storeId: string, property: string, origin: string): Promise<void> {
     const normalized = assertPropertyMapping(property, origin);
-    const properties = await this.google.properties();
+    let connectionId: string | undefined;
+    try { connectionId = await this.repository.connectionFor(storeId, "GSC"); } catch { /* legacy compatibility */ }
+    const properties = await this.google.properties(connectionId);
     if (!properties.some(site => site.siteUrl === property)) throw new Error("GSC_PROPERTY_FORBIDDEN");
-    await this.repository.map(storeId, property, normalized.origin);
+    if (connectionId) await this.repository.mapIntegration({ storeId, source: "GSC", connectionId, origin: normalized.origin, gscProperty: property });
+    else await this.repository.map(storeId, property, normalized.origin);
     await this.repository.event(storeId, "PROPERTY_CONNECTED", { property, origin: normalized.origin });
     await this.repository.startJob(storeId, "sync", `initial:${property}`);
+  }
+  async mapGa4(storeId: string, input: {
+    readonly propertyId: string;
+    readonly origin?: string;
+    readonly streamId?: string;
+    readonly hostnameScope?: string;
+    readonly timeZone?: string;
+    readonly currencyCode?: string;
+  }): Promise<void> {
+    await this.ready();
+    const cleanPropertyId = input.propertyId.trim();
+    if (!/^\d+$/.test(cleanPropertyId)) throw new Error("GA4_PROPERTY_ID_INVALID");
+    let connectionId: string | undefined;
+    try {
+      connectionId = await this.repository.connectionFor(storeId, "GA4");
+    } catch {
+      try { connectionId = await this.repository.connectionFor(storeId, "GSC"); } catch { /* no connection */ }
+    }
+    if (!connectionId) throw new Error("GOOGLE_CONNECTION_REQUIRED");
+
+    let origin = input.origin?.trim();
+    if (!origin) {
+      const gscMapping = await this.repository.integrations(storeId);
+      const gsc = gscMapping.find(i => i.source === "gsc");
+      origin = gsc?.origin ?? `https://${input.hostnameScope ?? "example.com"}`;
+    }
+
+    const hostnameScope = input.hostnameScope?.trim() || (new URL(origin).hostname.replace(/^www\./, ""));
+    const timeZone = input.timeZone?.trim() || "America/Los_Angeles";
+    const currencyCode = input.currencyCode?.trim() || "USD";
+
+    await this.repository.mapIntegration({
+      storeId,
+      source: "GA4",
+      connectionId,
+      origin,
+      ga4PropertyId: cleanPropertyId,
+      streamId: input.streamId?.trim() || "Web",
+      hostnameScope,
+      timeZone,
+      currencyCode,
+    });
+    await this.repository.event(storeId, "GA4_PROPERTY_CONNECTED", { propertyId: cleanPropertyId, origin });
   }
   async evidence(storeId: string, url: string, queryOffset = 0): Promise<unknown> {
     const page = await this.repository.page(storeId, url);
@@ -117,5 +166,5 @@ export class PerformanceService {
       if (!exists.rowCount) await this.repository.event(event.store_id, "FOLLOW_UP_DUE", { ...event.details, key, day, message: "Compare complete before/after periods in SEO Performance; do not infer causality." });
     }
   }
-  start(storeId: string, kind: "sync" | "crawl"): Promise<{ jobId: string }> { return this.repository.startJob(storeId, kind, randomUUID()); }
+  start(storeId: string, kind: "sync" | "gsc_sync" | "ga4_sync" | "crawl"): Promise<{ jobId: string }> { return this.repository.startJob(storeId, kind, randomUUID()); }
 }

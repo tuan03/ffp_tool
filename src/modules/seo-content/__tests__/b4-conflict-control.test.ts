@@ -11,7 +11,7 @@ import { computeProductKey } from "../internal/conflict-control/seo-conflict-cor
 
 test("B4 discards a scene-only discovery candidate lacking product evidence", async () => {
   const result = await new DefaultKeywordConflictAnalyzer({ fallbackEmbeddingProvider: new LocalTfidfVectorizer() }).analyze({
-    source: { title: "Personalized Music Player Area Rug", description: "", niche: "personalized rug", handle: "music-rug", images: [] },
+    source: { niche: "personalized rug" },
     productUnderstanding: {
       physicalProductIdentity: "area rug",
       typography: { visibleTexts: [], styleSummary: "unknown" },
@@ -28,7 +28,7 @@ test("B4 discards a scene-only discovery candidate lacking product evidence", as
 
 test("B4 keeps a supported area-rug keyword out of the category-conflict path", async () => {
   const result = await new DefaultKeywordConflictAnalyzer({ fallbackEmbeddingProvider: new LocalTfidfVectorizer() }).analyze({
-    source: { title: "Personalized Music Player Area Rug", description: "", niche: "personalized rug", handle: "music-rug", images: [] },
+    source: { niche: "personalized rug" },
     productUnderstanding: {
       physicalProductIdentity: "area rug",
       typography: { visibleTexts: [], styleSummary: "unknown" },
@@ -45,7 +45,7 @@ test("B4 keeps a supported area-rug keyword out of the category-conflict path", 
 
 test("B4 rejects a mixed scene seed when its scene claim is unsupported by product evidence", async () => {
   const result = await new DefaultKeywordConflictAnalyzer({ fallbackEmbeddingProvider: new LocalTfidfVectorizer() }).analyze({
-    source: { title: "Personalized Music Player Area Rug", description: "", niche: "personalized rug", handle: "music-rug", images: [] },
+    source: { niche: "personalized rug" },
     productUnderstanding: {
       physicalProductIdentity: "area rug",
       typography: { visibleTexts: [], styleSummary: "unknown" },
@@ -142,10 +142,7 @@ test("B4 DefaultKeywordConflictAnalyzer isolates keyword conflicts across differ
         storeId: "capozen",
         productId: "cap-2",
         handle: "viking-quilt-b",
-        title: "Capozen Viking Quilt Bedding",
-        description: "Viking quilt bedding comforter",
         niche: "bedding",
-        images: [],
       },
       productUnderstanding: {
         physicalProductIdentity: "quilt bedding set",
@@ -172,10 +169,7 @@ test("B4 DefaultKeywordConflictAnalyzer isolates keyword conflicts across differ
         storeId: "jeminise",
         productId: "jem-1",
         handle: "jeminise-viking-quilt",
-        title: "Jeminise Viking Quilt Bedding",
-        description: "Viking quilt bedding comforter",
         niche: "bedding",
-        images: [],
       },
       productUnderstanding: {
         physicalProductIdentity: "quilt bedding set",

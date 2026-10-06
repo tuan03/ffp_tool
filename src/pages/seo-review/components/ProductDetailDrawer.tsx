@@ -6,6 +6,7 @@ import { sanitizeHtmlDescription } from "../sanitize-html";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { serializeProductRawJson } from "../product-raw-json-helper";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
+import { SeoVersionHistoryPanel, isShopifyProductGid } from "./SeoVersionHistoryPanel";
 import { SourceBadge } from "./SourceBadge";
 import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
@@ -209,6 +210,9 @@ export function ProductDetailDrawer({
           {/* Drawer Body - Scrollable */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-300">
             {workerClient && product.gptJobId && product.backendPublishRequired && <WorkerReviewHistoryPanel key={`${product.storeId}:${product.gptJobId}`} client={workerClient} storeId={product.storeId || currentStoreId || ""} jobId={product.gptJobId} />}
+            {workerClient && product.productId && isShopifyProductGid(product.productId) && (product.storeId || currentStoreId) &&
+              <SeoVersionHistoryPanel key={`${product.storeId || currentStoreId}:${product.productId}`} client={workerClient}
+                storeId={product.storeId || currentStoreId || ""} productGid={product.productId} />}
             {product.backendPublishRequired && (
               <section className="rounded-xl border border-cyan-800 bg-slate-900 p-4" aria-label="Backend publish">
                 <h3 className="font-semibold text-cyan-300">Duyệt và Sync là hai bước riêng</h3>

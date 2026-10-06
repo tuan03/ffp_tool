@@ -176,6 +176,24 @@ export function canRetryJob(job: GptSeoJob): boolean {
   return job.status === "FAILED" || job.status === "WAITING_INPUT" || job.status === "NEEDS_CHANGES";
 }
 
+function readSourceString(job: GptSeoJob, keys: readonly string[]): string | undefined {
+  if (!job.original || typeof job.original !== "object" || Array.isArray(job.original)) return undefined;
+  const source = job.original as Readonly<Record<string, unknown>>;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+export function getJobSourceTitle(job: GptSeoJob): string {
+  return readSourceString(job, ["title", "sourceTitle"]) ?? `Product ${job.sourceIdentity}`;
+}
+
+export function getJobSourceHandle(job: GptSeoJob): string | undefined {
+  return readSourceString(job, ["handle"]);
+}
+
 export function filterQueueJobs(jobs: readonly GptSeoJob[], filters: QueueFilters): readonly GptSeoJob[] {
   const normalizedQuery = filters.query.trim().toLocaleLowerCase();
   return jobs.filter(job => {
@@ -185,8 +203,8 @@ export function filterQueueJobs(jobs: readonly GptSeoJob[], filters: QueueFilter
 
     const searchableText = [
       job.id,
-      job.input.title,
-      job.input.handle,
+      getJobSourceTitle(job),
+      getJobSourceHandle(job),
       job.source,
       getProviderPresentation(job.settings.provider).label,
       job.settings.provider,

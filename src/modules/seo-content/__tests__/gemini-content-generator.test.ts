@@ -173,7 +173,6 @@ test("GeminiSeoContentGenerator parses AEO fields and builds valid Schema.org @g
       occasions: [],
       useCases: ["master bedroom"],
       personalizationSupported: false,
-      variantLabel: "Viking-03",
     },
     keywords: {
       primary: "viking quilt bed set",

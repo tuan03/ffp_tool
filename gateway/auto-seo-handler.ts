@@ -26,14 +26,14 @@ import { runSeoContent } from "./seo-content";
 import { executeSeoReviewSaveLifecycle, validateGeneratedSeoFields } from "./seo-review-lifecycle";
 import type {
   AutoSeoProductPayload,
-  SeoContentInput,
+  GatewaySeoContentRequest,
   SeoContentResult,
   SeoContentRunner,
 } from "./seo-content";
 
 export type {
   AutoSeoProductPayload,
-  SeoContentInput,
+  GatewaySeoContentRequest,
   SeoContentResult,
   SeoContentRunner,
 } from "./seo-content";

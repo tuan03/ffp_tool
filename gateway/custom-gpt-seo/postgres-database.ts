@@ -6,6 +6,7 @@ import type { PoolClient } from "pg";
 
 import { getSeoWorkerSchemaSql } from "../seo-worker/schema";
 import { getSeoPublishSchemaSql } from "../seo-worker/publish-schema";
+import { applySeoVersionMigrations } from "../seo-versioning";
 
 export interface SeoQueuePostgresOptions {
   readonly databaseUrl: string;
@@ -67,6 +68,11 @@ export class PostgresQueueDatabase {
   initialize(): Promise<void> {
     return this.initialization ??= this.withTransaction(async client => {
       await client.query(getQueueSchemaSql(this.schema));
+      await applySeoVersionMigrations({
+        transaction: operation => operation({
+          query: async (sql, values) => ({ rows: (await client.query<Record<string, unknown>>(sql, values)).rows }),
+        }),
+      }, this.schema);
       if (this.legacySourcePath && existsSync(this.legacySourcePath)) {
         const imported = await client.query(`SELECT 1 FROM "${this.schema}".seo_queue_migrations LIMIT 1`);
         if (!imported.rowCount) throw new Error("SEO_QUEUE_MIGRATION_REQUIRED: import the frozen SQLite queue before enabling PostgreSQL runtime");

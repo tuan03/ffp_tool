@@ -4,10 +4,10 @@ import { test } from "node:test";
 import { getWorkerProductKey, getRetryDelay, validateTargetCount, WORKER_DEFAULTS } from "../seo-worker/protocol";
 
 test("worker identity uses the Shopify product ID across source types, never title or handle", () => {
-  assert.equal(getWorkerProductKey({ source: "auto_seo", sourceIdentity: "gid://shopify/Product/123", input: {} }), "shopify:123");
-  assert.equal(getWorkerProductKey({ source: "amazon", sourceIdentity: "asin", input: { productId: "123" } }), "shopify:123");
-  assert.equal(getWorkerProductKey({ source: "amazon", sourceIdentity: "asin", input: {} }), "source:amazon:asin");
-  assert.throws(() => getWorkerProductKey({ source: "amazon", sourceIdentity: "", input: {} }), /INVALID_SOURCE/);
+  assert.equal(getWorkerProductKey({ source: "auto_seo", sourceIdentity: "gid://shopify/Product/123" }), "shopify:123");
+  assert.equal(getWorkerProductKey({ source: "amazon", sourceIdentity: "asin", productId: "123" }), "shopify:123");
+  assert.equal(getWorkerProductKey({ source: "amazon", sourceIdentity: "asin" }), "source:amazon:asin");
+  assert.throws(() => getWorkerProductKey({ source: "amazon", sourceIdentity: "" }), /INVALID_SOURCE/);
 });
 
 test("worker retry is bounded and run targets count successful drafts only", () => {

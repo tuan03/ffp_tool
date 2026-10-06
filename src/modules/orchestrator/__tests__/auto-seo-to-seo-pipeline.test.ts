@@ -7,10 +7,12 @@ import type {
   SeoContentOutput,
 } from "../../seo-content";
 import { handoverAutoSeoToSeo } from "../auto-seo-to-seo-pipeline";
+import { TEST_SEO_STORE_PROFILE } from "./test-seo-store-profile";
 
 test("handoverAutoSeoToSeo: returns empty result when input products array is empty", async () => {
   const result = await handoverAutoSeoToSeo({
     products: [],
+    storeProfile: TEST_SEO_STORE_PROFILE,
   });
 
   assert.equal(result.total, 0);
@@ -51,14 +53,14 @@ test("handoverAutoSeoToSeo: processes products through SEO runner and produces s
 
   const fakeRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
     return {
-      productTitle: `SEO ${input.title}`,
-      productDescription: `<p>SEO Optimized ${input.description}</p>`,
-      productSeoTitle: `${input.title} | Premium Store`,
-      productSeoDescription: `Discover high quality ${input.title} today.`,
-      productHandle: input.handle || "seo-handle",
+      productTitle: "Grounded Product",
+      productDescription: "<p>Grounded from image evidence</p>",
+      productSeoTitle: "Grounded Product | Premium Store",
+      productSeoDescription: "Discover this image-grounded product today.",
+      productHandle: "grounded-product",
       images: (input.images || []).map((img, i) => ({
         sourceUrl: img.url,
-        alt: img.alt || `Alt for ${input.title}`,
+        alt: `Grounded image ${i + 1}`,
         webp: {
           url: `https://cdn.example.com/webp-${i}.webp`,
           filename: `webp-${i}.webp`,
@@ -71,6 +73,7 @@ test("handoverAutoSeoToSeo: processes products through SEO runner and produces s
     {
       workflowId: "test-auto-seo-wf",
       products: sampleProducts,
+      storeProfile: TEST_SEO_STORE_PROFILE,
     },
     {
       seoRunner: fakeRunner,
@@ -87,7 +90,9 @@ test("handoverAutoSeoToSeo: processes products through SEO runner and produces s
   const firstItem = result.items[0];
   assert.equal(firstItem.productId, "gid://shopify/Product/1001");
   assert.equal(firstItem.success, true);
-  assert.equal(firstItem.seoOutput?.productSeoTitle, "Handmade Ceramic Mug | Premium Store");
+  assert.equal(firstItem.seoOutput?.productSeoTitle, "Grounded Product | Premium Store");
+  assert.deepEqual(Object.keys(firstItem.seoInput).sort(), ["images", "niche", "storeProfile"]);
+  assert.equal(firstItem.seoInput.storeProfile, TEST_SEO_STORE_PROFILE);
   assert.equal(firstItem.seoOutput?.images[0].webp?.url, "https://cdn.example.com/webp-0.webp");
 });
 
@@ -97,24 +102,26 @@ test("handoverAutoSeoToSeo: handles individual failures without crashing batch",
       id: "gid://shopify/Product/2001",
       title: "Good Product",
       handle: "good-product",
+      images: [{ id: "good-image", src: "https://example.com/good.jpg" }],
     },
     {
       id: "gid://shopify/Product/2002",
       title: "Failing Product",
       handle: "failing-product",
+      images: [{ id: "failing-image", src: "https://example.com/failing.jpg" }],
     },
   ];
 
   const fakeRunner = async (input: SeoContentInput): Promise<SeoContentOutput> => {
-    if (input.title === "Failing Product") {
+    if (input.images[0]?.id === "failing-image") {
       throw new Error("API rate limit exceeded");
     }
     return {
-      productTitle: `SEO ${input.title}`,
+      productTitle: "SEO Grounded Product",
       productDescription: "<p>Optimized</p>",
-      productSeoTitle: `${input.title} - Best Buy`,
+      productSeoTitle: "Grounded Product - Best Buy",
       productSeoDescription: "Meta description",
-      productHandle: input.handle,
+      productHandle: "grounded-product",
       images: [],
     };
   };
@@ -122,6 +129,8 @@ test("handoverAutoSeoToSeo: handles individual failures without crashing batch",
   const result = await handoverAutoSeoToSeo(
     {
       products: sampleProducts,
+      storeProfile: TEST_SEO_STORE_PROFILE,
+      concurrency: 1,
     },
     {
       seoRunner: fakeRunner,

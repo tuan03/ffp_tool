@@ -8,6 +8,10 @@ export const GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA = {
     "visualEntities",
     "sceneContext",
     "physicalProductIdentity",
+    "identityCandidates",
+    "excludedSceneEntities",
+    "confidence",
+    "reviewRequired",
   ],
   properties: {
     typography: {
@@ -22,6 +26,10 @@ export const GEMINI_PRODUCT_IMAGE_ANALYSIS_SCHEMA = {
     visualEntities: { type: "string" },
     sceneContext: { type: "string" },
     physicalProductIdentity: { type: "string" },
+    identityCandidates: { type: "array", maxItems: 10, items: { type: "string" } },
+    excludedSceneEntities: { type: "array", maxItems: 20, items: { type: "string" } },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    reviewRequired: { type: "boolean" },
   },
 } as const;
 
@@ -37,6 +45,10 @@ const ALLOWED_SCHEMA_PROPERTIES: ReadonlySet<string> = new Set([
   "visualEntities",
   "sceneContext",
   "physicalProductIdentity",
+  "identityCandidates",
+  "excludedSceneEntities",
+  "confidence",
+  "reviewRequired",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,6 +125,15 @@ export function parseGeminiProductImageAnalysis(raw: unknown): ProductImageAnaly
       throw new GeminiSchemaValidationError(`Missing or invalid '${field}' string in Gemini response`);
     }
   }
+  if (!isStringArray(parsed.identityCandidates) || !isStringArray(parsed.excludedSceneEntities)) {
+    throw new GeminiSchemaValidationError("Missing or invalid identity evidence arrays in Gemini response");
+  }
+  if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1) {
+    throw new GeminiSchemaValidationError("Missing or invalid 'confidence' in Gemini response");
+  }
+  if (typeof parsed.reviewRequired !== "boolean") {
+    throw new GeminiSchemaValidationError("Missing or invalid 'reviewRequired' in Gemini response");
+  }
 
   const visualEntities = parsed.visualEntities;
   const sceneContext = parsed.sceneContext;
@@ -129,5 +150,9 @@ export function parseGeminiProductImageAnalysis(raw: unknown): ProductImageAnaly
     visualEntities: visualEntities.trim() || "unknown",
     sceneContext: sceneContext.trim() || "unknown",
     physicalProductIdentity: physicalProductIdentity.trim() || "unknown",
+    identityCandidates: cleanStringList(parsed.identityCandidates),
+    excludedSceneEntities: cleanStringList(parsed.excludedSceneEntities),
+    confidence: parsed.confidence,
+    reviewRequired: parsed.reviewRequired,
   });
 }

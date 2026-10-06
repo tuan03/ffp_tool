@@ -8,6 +8,7 @@ import type { WorkerLease, WorkerPrincipal, WorkerRun } from "./protocol";
 import { getRetryDelay, getWorkerProductKey, SeoWorkerError, validateTargetCount, WORKER_DEFAULTS } from "./protocol";
 import type { AgentAccessPage, AgentRunPage } from "../../src/modules/custom-gpt-seo";
 import { SeoWorkerMetrics } from "./metrics";
+import { migrateLegacyWorkerJob } from "./job-migration";
 
 function digest(value: unknown): string { return createHash("sha256").update(canonicalizeJson(value)).digest("hex"); }
 function requireLabel(value: string): void {
@@ -303,7 +304,7 @@ export class SeoWorkerRepository {
         AND COALESCE(s.status,'')!='SYNCED' AND COALESCE(r.payload::jsonb->>'reviewDecision','')!='rejected'`, [storeId])).rows.map(row => JSON.parse(String(row.payload)) as GptSeoJob);
       const products = new Map<string, string[]>();
       for (const job of jobs) {
-        const key = getWorkerProductKey(job);
+        const key = getWorkerProductKey(job.execution);
         products.set(key, [...products.get(key) ?? [], job.id]);
       }
       return { activeBatches: batches.map(row => String(row.id)),
@@ -340,33 +341,38 @@ export class SeoWorkerRepository {
     requireLabel(storeId);
     return this.database.transaction(async sql => {
       const converted = (await sql.query("SELECT store_id FROM seo_worker_stores WHERE store_id=$1 FOR UPDATE", [storeId])).rows[0];
-      if (converted) {
-        await sql.query("UPDATE seo_worker_stores SET enabled=true WHERE store_id=$1", [storeId]);
-        return { imported: 0 };
-      }
       const live = (await sql.query("SELECT id FROM gpt_batches WHERE store_id=$1 AND provider='codex_mcp' AND active=1 AND expires_at>$2", [storeId, this.now()])).rows;
-      if (live.length) throw new SeoWorkerError("LEGACY_BATCH_ACTIVE");
-      const rows = (await sql.query(`SELECT j.payload FROM gpt_jobs j LEFT JOIN gpt_sync s ON s.job_id=j.id
+      if (!converted && live.length) throw new SeoWorkerError("LEGACY_BATCH_ACTIVE");
+      const active = (await sql.query(`SELECT payload FROM gpt_jobs WHERE store_id=$1 AND provider='codex_mcp'
+        AND status IN ('IN_PROGRESS','VALIDATING') FOR UPDATE`, [storeId])).rows;
+      if (!converted && active.length) throw new SeoWorkerError("LEGACY_JOB_NOT_DRAINED");
+      for (const row of active) migrateLegacyWorkerJob(JSON.parse(String(row.payload)) as GptSeoJob);
+      const rows = (await sql.query(`SELECT j.payload,w.job_id AS worker_job_id FROM gpt_jobs j LEFT JOIN gpt_sync s ON s.job_id=j.id
         LEFT JOIN gpt_review_state r ON r.job_id=j.id
-        WHERE j.store_id=$1 AND j.status!='CANCELLED' AND COALESCE(s.status,'')!='SYNCED'
+        LEFT JOIN seo_worker_jobs w ON w.job_id=j.id
+        WHERE j.store_id=$1 AND j.status IN ('PENDING','WAITING_INPUT','NEEDS_CHANGES') AND COALESCE(s.status,'')!='SYNCED'
         AND COALESCE(r.payload::jsonb->>'reviewDecision','')!='rejected'`, [storeId])).rows;
       const identities = new Set<string>();
-      const jobs = rows.map(row => JSON.parse(String(row.payload)) as GptSeoJob);
-      for (const job of jobs) {
-        const key = getWorkerProductKey(job);
+      const migrations = rows.map(row => ({ ...migrateLegacyWorkerJob(JSON.parse(String(row.payload)) as GptSeoJob), hasWorker: row.worker_job_id !== null }));
+      for (const { job } of migrations) {
+        const key = getWorkerProductKey(job.execution);
         if (identities.has(key)) throw new SeoWorkerError("DUPLICATE_ACTIVE_PRODUCT");
         identities.add(key);
-        if (job.settings.provider === "codex_mcp" && ["IN_PROGRESS", "VALIDATING", "NEEDS_CHANGES"].includes(job.status)) {
-          throw new SeoWorkerError("LEGACY_JOB_NOT_DRAINED");
-        }
       }
-      for (const job of jobs) {
-        const state = job.status === "REVIEW_READY" ? "READY_FOR_REVIEW" : job.status === "PENDING" ? "READY" : "BLOCKED";
+      let imported = 0;
+      for (const migration of migrations) {
+        const { job } = migration;
+        if (migration.migrated) {
+          await sql.query("UPDATE gpt_jobs SET status='PENDING',payload=$2 WHERE id=$1", [job.id, JSON.stringify(job)]);
+          await sql.query("INSERT INTO gpt_audit(store_id,event,created_at) VALUES ($1,$2,$3)", [storeId, `JOB_INPUT_V2_MIGRATED:${job.id}`, this.now()]);
+          imported++;
+        }
         await sql.query(`INSERT INTO seo_worker_jobs(job_id,store_id,product_key,state,updated_at)
-          VALUES ($1,$2,$3,$4,$5) ON CONFLICT(job_id) DO NOTHING`, [job.id, storeId, getWorkerProductKey(job), state, this.now()]);
+          VALUES ($1,$2,$3,'READY',$4) ON CONFLICT(job_id) DO NOTHING`, [job.id, storeId, getWorkerProductKey(job.execution), this.now()]);
+        if (!migration.migrated && !migration.hasWorker) imported++;
       }
       await sql.query("INSERT INTO seo_worker_stores(store_id,enabled) VALUES ($1,true) ON CONFLICT(store_id) DO UPDATE SET enabled=true", [storeId]);
-      return { imported: jobs.length };
+      return { imported };
     });
   }
 

@@ -10,6 +10,7 @@ import { FileSeoConflictCorpus, checkExternalSeoKeywords, finalizeExternalSeo } 
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import { createCustomGptHandler } from "../custom-gpt-seo/handler";
 import { processCustomGptJob } from "../custom-gpt-seo/finalizer";
+import { createTestStoreProfile } from "./seo-v2-fixtures";
 
 test("mock Actions end-to-end persists evidence, replays research, validates and reaches Review", async () => {
   const folder = await mkdtemp(path.join(tmpdir(), "gpt-actions-"));
@@ -17,7 +18,7 @@ test("mock Actions end-to-end persists evidence, replays research, validates and
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
   let researchCalls = 0;
-  const handler = createCustomGptHandler({ queue, actionKey: "action", adminKey: "admin", storeId: "capozen", research: async (_seeds, language) => { researchCalls++; assert.equal(language, "en-US"); return { rug: ["cotton rug"] }; }, checkKeywords: (input, keywords) => checkExternalSeoKeywords(input, keywords, corpus) });
+  const handler = createCustomGptHandler({ queue, actionKey: "action", adminKey: "admin", storeId: "capozen", research: async (_seeds, language) => { researchCalls++; assert.equal(language, "en-US"); return { rug: ["cotton rug"] }; }, checkKeywords: (keywords, options) => checkExternalSeoKeywords(keywords, { ...options, corpus }) });
   const server = http.createServer((req, res) => { void handler(req, res); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); assert.ok(address && typeof address !== "string");
@@ -31,7 +32,9 @@ test("mock Actions end-to-end persists evidence, replays research, validates and
   try {
     queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
     const largeSnapshot = { variants: Array.from({ length: 1000 }, (_, index) => ({ id: String(index), title: `Variant ${index}`, description: "Original variant details. ".repeat(5) })) };
-    const job = await post("admin/enqueue", { storeId: "capozen", source: "auto_seo", sourceIdentity: "123", input: { productId: "123", title: "Cotton rug", description: "Cotton rug with a geometric pattern", handle: "cotton-rug", niche: "rugs", images: [{ id: "front", url: "https://example.com/front.jpg" }] }, original: { id: "123", title: "Cotton rug", ...largeSnapshot } }, "admin");
+    const job = await post("admin/enqueue", { storeId: "capozen", source: "auto_seo", sourceIdentity: "123", productId: "123",
+      input: { niche: "rugs", storeProfile: createTestStoreProfile("capozen"), images: [{ id: "front", url: "https://example.com/front.jpg" }] },
+      original: { id: "123", title: "Cotton rug", handle: "cotton-rug", updatedAt: "v1", ...largeSnapshot } }, "admin");
     const snapshotResponse = await fetch(base + `admin/job?jobId=${job.id}`, { headers: { Authorization: "Bearer admin" } });
     assert.equal(snapshotResponse.status, 200);
     assert.ok((await snapshotResponse.text()).length > 90_000, "Admin snapshots can exceed the bounded Actions payload");
@@ -40,7 +43,9 @@ test("mock Actions end-to-end persists evidence, replays research, validates and
     assert.ok((await actionResponse.text()).length < 80_000);
     const batch = await post("claim", { requestId: "claim-1" });
     const lease = { jobId: job.id, batchId: batch.id, leaseToken: batch.leaseToken };
-    await post("analysis", { ...lease, requestId: "analysis-1", payload: { physicalProductIdentity: "rug", visualEntities: "geometric pattern", sceneContext: "plain background", typography: { visibleTexts: [], styleSummary: "no text" }, shoppingContext: { targetAudience: ["homeowners"], suitableOccasions: [], useCases: ["floor decor"], buyerIntentKeywords: ["cotton rug"] }, evidence: [{ imageId: "front", observation: "Geometric pattern on the rug" }] } });
+    await post("analysis", { ...lease, requestId: "analysis-1", payload: { physicalProductIdentity: "rug", visualEntities: "geometric pattern", sceneContext: "plain background",
+      identityCandidates: ["rug"], excludedSceneEntities: [], confidence: 0.9, reviewRequired: false,
+      typography: { visibleTexts: [], styleSummary: "no text" }, shoppingContext: { targetAudience: ["homeowners"], suitableOccasions: [], useCases: ["floor decor"], buyerIntentKeywords: ["cotton rug"] }, evidence: [{ imageId: "front", observation: "Geometric pattern on the rug" }] } });
     queue.configure("capozen", { provider: "custom_gpt", batchSize: 5, language: "vi-VN" });
     const researchRequest = { ...lease, requestId: "research-1", seeds: ["rug"] };
     await post("research", researchRequest);
@@ -49,7 +54,7 @@ test("mock Actions end-to-end persists evidence, replays research, validates and
     await post("keywords", { ...lease, requestId: "keywords-1", payload: { keywords: ["geometric cotton rug"], reason: "Matches source material and visible pattern" } });
     await post("submit", { ...lease, requestId: "submit-1", payload: { draft: { productTitle: "Geometric cotton rug", intro: "A cotton rug with a geometric pattern.", bullets: [{ label: "Material", text: "Cotton" }, { label: "Design", text: "Geometric pattern" }], closing: "Explore this rug for your home.", productSeoTitle: "Geometric cotton rug", productSeoDescription: "A cotton rug with a geometric pattern for your home.", aeo_quick_summary: "This cotton rug features a visible geometric pattern designed for floor decor in the home. Its grounded design details suit homeowners seeking a straightforward decorative accent while avoiding unsupported claims about performance, special treatments, certifications, or care. The cotton material and visible pattern are the only verified product characteristics included.", aeo_faq: [{ question: "What is this product?", answer: "It is a cotton rug with a geometric pattern." }, { question: "Where can it be used?", answer: "The supplied information presents it as floor decor for the home." }, { question: "What design is visible?", answer: "The image shows a geometric pattern on the rug." }] }, alts: { front: "Cotton rug with geometric pattern" } } });
     assert.equal(queue.get("capozen", String(job.id)).status, "VALIDATING");
-    await processCustomGptJob(queue, (input, analysis, keywords, submission) => finalizeExternalSeo(input, analysis, keywords, submission, corpus));
+    await processCustomGptJob(queue, (input, analysis, keywords, submission, options) => finalizeExternalSeo(input, analysis, keywords, submission, { ...options, corpus }));
     assert.equal(queue.get("capozen", String(job.id)).status, "REVIEW_READY");
     await post("release", { batchId: batch.id, leaseToken: batch.leaseToken });
     assert.equal(queue.get("capozen", String(job.id)).status, "REVIEW_READY");

@@ -8,7 +8,7 @@ import type {
   ProductCrawlerCreateJobResponse,
   ProductCrawlerJobInput,
   ProductCrawlerJobStatusResponse,
-  SeoContentInput,
+  CrawlerSeoHandoffSource,
 } from "./types";
 
 const ASIN_REGEX = /^[A-Z0-9]{10}$/i;
@@ -137,7 +137,7 @@ export function crawlerProductToListItem(product: CrawlerProduct): CrawlerProduc
   };
 }
 
-export function crawlerProductToSeoInput(product: CrawlerProduct): SeoContentInput {
+export function crawlerProductToSeoSource(product: CrawlerProduct): CrawlerSeoHandoffSource {
   const images = product.media.filter((m) => m.kind === "image").map((m) => m.url);
 
   return {

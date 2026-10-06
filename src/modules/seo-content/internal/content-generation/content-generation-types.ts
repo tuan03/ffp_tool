@@ -1,4 +1,3 @@
-import type { VariantSummary } from "../../types";
 import type { ContentGenerationMetadata, ContentResult } from "../domain-types";
 import type { StoreContentProfile } from "../store-profiles/types";
 import type { KeywordComparisonResult } from "../keyword-comparator";
@@ -18,8 +17,6 @@ export interface ContentFactSheet {
   readonly occasions: readonly string[];
   readonly useCases: readonly string[];
   readonly personalizationSupported: boolean;
-  readonly variantLabel?: string;
-  readonly variantSummary?: VariantSummary;
   readonly storeProfile?: StoreContentProfile;
 }
 

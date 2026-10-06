@@ -8,21 +8,19 @@ import {
   registerSeoContentKeywords,
   unregisterSeoContentKeywords,
 } from "../service";
+import { FileSeoConflictCorpus } from "../internal/conflict-control/file-seo-conflict-corpus";
 import type { SeoContentDetailedResult, SeoContentInput } from "../types";
+import { TEST_STORE_PROFILE } from "./test-profile";
 
 test("unregisterSeoContentKeywords releases a reservation when Shopify sync fails", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "ffp-seo-release-"));
   const corpusPath = path.join(directory, "corpus.json");
-  const previousPath = process.env.SEO_CONFLICT_CORPUS_PATH;
-  process.env.SEO_CONFLICT_CORPUS_PATH = corpusPath;
+  const conflictCorpus = new FileSeoConflictCorpus({ filePath: corpusPath });
 
   const input: SeoContentInput = {
-    productId: "amazon:parent:color:black",
-    title: "Black tote",
-    description: "A black tote",
-    handle: "black-tote-a1b2c3d4",
     images: [],
     niche: "tote bags",
+    storeProfile: TEST_STORE_PROFILE,
   };
   const detailed: SeoContentDetailedResult = {
     output: {
@@ -30,7 +28,6 @@ test("unregisterSeoContentKeywords releases a reservation when Shopify sync fail
       productDescription: "Black tote description",
       productSeoTitle: "Black Tote Bag",
       productSeoDescription: "Black tote description",
-      productHandle: input.handle,
       images: [],
     },
     metadata: {
@@ -44,16 +41,15 @@ test("unregisterSeoContentKeywords releases a reservation when Shopify sync fail
   };
 
   try {
-    await registerSeoContentKeywords(input, detailed);
-    await unregisterSeoContentKeywords(input, detailed);
+    const execution = { storeId: "test-store", productId: "amazon:parent:color:black", source: "amazon" as const, sourceIdentity: "parent:color:black", providerId: "gemini", pipelineVersion: "seo-b1-b6-v2", originalSnapshot: {} };
+    await registerSeoContentKeywords(input, detailed, { execution, conflictCorpus });
+    await unregisterSeoContentKeywords(input, detailed, { execution, conflictCorpus });
 
     const corpus = JSON.parse(await readFile(corpusPath, "utf8")) as {
       readonly products: readonly unknown[];
     };
     assert.deepEqual(corpus.products, []);
   } finally {
-    if (previousPath === undefined) delete process.env.SEO_CONFLICT_CORPUS_PATH;
-    else process.env.SEO_CONFLICT_CORPUS_PATH = previousPath;
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -13,6 +13,7 @@ import {
 } from "./operations/collections-write";
 import { executeConnectionTest } from "./operations/connection-test";
 import { executeProductsGet, executeProductsList } from "./operations/products";
+import { executeProductMediaPage } from "./operations/product-media";
 import {
   executeProductsBulkUpdate,
   executeProductsCreate,
@@ -413,6 +414,8 @@ export class GatewayDispatcher {
         return executeProductsList(store, this.graphqlClient, payload);
       case "products.get":
         return executeProductsGet(store, this.graphqlClient, payload);
+      case "products.mediaPage":
+        return executeProductMediaPage(store, this.graphqlClient, payload);
       case "collections.list":
         return executeCollectionsList(store, this.graphqlClient, payload);
       case "collections.get":

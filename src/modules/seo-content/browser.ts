@@ -4,6 +4,7 @@ export {
   getBrowserSeoContentRunner,
   type BrowserSeoContentRunner,
 } from "./browser-runtime";
+export { resolveStoreProfile } from "./internal/store-profiles";
 export {
   applySeoContentToCustomizationProduct,
   fromCustomizationBatch,

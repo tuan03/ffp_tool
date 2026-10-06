@@ -16,8 +16,6 @@ import {
 import { createB4ConflictControlStage } from "./internal/stages/b4-conflict-control";
 import { createB5ContentGenerationStage } from "./internal/stages/b5-content-generation";
 import { createB6ImageProcessingStage } from "./internal/stages/b6-image-processing";
-import { getDefaultSiteNicheResolver } from "./internal/site-niche/site-niche-runtime";
-import type { SiteNicheResolver } from "./internal/site-niche/site-niche-resolver";
 import { resolveStoreProfile } from "./internal/store-profiles";
 import { computeProductInputHash, computeSeoResultCacheKey } from "./internal/checkpoint/checkpoint-hasher";
 import {
@@ -35,6 +33,7 @@ import type {
   SeoContentOutput,
   SeoContentPipelineSummary,
   SeoContentRunOptions,
+  SeoExecutionEnvelope,
 } from "./types";
 import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
 import type { SeoResultCacheRecord } from "./internal/persistence/repositories";
@@ -97,6 +96,7 @@ export function createSeoContentSession(input: SeoContentInput, options?: SeoCon
 export function createSeoContentSession(input: SeoContentInput, options: SeoContentRunOptions = {}): { run(): Promise<SeoContentDetailedResult> } {
   loadServerEnvironment();
   const providerInput = prepareSeoProviderInput(input);
+  const executionEnvelope = options.execution;
   let resume: SeoPipelineResume | undefined;
   let running = false;
   let cacheChecked = false;
@@ -121,8 +121,8 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
     ?? getDefaultSeoProviderRegistry();
   const resultCache = options.dependencies?.resultCache as SeoResultCache | undefined;
   const conflictCorpus = options.dependencies?.conflictCorpus as SeoConflictCorpus | undefined
-    ?? (input.storeId ? new FileSeoConflictCorpus({ storeId: input.storeId }) : undefined);
-  const createdProviderRuntime = providerRegistry.create(providerInput.providerId ?? "gemini", {
+    ?? (executionEnvelope?.storeId ? new FileSeoConflictCorpus({ storeId: executionEnvelope.storeId }) : undefined);
+  const createdProviderRuntime = providerRegistry.create("gemini", {
     imageMode: options.imageMode ?? "full",
     requestOptions,
     onFallback: observeFallback,
@@ -135,7 +135,6 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
   const runtimeStages = [
     createB1ProductUnderstandingStage({
       imageAnalyzer: providerRuntime.imageAnalyzer,
-      maxImages: options.imageMode === "alt_only" ? 1 : undefined,
     }),
     createB2ShoppingContextStage({
       analyzer: providerRuntime.shoppingContextAnalyzer,
@@ -152,6 +151,7 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
       requestOptions,
       conflictCorpus,
       analyzer: providerRuntime.keywordConflictAnalyzer,
+      execution: executionEnvelope,
     }),
     createB5ContentGenerationStage({
       generator: providerRuntime.contentGenerator,
@@ -169,8 +169,6 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
       name: stage.name,
       execute(context) { observedFallbacks.delete(stage.name); return stage.execute(context); },
     })),
-    siteNicheResolver: (options.dependencies?.siteNicheResolver as SiteNicheResolver | undefined)
-      ?? getDefaultSiteNicheResolver(),
     checkpointManager,
     stageModels: {
       b1: providerRuntime.model,
@@ -198,7 +196,7 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
         corpusRevision,
         promptVersion,
         model: providerRuntime.model,
-        pipelineVersion: providerInput.pipelineVersion ?? "seo-b1-b6-v1",
+        pipelineVersion: executionEnvelope?.pipelineVersion ?? "seo-b1-b6-v2",
       });
       const cachedResult = resultCache && !cacheChecked ? await resultCache.get(resultCacheKey) : undefined;
       cacheChecked = true;
@@ -249,33 +247,32 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
           : execution.output,
         metadata: {
           engine,
-          fieldsApplied: ["title", "descriptionHtml", "handle", "seo.title", "seo.description", "media.alt"],
+          fieldsApplied: ["title", "descriptionHtml", "seo.title", "seo.description", "media.alt"],
           fallbackStages,
           warnings: [...observedWarnings, ...execution.warnings],
           approvedKeywords: execution.context.conflictResult?.approvedKeywords ?? [],
           approvedEmbeddings: execution.context.conflictResult?.approvedEmbeddings,
           corpusRevision: execution.context.conflictResult?.corpusRevision,
           inputHash,
-          sourceVersion: providerInput.sourceVersion,
-          shopifyUpdatedAt: providerInput.shopifyUpdatedAt,
+          sourceVersion: executionEnvelope?.sourceRevision,
+          shopifyUpdatedAt: executionEnvelope?.shopifyUpdatedAt,
           providerId: providerRuntime.providerId,
-          pipelineVersion: providerInput.pipelineVersion,
+          pipelineVersion: executionEnvelope?.pipelineVersion ?? "seo-b1-b6-v2",
           performance: { stageDurationsMs: { ...stageDurationsMs }, ...providerMetrics },
         },
       };
-      if (resultCache) {
+      if (resultCache && executionEnvelope) {
         await resultCache.set({
           cacheKey: resultCacheKey,
-          storeId: providerInput.storeId,
-          productId: providerInput.productId,
+          storeId: executionEnvelope.storeId,
+          productId: executionEnvelope.productId,
           inputHash,
-          sourceVersion: providerInput.sourceVersion,
-          imageFingerprint: computeProductInputHash({ ...providerInput, title: "", description: "", existingKeywords: [] }),
-          variantSummaryHash: computeProductInputHash({ ...providerInput, images: [], title: "", description: "", existingKeywords: [] }),
+          sourceVersion: executionEnvelope.sourceRevision,
+          imageFingerprint: inputHash,
           providerId: providerRuntime.providerId,
           model: providerRuntime.model,
           promptVersion,
-          pipelineVersion: providerInput.pipelineVersion ?? "seo-b1-b6-v1",
+          pipelineVersion: executionEnvelope.pipelineVersion,
           result: detailedResult,
           expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
         });
@@ -289,16 +286,16 @@ export function createSeoContentSession(input: SeoContentInput, options: SeoCont
 export async function registerSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
-  conflictCorpus?: SeoConflictCorpus,
+  options: {
+    readonly execution: SeoExecutionEnvelope;
+    readonly conflictCorpus?: SeoConflictCorpus;
+  },
 ): Promise<{ readonly revision: number }> {
-  const corpus = conflictCorpus ?? new FileSeoConflictCorpus({ storeId: input.storeId });
+  void input;
+  const corpus = options.conflictCorpus ?? new FileSeoConflictCorpus({ storeId: options.execution.storeId });
   return registerProductKeywords(
     corpus,
-    {
-      ...input,
-      title: detailed.output.productTitle,
-      handle: detailed.output.productHandle,
-    },
+    options.execution,
     detailed.metadata.approvedKeywords,
     {
       title: detailed.output.productTitle,
@@ -311,15 +308,18 @@ export async function registerSeoContentKeywords(
 export async function unregisterSeoContentKeywords(
   input: SeoContentInput,
   detailed: SeoContentDetailedResult,
-  conflictCorpus?: SeoConflictCorpus,
+  options: {
+    readonly execution: SeoExecutionEnvelope;
+    readonly conflictCorpus?: SeoConflictCorpus;
+  },
 ): Promise<void> {
-  const corpus = conflictCorpus ?? new FileSeoConflictCorpus({ storeId: input.storeId });
+  void input;
+  const corpus = options.conflictCorpus ?? new FileSeoConflictCorpus({ storeId: options.execution.storeId });
   if (!corpus.removeProduct) throw new Error("SEO conflict corpus does not support reservation removal");
   await corpus.removeProduct({
-    storeId: input.storeId,
-    productId: input.productId,
-    handle: detailed.output.productHandle,
-    url: input.url ?? `/products/${detailed.output.productHandle}`,
+    storeId: options.execution.storeId,
+    productId: options.execution.productId,
+    url: options.execution.sourceIdentity,
   });
 }
 

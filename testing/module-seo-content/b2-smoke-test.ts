@@ -1,6 +1,7 @@
 import type { SeoContentInput } from "../../src/modules/seo-content/types";
 import { createInitialContext, evolveContext } from "../../src/modules/seo-content/internal/pipeline-context";
 import { createB2ShoppingContextStage } from "../../src/modules/seo-content/internal/stages/b2-shopping-context";
+import { SMOKE_TEST_STORE_PROFILE } from "./e2e-smoke-helpers";
 
 /**
  * Standalone Node.js smoke test for B2 Shopping Context.
@@ -17,11 +18,9 @@ async function main(): Promise<void> {
   console.log(`  GEMINI_ANALYSIS_MODEL: ${process.env.GEMINI_ANALYSIS_MODEL ?? "gemini-2.5-flash"}`);
 
   const sampleInput: SeoContentInput = {
-    title: "Vintage Halloween Black Cat T-Shirt",
-    description: "Soft cotton t-shirt with vintage black cat graphic for spooky season.",
     niche: "halloween",
-    handle: "vintage-halloween-black-cat-t-shirt",
-    images: [],
+    storeProfile: SMOKE_TEST_STORE_PROFILE,
+    images: [{ id: "image-1", url: "https://example.com/black-cat-shirt.webp" }],
   };
 
   const initialContext = createInitialContext(sampleInput);

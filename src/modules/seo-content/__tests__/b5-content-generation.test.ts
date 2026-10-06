@@ -5,10 +5,11 @@ import { buildContentFactSheet } from "../internal/content-generation/content-fa
 import { HeuristicContentGenerator } from "../internal/content-generation/heuristic-content-generator";
 import { extractVisionDesignConcept } from "../internal/content-generation/heuristic-title-builder";
 import { createInitialContext } from "../internal/pipeline-context";
+import { TEST_STORE_PROFILE } from "./test-profile";
 
 test("B5 fact sheet excludes scene context and only supplies product-safe B1 evidence", async () => {
   const facts = buildContentFactSheet({
-    ...createInitialContext({ title: "Music Rug", description: "", niche: "personalized rug", handle: "music-rug", images: [] }),
+    ...createInitialContext({ niche: "personalized rug", images: [], storeProfile: TEST_STORE_PROFILE }),
     productUnderstanding: {
       physicalProductIdentity: "area rug",
       typography: { visibleTexts: ["Song Title"], styleSummary: "white media-player labels" },
@@ -25,26 +26,24 @@ test("B5 fact sheet excludes scene context and only supplies product-safe B1 evi
   assert.doesNotMatch(`${draft.intro} ${draft.closing}`, /guitar|plant|studio/i);
 });
 
-test("B5 HeuristicContentGenerator preserves variantLabel in fact sheet and title builder", async () => {
+test("B5 HeuristicContentGenerator excludes legacy variantLabel from facts and content", async () => {
   const facts = buildContentFactSheet({
     ...createInitialContext({
-      title: "Personalized Christian Handbag Set",
-      description: "",
       niche: "handbag set",
-      handle: "christian-handbag-set",
       images: [],
-      variantLabel: "Pink Faith",
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "handbag set",
       typography: { visibleTexts: [], styleSummary: "" },
       visualEntities: "Handbag set with wallet",
       sceneContext: "",
+      identityCandidates: ["handbag set"], confidence: 0.95, reviewRequired: false,
     },
   });
 
 
-  assert.equal(facts.variantLabel, "Pink Faith");
+  assert.equal("variantLabel" in facts, false);
 
   const draft = await new HeuristicContentGenerator().generate({
     facts,
@@ -52,21 +51,18 @@ test("B5 HeuristicContentGenerator preserves variantLabel in fact sheet and titl
     constraints: { maxSeoTitleLength: 70, maxSeoDescriptionLength: 160, maxHandleLength: 80, maxBullets: 5, preserveExistingHandle: true },
   });
 
-  assert.match(draft.productTitle, /Pink Faith/);
-  assert.match(draft.productSeoDescription, /Pink Faith/);
+  assert.doesNotMatch(draft.productTitle, /Pink Faith/);
+  assert.doesNotMatch(draft.productSeoDescription, /Pink Faith/);
   assert.ok(draft.productSeoDescription.length <= 160);
-  assert.ok(draft.bullets.some((b) => b.text.includes("Pink Faith")));
+  assert.ok(draft.bullets.every((b) => !b.text.includes("Pink Faith")));
 });
 
 test("B5 HeuristicContentGenerator enriches title and SEO title using visualEntities and typographyVisibleTexts", async () => {
   const facts1 = buildContentFactSheet({
     ...createInitialContext({
-      title: "Viking Bedding Set Quilt Comforter with Pillowcases - Pattern 01",
-      description: "Viking comforter bedding set with pillowcases",
       niche: "bedding",
-      handle: "viking-bedding-set-1",
       images: [],
-      variantLabel: "Pattern 01",
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "quilt bedding set",
@@ -78,12 +74,9 @@ test("B5 HeuristicContentGenerator enriches title and SEO title using visualEnti
 
   const facts2 = buildContentFactSheet({
     ...createInitialContext({
-      title: "Viking Bedding Set Quilt Comforter with Pillowcases - Pattern 02",
-      description: "Viking comforter bedding set with pillowcases",
       niche: "bedding",
-      handle: "viking-bedding-set-2",
       images: [],
-      variantLabel: "Pattern 02",
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "quilt bedding set",
@@ -155,11 +148,9 @@ test("B5 extractVisionDesignConcept safely rejects placeholder values like 'unkn
 test("B5 HeuristicContentGenerator does not truncate distinctive suffix mid-word in SEO Title", async () => {
   const facts = buildContentFactSheet({
     ...createInitialContext({
-      title: "Viking Bedding Set Quilt Comforter",
-      description: "Viking bedding set",
       niche: "bedding",
-      handle: "viking-bedding-set",
       images: [],
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "quilt bedding set",
@@ -184,18 +175,16 @@ test("B5 HeuristicContentGenerator does not truncate distinctive suffix mid-word
 test("B5 HeuristicContentGenerator generates full AEO suite with quick summary, 4 strategic FAQs, and Schema.org JSON-LD @graph", async () => {
   const facts = buildContentFactSheet({
     ...createInitialContext({
-      title: "Viking Quilt Bed Set - Viking-03",
-      description: "Machine wash cold gentle cycle. Microfiber bedding.",
       niche: "bedding",
-      handle: "viking-quilt-bed-set-viking-03",
       images: [],
-      variantLabel: "Viking-03",
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "quilt bed set",
       typography: { visibleTexts: ["VALHALLA"], styleSummary: "Nordic runes" },
       visualEntities: "Thor Mjolnir skull hammer with Celtic knotwork and ravens",
       sceneContext: "Bedroom",
+      identityCandidates: ["quilt bed set"], confidence: 0.96, reviewRequired: false,
     },
     shoppingContext: {
       targetAudience: ["Norse mythology enthusiasts"],
@@ -216,7 +205,7 @@ test("B5 HeuristicContentGenerator generates full AEO suite with quick summary, 
   assert.ok(draft.aeo_quick_summary, "aeo_quick_summary must be defined");
   const words = draft.aeo_quick_summary.split(/\s+/).filter(Boolean);
   assert.ok(words.length >= 30 && words.length <= 80, `Quick summary word count ${words.length} should be ~40-70 words`);
-  assert.match(draft.aeo_quick_summary, /Viking-03/);
+  assert.doesNotMatch(draft.aeo_quick_summary, /Viking-03/);
   assert.match(draft.aeo_quick_summary, /Thor Mjolnir skull hammer/);
   assert.match(draft.aeo_quick_summary, /quilt bed set/i);
 
@@ -261,11 +250,9 @@ test("B5 HeuristicContentGenerator generates full AEO suite with quick summary, 
 test("B5 HeuristicContentGenerator adapts FAQ Q2 and Q3 for rugs and personalization", async () => {
   const rugFacts = buildContentFactSheet({
     ...createInitialContext({
-      title: "Custom Vintage Cat Rug",
-      description: "Low-pile washable rug.",
       niche: "custom rug",
-      handle: "custom-vintage-cat-rug",
       images: [],
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "area rug",
@@ -314,11 +301,9 @@ test("B5: placeholder defense filters 'unknown' and rebuilds title for 'Design #
 
   const rawContext = {
     ...createInitialContext({
-      title: "Design #1",
-      description: "Sample description",
       niche: "area rug",
-      handle: "design-1",
       images: [],
+      storeProfile: TEST_STORE_PROFILE,
     }),
     productUnderstanding: {
       physicalProductIdentity: "area rug",

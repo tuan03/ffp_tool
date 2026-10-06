@@ -288,28 +288,6 @@ export function buildHeuristicProductTitle(input: TitleBuilderInput): string {
     baseTitle = enrichTitleWithVisionConcept(baseTitle, visionConcept);
   }
 
-  // Preserve variant label if present
-  if (facts.variantLabel && facts.variantLabel.trim().length > 0) {
-    const varLabel = facts.variantLabel.trim();
-    const suffix = ` - ${varLabel}`;
-    if (baseTitle.toLowerCase().endsWith(suffix.toLowerCase())) {
-      if (baseTitle.length <= maxLength) {
-        return baseTitle;
-      }
-      const prefixPart = baseTitle.slice(0, baseTitle.length - suffix.length).trim();
-      const available = Math.max(20, maxLength - suffix.length);
-      const fittedPrefix = fitProductTitle(prefixPart, available);
-      return `${fittedPrefix}${suffix}`;
-    } else if (!baseTitle.toLowerCase().includes(varLabel.toLowerCase())) {
-      if (baseTitle.length + suffix.length <= maxLength) {
-        return `${baseTitle}${suffix}`;
-      }
-      const available = Math.max(20, maxLength - suffix.length);
-      const fittedBase = fitProductTitle(baseTitle, available);
-      return `${fittedBase}${suffix}`;
-    }
-  }
-
   return fitProductTitle(baseTitle, maxLength);
 }
 

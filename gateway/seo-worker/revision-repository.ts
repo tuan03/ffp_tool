@@ -32,7 +32,7 @@ export class SeoRevisionRepository {
     });
   }
 
-  async create(request: RevisionRequest, parent: GptSeoJob, fresh: Pick<GptSeoEnqueue, "input" | "original">): Promise<{ jobId: string; previousJobId: string }> {
+  async create(request: RevisionRequest, parent: GptSeoJob, fresh: Pick<GptSeoEnqueue, "input" | "execution">): Promise<{ jobId: string; previousJobId: string }> {
     const digest = requestDigest(request);
     return this.database.transaction(async sql => {
       const previous = (await sql.query("SELECT * FROM seo_worker_revisions WHERE store_id=$1 AND request_id=$2", [request.storeId, request.requestId])).rows[0];
@@ -53,9 +53,7 @@ export class SeoRevisionRepository {
       if (publish && publish.state !== "SUCCEEDED" && !(publish.state === "BLOCKED" && publish.has_write_intent === false)) throw new SeoWorkerError("PUBLISH_UNRESOLVED");
       if (!publish && (await sql.query("SELECT job_id FROM gpt_sync WHERE job_id=$1 AND status IN ('SYNCING','UNKNOWN')", [parent.id])).rows.length) throw new SeoWorkerError("PUBLISH_UNRESOLVED");
       await sql.query("UPDATE seo_worker_jobs SET pipeline_active=false,state='CLOSED',updated_at=$2 WHERE job_id=$1", [parent.id, this.now()]);
-      const next = await this.enqueue({ storeId: parent.storeId, source: parent.source, sourceIdentity: parent.sourceIdentity,
-        sourceRevision: `revision:${parent.id}:${request.requestId}`, ...fresh,
-        settings: { ...parent.settings, ...(request.instructions ? { instructions: `${parent.settings.instructions}\n\nRevision request: ${request.instructions}` } : {}) } }, parent.id);
+      const next = await this.enqueue({ ...fresh, settings: parent.settings }, parent.id);
       if (publish?.state === "BLOCKED") await sql.query("UPDATE seo_publish_operations SET superseded_by=$2 WHERE id=$1", [publish.id, next.id]);
       await sql.query("INSERT INTO seo_worker_revisions(store_id,request_id,digest,previous_job_id,job_id,operator,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)", [request.storeId, request.requestId, digest, parent.id, next.id, request.operator, this.now()]);
       await sql.query("INSERT INTO gpt_audit(store_id,job_id,event,created_at) VALUES ($1,$2,$3,$4)", [request.storeId, next.id, `REVISION_CREATED:${parent.id}:${request.operator}`, this.now()]);

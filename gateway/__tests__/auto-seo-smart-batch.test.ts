@@ -20,6 +20,7 @@ import {
 } from "../auto-seo-input-hash";
 import type { AutoSeoProductPayload } from "../seo-content";
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
+import { createTestEnqueue } from "./seo-v2-fixtures";
 
 function createProduct(
   overrides: Partial<AutoSeoProductPayload> = {},
@@ -337,20 +338,8 @@ test("eligibility marks matching queue and pending review revisions active", () 
     updatedAt: "2026-10-01T00:00:00Z",
     inputHash: "queue-hash",
   });
-  queue.enqueue({
-    storeId: "capozen",
-    source: "auto_seo",
-    sourceIdentity: "queue-product",
-    input: {
-      productId: "queue-product",
-      title: "Queued product",
-      description: "Description",
-      handle: "queued-product",
-      niche: "Rug",
-      images: [],
-    },
-    original: { updatedAt: "2026-10-01T00:00:00Z" },
-  });
+  queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "queue-product",
+    input: { niche: "Rug", images: [] }, original: { updatedAt: "2026-10-01T00:00:00Z" } }));
   insertBackup(db, {
     backupId: "review-base",
     productId: "review-product",
@@ -400,20 +389,13 @@ test("eligibility marks a confirmed Shopify sync as current SEO", () => {
     updatedAt: "2026-10-01T00:00:00Z",
     inputHash: "synced-hash",
   });
-  const job = queue.enqueue({
+  const job = queue.enqueue(createTestEnqueue({
     storeId: "capozen",
-    source: "auto_seo",
     sourceIdentity: "synced-product",
-    input: {
-      productId: "synced-product",
-      title: "Synced product",
-      description: "Description",
-      handle: "synced-product",
-      niche: "Rug",
-      images: [],
-    },
+    productId: "synced-product",
+    input: { images: [], niche: "Rug" },
     original: { updatedAt: "2026-10-01T00:00:00Z" },
-  });
+  }));
   db.prepare("INSERT INTO gpt_sync(job_id,token,status) VALUES (?,?,?)").run(job.id, "sync-token", "SYNCED");
 
   const response = getAutoSeoEligibility(db, {

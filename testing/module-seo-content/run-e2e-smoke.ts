@@ -116,17 +116,6 @@ async function writeWebpArtifacts(
   return artifactUrls;
 }
 
-async function validateLocalImageFiles(input: { readonly images: readonly { readonly localFilePath?: string }[] }): Promise<void> {
-  for (const image of input.images) {
-    if (!image.localFilePath) continue;
-    try {
-      await fs.access(image.localFilePath);
-    } catch {
-      throw new Error(`Local image does not exist: ${image.localFilePath}`);
-    }
-  }
-}
-
 async function openReport(reportPath: string): Promise<void> {
   if (process.platform !== "win32") return;
   try {
@@ -163,10 +152,9 @@ async function main(): Promise<void> {
   for (let index = 0; index < inputs.length; index++) {
     const input = inputs[index]!;
     const productNumber = index + 1;
-    console.log(`\n▶ [Product ${productNumber}/${inputs.length}] "${input.title}"`);
-    console.log(`  Images: ${input.images.length}; niche: "${input.niche}"; siteDomain: ${input.siteDomain ?? "not provided"}`);
-
-    await validateLocalImageFiles(input);
+    const displayName = input.images[0]?.id ?? `product-${productNumber}`;
+    console.log(`\n▶ [Product ${productNumber}/${inputs.length}] "${displayName}"`);
+    console.log(`  Images: ${input.images.length}; niche: "${input.niche}"; profile: ${input.storeProfile.profileId}@${input.storeProfile.profileVersion}`);
 
     const traces: StageSnapshot[] = [];
     const pipeline = pipelineRuntime.createSeoPipeline({
@@ -200,9 +188,8 @@ async function main(): Promise<void> {
     productSummaries.push({
       productIndex: index,
       input: {
-        title: input.title,
+        title: displayName,
         niche: input.niche,
-        ...(input.siteDomain ? { siteDomain: input.siteDomain } : {}),
         imageCount: input.images.length,
       },
       durationMs: itemDurationMs,

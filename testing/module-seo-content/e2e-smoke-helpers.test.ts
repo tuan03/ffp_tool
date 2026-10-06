@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   createTracingStages,
@@ -9,6 +8,7 @@ import {
   parseSmokeInput,
   parseSmokeInputs,
   serializeSeoOutput,
+  SMOKE_TEST_STORE_PROFILE,
 } from "./e2e-smoke-helpers";
 import { createInitialContext } from "../../src/modules/seo-content/internal/pipeline-context";
 import type { SeoPipelineStage } from "../../src/modules/seo-content/internal/pipeline";
@@ -16,32 +16,24 @@ import { loadSmokePipelineRuntime } from "./runtime-loader";
 
 const REPOSITORY_ROOT = path.resolve("D:/workspace/ffp-tool");
 
-test("parses a multi-image smoke fixture and resolves local image paths from the repository root", () => {
+test("parses a multi-image smoke fixture with stable IDs and explicit store profile", () => {
   const input = parseSmokeInput(
     {
-      title: "Personalized Music Player Area Rug",
-      description: "A custom area rug for music lovers.",
       niche: "personalized rug",
-      handle: "personalized-music-player-area-rug",
       images: [
-        { localFilePath: "src/modules/seo-content/__tests__/media/first.webp" },
-        { url: "https://cdn.example.test/second.webp", alt: "Second view" },
+        { id: "hero", url: "https://cdn.example.test/first.webp" },
+        { url: "https://cdn.example.test/second.webp" },
       ],
     },
     REPOSITORY_ROOT,
   );
 
   assert.equal(input.images.length, 2);
-  assert.equal(
-    input.images[0]?.localFilePath,
-    path.join(REPOSITORY_ROOT, "src/modules/seo-content/__tests__/media/first.webp"),
-  );
-  assert.equal(
-    input.images[0]?.url,
-    pathToFileURL(path.join(REPOSITORY_ROOT, "src/modules/seo-content/__tests__/media/first.webp")).toString(),
-  );
+  assert.equal(input.images[0]?.id, "hero");
+  assert.equal(input.images[0]?.url, "https://cdn.example.test/first.webp");
+  assert.equal(input.images[1]?.id, "image-2");
   assert.equal(input.images[1]?.url, "https://cdn.example.test/second.webp");
-  assert.equal(input.images[1]?.alt, "Second view");
+  assert.equal(input.storeProfile, SMOKE_TEST_STORE_PROFILE);
 });
 
 test("rejects a smoke fixture without a required product field or image", () => {
@@ -49,10 +41,7 @@ test("rejects a smoke fixture without a required product field or image", () => 
     () =>
       parseSmokeInput(
         {
-          title: "Incomplete product",
-          description: "Description",
           niche: "rug",
-          handle: "incomplete-product",
           images: [],
         },
         REPOSITORY_ROOT,
@@ -64,15 +53,12 @@ test("rejects a smoke fixture without a required product field or image", () => 
     () =>
       parseSmokeInput(
         {
-          title: "",
-          description: "Description",
-          niche: "rug",
-          handle: "incomplete-product",
+          niche: "",
           images: [{ url: "https://cdn.example.test/image.webp" }],
         },
         REPOSITORY_ROOT,
       ),
-    /title is required/i,
+    /niche is required/i,
   );
 });
 
@@ -118,18 +104,16 @@ test("traces each wrapped SEO stage in pipeline order", async () => {
     tracedNames.push(trace.stageName);
   });
   let context = createInitialContext({
-    title: "Music Rug",
-    description: "Description",
     niche: "rug",
-    handle: "music-rug",
-    images: [{ url: "https://cdn.example.test/rug.webp" }],
+    images: [{ id: "rug-image", url: "https://cdn.example.test/rug.webp" }],
+    storeProfile: SMOKE_TEST_STORE_PROFILE,
   });
 
   for (const stage of tracedStages) {
     context = await stage.execute(context);
   }
 
-  assert.equal(context.source.handle, "music-rug");
+  assert.deepEqual(context.source.storeProfile, SMOKE_TEST_STORE_PROFILE);
   assert.deepEqual(tracedNames, ["b1", "b2", "b3", "b4", "b5", "b6"]);
 });
 
@@ -166,29 +150,21 @@ test("parses an array of multiple products via parseSmokeInputs", () => {
   const inputs = parseSmokeInputs(
     [
       {
-        title: "Product One",
-        description: "First description",
         niche: "rug",
-        handle: "product-one",
         images: [{ url: "https://example.com/1.webp" }],
       },
       {
-        title: "Product Two",
-        description: "Second description",
         niche: "blanket",
-        handle: "product-two",
-        siteDomain: "jeminise.com",
-        images: [{ url: "https://example.com/2.webp", alt: "Alt 2" }],
+        images: [{ id: "second", url: "https://example.com/2.webp" }],
       },
     ],
     REPOSITORY_ROOT,
   );
 
   assert.equal(inputs.length, 2);
-  assert.equal(inputs[0]?.title, "Product One");
-  assert.equal(inputs[1]?.title, "Product Two");
-  assert.equal(inputs[1]?.siteDomain, "jeminise.com");
-  assert.equal(inputs[1]?.images[0]?.alt, "Alt 2");
+  assert.equal(inputs[0]?.niche, "rug");
+  assert.equal(inputs[1]?.niche, "blanket");
+  assert.equal(inputs[1]?.images[0]?.id, "second");
 });
 
 test("parses an object with items array via parseSmokeInputs", () => {
@@ -196,10 +172,7 @@ test("parses an object with items array via parseSmokeInputs", () => {
     {
       items: [
         {
-          title: "Wrapped Product",
-          description: "Wrapped description",
           niche: "rug",
-          handle: "wrapped-product",
           images: [{ url: "https://example.com/wrapped.webp" }],
         },
       ],
@@ -208,7 +181,7 @@ test("parses an object with items array via parseSmokeInputs", () => {
   );
 
   assert.equal(inputs.length, 1);
-  assert.equal(inputs[0]?.title, "Wrapped Product");
+  assert.equal(inputs[0]?.niche, "rug");
 });
 
 test("rejects empty arrays in parseSmokeInputs", () => {

@@ -114,7 +114,6 @@ export interface SeoResultCacheRecord {
   readonly inputHash: string;
   readonly sourceVersion?: string;
   readonly imageFingerprint?: string;
-  readonly variantSummaryHash?: string;
   readonly providerId: string;
   readonly model: string;
   readonly promptVersion: string;
@@ -139,7 +138,7 @@ export class PostgresSeoResultCache {
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13)
        ON CONFLICT(cache_key) DO UPDATE SET result=EXCLUDED.result, expires_at=EXCLUDED.expires_at`,
       [record.cacheKey, record.storeId ?? null, record.productId ?? null, record.inputHash,
-        record.sourceVersion ?? null, record.imageFingerprint ?? null, record.variantSummaryHash ?? null,
+        record.sourceVersion ?? null, record.imageFingerprint ?? null, null,
         record.providerId, record.model, record.promptVersion, record.pipelineVersion,
         JSON.stringify(record.result), new Date(record.expiresAt)],
     );

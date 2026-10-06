@@ -161,8 +161,8 @@ test("gateway mock guard: runSeoContent defaults to mock runner when VITE_APP_EN
   try {
     const result = await runSeoContent({
       workflowId: "test-mock-env-wf",
-      storeId: "store-1",
-      shopDomain: "store-1.myshopify.com",
+      storeId: "jeminise",
+      shopDomain: "b6-theme-test.myshopify.com",
       products: [
         {
           id: "prod-1",

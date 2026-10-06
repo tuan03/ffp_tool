@@ -9,7 +9,7 @@ export {
 
 export {
   crawlerProductToListItem,
-  crawlerProductToSeoInput,
+  crawlerProductToSeoSource,
   parseInputLines,
   realProductCrawlerClient,
   RealProductCrawlerClient,
@@ -49,7 +49,7 @@ export type {
   ProductCrawlerSummary,
   ProductCustomization,
   ProductVariant,
-  SeoContentInput,
+  CrawlerSeoHandoffSource,
   SourceVariant,
   SplitContext,
   VariantMatrix,

@@ -1,6 +1,3 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { resolveLocalImageFile } from "../image-processing/local-image-resolver";
 import type { SeoContentImageInput } from "../../types";
 
 export type SupportedImageMimeType = "image/jpeg" | "image/png" | "image/webp";
@@ -50,10 +47,8 @@ export function detectMimeTypeFromFilename(filenameOrUrl: string): SupportedImag
 /**
  * Prepares an image payload for Gemini multimodal input.
  * Priority:
- * 1. localFilePath -> check path, size limit (10MB), read binary from disk, encode base64 inlineData
- * 2. gs:// URI -> fileData with fileUri (requires recognizable image extension)
- * 3. data:image/ URI -> extract base64 inlineData (enforces 10MB decoded limit)
- * 4. http(s):// URL -> fetch with timeout -> validate Content-Type & size -> inlineData
+ * The V2 contract accepts a trusted URL only. Local paths, alt text, filenames,
+ * and neighboring metadata are intentionally absent from semantic input.
  */
 export async function prepareProductImagePayload(
   image: SeoContentImageInput,
@@ -64,44 +59,9 @@ export async function prepareProductImagePayload(
     throw new InvalidImagePayloadError("Image input is required");
   }
 
-  // Priority 1: localFilePath
-  const localResolved = resolveLocalImageFile(image.localFilePath, image.url);
-  if (localResolved) {
-    const mimeType = detectMimeTypeFromFilename(localResolved);
-    if (mimeType) {
-      try {
-        const stats = await fs.stat(localResolved);
-        if (stats.size > MAX_IMAGE_BYTES) {
-          throw new InvalidImagePayloadError(
-            `Local image file '${localResolved}' (${stats.size} bytes) exceeds maximum allowed size of 10MB`,
-          );
-        }
-
-        const buffer = await fs.readFile(localResolved);
-        const base64 = buffer.toString("base64");
-        return {
-          type: "inline",
-          inlineData: {
-            data: base64,
-            mimeType,
-          },
-        };
-      } catch (err) {
-        options?.signal?.throwIfAborted();
-        if (err instanceof InvalidImagePayloadError) throw err;
-        if (!image.url) {
-          throw new InvalidImagePayloadError(
-            `Failed to read local image file '${localResolved}': ${err instanceof Error ? err.message : String(err)}`,
-            err,
-          );
-        }
-      }
-    }
-  }
-
   const rawUrl = image.url ? image.url.trim() : "";
   if (!rawUrl) {
-    throw new InvalidImagePayloadError("Image has neither localFilePath nor url");
+    throw new InvalidImagePayloadError("Image URL is required");
   }
 
   // Priority 2: gs:// Google Cloud Storage URI

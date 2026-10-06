@@ -33,7 +33,7 @@ test("PostgreSQL migration is idempotent and checkpoint survives a new store ins
     await runSeoContentMigrations(pool);
     await clearTestRows(pool, marker);
     const first = new PostgresSeoCheckpointStore(pool);
-    await first.set({ schemaVersion: 1, inputHash: `${marker}-hash`, storeId: marker,
+    await first.set({ schemaVersion: 2, inputHash: `${marker}-hash`, storeId: marker,
       createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_100,
       expiresAt: Date.now() + 60_000,
       stages: { B1: { stage: "B1", status: "completed", stageHash: "b1", data: { visible: true },
@@ -64,7 +64,7 @@ test("PostgreSQL checkpoint crash matrix recovers the exact committed B1-B6 pref
         createdAt: 1_700_000_000_000 + index, updatedAt: 1_700_000_000_000 + index,
       }]));
       await new PostgresSeoCheckpointStore(pool).set({
-        schemaVersion: 1, inputHash, storeId: marker,
+        schemaVersion: 2, inputHash, storeId: marker,
         createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_100 + boundary,
         expiresAt: Date.now() + 60_000, stages: committed,
       });

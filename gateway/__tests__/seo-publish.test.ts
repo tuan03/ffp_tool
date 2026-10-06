@@ -8,13 +8,16 @@ import { SeoPublishRepository } from "../seo-worker/publish-repository";
 import type { PublishFields, PublishOperation } from "../seo-worker/publish-repository";
 import { processSeoPublish } from "../seo-worker/publish-worker";
 
+import { createTestEnqueue } from "./seo-v2-fixtures";
+
 async function fixture() {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
   let now = 1000;
   const repository = new SeoPublishRepository({ transaction: operation => pg.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) }, () => now);
   const review = { reviewDecision: "approved", updatedAt: 7, productTitle: { value: "New" }, productDescription: { value: "Description" }, seoTitle: { value: "Title" }, seoDescription: { value: "Meta" } };
-  await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('job','demo','d','REVIEW_READY',$1,1,'codex_mcp')", [JSON.stringify({ input: { productId: "123" }, original: { updatedAt: "v1" } })]);
+  const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", sourceRevision: "v1", original: { updatedAt: "v1" } });
+  await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('job','demo','d','REVIEW_READY',$1,1,'codex_mcp')", [JSON.stringify({ input: enqueue.input, execution: enqueue.execution, original: enqueue.execution.originalSnapshot })]);
   await pg.query("INSERT INTO gpt_review_state(job_id,payload) VALUES ('job',$1)", [JSON.stringify(review)]);
   await pg.query("INSERT INTO seo_worker_stores(store_id,enabled) VALUES ('demo',true)");
   const operation = await repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "sync", operator: "operator" });
@@ -120,7 +123,8 @@ test("publish survives lost write response without repeating write or incrementi
   let now = 1000;
   const repository = new SeoPublishRepository({ transaction: operation => pg.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) }, () => now);
   const original = { updatedAt: "v1", seoVersion: 3 };
-  const job = { id: "job", storeId: "demo", input: { productId: "123" }, original, source: "auto_seo", status: "REVIEW_READY" };
+  const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", sourceRevision: "v1", original });
+  const job = { id: "job", storeId: "demo", input: enqueue.input, execution: enqueue.execution, original, source: "auto_seo", status: "REVIEW_READY" };
   const review = { reviewDecision: "approved", updatedAt: 7, productTitle: { value: "New title" }, productDescription: { value: "New description" }, seoTitle: { value: "SEO title" }, seoDescription: { value: "Meta" } };
   try {
     await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('job','demo','d','REVIEW_READY',$1,1,'codex_mcp')", [JSON.stringify(job)]);
