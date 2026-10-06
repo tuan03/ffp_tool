@@ -402,9 +402,10 @@ export function SeoReviewPage({
       setGptReviewLoadState(loaded.length > 0 ? "has_reviews" : "empty");
     }
     setGptReviewLoadState("loading");
-    void loadGptReviews().catch(() => {
+    void loadGptReviews().catch(error => {
       if (!cancelled) {
         setGptReviewLoadState("empty");
+        console.error("[SEO Review] Lỗi xử lý kết quả GPT:", error);
         notifyUser({ title: "GPT SEO", message: "Không tải được kết quả GPT từ server. Mở GPT SEO để kiểm tra kết nối.", type: "error" });
       }
     });
