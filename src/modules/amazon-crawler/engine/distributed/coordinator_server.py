@@ -1725,9 +1725,17 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         external_job_id = str(payload.get("externalJobId") or "")
         if not external_job_id or len(external_job_id) > 100:
             raise HTTPException(status_code=422, detail="externalJobId is required.")
-        if not store.defer_external_seo(item_id, worker_id=str(payload.get("workerId") or ""), external_job_id=external_job_id):
+        provider = str(payload.get("provider") or "custom_gpt")
+        if provider not in {"custom_gpt", "codex_mcp"}:
+            raise HTTPException(status_code=422, detail="provider must be custom_gpt or codex_mcp.")
+        if not store.defer_external_seo(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            external_job_id=external_job_id,
+            provider=provider,
+        ):
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
-        return {"status": "pending", "engine": "custom_gpt"}
+        return {"status": "pending", "engine": provider}
 
     @app.post("/api/v1/internal/product-pipeline/{item_id}/seo")
     def mark_product_seo(

@@ -1520,13 +1520,26 @@ class CoordinatorStore(CoordinatorObservability):
                 self._refresh_job(session, item.job_id)
         return claimed
 
-    def defer_external_seo(self, item_id: str, *, worker_id: str, external_job_id: str) -> bool:
+    def defer_external_seo(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        external_job_id: str,
+        provider: str = "custom_gpt",
+    ) -> bool:
         """Park the item without occupying a worker while a human-driven GPT processes it."""
+        if provider not in {"custom_gpt", "codex_mcp"}:
+            raise ValueError("Unsupported external SEO provider.")
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, item_id)
             if item is None or item.claimed_by != worker_id or item.status != "seo":
                 return False
-            item.shopify_result = {**dict(item.shopify_result or {}), "externalSeo": {"jobId": external_job_id}, "seo": {"status": "pending", "engine": "custom_gpt"}}
+            item.shopify_result = {
+                **dict(item.shopify_result or {}),
+                "externalSeo": {"jobId": external_job_id, "provider": provider},
+                "seo": {"status": "pending", "engine": provider},
+            }
             item.status = "retry_wait"
             item.next_attempt_at = utc_now() + timedelta(seconds=60)
             item.claimed_by = None
@@ -1549,6 +1562,13 @@ class CoordinatorStore(CoordinatorObservability):
             if item is None or item.claimed_by != worker_id or item.status != "image_processing":
                 return False
             current = dict(item.shopify_result or {})
+            checkpointed_image_summary = current.get("imageProcessing")
+            if (
+                not isinstance(checkpointed_image_summary, dict)
+                or checkpointed_image_summary.get("status") != "completed"
+                or image_summary.get("status") != "completed"
+            ):
+                return False
             current["seo"] = seo_summary
             current["imageProcessing"] = image_summary
             current["review"] = {

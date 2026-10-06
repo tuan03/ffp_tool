@@ -397,3 +397,83 @@ test("administration clears only safe jobs in the selected store", async () => {
     db.close();
   }
 });
+
+test("Amazon crawler enqueue forces Codex while preserving store SEO settings", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("capozen", {
+    provider: "gemini",
+    batchSize: 3,
+    language: "vi-VN",
+    instructions: "Use grounded product facts only.",
+  });
+  const handler = createCustomGptHandler({
+    queue,
+    storeId: "capozen",
+    adminKey: "admin-key",
+  });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/enqueue?storeId=capozen`;
+  const originalImageUrl = "https://m.media-amazon.com/images/I/original-product.jpg";
+  const originalSnapshot = {
+    id: "crawler-product",
+    media: [{ id: "front", url: originalImageUrl }],
+    variants: [{ id: "variant-1", price: "29.99" }],
+  };
+  const input = {
+    niche: "home decor",
+    storeProfile: createTestEnqueue({ storeId: "capozen" }).input.storeProfile,
+    images: [{ id: "front", url: originalImageUrl }],
+  };
+
+  try {
+    const crawlerResponse = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "codex_mcp",
+        source: "amazon",
+        sourceIdentity: "amazon:B0CODEX123",
+        sourceRevision: "crawler-checksum",
+        input,
+        original: originalSnapshot,
+      }),
+    });
+    assert.equal(crawlerResponse.status, 200);
+    const crawlerJob = await crawlerResponse.json() as {
+      readonly id: string;
+      readonly input: { readonly images: readonly { readonly url: string }[] };
+      readonly execution: { readonly providerId: string; readonly originalSnapshot: unknown };
+      readonly settings: { readonly provider: string; readonly batchSize: number; readonly language: string; readonly instructions: string };
+    };
+    assert.equal(crawlerJob.settings.provider, "codex_mcp");
+    assert.equal(crawlerJob.settings.batchSize, 3);
+    assert.equal(crawlerJob.settings.language, "vi-VN");
+    assert.equal(crawlerJob.settings.instructions, "Use grounded product facts only.");
+    assert.equal(crawlerJob.execution.providerId, "codex_mcp");
+    assert.equal(crawlerJob.input.images[0]?.url, originalImageUrl);
+    assert.deepEqual(crawlerJob.execution.originalSnapshot, originalSnapshot);
+
+    const autoSeoResponse = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-key", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "codex_mcp",
+        source: "auto_seo",
+        sourceIdentity: "123",
+        productId: "123",
+        input,
+        original: originalSnapshot,
+      }),
+    });
+    assert.equal(autoSeoResponse.status, 400);
+    assert.equal(queue.list("capozen").length, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});

@@ -238,17 +238,22 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
         }
         case "admin/job": result = (await queue.get(storeId, jobId)); break;
         case "admin/enqueue": {
-          const provider = (await queue.settings(storeId)).provider;
-          if (provider !== "custom_gpt" && provider !== "codex_mcp") throw new Error("Provider changed; retry the handoff using the current provider");
           const source = body.source;
           if (source !== "amazon" && source !== "auto_seo") throw new Error("Invalid source");
+          const storeSettings = await queue.settings(storeId);
+          const requestedProvider = body.provider;
+          if (requestedProvider !== undefined && (source !== "amazon" || requestedProvider !== "codex_mcp")) {
+            throw new Error("Only Amazon crawler jobs may override the provider to codex_mcp");
+          }
+          const provider = requestedProvider === "codex_mcp" ? requestedProvider : storeSettings.provider;
+          if (provider !== "custom_gpt" && provider !== "codex_mcp") throw new Error("Provider changed; retry the handoff using the current provider");
           const sourceIdentity = required(body.sourceIdentity, "sourceIdentity");
           const input: GptSeoEnqueue = { input: parseGptInput(body.input), execution: {
             storeId, source, sourceIdentity,
             ...(typeof body.productId === "string" ? { productId: body.productId } : {}),
             ...(typeof body.sourceRevision === "string" ? { sourceRevision: body.sourceRevision } : {}),
             providerId: provider, pipelineVersion: SEO_WORKER_SCHEMA_VERSION, originalSnapshot: body.original,
-          } };
+          }, settings: { ...storeSettings, provider } };
           result = (await queue.enqueue(input)); break;
         }
         case "admin/retry": (await queue.retry(storeId, jobId)); result = { status: "PENDING" }; break;

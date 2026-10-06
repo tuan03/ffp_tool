@@ -3,8 +3,8 @@ import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
-import type { GptSeoJob, GptSeoSettings } from "../src/modules/custom-gpt-seo";
-import type { SeoContentDetailedOutput, SeoExecutionEnvelope } from "../src/modules/seo-content";
+import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
+import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
 import { bindExternalSeoProduct } from "../src/modules/seo-content";
 import { PostgresSeoContentRuntime } from "../src/modules/seo-content/server";
 
@@ -35,14 +35,7 @@ import {
   applySeoContentToCustomizationProduct,
   createSeoContentPipelineSummary,
   fromCustomizationProduct,
-  registerSeoContentKeywords,
   resolveStoreProfile,
-  runSeoContentDetailed,
-  createSeoContentSession,
-  SeoCorpusCommitCoordinator,
-  SeoCorpusReservation,
-  type SeoCorpusCommitResult,
-  unregisterSeoContentKeywords,
 } from "../src/modules/seo-content";
 
 interface PipelineClaim {
@@ -54,7 +47,7 @@ interface PipelineClaim {
   readonly checksum: string;
   readonly attempt: number;
   readonly stage?: "prepare" | "sync";
-  readonly externalSeo?: { readonly jobId: string } | null;
+  readonly externalSeo?: { readonly jobId: string; readonly provider?: "custom_gpt" | "codex_mcp" } | null;
   readonly inputAsin: string;
   readonly product: CrawlProduct;
   readonly review?: {
@@ -132,7 +125,6 @@ const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
-const seoCorpusCommitCoordinator = new SeoCorpusCommitCoordinator();
 const AMAZON_METAFIELD_SCHEMA_VERSION = 2;
 let seoPersistence: PostgresSeoContentRuntime | undefined;
 let reviewImageWorker: AbortController | undefined;
@@ -465,8 +457,14 @@ async function processClaim(
     const url = new URL(route, gptBase);
     url.searchParams.set("storeId", targetStore || "");
     const response = await fetch(url, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", "x-gateway-key": env.GATEWAY_AUTH_TOKEN || "" }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15_000) });
-    if (!response.ok) throw new Error(`GPT SEO gateway returned ${response.status}`);
-    return await response.json() as T;
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message = isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string"
+        ? payload.error.message
+        : `GPT SEO gateway returned ${response.status}`;
+      throw new Error(`GPT SEO gateway returned ${response.status}: ${message}`);
+    }
+    return payload as T;
   }
   let gptSyncToken: string | undefined;
   let externalSeoExecution: SeoContentDetailedOutput | undefined;
@@ -505,41 +503,38 @@ async function processClaim(
       seo: { status: "running" },
     });
     try {
-      // Existing loopback Gemini installations do not require a gateway key.
-      // External SEO providers explicitly require that key for their admin API.
-      const settings = env.GATEWAY_AUTH_TOKEN
-        ? await gptRequest<GptSeoSettings>("settings")
-        : { provider: "gemini" as const };
-      if (claim.externalSeo || settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
-        const targetStoreConfig = configuredStores.find((store) => store.storeId === targetStore);
-        const storeProfile = resolveStoreProfile({ storeId: targetStore, siteDomain: targetStoreConfig?.shopDomain });
-        if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
-        if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
-        const externalJob = claim.externalSeo
-          ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)
-          : await gptRequest<GptSeoJob>("enqueue", {
-              input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
-              execution: {
-                storeId: targetStore,
-                productId: claim.existingShopify?.productId,
-                source: "amazon",
-                sourceIdentity: claim.sourceKey,
-                sourceRevision: claim.checksum,
-                providerId: settings.provider,
-                pipelineVersion: "seo-content-input-v2",
-                originalSnapshot: baseNormalizedProduct,
-              },
-            });
-        if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
-          await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
-          return;
-        }
-        if (externalJob.status !== "REVIEW_READY") {
-          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/external-seo`, { workerId, externalJobId: externalJob.id });
-          return;
-        }
-        externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
+      if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
+      const targetStoreConfig = configuredStores.find((store) => store.storeId === targetStore);
+      const storeProfile = resolveStoreProfile({ storeId: targetStore, siteDomain: targetStoreConfig?.shopDomain });
+      if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
+      if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
+      const externalJob = claim.externalSeo
+        ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)
+        : await gptRequest<GptSeoJob>("enqueue", {
+            provider: "codex_mcp",
+            source: "amazon",
+            sourceIdentity: claim.sourceKey,
+            sourceRevision: claim.checksum,
+            ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
+            input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
+            original: baseNormalizedProduct,
+          });
+      if (!claim.externalSeo && externalJob.settings.provider !== "codex_mcp") {
+        throw new Error("CRAWLER_CODEX_PROVIDER_MISMATCH");
       }
+      if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
+        await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
+        return;
+      }
+      if (externalJob.status !== "REVIEW_READY") {
+        await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/external-seo`, {
+          workerId,
+          externalJobId: externalJob.id,
+          provider: externalJob.settings.provider,
+        });
+        return;
+      }
+      externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
     } catch (error) {
       await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
       return;
@@ -562,13 +557,6 @@ async function processClaim(
   }, 2_000);
   heartbeat.unref();
 
-  let seoReservation: SeoCorpusReservation | undefined;
-  let reservedSeo:
-    | {
-        readonly input: ReturnType<typeof fromCustomizationProduct>;
-        readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
-      }
-    | undefined;
   const claimStoreId = typeof claim.settings?.storeId === "string" && claim.settings.storeId.trim()
     ? claim.settings.storeId.trim()
     : storeId;
@@ -676,79 +664,15 @@ async function processClaim(
       imageProcessingSummary = claim.review.imageProcessing;
       shopifyProduct = claim.product;
     } else {
-      interface PreparedSeo {
-        readonly input: ReturnType<typeof fromCustomizationProduct>;
-        readonly execution: Awaited<ReturnType<typeof runSeoContentDetailed>>;
-        readonly product: CrawlProduct;
-      }
-      const persistence = getSeoPersistence();
-      const conflictCorpus = persistence.conflictCorpus(claimStoreId);
-      const seoInput = fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile);
-      const seoExecutionEnvelope: SeoExecutionEnvelope = {
-        storeId: claimStoreId,
-        productId: claim.existingShopify?.productId,
-        source: "amazon",
-        sourceIdentity: claim.sourceKey,
-        sourceRevision: claim.checksum,
-        providerId: env.SEO_CONTENT_PROVIDER?.trim() || "gemini",
-        pipelineVersion: "seo-content-input-v2",
-        originalSnapshot: baseNormalizedProduct,
-      };
-      const seoSession = externalSeoExecution ? undefined : createSeoContentSession(seoInput, {
-        imageMode: "alt_only", signal: cancellationController.signal, execution: seoExecutionEnvelope,
-        dependencies: {
-          conflictCorpus,
-          checkpointManager: persistence.checkpointManager,
-          resultCache: persistence.resultCache,
-          siteNicheResolver: persistence.siteNicheResolver,
-          providerCircuitBreaker: persistence.providerCircuitBreaker,
-        },
-      });
-      let prepared: SeoCorpusCommitResult<PreparedSeo>;
+      if (!externalSeoExecution) throw new Error("CODEX_SEO_RESULT_REQUIRED");
+      const seoExecution = externalSeoExecution;
+      let seoProduct: CrawlProduct;
       try {
-        prepared = externalSeoExecution ? {
-          execution: { input: seoInput, execution: externalSeoExecution, product: applySeoContentToCustomizationProduct(baseNormalizedProduct, externalSeoExecution.output, { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle }) },
-          revisionRetries: 0,
-          timings: { initialSeoMs: 0, queueWaitMs: 0, rebaseSeoMs: 0, registrationMs: 0, totalMs: 0 },
-        } : await seoCorpusCommitCoordinator.prepare<PreparedSeo>({
-          signal: cancellationController.signal,
-          corpusKey: `postgres:${claimStoreId}`,
-          runSeo: async () => {
-            if (!seoSession) throw new Error("Gemini SEO session was not initialized");
-            const execution = await seoSession.run();
-            const product = applySeoContentToCustomizationProduct(
-              baseNormalizedProduct,
-              execution.output,
-              { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
-            );
-            const finalHandle = String(product.handle || execution.output.productHandle);
-            return {
-              input: fromCustomizationProduct(product, storeProfile.niche, storeProfile),
-              execution: {
-                ...execution,
-                output: { ...execution.output, productHandle: finalHandle },
-              },
-              product,
-            };
-          },
-          register: async (seo) => registerSeoContentKeywords(seo.input, seo.execution, {
-            execution: seoExecutionEnvelope,
-            conflictCorpus,
-          }),
-        });
-        reservedSeo = {
-          input: prepared.execution.input,
-          execution: prepared.execution.execution,
-        };
-        const reservation = reservedSeo;
-        if (!externalSeoExecution) {
-          seoReservation = new SeoCorpusReservation(
-            () => unregisterSeoContentKeywords(reservation.input, reservation.execution, {
-              execution: seoExecutionEnvelope,
-              conflictCorpus,
-            }),
-          );
-        }
+        seoProduct = applySeoContentToCustomizationProduct(
+          baseNormalizedProduct,
+          seoExecution.output,
+          { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
+        );
         throwIfCancelled();
       } catch (error: unknown) {
         if (cancellationController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
@@ -758,28 +682,21 @@ async function processClaim(
         await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
         return;
       }
-      timings.seoInitialMs = prepared.timings.initialSeoMs;
-      timings.seoQueueWaitMs = prepared.timings.queueWaitMs;
-      timings.seoRebaseMs = prepared.timings.rebaseSeoMs;
-      timings.seoRegistrationMs = prepared.timings.registrationMs;
-      timings.seoTotalMs = prepared.timings.totalMs;
-      if (prepared.revisionRetries > 0) {
-        reconciliationWarnings.push(
-          `SEO corpus changed during processing; rechecked keyword allocation ${prepared.revisionRetries} time(s) before review.`,
-        );
-      }
+      timings.seoInitialMs = 0;
+      timings.seoQueueWaitMs = 0;
+      timings.seoRebaseMs = 0;
+      timings.seoRegistrationMs = 0;
+      timings.seoTotalMs = 0;
       logPhase(claim.sourceKey, "seo-and-corpus", timings.seoTotalMs);
 
-      const seoProduct = prepared.execution.product;
-      const seoExecution = prepared.execution.execution;
       seoSummary = {
         ...createSeoContentPipelineSummary(seoExecution),
         performance: {
           ...seoExecution.metadata.performance,
           stageDurationsMs: seoExecution.metadata.performance?.stageDurationsMs ?? {},
-          revisionRetries: prepared.revisionRetries,
-          commitQueueMs: prepared.timings.queueWaitMs,
-          commitMs: prepared.timings.registrationMs,
+          revisionRetries: 0,
+          commitQueueMs: 0,
+          commitMs: 0,
         },
       };
       console.log(JSON.stringify({ taskId: claim.id, step: "seo-performance", ...seoSummary.performance }));
@@ -834,60 +751,7 @@ async function processClaim(
           imageProcessing: imageProcessingSummary,
         },
       };
-      const inputHash = seoExecution.metadata.inputHash;
-      let durableHandoff: { readonly handoffId: string; readonly eventId: string } | undefined;
-      if (!externalSeoExecution) {
-        if (!inputHash) throw new Error("SEO Content completed without a durable input hash");
-        durableHandoff = await persistence.completion.complete({
-          run: {
-            runId: inputHash,
-            inputHash,
-            storeId: claimStoreId,
-            productId: claim.productId,
-            handle: shopifyProduct.handle,
-            sourceVersion: claim.checksum,
-            shopifyUpdatedAt: seoExecution.metadata.shopifyUpdatedAt,
-            providerId: seoExecution.metadata.providerId,
-            model: env.GEMINI_ANALYSIS_MODEL || env.GEMINI_MODEL,
-            pipelineVersion: seoExecution.metadata.pipelineVersion,
-            status: "running",
-            metadata: { claimId: claim.id, jobId: claim.jobId, taskId: claim.taskId },
-            createdAt: pipelineStartedAt,
-            updatedAt: Date.now(),
-          },
-          handoffId: `seo-review:${claim.id}`,
-          outboxEventId: `seo-review-ready:${claim.id}`,
-          handoffPayload: reviewPayload,
-        });
-        // The PostgreSQL handoff now owns the durable keyword claim. Cleanup must
-        // not release it if delivery is interrupted or this process restarts.
-        seoReservation?.retain();
-      }
-      try {
-        await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/review-ready`, reviewPayload);
-      } catch (error: unknown) {
-        if (!durableHandoff) throw error;
-        await persistence.completion.recordDeliveryFailure(
-          durableHandoff.eventId,
-          workerId,
-          error instanceof Error ? error.message : String(error),
-          1_000,
-        );
-        console.warn(
-          `[Shopify pipeline] Review handoff ${durableHandoff.handoffId} remains durable and will be replayed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return;
-      }
-      if (durableHandoff) {
-        try {
-          await persistence.completion.markPublished(durableHandoff.handoffId, durableHandoff.eventId);
-        } catch (error: unknown) {
-          console.warn(
-            `[Shopify pipeline] Review handoff ${durableHandoff.handoffId} was delivered but its outbox publish marker could not be updated: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-      seoReservation?.retain();
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/review-ready`, reviewPayload);
       logPhase(claim.sourceKey, "review-ready", Date.now() - pipelineStartedAt);
       return;
     }
@@ -1063,10 +927,6 @@ async function processClaim(
         if (isProxyOrNetworkFailure(syncResult.error || "")) {
           proxyCooldownUntil.set(effectiveProxyStoreId, Date.now() + 30_000);
         }
-        if (!syncResult.reconciliationRequired && reservedSeo) {
-          await seoReservation?.dispose();
-          reservedSeo = undefined;
-        }
         timings.shopifySyncMs = Date.now() - syncStartedAt;
         timings.totalMs = Date.now() - pipelineStartedAt;
         await failClaim(claim, workerId, new Error(syncResult.error || "Shopify sync failed."), {
@@ -1155,9 +1015,6 @@ async function processClaim(
       shouldAcknowledgeStop = cancellationState?.status === "draining";
     }
     if (shouldAcknowledgeStop) {
-      if (reservedSeo && !hasStartedShopifyWrite) {
-        await seoReservation?.dispose().catch(() => undefined);
-      }
       await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/cancelled`, {
         workerId,
       }).catch(() => undefined);
@@ -1188,9 +1045,6 @@ async function processClaim(
       errObj?.reconciliationRequired === true ||
       Boolean(extractedProductId);
     const reconciliationRequired = isPartialWrite || /unknown write state|partial write|reconciliation/i.test(message);
-    if (reservedSeo && !hasStartedShopifyWrite && !reconciliationRequired) {
-      await seoReservation?.dispose().catch(() => undefined);
-    }
     if (extractedProductId) {
       try {
         await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
@@ -1222,11 +1076,6 @@ async function processClaim(
       });
     }
     clearInterval(heartbeat);
-    if (!hasStartedShopifyWrite) {
-      await seoReservation?.dispose().catch(() => {
-        console.warn(JSON.stringify({ taskId: claim.id, step: "seo-reservation-cleanup", failed: true }));
-      });
-    }
   }
 }
 
