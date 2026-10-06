@@ -34,7 +34,7 @@ export function adaptCustomGptReview(job: GptSeoJob, saved: Record<string, unkno
   const sourceProduct = job.original as AutoSeoSourceProduct;
   const sourceHandle = typeof sourceProduct.handle === "string" ? sourceProduct.handle : "";
   const product = adaptAutoSeoItemToViewModel({
-    productId: job.execution.productId || job.sourceIdentity,
+    productId: job.execution?.productId || job.sourceIdentity,
     storeId: job.storeId,
     handle: sourceHandle,
     sourceProduct,
