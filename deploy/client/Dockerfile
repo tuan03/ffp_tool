@@ -10,6 +10,15 @@ WORKDIR /app
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
+# Install native build tools for compiling native addons (better-sqlite3)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+    gcc \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy package.json and lockfile for fast deterministic layer caching
 COPY package.json package-lock.json ./
 RUN npm ci --prefer-offline
