@@ -7,6 +7,7 @@ interface ConnectionsSyncViewProps {
   readonly storeId: string;
   readonly onSyncGsc: () => Promise<void>;
   readonly onSyncGa4: () => Promise<void>;
+  readonly onMapGa4: (input: { readonly propertyId: string; readonly hostnameScope?: string; readonly streamId?: string; readonly timeZone?: string; readonly currencyCode?: string }) => Promise<void>;
   readonly onBackfill: (source: "gsc" | "ga4", days: number) => Promise<void>;
   readonly onCrawlWebsite: () => Promise<void>;
   readonly onReconnect: () => Promise<void>;
@@ -17,6 +18,7 @@ export function ConnectionsSyncView({
   storeId,
   onSyncGsc,
   onSyncGa4,
+  onMapGa4,
   onBackfill,
   onCrawlWebsite,
   onReconnect,
@@ -25,6 +27,9 @@ export function ConnectionsSyncView({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [backfillDays, setBackfillDays] = useState<number>(28);
+  const [showGa4Form, setShowGa4Form] = useState(false);
+  const [ga4PropertyId, setGa4PropertyId] = useState(data.ga4.propertyId ?? "");
+  const [ga4Hostname, setGa4Hostname] = useState(data.ga4.hostnameScope ?? "");
 
   const runAction = async (task: () => Promise<void>, successText: string) => {
     setBusy(true);
@@ -194,15 +199,85 @@ export function ConnectionsSyncView({
                 {data.ga4.status}
               </span>
             </div>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => runAction(onReconnect, "Đang chuyển hướng kết nối lại Google...")}
-              className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 hover:text-white transition shadow-sm disabled:opacity-40"
-            >
-              🔗 Kết nối lại Google
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setShowGa4Form(v => !v)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition shadow-sm disabled:opacity-40"
+              >
+                ⚙️ {showGa4Form ? "Đóng cấu hình" : "Cấu hình GA4"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction(onReconnect, "Đang chuyển hướng kết nối lại Google...")}
+                className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 hover:text-white transition shadow-sm disabled:opacity-40"
+              >
+                🔗 Kết nối lại Google
+              </button>
+            </div>
           </div>
+
+          {showGa4Form && (
+            <div className="rounded-lg border border-cyan-800/60 bg-slate-950/80 p-3 space-y-3">
+              <div className="text-xs font-semibold text-cyan-300">Cấu hình Google Analytics 4 (GA4)</div>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    GA4 Property ID (chỉ gồm số, ví dụ 549055707):
+                  </label>
+                  <input
+                    type="text"
+                    value={ga4PropertyId}
+                    onChange={e => setGa4PropertyId(e.target.value)}
+                    placeholder="549055707"
+                    className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Hostname Scope (tên miền đo lường):
+                  </label>
+                  <input
+                    type="text"
+                    value={ga4Hostname}
+                    onChange={e => setGa4Hostname(e.target.value)}
+                    placeholder="jeminise.com"
+                    className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowGa4Form(false)}
+                  className="rounded px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !ga4PropertyId.trim()}
+                  onClick={() =>
+                    runAction(
+                      async () => {
+                        await onMapGa4({
+                          propertyId: ga4PropertyId.trim(),
+                          hostnameScope: ga4Hostname.trim() || undefined,
+                        });
+                        setShowGa4Form(false);
+                      },
+                      "Đã lưu cấu hình GA4 thành công.",
+                    )
+                  }
+                  className="rounded bg-cyan-600 px-3 py-1 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-40"
+                >
+                  Lưu cấu hình
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2 text-xs text-slate-300">
             <div className="flex justify-between py-1 border-b border-slate-800/60">
@@ -265,22 +340,27 @@ export function ConnectionsSyncView({
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !data.ga4.propertyId || data.ga4.status === "NOT_CONFIGURED"}
               onClick={() => runAction(onSyncGa4, "Đã yêu cầu đồng bộ Google Analytics 4.")}
-              className="rounded-lg border border-cyan-500 bg-cyan-950/60 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"
+              className="rounded-lg border border-cyan-500 bg-cyan-950/60 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Đồng bộ GA4 ngay
             </button>
             <div className="flex items-center gap-1.5 ml-auto">
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || !data.ga4.propertyId || data.ga4.status === "NOT_CONFIGURED"}
                 onClick={() => runAction(() => onBackfill("ga4", backfillDays), `Đã khởi động Backfill GA4 ${backfillDays} ngày.`)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Backfill GA4 ({backfillDays}d)
               </button>
             </div>
+            {(!data.ga4.propertyId || data.ga4.status === "NOT_CONFIGURED") && (
+              <p className="w-full text-[11px] text-amber-400 mt-1">
+                ⚠️ Vui lòng bấm <strong>Cấu hình GA4</strong> để lưu Property ID trước khi đồng bộ.
+              </p>
+            )}
           </div>
         </div>
       </div>
