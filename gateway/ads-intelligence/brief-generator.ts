@@ -32,36 +32,22 @@ export function generateBriefFromDecision(
 ): CreativeBrief {
   const targetCpa = storeProfile.business.targetCpa ?? 25.0;
   const budgetCap = storeProfile.budgets.experimentAuthorizedCap ?? 50.0;
-  const targetProduct = storeId === "chillgen"
-    ? {
-        name: "Ergonomic Lumbar Cushion Pro",
-        targetMarket: "US (Remote Workers & Commuters)",
-        offer: "Buy 1 Get 1 20% OFF + Free Ergonomic Posture Guide",
-        landingPageUrl: "https://chillgen.com/products/lumbar-cushion-pro",
-        priceUsd: 49.99,
-      }
-    : storeId === "jeminise"
-    ? {
-        name: "Minimalist Celestial Jewelry Set",
-        targetMarket: "US (Gen-Z & Millennial Gift Shoppers)",
-        offer: "Complimentary Luxury Gift Box with orders over $60",
-        landingPageUrl: "https://jeminise.com/collections/celestial",
-        priceUsd: 38.0,
-      }
-    : {
-        name: "Nordic Minimalist Ceramic Vase",
-        targetMarket: "US (Home Decor Enthusiasts)",
-        offer: "Bundle & Save 15% on 2+ Vases",
-        landingPageUrl: "https://wrydeco.com/collections/vases",
-        priceUsd: 45.0,
-      };
-
   const adName = decision.entity.name;
+  const productName = controlAd?.name || decision.entity.name || `${storeProfile.storeId.toUpperCase()} Featured Product`;
+  const shopDomain = storeProfile.shopify?.shopDomain || `${storeId}.com`;
+  const landingPageUrl = `https://${shopDomain}`;
+  const targetProduct = {
+    name: productName,
+    targetMarket: storeProfile.marketCountries?.length ? storeProfile.marketCountries.join(", ") : "Global / US",
+    offer: "Special Limited-Time Promotion • Up to 20% OFF • Free Shipping",
+    landingPageUrl,
+    priceUsd: Math.round((targetCpa * 2) * 100) / 100 || 49.99,
+  };
   const isFatigue = decision.decision === "TEST_CREATIVE";
 
   const hookAngle = isFatigue
-    ? "Pattern Interrupt: Why your back still aches despite buying a $500 chair"
-    : "Social Proof: Over 12,000 office workers switched to this posture reset in 2026";
+    ? `Pattern Interrupt: Why traditional solutions fail to solve the core problem for ${productName}`
+    : `Social Proof: Over 10,000 verified customers upgraded to ${productName} in 2026`;
 
   const hookType: CompetitorHookType = isFatigue ? "PROBLEM_AGITATION" : "SOCIAL_PROOF";
   const visualStyle: CompetitorVisualStyle = "UGC_LOFI";
@@ -71,33 +57,33 @@ export function generateBriefFromDecision(
     {
       timestamp: "0:00 - 0:03",
       scene: "Hook (Pattern Interrupt)",
-      visualAction: "Close-up selfie camera of creator rubbing lower back in frustration at desk; sudden audio scratch.",
-      audioVoiceover: "Stop buying expensive office chairs. Your lower spine doesn't need more foam, it needs active curvature support.",
-      onScreenText: "🚨 The $500 desk chair trap",
+      visualAction: `Close-up creator reaction addressing the primary friction point with ${productName}; instant pattern break.`,
+      audioVoiceover: `Stop settling for alternatives that don't deliver real results. Here is what actually works for ${productName}.`,
+      onScreenText: `🚨 The truth about ${productName}`,
       isNewIdea: true,
     },
     {
       timestamp: "0:04 - 0:12",
       scene: "Problem Agitation & Demonstration",
-      visualAction: "Split screen showing slouching spine without support vs instantaneous posture realignment when placing cushion.",
-      audioVoiceover: "When you sit for 8 hours without lumbar lock, your L4-L5 vertebrae bear 200% bodyweight pressure. Watch what happens here.",
-      onScreenText: "Normal posture vs Active Lumbar Lock",
+      visualAction: `Split screen showing common frustration with generic alternatives vs instantaneous satisfaction with ${productName}.`,
+      audioVoiceover: `Most products in this category fail to address the root customer problem. Watch the difference in real-world application.`,
+      onScreenText: "Generic Alternatives vs The New Standard",
       isNewIdea: false,
     },
     {
       timestamp: "0:13 - 0:22",
       scene: "Product Truth & Micro-Demo",
-      visualAction: "Hands pressing memory foam rebound; creator sliding cushion onto car seat and office chair seamlessly.",
-      audioVoiceover: "High-density heat-responsive memory foam that never goes flat, wrapped in breathable athletic mesh.",
-      onScreenText: "Zero-sag memory core • Breathable mesh",
+      visualAction: `Hands-on tactile micro-demo highlighting premium craftsmanship, verified durability, and effortless daily use.`,
+      audioVoiceover: `Engineered with high-standard materials and tested for lasting everyday performance.`,
+      onScreenText: "Tested Quality • Designed to Last",
       isNewIdea: true,
     },
     {
       timestamp: "0:23 - 0:30",
       scene: "CTA & Risk-Free Offer",
-      visualAction: "Creator smiling comfortably, screen overlay displaying 30-day money-back badge and store checkout URL.",
-      audioVoiceover: "Try it risk-free for 30 days. If your back doesn't feel refreshed by 5 PM, send it back for a full refund.",
-      onScreenText: "30-Day Pain-Free Trial • Tap Below",
+      visualAction: `Creator smiling comfortably, screen overlay displaying 30-day money-back badge and store checkout URL.`,
+      audioVoiceover: `Try it risk-free today with our satisfaction guarantee and free shipping. Tap the link below.`,
+      onScreenText: "30-Day Risk-Free Trial • Tap Below",
       isNewIdea: false,
     },
   ];
@@ -107,7 +93,7 @@ export function generateBriefFromDecision(
       referenceId: "INTERNAL_FATIGUE_ANALYSIS",
       source: `Decision Card ${decision.id} (${decision.title})`,
       whatWeLearned: `Current ad ${adName} suffered CTR decay below 1.5% due to repetitive studio b-roll without an engaging first-3s hook.`,
-      creativeDifference: "Replaces static studio shot with genuine smartphone UGC pattern interrupt and explicit anatomical problem agitation.",
+      creativeDifference: "Replaces static studio shot with genuine smartphone UGC pattern interrupt and explicit problem agitation.",
     },
   ];
 
@@ -176,29 +162,16 @@ export function generateBriefFromCreativeGap(
 ): CreativeBrief {
   const targetCpa = storeProfile.business.targetCpa ?? 25.0;
   const budgetCap = storeProfile.budgets.experimentAuthorizedCap ?? 60.0;
-  const targetProduct = storeId === "chillgen"
-    ? {
-        name: "Ergonomic Lumbar Cushion Pro",
-        targetMarket: "US (Office & Remote Workers)",
-        offer: "Free Shipping + 20% OFF Posture Bundle",
-        landingPageUrl: "https://chillgen.com/products/lumbar-cushion-pro",
-        priceUsd: 49.99,
-      }
-    : storeId === "jeminise"
-    ? {
-        name: "Celestial Zodiac Pendant Necklace",
-        targetMarket: "US (Astrology & Fine Jewelry Shoppers)",
-        offer: "Free Velvet Keepsake Pouch + 15% OFF",
-        landingPageUrl: "https://jeminise.com/products/zodiac-pendant",
-        priceUsd: 42.0,
-      }
-    : {
-        name: "Minimalist Stoneware Carafe & Tumbler",
-        targetMarket: "US (Modern Architecture & Tableware)",
-        offer: "Buy 2 Get 1 25% OFF",
-        landingPageUrl: "https://wrydeco.com/products/stoneware-carafe",
-        priceUsd: 55.0,
-      };
+  const productName = controlAd?.name || `${storeProfile.storeId.toUpperCase()} Featured Collection`;
+  const shopDomain = storeProfile.shopify?.shopDomain || `${storeId}.com`;
+  const landingPageUrl = `https://${shopDomain}`;
+  const targetProduct = {
+    name: productName,
+    targetMarket: storeProfile.marketCountries?.length ? storeProfile.marketCountries.join(", ") : "Global / US",
+    offer: "Special Limited-Time Promotion • Up to 20% OFF • Free Shipping",
+    landingPageUrl,
+    priceUsd: Math.round((targetCpa * 2) * 100) / 100 || 49.99,
+  };
 
   const sampleCompetitors = gap.sampleCompetitorAds.map((s) => s.pageName).join(", ");
   const competitorReferences: CreativeBriefReference[] = gap.sampleCompetitorAds.map((s) => ({
@@ -212,7 +185,7 @@ export function generateBriefFromCreativeGap(
     {
       timestamp: "0:00 - 0:03",
       scene: "Hook (Competitor Gap Angle)",
-      visualAction: `High-energy opening showcasing ${gap.hookType.toLowerCase()} scenario in natural home office setting.`,
+      visualAction: `High-energy opening showcasing ${gap.hookType.toLowerCase()} scenario in natural everyday setting.`,
       audioVoiceover: gap.suggestedBrief.hookAngle,
       onScreenText: `⚡ ${gap.patternName}`,
       isNewIdea: true,
@@ -221,23 +194,23 @@ export function generateBriefFromCreativeGap(
       timestamp: "0:04 - 0:14",
       scene: "Storyboard Narrative & Agitation",
       visualAction: gap.suggestedBrief.storyboardIdea,
-      audioVoiceover: "Most alternatives fail because they don't address the root ergonomic pressure angle.",
-      onScreenText: "The ergonomic angle difference",
+      audioVoiceover: "Most alternatives fail because they don't solve the core customer frustration.",
+      onScreenText: `The ${gap.patternName} Advantage`,
       isNewIdea: true,
     },
     {
       timestamp: "0:15 - 0:24",
       scene: "Feature Proof & Texture Reveal",
-      visualAction: "Close tactile shots of fabric texture, seam stitching, and instant rebound under pressure.",
-      audioVoiceover: "Crafted with hospital-grade contour resilience that adapts to your natural spine curve without flattening out.",
-      onScreenText: "Hospital-grade ergonomic memory curve",
+      visualAction: "Close tactile shots highlighting material quality, precise craftsmanship, and immediate performance.",
+      audioVoiceover: "Crafted with premium materials designed for long-lasting comfort and reliable daily use.",
+      onScreenText: "Premium Craftsmanship • Verified Quality",
       isNewIdea: false,
     },
     {
       timestamp: "0:25 - 0:30",
       scene: "Call to Action",
       visualAction: "Clean product packshot with promo code overlay and direct link arrow.",
-      audioVoiceover: `${gap.suggestedBrief.callToAction} today with free insured shipping across the US.`,
+      audioVoiceover: `${gap.suggestedBrief.callToAction} today with free insured shipping.`,
       onScreenText: `${gap.suggestedBrief.callToAction} • Tap Link`,
       isNewIdea: false,
     },
@@ -251,7 +224,7 @@ export function generateBriefFromCreativeGap(
     status: "DRAFT",
     problemOrOpportunity: `Competitor Creative Gap ${gap.id}: ${gap.patternName} successfully run by ${sampleCompetitors} (up to ${Math.max(...gap.sampleCompetitorAds.map((a) => a.daysActive))} days active), currently UNTESTED on ${storeId}.`,
     product: targetProduct,
-    targetAudience: "US consumers browsing social media experiencing product category friction.",
+    targetAudience: "Active consumers browsing social media experiencing product category friction.",
     hypothesis: `Deploying the ${gap.patternName} angle will tap into an unexploited competitor customer segment, achieving Link CTR >= 2.0% and qualifying as a scalable angle within 14 days.`,
     creativeConcept: {
       hookAngle: gap.suggestedBrief.hookAngle,
@@ -267,9 +240,9 @@ export function generateBriefFromCreativeGap(
       headline: `The New Standard in ${targetProduct.name}`,
       ctaButton: gap.suggestedBrief.callToAction,
       productTruths: [
-        "Premium breathable fabrics certified hypoallergenic",
-        "Backed by 30-day money-back guarantee",
-        "Fast 3-day US domestic shipping",
+        "Premium verified materials tested for daily durability",
+        "Backed by authentic customer satisfaction guarantee",
+        "Fast insured shipping with responsive customer care",
       ],
       brandConstraints: [
         "Strictly original assets; zero copy-paste of competitor footage or logos",

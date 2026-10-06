@@ -10,9 +10,9 @@ WORKDIR /app
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-# Copy package.json
-COPY package.json ./
-RUN npm install
+# Copy package.json and lockfile for fast deterministic layer caching
+COPY package.json package-lock.json ./
+RUN npm ci --prefer-offline
 
 # Copy source and build
 ARG VITE_AGENT_INSTALL_URL=https://ffp.b6-team.site

@@ -6,12 +6,43 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
+  verify:
+    name: Pre-deploy quality gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate TypeScript types
+        run: npm run typecheck
+
+      - name: Run deployment contract tests
+        run: node --test scripts/production-postgres.test.mjs scripts/production-search-console.test.mjs scripts/production-service-tokens.test.mjs scripts/restart-gpt-seo.test.mjs
+
+      - name: Run MCP and Gateway core tests
+        run: npx tsx --test gateway/__tests__/ads-intelligence-mcp.test.ts
+
   deploy:
     name: Deploy root Compose to VPS
+    needs: verify
     runs-on: ubuntu-latest
 
     steps:
@@ -200,37 +231,47 @@ jobs:
               exit 1
             fi
 
-            echo "=== [5/6] Configuring host HTTPS reverse proxy ==="
+            echo "=== [5/6] Verifying host HTTPS reverse proxy ==="
             DOMAIN="${TARGET_DOMAIN:-ffp.b6-team.site}"
             NGINX_CONF="/etc/nginx/sites-available/$DOMAIN.conf"
             NGINX_ENABLED="/etc/nginx/sites-enabled/$DOMAIN.conf"
             if [ ! -f "$NGINX_CONF" ]; then
-              sudo bash -c "printf '%s\n' \
-                'server {' \
-                '    listen 80;' \
-                '    listen [::]:80;' \
-                '    server_name $DOMAIN;' \
-                '    client_max_body_size 50M;' \
-                '    location / {' \
-                '        proxy_pass http://127.0.0.1:$CLIENT_PORT;' \
-                '        proxy_http_version 1.1;' \
-                '        proxy_set_header Upgrade \$http_upgrade;' \
-                '        proxy_set_header Connection \"upgrade\";' \
-                '        proxy_set_header Host \$host;' \
-                '        proxy_set_header X-Real-IP \$remote_addr;' \
-                '        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;' \
-                '        proxy_set_header X-Forwarded-Proto \$scheme;' \
-                '        proxy_connect_timeout 60s;' \
-                '        proxy_send_timeout 300s;' \
-                '        proxy_read_timeout 300s;' \
-                '    }' \
-                '}' > '$NGINX_CONF'"
-              sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+              if [ -f scripts/setup-vps-host.sh ]; then
+                sudo bash scripts/setup-vps-host.sh "$DOMAIN" "$CLIENT_PORT"
+              else
+                sudo bash -c "printf '%s\n' \
+                  'server {' \
+                  '    listen 80;' \
+                  '    listen [::]:80;' \
+                  '    server_name $DOMAIN;' \
+                  '    client_max_body_size 50M;' \
+                  '    location / {' \
+                  '        proxy_pass http://127.0.0.1:$CLIENT_PORT;' \
+                  '        proxy_http_version 1.1;' \
+                  '        proxy_set_header Upgrade \$http_upgrade;' \
+                  '        proxy_set_header Connection \"upgrade\";' \
+                  '        proxy_set_header Host \$host;' \
+                  '        proxy_set_header X-Real-IP \$remote_addr;' \
+                  '        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;' \
+                  '        proxy_set_header X-Forwarded-Proto \$scheme;' \
+                  '        proxy_connect_timeout 60s;' \
+                  '        proxy_send_timeout 300s;' \
+                  '        proxy_read_timeout 300s;' \
+                  '    }' \
+                  '}' > '$NGINX_CONF'"
+                sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+                sudo nginx -t
+                sudo systemctl reload nginx
+              fi
             else
-              sudo sed -i -E "s#proxy_pass http://127\.0\.0\.1:[0-9]+;#proxy_pass http://127.0.0.1:$CLIENT_PORT;#" "$NGINX_CONF"
+              if grep -q "proxy_pass http://127\.0\.0\.1:$CLIENT_PORT;" "$NGINX_CONF" 2>/dev/null; then
+                echo "Nginx reverse proxy already configured on port $CLIENT_PORT (skipping reload)."
+              else
+                sudo sed -i -E "s#proxy_pass http://127\.0\.0\.1:[0-9]+;#proxy_pass http://127.0.0.1:$CLIENT_PORT;#" "$NGINX_CONF"
+                sudo nginx -t
+                sudo systemctl reload nginx
+              fi
             fi
-            sudo nginx -t
-            sudo systemctl reload nginx
             if ! sudo grep -q "ssl_certificate" "$NGINX_CONF" 2>/dev/null; then
               sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || {
                 echo "Certbot reported a warning. Verify DNS for $DOMAIN." >&2
