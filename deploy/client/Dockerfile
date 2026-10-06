@@ -19,9 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package.json and lockfile for fast deterministic layer caching
-COPY package.json package-lock.json ./
-RUN npm ci --prefer-offline
+# Copy package.json
+COPY package.json ./
+RUN npm install
 
 # Copy source and build
 ARG VITE_AGENT_INSTALL_URL=https://ffp.b6-team.site
