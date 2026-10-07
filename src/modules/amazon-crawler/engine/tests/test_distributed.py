@@ -315,6 +315,37 @@ class PackagedClientTests(unittest.TestCase):
             self.assertEqual([assignment.name for assignment in assignments], ["direct", "fallback-1"])
             self.assertEqual(warnings, [])
 
+    def test_default_data_directory_is_scoped_by_coordinator_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"PROGRAMDATA": directory}, clear=True,
+        ):
+            first_path = Path(directory) / "first.json"
+            second_path = Path(directory) / "second.json"
+            equivalent_path = Path(directory) / "equivalent.json"
+            first_path.write_text(json.dumps({"serverUrl": "https://crawler-a.test"}), encoding="utf-8")
+            second_path.write_text(json.dumps({"serverUrl": "https://crawler-b.test"}), encoding="utf-8")
+            equivalent_path.write_text(json.dumps({"serverUrl": "https://CRAWLER-A.test:443/path"}), encoding="utf-8")
+
+            first = AgentConfig.load(first_path)
+            second = AgentConfig.load(second_path)
+            equivalent = AgentConfig.load(equivalent_path)
+
+            self.assertNotEqual(first.data_directory, second.data_directory)
+            self.assertEqual(first.data_directory, equivalent.data_directory)
+            self.assertEqual(first.data_directory.parent.name, "servers")
+
+    def test_explicit_data_directory_is_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configured_data = root / "shared-by-explicit-choice"
+            config_path = root / "agent.json"
+            config_path.write_text(json.dumps({
+                "serverUrl": "https://crawler.test",
+                "dataDirectory": str(configured_data),
+            }), encoding="utf-8")
+
+            self.assertEqual(AgentConfig.load(config_path).data_directory, configured_data)
+
     def test_agent_config_keeps_only_valid_out_of_band_signer_pins(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "agent.json"

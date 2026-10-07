@@ -2,20 +2,42 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .protocol import AgentLimits
 from .client_storage_pressure import OutboxLimits
 
 
-def default_data_directory() -> Path:
+def server_data_scope(server_url: str) -> str:
+    """Return a stable, filesystem-safe namespace for one Coordinator origin."""
+    parsed = urlsplit(server_url)
+    hostname = (parsed.hostname or "").encode("idna").decode("ascii").lower()
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise ValueError("serverUrl must contain a valid http or https origin.")
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = parsed.port
+    canonical_origin = f"{parsed.scheme.lower()}://{hostname}"
+    if port is not None and port != default_port:
+        canonical_origin += f":{port}"
+    safe_host = re.sub(r"[^a-z0-9.-]+", "-", hostname).strip("-.") or "server"
+    if port is not None and port != default_port:
+        safe_host += f"-{port}"
+    digest = hashlib.sha256(canonical_origin.encode("utf-8")).hexdigest()[:12]
+    return f"{safe_host[:80]}-{digest}"
+
+
+def default_data_directory(server_url: str | None = None) -> Path:
     base = os.environ.get("PROGRAMDATA") or os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "FFP Amazon Crawler"
+    root = Path(base) / "FFP Amazon Crawler"
+    return root / "servers" / server_data_scope(server_url) if server_url else root
 
 
 @dataclass(frozen=True)
@@ -53,7 +75,7 @@ class AgentConfig:
             concurrency = max(1, min(16, int(payload.get("maxConcurrentInputs", 4))))
         except (TypeError, ValueError):
             concurrency = 4
-        data_directory = Path(str(payload.get("dataDirectory") or default_data_directory()))
+        data_directory = Path(str(payload.get("dataDirectory") or default_data_directory(server_url)))
         raw_proxy_path = str(payload.get("proxyConfigPath") or "").strip()
         if raw_proxy_path:
             proxy_config_path = Path(raw_proxy_path)

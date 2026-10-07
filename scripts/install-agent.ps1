@@ -19,6 +19,22 @@ function Assert-HttpsUri([string]$Value) {
     return $uri
 }
 
+function Get-AgentServerScope([Uri]$Uri) {
+    $canonicalOrigin = $Uri.Scheme.ToLowerInvariant() + '://' + $Uri.IdnHost.ToLowerInvariant()
+    $safeHost = $Uri.IdnHost.ToLowerInvariant() -replace '[^a-z0-9.-]+', '-'
+    if (-not $Uri.IsDefaultPort) {
+        $canonicalOrigin += ':' + $Uri.Port
+        $safeHost += '-' + $Uri.Port
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonicalOrigin))) -replace '-', '').ToLowerInvariant().Substring(0, 12)
+    } finally {
+        $sha.Dispose()
+    }
+    return $safeHost.Trim('-', '.') + '-' + $digest
+}
+
 function Save-HttpsFile([Uri]$Uri, [string]$Destination, [long]$MaximumBytes) {
     # Inspect every redirect before following it; never allow HTTPS -> HTTP.
     $handler = New-Object System.Net.Http.HttpClientHandler
@@ -94,9 +110,10 @@ try {
     }
     $configDirectory = Join-Path $env:PROGRAMDATA 'FFP Amazon Crawler'
     $configPath = Join-Path $configDirectory 'agent.json'
+    $dataDirectory = Join-Path (Join-Path $configDirectory 'servers') (Get-AgentServerScope ([Uri]$ServerUrl))
     $null = New-Item -ItemType Directory -Force -Path $configDirectory
     if (-not (Test-Path -LiteralPath $configPath)) {
-        @{ serverUrl = $ServerUrl; displayName = $DisplayName; dataDirectory = $configDirectory;
+        @{ serverUrl = $ServerUrl; displayName = $DisplayName; dataDirectory = $dataDirectory;
             maxConcurrentInputs = 4; trustedSignerThumbprints = $pins } |
             ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
     }

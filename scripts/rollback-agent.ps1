@@ -18,7 +18,27 @@ if ($installRoot -ine $expectedInstall) { throw 'Rollback install path is not th
 $configFullPath = [IO.Path]::GetFullPath($ConfigPath)
 if (-not (Test-Path -LiteralPath $configFullPath -PathType Leaf)) { throw 'Persistent Agent configuration is missing.' }
 $config = Get-Content -LiteralPath $configFullPath -Raw | ConvertFrom-Json -ErrorAction Stop
-$dataRootValue = if ($config.dataDirectory) { [string]$config.dataDirectory } else { Join-Path $env:ProgramData 'FFP Amazon Crawler' }
+
+function Get-AgentServerScope([Uri]$Uri) {
+    $canonicalOrigin = $Uri.Scheme.ToLowerInvariant() + '://' + $Uri.IdnHost.ToLowerInvariant()
+    $safeHost = $Uri.IdnHost.ToLowerInvariant() -replace '[^a-z0-9.-]+', '-'
+    if (-not $Uri.IsDefaultPort) {
+        $canonicalOrigin += ':' + $Uri.Port
+        $safeHost += '-' + $Uri.Port
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonicalOrigin))) -replace '-', '').ToLowerInvariant().Substring(0, 12)
+    } finally {
+        $sha.Dispose()
+    }
+    return $safeHost.Trim('-', '.') + '-' + $digest
+}
+
+if (-not $config.serverUrl) { throw 'Persistent Agent configuration has no server URL.' }
+$serverUri = [Uri][string]$config.serverUrl
+$defaultDataRoot = Join-Path (Join-Path (Join-Path $env:ProgramData 'FFP Amazon Crawler') 'servers') (Get-AgentServerScope $serverUri)
+$dataRootValue = if ($config.dataDirectory) { [string]$config.dataDirectory } else { $defaultDataRoot }
 if (-not [IO.Path]::IsPathRooted($dataRootValue)) { $dataRootValue = Join-Path (Split-Path -Parent $configFullPath) $dataRootValue }
 $dataRoot = [IO.Path]::GetFullPath($dataRootValue).TrimEnd('\')
 $backupRoot = [IO.Path]::GetFullPath($BackupDirectory).TrimEnd('\')

@@ -23,6 +23,22 @@ if (-not [string]::IsNullOrEmpty($serverUri.UserInfo) -or -not [string]::IsNullO
     throw "ServerUrl must not contain credentials, query parameters, or fragments."
 }
 
+function Get-AgentServerScope([Uri]$Uri) {
+    $canonicalOrigin = $Uri.Scheme.ToLowerInvariant() + '://' + $Uri.IdnHost.ToLowerInvariant()
+    $safeHost = $Uri.IdnHost.ToLowerInvariant() -replace '[^a-z0-9.-]+', '-'
+    if (-not $Uri.IsDefaultPort) {
+        $canonicalOrigin += ':' + $Uri.Port
+        $safeHost += '-' + $Uri.Port
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonicalOrigin))) -replace '-', '').ToLowerInvariant().Substring(0, 12)
+    } finally {
+        $sha.Dispose()
+    }
+    return $safeHost.Trim('-', '.') + '-' + $digest
+}
+
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "       FFP CRAWLER AGENT - REMOTE INSTALLER              " -ForegroundColor Yellow
@@ -152,7 +168,7 @@ if (-not (Test-Path -LiteralPath $configFile)) {
     @{
         serverUrl = $ServerUrl
         displayName = $DisplayName
-        dataDirectory = ".runtime/agent-data"
+        dataDirectory = ".runtime/agent-data/$(Get-AgentServerScope $serverUri)"
         heartbeatIntervalSeconds = 10
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configFile -Encoding UTF8
 } else {
