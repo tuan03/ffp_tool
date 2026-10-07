@@ -26,19 +26,46 @@ import {
 // Sub-components
 import { AdsHeader } from "./components/AdsHeader";
 import { ExecutiveKpiRibbon } from "./components/ExecutiveKpiRibbon";
-import { DecisionDrawer } from "./components/DecisionDrawer";
-import { GuardedWriteModal } from "./components/GuardedWriteModal";
-import { McpModal } from "./components/McpModal";
-import { ExperimentOutcomeModal } from "./components/ExperimentOutcomeModal";
-import { StoreProfileModal } from "./components/StoreProfileModal";
 
-// Sub-tabs
-import { DecisionsTab } from "./tabs/DecisionsTab";
-import { HierarchyTab } from "./tabs/HierarchyTab";
-import { FunnelTab } from "./tabs/FunnelTab";
-import { CompetitorsTab } from "./tabs/CompetitorsTab";
-import { ExperimentsTab } from "./tabs/ExperimentsTab";
-import { SystemHealthTab } from "./tabs/SystemHealthTab";
+// Lazy-loaded drawers and modals
+const DecisionDrawer = React.lazy(() => import("./components/DecisionDrawer").then(m => ({ default: m.DecisionDrawer })));
+const GuardedWriteModal = React.lazy(() => import("./components/GuardedWriteModal").then(m => ({ default: m.GuardedWriteModal })));
+const McpModal = React.lazy(() => import("./components/McpModal").then(m => ({ default: m.McpModal })));
+const ExperimentOutcomeModal = React.lazy(() => import("./components/ExperimentOutcomeModal").then(m => ({ default: m.ExperimentOutcomeModal })));
+const StoreProfileModal = React.lazy(() => import("./components/StoreProfileModal").then(m => ({ default: m.StoreProfileModal })));
+
+// Lazy-loaded sub-tabs for bundle optimization
+const DecisionsTab = React.lazy(() => import("./tabs/DecisionsTab").then(m => ({ default: m.DecisionsTab })));
+const HierarchyTab = React.lazy(() => import("./tabs/HierarchyTab").then(m => ({ default: m.HierarchyTab })));
+const FunnelTab = React.lazy(() => import("./tabs/FunnelTab").then(m => ({ default: m.FunnelTab })));
+const CompetitorsTab = React.lazy(() => import("./tabs/CompetitorsTab").then(m => ({ default: m.CompetitorsTab })));
+const ExperimentsTab = React.lazy(() => import("./tabs/ExperimentsTab").then(m => ({ default: m.ExperimentsTab })));
+const SystemHealthTab = React.lazy(() => import("./tabs/SystemHealthTab").then(m => ({ default: m.SystemHealthTab })));
+
+function TabLoadingFallback() {
+  return (
+    <div className="py-12 flex flex-col items-center justify-center space-y-3 animate-pulse">
+      <div className="h-6 w-36 bg-slate-800 rounded-lg" />
+      <div className="h-4 w-64 bg-slate-800/60 rounded" />
+      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+        <div className="h-28 bg-slate-800/40 rounded-xl border border-slate-800" />
+        <div className="h-28 bg-slate-800/40 rounded-xl border border-slate-800" />
+        <div className="h-28 bg-slate-800/40 rounded-xl border border-slate-800" />
+      </div>
+    </div>
+  );
+}
+
+function ModalLoadingFallback() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs">
+      <div className="rounded-xl border border-slate-700 bg-slate-900 p-6 text-sm text-slate-300 shadow-xl flex items-center gap-3">
+        <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+        <span>Đang tải...</span>
+      </div>
+    </div>
+  );
+}
 
 export type AdsTabId = "decisions" | "hierarchy" | "funnel" | "competitors" | "experiments" | "health";
 
@@ -727,95 +754,111 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
       </div>
 
       {/* 4. Active Tab Content Rendering */}
-      {
-        <div>
-          {activeTab === "decisions" && (
-            <DecisionsTab
-              decisions={decisions}
-              aiReport={aiReport}
-              aiAnalyzing={aiAnalyzing}
-              localAiRunners={localAiRunners}
-              onRunAiAnalysis={handleAiAnalyze}
-              onSelectCard={(card) => setSelectedDrawerCard(card)}
-              onTriggerGuardedWrite={undefined}
-              onCreateBrief={handleCreateBriefFromDecision}
-            />
-          )}
+      <React.Suspense fallback={<TabLoadingFallback />}>
+        {activeTab === "decisions" && (
+          <DecisionsTab
+            decisions={decisions}
+            aiReport={aiReport}
+            aiAnalyzing={aiAnalyzing}
+            localAiRunners={localAiRunners}
+            onRunAiAnalysis={handleAiAnalyze}
+            onSelectCard={(card) => setSelectedDrawerCard(card)}
+            onTriggerGuardedWrite={undefined}
+            onCreateBrief={handleCreateBriefFromDecision}
+          />
+        )}
 
-          {activeTab === "hierarchy" && <HierarchyTab campaigns={campaigns} />}
+        {activeTab === "hierarchy" && <HierarchyTab campaigns={campaigns} />}
 
-          {activeTab === "funnel" && <FunnelTab reconciliation={reconciliation} summary={summary} />}
+        {activeTab === "funnel" && <FunnelTab reconciliation={reconciliation} summary={summary} />}
 
-          {activeTab === "competitors" && (
-            <CompetitorsTab
-              key={currentStoreId}
-              storeId={currentStoreId}
-              client={client}
-              competitorReport={competitorReport}
-              onCreateBriefFromGap={handleCreateBriefFromGap}
-            />
-          )}
+        {activeTab === "competitors" && (
+          <CompetitorsTab
+            key={currentStoreId}
+            storeId={currentStoreId}
+            client={client}
+            competitorReport={competitorReport}
+            onCreateBriefFromGap={handleCreateBriefFromGap}
+          />
+        )}
 
-          {activeTab === "experiments" && (
-            <ExperimentsTab
-              briefs={briefs}
-              experiments={experiments}
-              onApproveBrief={handleApproveBrief}
-              onCreateExperiment={handleCreateExperimentFromBrief}
-              onCopyMarkdown={handleCopyBriefMarkdown}
-              onOpenOutcomeModal={() => setActionNotification("Nhập kết quả đo lường chưa khả dụng; hệ thống không tự điền số thử nghiệm.")}
-            />
-          )}
+        {activeTab === "experiments" && (
+          <ExperimentsTab
+            briefs={briefs}
+            experiments={experiments}
+            onApproveBrief={handleApproveBrief}
+            onCreateExperiment={handleCreateExperimentFromBrief}
+            onCopyMarkdown={handleCopyBriefMarkdown}
+            onOpenOutcomeModal={() => setActionNotification("Nhập kết quả đo lường chưa khả dụng; hệ thống không tự điền số thử nghiệm.")}
+          />
+        )}
 
-          {activeTab === "health" && (
-            <SystemHealthTab health={health} shopifySummary={shopifySummary} onSync={() => { void loadData(currentStoreId, { force: true }); }} />
-          )}
-        </div>
-      }
+        {activeTab === "health" && (
+          <SystemHealthTab health={health} shopifySummary={shopifySummary} onSync={() => { void loadData(currentStoreId, { force: true }); }} />
+        )}
+      </React.Suspense>
 
       {/* 5. Modals & Slide-over Drawer */}
-      <DecisionDrawer
-        card={selectedDrawerCard}
-        onClose={() => setSelectedDrawerCard(null)}
-        onTriggerGuardedWrite={(card) => {
-          setSelectedDrawerCard(null);
-          void handleTriggerGuardedWrite(card);
-        }}
-        onCreateBrief={handleCreateBriefFromDecision}
-      />
-
-      <GuardedWriteModal
-        proposal={guardedProposal}
-        executing={executingGuardedWrite}
-        executionResult={executionResult}
-        onClose={() => {
-          setGuardedProposal(null);
-          setExecutionResult(null);
-        }}
-        onExecute={handleExecuteGuardedWrite}
-      />
-
-      {showMcpModal && <McpModal client={client} stores={stores} onClose={() => setShowMcpModal(false)} />}
-
-      {showProfileModal && (
-        <StoreProfileModal
-          storeId={currentStoreId}
-          shopDomain={stores.find(s => s.storeId === currentStoreId)?.shopDomain}
-          client={client}
-          onClose={() => setShowProfileModal(false)}
-          onSaved={(savedStoreId) => {
-            setActionNotification(`✅ Đã lưu cấu hình Ads cho store ${savedStoreId} thành công! Đang kết nối dữ liệu trực tiếp...`);
-            void loadData(savedStoreId, { force: true });
-          }}
-        />
+      {selectedDrawerCard && (
+        <React.Suspense fallback={null}>
+          <DecisionDrawer
+            card={selectedDrawerCard}
+            onClose={() => setSelectedDrawerCard(null)}
+            onTriggerGuardedWrite={(card) => {
+              setSelectedDrawerCard(null);
+              void handleTriggerGuardedWrite(card);
+            }}
+            onCreateBrief={handleCreateBriefFromDecision}
+          />
+        </React.Suspense>
       )}
 
-      <ExperimentOutcomeModal
-        experiment={outcomeExperiment}
-        saving={savingOutcome}
-        onClose={() => setOutcomeExperiment(null)}
-        onSave={handleSaveExperimentOutcome}
-      />
+      {guardedProposal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <GuardedWriteModal
+            proposal={guardedProposal}
+            executing={executingGuardedWrite}
+            executionResult={executionResult}
+            onClose={() => {
+              setGuardedProposal(null);
+              setExecutionResult(null);
+            }}
+            onExecute={handleExecuteGuardedWrite}
+          />
+        </React.Suspense>
+      )}
+
+      {showMcpModal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <McpModal client={client} stores={stores} onClose={() => setShowMcpModal(false)} />
+        </React.Suspense>
+      )}
+
+      {showProfileModal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <StoreProfileModal
+            storeId={currentStoreId}
+            shopDomain={stores.find(s => s.storeId === currentStoreId)?.shopDomain}
+            client={client}
+            onClose={() => setShowProfileModal(false)}
+            onSaved={(savedStoreId) => {
+              setActionNotification(`✅ Đã lưu cấu hình Ads cho store ${savedStoreId} thành công! Đang kết nối dữ liệu trực tiếp...`);
+              void loadData(savedStoreId, { force: true });
+            }}
+          />
+        </React.Suspense>
+      )}
+
+      {outcomeExperiment && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <ExperimentOutcomeModal
+            experiment={outcomeExperiment}
+            saving={savingOutcome}
+            onClose={() => setOutcomeExperiment(null)}
+            onSave={handleSaveExperimentOutcome}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 }
