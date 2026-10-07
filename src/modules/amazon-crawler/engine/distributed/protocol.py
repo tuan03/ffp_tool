@@ -153,6 +153,7 @@ def hello_message(
             "mediaGalleryV2": True,
             "durablePendingPurgeV1": True,
             "durableRestartV1": True,
+            "pauseReleaseV1": True,
         },
         "limits": {
             "productThreads": limits.product_threads,

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import select
 
+from engine.distributed import AGENT_VERSION
 from engine.crawler_core import CrawlSettings
 from engine.cache import RawFamilyCache
 from engine.distributed.client_store import ClientStore
@@ -39,6 +40,7 @@ from engine.distributed.coordinator_models import (
     JobEvent,
     ShopifyOperationIdempotency,
     ShopifyProductLink,
+    TaskAttempt,
     TaskResult,
     create_database_engine,
     create_session_factory,
@@ -221,14 +223,16 @@ class ClientTrayTests(unittest.TestCase):
 
     def test_update_does_not_reinstall_when_agent_is_current(self) -> None:
         tray = object.__new__(TrayApplication)
-        tray._check_for_update = Mock(return_value="5.2.2")
+        tray._check_for_update = Mock(return_value=AGENT_VERSION)
         tray._notify = Mock()
         tray._confirm = Mock(return_value=True)
         tray._launch_lifecycle_script = Mock()
 
         tray._run_update_agent()
 
-        tray._notify.assert_called_once_with("Agent 5.2.2 hiện là phiên bản mới nhất. Không cần cập nhật.")
+        tray._notify.assert_called_once_with(
+            f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất. Không cần cập nhật."
+        )
         tray._confirm.assert_not_called()
         tray._launch_lifecycle_script.assert_not_called()
 
@@ -1147,6 +1151,64 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(agent.store.pending_products(), [])
             self.assertEqual(agent.store.pending_results(), [])
 
+    async def test_local_pause_interrupts_active_task_and_requests_lease_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = DistributedCrawlerAgent(
+                project_root=root,
+                config=AgentConfig(
+                    server_url="http://127.0.0.1:9999",
+                    display_name="test-agent",
+                    max_concurrent_inputs=1,
+                    limits=AgentLimits(),
+                    data_directory=root,
+                ),
+            )
+            assignment = {
+                "type": "assignment",
+                "taskId": "task-pause",
+                "jobId": "job-pause",
+                "leaseId": "lease-pause",
+                "source": "B0FR4MSS2H",
+                "asin": "B0FR4MSS2H",
+                "url": "https://www.amazon.com/dp/B0FR4MSS2H",
+                "settings": {},
+                "settingsFingerprint": "settings-pause",
+            }
+            agent.store.save_assignment(assignment)
+            agent.active["task-pause"] = assignment
+            cancel_event = threading.Event()
+            agent.task_cancel_events["task-pause"] = cancel_event
+            agent._is_connected = True
+
+            agent.set_paused(True)
+
+            self.assertTrue(cancel_event.is_set())
+            self.assertEqual(agent.status_snapshot()["releasingTasks"], 1)
+            release_loop = asyncio.create_task(agent._pause_release_loop())
+            try:
+                release = await asyncio.wait_for(agent.outbound_queue.get(), timeout=1)
+            finally:
+                release_loop.cancel()
+                await asyncio.gather(release_loop, return_exceptions=True)
+            self.assertEqual(release, {
+                "type": "release_task",
+                "taskId": "task-pause",
+                "leaseId": "lease-pause",
+                "reason": "AGENT_PAUSED",
+            })
+
+            await agent._acknowledge_pause_release({
+                "type": "release_task_ack",
+                "taskId": "task-pause",
+                "leaseId": "lease-pause",
+                "status": "released",
+            })
+
+            self.assertNotIn("task-pause", agent.active)
+            self.assertEqual(agent.store.recover_assignments(), [])
+            self.assertEqual(agent.status_snapshot()["availableSlots"], 0)
+
     async def test_crawler_receives_agent_proxy_config_path(self) -> None:
         captured: dict[str, object] = {}
 
@@ -1696,6 +1758,91 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(len(first), 2)
         self.assertEqual(second, [])
+
+    def test_paused_agent_release_requeues_without_consuming_retry_budget(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello("client-a", slots=1))
+        self.store.register_client(client_hello("client-b", slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        self.store.update_progress("client-a", {
+            "taskId": first["taskId"],
+            "leaseId": first["leaseId"],
+            "progress": {"phase": "variants", "completed": 2, "total": 10},
+        })
+
+        released = self.store.release_task("client-a", {
+            "taskId": first["taskId"],
+            "leaseId": first["leaseId"],
+            "reason": "AGENT_PAUSED",
+        })
+        duplicate = self.store.release_task("client-a", {
+            "taskId": first["taskId"],
+            "leaseId": first["leaseId"],
+            "reason": "AGENT_PAUSED",
+        })
+
+        self.assertEqual(released["status"], "released")
+        self.assertEqual(released["failureCount"], 0)
+        self.assertEqual(released["requeueCount"], 1)
+        self.assertEqual(duplicate["status"], "duplicate")
+        with self.sessions() as session:
+            task = session.get(CrawlTask, first["taskId"])
+            attempt = session.scalar(select(TaskAttempt).where(TaskAttempt.lease_id == first["leaseId"]))
+            self.assertEqual(task.status, "queued")
+            self.assertIsNone(task.assigned_client_id)
+            self.assertIsNone(task.lease_id)
+            self.assertEqual(task.failure_count, 0)
+            self.assertEqual(task.requeue_count, 1)
+            self.assertEqual(attempt.status, "released")
+
+        second = self.store.lease_tasks("client-b", 1)[0]
+        self.assertEqual(second["taskId"], first["taskId"])
+        self.assertNotEqual(second["leaseId"], first["leaseId"])
+        stale = self.store.accept_result(
+            str(first["taskId"]),
+            "client-a",
+            str(first["leaseId"]),
+            "stale-checksum",
+            {"jobId": job["id"], "products": []},
+        )
+        self.assertEqual(stale["status"], "stale")
+
+    def test_paused_agent_release_keeps_products_already_accepted_by_server(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello("client-a", slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-before-pause",
+            "sourceKey": "amazon:B0FR4MSS2H:color:ocean",
+            "title": "Accepted before pause",
+        }
+        envelope = {
+            "jobId": job["id"],
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+            "clientId": "client-a",
+            "product": product,
+        }
+        accepted = self.store.accept_product(
+            str(lease["taskId"]),
+            "client-a",
+            str(lease["leaseId"]),
+            str(product["sourceKey"]),
+            payload_checksum(envelope),
+            envelope,
+        )
+
+        released = self.store.release_task("client-a", {
+            "taskId": lease["taskId"],
+            "leaseId": lease["leaseId"],
+            "reason": "AGENT_PAUSED",
+        })
+
+        self.assertEqual(accepted["status"], "accepted")
+        self.assertEqual(released["status"], "released")
+        with self.sessions() as session:
+            products = list(session.scalars(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"])))
+            self.assertEqual([item.source_key for item in products], [product["sourceKey"]])
 
     def test_heartbeat_reissues_cancel_for_a_cancelled_running_job(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
@@ -3377,6 +3524,44 @@ class CoordinatorApiTests(unittest.TestCase):
                     agent.send_json({"type": "ready", "availableSlots": 1,
                                      "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
                     self.assertEqual(agent.receive_json()["type"], "assignment")
+
+    def test_agent_pause_release_is_acknowledged_and_wakes_another_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_coordinator_app(
+                database_url=f"sqlite:///{(Path(directory) / 'pause-release.sqlite3').as_posix()}"
+            )
+            with TestClient(app) as client:
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                with client.websocket_connect("/api/v1/worker/connect") as first_agent:
+                    first_agent.send_json(client_hello("pause-agent-a", slots=1))
+                    self.assertEqual(first_agent.receive_json()["type"], "hello_ack")
+                    first = first_agent.receive_json()
+                    first_agent.send_json({
+                        "type": "release_task",
+                        "taskId": first["taskId"],
+                        "leaseId": first["leaseId"],
+                        "reason": "AGENT_PAUSED",
+                    })
+                    acknowledgement = first_agent.receive_json()
+                    self.assertEqual(acknowledgement["type"], "release_task_ack")
+                    self.assertEqual(acknowledgement["status"], "released")
+                    self.assertEqual(first_agent.receive_json()["type"], "work_available")
+
+                    with client.websocket_connect("/api/v1/worker/connect") as second_agent:
+                        second_agent.send_json(client_hello("pause-agent-b", slots=1))
+                        self.assertEqual(second_agent.receive_json()["type"], "hello_ack")
+                        second = second_agent.receive_json()
+
+                self.assertEqual(second["taskId"], first["taskId"])
+                self.assertNotEqual(second["leaseId"], first["leaseId"])
+                stale = app.state.store.accept_result(
+                    str(first["taskId"]),
+                    "pause-agent-a",
+                    str(first["leaseId"]),
+                    "stale-checksum",
+                    {"jobId": job["id"], "products": []},
+                )
+                self.assertEqual(stale["status"], "stale")
 
     def test_single_task_cancel_route_does_not_cancel_sibling_or_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

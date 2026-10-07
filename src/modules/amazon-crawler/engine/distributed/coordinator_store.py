@@ -1176,6 +1176,68 @@ class CoordinatorStore(CoordinatorObservability):
             self._refresh_job(session, task.job_id)
             return {"status": task.status, "failureCount": task.failure_count}
 
+    def release_task(self, client_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Fence an unfinished lease and return its task to the scheduler without a failure."""
+        task_id = str(payload.get("taskId") or "")
+        lease_id = str(payload.get("leaseId") or "")
+        reason = str(payload.get("reason") or "AGENT_PAUSED")
+        if reason != "AGENT_PAUSED":
+            return {"status": "invalid", "reason": "unsupported_release_reason"}
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
+            if task is None:
+                return {"status": "missing"}
+            attempt = session.scalar(select(TaskAttempt).where(
+                TaskAttempt.task_id == task_id,
+                TaskAttempt.client_id == client_id,
+                TaskAttempt.lease_id == lease_id,
+            ).with_for_update())
+            if attempt is not None and attempt.status == "released":
+                return {"status": "duplicate", "jobId": task.job_id}
+            if task.result is not None or task.status == "completed":
+                return {"status": "completed", "jobId": task.job_id}
+            if task.status in {"cancelling", "cancelled"}:
+                return {"status": "cancelled", "jobId": task.job_id}
+            if (
+                task.status not in {"leased", "running"}
+                or task.assigned_client_id != client_id
+                or task.lease_id != lease_id
+                or attempt is None
+            ):
+                return {"status": "stale", "jobId": task.job_id}
+
+            now = utc_now()
+            attempt.status = "released"
+            attempt.finished_at = now
+            attempt.duration_ms = max(
+                0,
+                int((now - _as_utc(attempt.started_at)).total_seconds() * 1000),
+            )
+            task.status = "queued"
+            task.assigned_client_id = None
+            task.lease_id = None
+            task.lease_expires_at = None
+            task.next_retry_at = None
+            task.completed_at = None
+            task.requeue_count += 1
+            if task.last_error:
+                retained_error = dict(task.last_error)
+                retained_error.pop("resumeClientId", None)
+                retained_error.pop("retryAfter", None)
+                task.last_error = retained_error or None
+            self._event(session, task.job_id, "task_released", {
+                "taskId": task.id,
+                "clientId": client_id,
+                "reason": reason,
+            })
+            self._refresh_job(session, task.job_id)
+            return {
+                "status": "released",
+                "jobId": task.job_id,
+                "failureCount": task.failure_count,
+                "requeueCount": task.requeue_count,
+            }
+
     @staticmethod
     def _receipt_id(kind: str, task_id: str, client_id: str, lease_id: str, product_key: str = "") -> str:
         return payload_checksum([kind, task_id, client_id, lease_id, product_key])

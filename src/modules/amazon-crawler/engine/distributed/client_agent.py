@@ -135,6 +135,8 @@ class DistributedCrawlerAgent:
         self.cancel_events: dict[str, set[threading.Event]] = {}
         self.task_cancel_events: dict[str, threading.Event] = {}
         self._cancel_events_lock = threading.Lock()
+        self._pause_release_lock = threading.Lock()
+        self._pause_releases: dict[tuple[str, str], dict[str, Any]] = {}
         self.executing_task_ids: set[str] = set()
         self.stop_event = asyncio.Event()
         self.connection_status = "offline"
@@ -241,6 +243,7 @@ class DistributedCrawlerAgent:
             "maxConcurrentInputs": self._agent_runtime_config.maxConcurrentInputs,
             "runningTasks": len(self.executing_task_ids & self.active.keys()),
             "queuedTasks": len(self.active.keys() - self.executing_task_ids),
+            "releasingTasks": self._pause_release_count(),
             "pendingCancellations": pending_cancellations,
             "drainState": self._drain_command["state"] if self._drain_command else None,
             "limits": self._agent_limits().apply({}),
@@ -289,6 +292,8 @@ class DistributedCrawlerAgent:
             task_id = str(assignment["taskId"])
             self.active[task_id] = assignment
             self._dashboard_update("receive", assignment)
+        if self._locally_paused or self._remote_execution_state == "PAUSED":
+            self._queue_pause_releases()
         executor = asyncio.create_task(self._execution_loop())
         completions = asyncio.create_task(self._completion_loop())
         try:
@@ -366,6 +371,96 @@ class DistributedCrawlerAgent:
         self._locally_paused = is_paused
         self.store.set_paused(is_paused)
         self._refresh_pause_state()
+        if is_paused:
+            self._queue_pause_releases()
+
+    def _pause_release_count(self) -> int:
+        with self._pause_release_lock:
+            return len(self._pause_releases)
+
+    def _queue_pause_releases(self) -> None:
+        assignments = {
+            (str(assignment.get("taskId") or ""), str(assignment.get("leaseId") or "")): assignment
+            for assignment in [*self.store.recover_assignments(), *list(self.active.values())]
+            if str(assignment.get("taskId") or "") and str(assignment.get("leaseId") or "")
+        }
+        if not assignments:
+            return
+        with self._pause_release_lock:
+            for attempt, assignment in assignments.items():
+                self._pause_releases.setdefault(attempt, {
+                    "assignment": dict(assignment),
+                    "lastSentAt": 0.0,
+                    "acknowledged": False,
+                })
+        for task_id, _lease_id in assignments:
+            with self._cancel_events_lock:
+                event = self.task_cancel_events.get(task_id)
+                if event is not None:
+                    event.set()
+            with self._running_crawlers_lock:
+                crawler = self._running_crawlers.get(task_id)
+            if crawler is not None and not isinstance(crawler, ProcessCrawler):
+                threading.Thread(
+                    target=crawler.browser_pool.close,
+                    name=f"pause-task-{task_id[:8]}",
+                    daemon=True,
+                ).start()
+        self._publish_status()
+
+    async def _pause_release_loop(self) -> None:
+        while True:
+            now = time.monotonic()
+            with self._pause_release_lock:
+                completed = [
+                    attempt for attempt, release in self._pause_releases.items()
+                    if release["acknowledged"] and attempt[0] not in self.executing_task_ids
+                ]
+                for attempt in completed:
+                    self._pause_releases.pop(attempt, None)
+                pending = [
+                    (attempt, dict(release["assignment"]))
+                    for attempt, release in self._pause_releases.items()
+                    if not release["acknowledged"] and now - float(release["lastSentAt"]) >= 1.0
+                ]
+                for attempt, _assignment in pending:
+                    release = self._pause_releases.get(attempt)
+                    if release is not None:
+                        release["lastSentAt"] = now
+            if self._is_connected:
+                for (task_id, lease_id), _assignment in pending:
+                    await self.outbound_queue.put({
+                        "type": "release_task",
+                        "taskId": task_id,
+                        "leaseId": lease_id,
+                        "reason": "AGENT_PAUSED",
+                    })
+            await asyncio.sleep(0.25)
+
+    async def _acknowledge_pause_release(self, payload: dict[str, Any]) -> None:
+        task_id = str(payload.get("taskId") or "")
+        lease_id = str(payload.get("leaseId") or "")
+        status = str(payload.get("status") or "")
+        if status not in {"released", "duplicate", "stale", "completed", "cancelled", "missing"}:
+            return
+        attempt = (task_id, lease_id)
+        with self._pause_release_lock:
+            release = self._pause_releases.get(attempt)
+            if release is None:
+                return
+            release["acknowledged"] = True
+            assignment = dict(release["assignment"])
+        self._approved_attempts.discard(attempt)
+        self.store.quarantine_attempt(task_id, lease_id, "agent_paused_release")
+        self.store.discard_task(task_id)
+        self.active.pop(task_id, None)
+        self._dashboard_update("finish", assignment, "interrupted")
+        self._dashboard_update("delivery", task_id, lease_id, "cancelled")
+        if task_id not in self.executing_task_ids:
+            with self._pause_release_lock:
+                self._pause_releases.pop(attempt, None)
+        await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
+        self._publish_status()
 
     def _refresh_pause_state(self) -> None:
         was_paused = self._paused
@@ -851,6 +946,8 @@ class DistributedCrawlerAgent:
                 await asyncio.to_thread(self.store.clear_drain_command)
                 self._drain_command = None
             self._refresh_pause_state()
+            if command_type == "PAUSE":
+                self._queue_pause_releases()
             update = {"type": "command_update", "commandId": command_id,
                 "sequence": sequence, "status": "SUCCESS", "appliedExecutionState": desired_state}
             if command_type == "PAUSE":
@@ -975,6 +1072,7 @@ class DistributedCrawlerAgent:
                         asyncio.create_task(self._upload_loop()),
                         asyncio.create_task(self._telemetry_loop()),
                         asyncio.create_task(self._drain_monitor_loop()),
+                        asyncio.create_task(self._pause_release_loop()),
                     ]
                     connection_tasks.append(asyncio.create_task(self._recovery_gate_loop()))
                     stop_waiter = asyncio.create_task(self.stop_event.wait())
@@ -1054,6 +1152,8 @@ class DistributedCrawlerAgent:
                     await asyncio.to_thread(self.store.acknowledge_telemetry, [event_id for event_id in event_ids[:64] if isinstance(event_id, str)])
             elif message_type == "command_batch":
                 await self._process_command_batch(payload)
+            elif message_type == "release_task_ack":
+                await self._acknowledge_pause_release(payload)
             elif message_type == "command_sync":
                 await self.outbound_queue.put({
                     "type": "command_sync",
@@ -1777,6 +1877,7 @@ class DistributedCrawlerAgent:
             "pinterestBrowserLoggedIn": self.pinterest_browser_logged_in(),
             "durablePendingPurgeV1": True,
             "durableRestartV1": True,
+            "pauseReleaseV1": True,
         }
 
     def _current_tasks_snapshot(self) -> list[dict[str, Any]]:
@@ -2033,10 +2134,17 @@ class DistributedCrawlerAgent:
         while True:
             completion = await self.completion_queue.get()
             task_id = str(completion["taskId"])
+            lease_id = str(completion.get("leaseId") or "")
+            with self._pause_release_lock:
+                pause_release = self._pause_releases.get((task_id, lease_id))
             assignment = self.active.pop(task_id, None)
             if assignment is not None:
                 self._dashboard_update("finish", assignment, str(completion["type"]), completion.get("error"))
-            if completion["type"] == "failed" and assignment is not None:
+            if pause_release is not None:
+                if bool(pause_release.get("acknowledged")):
+                    with self._pause_release_lock:
+                        self._pause_releases.pop((task_id, lease_id), None)
+            elif completion["type"] == "failed" and assignment is not None:
                 await self.outbound_queue.put({
                     "type": "task_failed", "taskId": task_id,
                     "leaseId": completion["leaseId"], "error": completion["error"],

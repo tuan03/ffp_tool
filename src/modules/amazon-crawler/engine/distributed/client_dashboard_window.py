@@ -269,7 +269,14 @@ class AgentDashboardWindow:
         dashboard = _mapping(snapshot.get("dashboard"))
         self.title.configure(text=f"FFP Agent — {snapshot.get('displayName', '')}")
         connected = "Đã kết nối server" if snapshot.get("isConnected") else "Mất kết nối / đang kết nối lại"
-        operating = "Tạm ngưng nhận việc mới" if snapshot.get("isPaused") else ("Đang làm việc" if snapshot.get("activeTasks") else "Sẵn sàng nhận việc")
+        if snapshot.get("isPaused"):
+            operating = (
+                "Đang trả việc chưa hoàn tất về hàng đợi"
+                if int(snapshot.get("releasingTasks") or 0) > 0
+                else "Đã tạm ngưng; không nhận việc"
+            )
+        else:
+            operating = "Đang làm việc" if snapshot.get("activeTasks") else "Sẵn sàng nhận việc"
         if _mapping(snapshot.get("storage")).get("blocked"):
             operating = "Tạm ngưng nhận việc do lưu trữ"
         self.connection.configure(text=f"{connected}  •  {operating}")

@@ -148,7 +148,10 @@ class ConnectionManager:
         source = value if isinstance(value, dict) else {}
         return {
             key: bool(source.get(key))
-                for key in ("amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1", "durableRestartV1")
+                for key in (
+                    "amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1",
+                    "durableRestartV1", "pauseReleaseV1",
+                )
             if key in source
         }
 
@@ -2098,6 +2101,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     response = await asyncio.to_thread(store.fail_task, client_id, message)
                     await websocket.send_json({"type": "task_failed_ack", "taskId": message.get("taskId"), **response})
                     await assign(1)
+                elif message_type == "release_task":
+                    response = await asyncio.to_thread(store.release_task, client_id, message)
+                    await websocket.send_json({
+                        "type": "release_task_ack",
+                        "taskId": message.get("taskId"),
+                        "leaseId": message.get("leaseId"),
+                        **response,
+                    })
+                    if response.get("status") == "released":
+                        await manager.broadcast({"type": "work_available"})
                 elif message_type == "cancel_ack":
                     response = await asyncio.to_thread(store.acknowledge_task_cancel, client_id, message)
                     await websocket.send_json({"type": "cancel_ack_received", "taskId": message.get("taskId"), **response})
