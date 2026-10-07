@@ -49,7 +49,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
       <video
         aria-label={`Video quảng cáo ${ad.pageName}`}
         controls
-        preload="metadata"
+        preload="none"
         playsInline
         referrerPolicy="no-referrer"
         poster={thumbnail !== source ? thumbnail : undefined}
@@ -70,6 +70,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
             src={card.mediaUrl}
             alt={card.headline || `${label} — ${index + 1}`}
             loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             onError={() => setHasImageError(true)}
             className="h-full w-full shrink-0 snap-center object-contain"
@@ -87,6 +88,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
           src={imageSource}
           alt={label}
           loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           onError={() => setHasImageError(true)}
           className="h-full w-full object-contain"
