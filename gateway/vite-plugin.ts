@@ -14,7 +14,7 @@ import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, isSa
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
-import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
+import { getRuntimeStoreConfigFile, loadLocalEnv, loadRuntimeStores } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
 import { StoreControlPlane } from "./store-control-plane";
@@ -49,8 +49,8 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         process.env.VITE_APP_ENV === "mock" ||
         process.env.APP_ENV === "mock";
 
-      const storeConfigFile = env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
-      const stores = loadBootstrappedStores({ env, configFile: storeConfigFile });
+      const storeConfigFile = getRuntimeStoreConfigFile(env);
+      const stores = loadRuntimeStores({ env });
 
       const storeRegistry = new InMemoryStoreRegistry(stores);
       const tokenProvider = new CompositeTokenProvider();
@@ -115,7 +115,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
 
         if (isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
           try {
-            const freshStores = loadBootstrappedStores({ env: loadLocalEnv(), configFile: storeConfigFile });
+            const freshStores = loadRuntimeStores({ env: loadLocalEnv() });
             const freshIds = new Set(freshStores.map((s) => s.storeId));
             for (const store of freshStores) {
               if (!storeRegistry.getStore(store.storeId)) {

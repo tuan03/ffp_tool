@@ -9,8 +9,8 @@ import { bindExternalSeoProduct } from "../src/modules/seo-content";
 import { PostgresSeoContentRuntime } from "../src/modules/seo-content/server";
 
 import {
-  loadBootstrappedStores,
   loadLocalEnv,
+  loadRuntimeStores,
   startGatewayServer,
 } from "../gateway/index";
 import { getAutoSeoDatabaseUrl } from "../gateway/auto-seo-database-url";
@@ -148,7 +148,7 @@ interface PipelineTimings {
   totalMs?: number;
 }
 
-let configuredStores = loadBootstrappedStores({ env });
+let configuredStores = loadRuntimeStores({ env });
 let baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : (configuredStores.length > 0 ? configuredStores[0] : undefined);
 if (!storeId && baseStore) {
   storeId = baseStore.storeId;
@@ -569,7 +569,7 @@ async function processClaim(
     throwIfCancelled();
     let claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     if (!claimStoreConfig) {
-      configuredStores = loadBootstrappedStores({ env: loadLocalEnv() });
+      configuredStores = loadRuntimeStores({ env: loadLocalEnv() });
       claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     }
     const storeProfile = resolveStoreProfile({ storeId: claimStoreId, siteDomain: claimStoreConfig?.shopDomain });
@@ -1186,7 +1186,7 @@ async function main(): Promise<void> {
     while (!storeId || !baseStore) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       const freshEnv = loadLocalEnv();
-      configuredStores = loadBootstrappedStores({ env: freshEnv });
+      configuredStores = loadRuntimeStores({ env: freshEnv });
       storeId = (freshEnv.GATEWAY_STORE_ID || process.env.GATEWAY_STORE_ID || (configuredStores.length > 0 ? configuredStores[0].storeId : ""))?.trim();
       baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : undefined;
       if (storeId && baseStore) {

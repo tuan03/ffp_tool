@@ -10,6 +10,16 @@ export interface StoreBootstrapOptions {
   readonly cwd?: string;
   readonly configFile?: string;
 }
+
+export interface RuntimeStoreBootstrapOptions {
+  readonly env?: Record<string, string>;
+  readonly cwd?: string;
+}
+
+export function getRuntimeStoreConfigFile(env: Readonly<Record<string, string>>): string {
+  return env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
+}
+
 /**
  * Loads key-value pairs from .env.local if present, merged onto process.env.
  */
@@ -497,6 +507,21 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
   }
 
   return Array.from(storesByStoreId.values());
+}
+
+/**
+ * Loads the same durable store registry used by the Gateway control plane.
+ * Server-side consumers must use this entry point so stores registered at
+ * runtime are visible without duplicating credentials in environment files.
+ */
+export function loadRuntimeStores(options?: RuntimeStoreBootstrapOptions): StoreConfig[] {
+  const cwd = options?.cwd || process.cwd();
+  const env = options?.env || loadLocalEnv(cwd);
+  return loadBootstrappedStores({
+    cwd,
+    env,
+    configFile: getRuntimeStoreConfigFile(env),
+  });
 }
 
 let configMutex = Promise.resolve();

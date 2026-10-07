@@ -30,6 +30,13 @@ test("registry resolves the Capozen rug profile by store ID and Shopify domain",
 test("registry resolves the Preaureum handbag profile by store ID and Shopify domain", () => {
   assert.equal(resolveStoreProfile({ storeId: "preaureum" }), PREAUREUM_HANDBAG_PROFILE);
   assert.equal(
+    resolveStoreProfile({
+      storeId: "preaureum_dev",
+      siteDomain: "leatherbag-3anqqbf8.myshopify.com",
+    }),
+    PREAUREUM_HANDBAG_PROFILE,
+  );
+  assert.equal(
     resolveStoreProfile({ siteDomain: "leatherbag-3anqqbf8.myshopify.com" }),
     PREAUREUM_HANDBAG_PROFILE,
   );
