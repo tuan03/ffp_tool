@@ -1,18 +1,32 @@
 import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import process from "node:process";
 
+const cacheDir = path.resolve(".cache", "tsbuildinfo");
+await mkdir(cacheDir, { recursive: true });
+
 const configs = [
-  "tsconfig.json",
-  "tsconfig.gateway.json",
-  "tsconfig.pipeline.json",
+  { config: "tsconfig.json", name: "root" },
+  { config: "tsconfig.gateway.json", name: "gateway" },
+  { config: "tsconfig.pipeline.json", name: "pipeline" },
 ];
 
 const results = await Promise.all(
-  configs.map((config) => {
+  configs.map(({ config, name }) => {
     return new Promise((resolve) => {
+      const tsBuildInfoPath = path.join(cacheDir, `${name}.tsbuildinfo`);
       const proc = spawn(
         process.execPath,
-        ["./node_modules/typescript/bin/tsc", "--noEmit", "-p", config],
+        [
+          "./node_modules/typescript/bin/tsc",
+          "--noEmit",
+          "--incremental",
+          "--tsBuildInfoFile",
+          tsBuildInfoPath,
+          "-p",
+          config,
+        ],
         { stdio: "inherit" }
       );
       proc.on("close", (code) => {

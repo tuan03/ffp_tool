@@ -31,6 +31,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline
 
+      - name: Restore TypeScript build cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}-
+            tsbuildinfo-${{ runner.os }}-
+
       - name: Validate TypeScript types
         run: npm run typecheck
 
@@ -39,6 +48,18 @@ jobs:
 
       - name: Run MCP and Gateway core tests
         run: npx tsx --test gateway/__tests__/ads-intelligence-mcp.test.ts
+
+      - name: Build client production distribution
+        env:
+          VITE_AGENT_INSTALL_URL: https://${{ secrets.DOMAIN || 'ffp.b6-team.site' }}
+        run: npm run build:client
+
+      - name: Upload client distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: dist/
+          retention-days: 1
 
   deploy:
     name: Deploy root Compose to VPS
@@ -49,17 +70,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download client distribution artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: dist
+
       - name: Package tracked deployment source
-        run: git ls-files -z | tar --null -czf ffp-tool-deploy.tar.gz --files-from -
+        run: git ls-files -z | tar --null -czf ffp-tool-deploy.tar.gz --files-from - dist
 
       - name: Copy deployment source to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: ffp-tool-deploy.tar.gz
-          target: /tmp
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key ffp-tool-deploy.tar.gz "${VPS_USER}@${VPS_HOST}:/tmp/ffp-tool-deploy.tar.gz"
+          rm -f ~/.ssh/deploy_key
 
       - name: Encode environment secrets
         id: prep

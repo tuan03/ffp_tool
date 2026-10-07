@@ -4,6 +4,7 @@ build/
 artifacts/
 Tool_crawer_New_update/
 .vite/
+.cache/
 .env
 .env.*
 !.env.example
