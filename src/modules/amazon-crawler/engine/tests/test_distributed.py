@@ -19,7 +19,7 @@ from unittest.mock import Mock, patch
 import websockets
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from engine.distributed import AGENT_VERSION
 from engine.crawler_core import CrawlSettings
@@ -31,6 +31,7 @@ from engine.distributed.client_main import _configure_packaged_browser, _resolve
 from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInstanceLock
 from engine.distributed.client_tray import TrayApplication, format_status, should_notify_captcha
 from engine.distributed.coordinator_models import (
+    AmazonAsinRegistry,
     Base,
     ClientRecord,
     CoordinatorState,
@@ -2821,6 +2822,59 @@ class CoordinatorStoreTests(unittest.TestCase):
             items = session.scalars(select(CrawlProductItem)).all()
             self.assertEqual(len(items), 1)
 
+    def test_family_registry_resolves_sibling_asins_per_store_and_tracks_shopify_sync(self) -> None:
+        job = self.store.create_job({"urls": ["B0CHILD001"], "storeId": "capozen"})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-ocean",
+            "sourceKey": "amazon:B0PARENT01:design:ocean",
+            "asin": "B0CHILD001",
+            "parentAsin": "B0PARENT01",
+            "sourceVariants": [{"asin": "B0CHILD001"}, {"asin": "B0CHILD002"}],
+            "title": "Ocean",
+        }
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+
+        active = self.store.resolve_asin_families("capozen", ["B0CHILD002"])["families"][0]
+        self.assertEqual(active["parentAsin"], "B0PARENT01")
+        self.assertEqual(active["databaseStatus"], "leased")
+        self.assertEqual(active["jobId"], job["id"])
+        self.assertEqual(active["memberAsins"], ["B0CHILD001", "B0CHILD002", "B0PARENT01"])
+        other_store = self.store.resolve_asin_families("jeminise", ["B0CHILD002"])["families"][0]
+        self.assertFalse(other_store["isResolved"])
+
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [], "errors": [], "warnings": []},
+        )
+        crawled = self.store.resolve_asin_families("capozen", ["B0CHILD002"])["families"][0]
+        self.assertEqual(crawled["databaseStatus"], "crawled")
+
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="capozen", limit=1)[0]
+        self.assertTrue(self.store.complete_product_item(
+            claim["id"], worker_id="worker-1", store_id="capozen", normalized_checksum="normalized-1",
+            normalized_payload=product,
+            shopify_result={"productId": "gid://shopify/Product/123", "productHandle": "ocean"},
+        ))
+        synced = self.store.resolve_asin_families("capozen", ["B0CHILD002"])["families"][0]
+        self.assertEqual(synced["databaseStatus"], "synced")
+        with self.sessions() as session:
+            rows = session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == "capozen",
+            )).all()
+            self.assertEqual(len(rows), 3)
+            self.assertTrue(all(row.shopify_product_ids == ["gid://shopify/Product/123"] for row in rows))
+        with self.sessions.begin() as session:
+            session.execute(delete(AmazonAsinRegistry))
+        self.assertEqual(self.store.backfill_asin_registry(), {"products": 1, "links": 1})
+        rebuilt = self.store.resolve_asin_families("capozen", ["B0CHILD002"])["families"][0]
+        self.assertEqual(rebuilt["parentAsin"], "B0PARENT01")
+        self.assertEqual(rebuilt["databaseStatus"], "synced")
+
     def test_same_source_key_reuses_shopify_mapping_across_sequential_jobs(self) -> None:
         source_key = "amazon:B0FR4MSS2H:design:ocean"
         product = {
@@ -3255,6 +3309,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             links = session.scalars(select(ShopifyProductLink)).all()
             self.assertEqual(len(links), 1)
             self.assertEqual(links[0].source_key, source_key)
+            self.assertGreaterEqual(len(session.scalars(select(AmazonAsinRegistry)).all()), 1)
 
     def test_job_becomes_partial_only_after_product_pipeline_failure(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})

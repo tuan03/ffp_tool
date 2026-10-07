@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from collections import Counter
@@ -21,6 +22,7 @@ from ..review_engine import normalize_review_source
 from ..timeouts import CrawlTimeout, TIMEOUT_FIELDS
 from ..retry_policy import RETRY_FIELDS, retry_delay
 from .coordinator_models import (
+    AmazonAsinRegistry,
     ClientRecord,
     CoordinatorState,
     CrawlJobControl,
@@ -171,6 +173,187 @@ class CoordinatorStore(CoordinatorObservability):
         self._product_claim_lock = Lock()
         self._job_creation_lock = Lock()
         self._review_mutation_lock = Lock()
+
+    @staticmethod
+    def _product_family_identity(product: dict[str, Any]) -> tuple[str, list[str]] | None:
+        source_key = _source_key(product)
+        source_key_parts = source_key.split(":", 3)
+        raw_parent = product.get("parentAsin")
+        if not isinstance(raw_parent, str) and len(source_key_parts) >= 2:
+            raw_parent = source_key_parts[1]
+        parent_asin = str(raw_parent or "").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]{10}", parent_asin):
+            return None
+        member_asins = {parent_asin}
+        product_asin = str(product.get("asin") or "").strip().upper()
+        if re.fullmatch(r"[A-Z0-9]{10}", product_asin):
+            member_asins.add(product_asin)
+        for variant in product.get("sourceVariants") or []:
+            if not isinstance(variant, dict):
+                continue
+            asin = str(variant.get("asin") or "").strip().upper()
+            if re.fullmatch(r"[A-Z0-9]{10}", asin):
+                member_asins.add(asin)
+        return parent_asin, sorted(member_asins)
+
+    @staticmethod
+    def _upsert_asin_registry(
+        session,
+        *,
+        store_id: str,
+        job_id: str | None,
+        product: dict[str, Any],
+        status: str,
+        shopify_product_id: str | None = None,
+    ) -> None:
+        normalized_store_id = store_id.strip()
+        identity = CoordinatorStore._product_family_identity(product)
+        if not normalized_store_id or identity is None:
+            return
+        parent_asin, member_asins = identity
+        now = utc_now()
+        insert_factory = postgres_insert if session.get_bind().dialect.name == "postgresql" else sqlite_insert
+        for asin in member_asins:
+            statement = insert_factory(AmazonAsinRegistry).values(
+                id=_id(),
+                store_id=normalized_store_id,
+                marketplace="amazon-us",
+                asin=asin,
+                parent_asin=parent_asin,
+                status=status,
+                last_job_id=job_id,
+                shopify_product_ids=[shopify_product_id] if shopify_product_id else [],
+                synced_at=now if status == "synced" else None,
+                created_at=now,
+                updated_at=now,
+            )
+            update_values: dict[str, Any] = {
+                "parent_asin": parent_asin,
+                "status": status,
+                "updated_at": now,
+            }
+            if job_id:
+                update_values["last_job_id"] = job_id
+            if status == "synced":
+                update_values["synced_at"] = now
+            session.execute(statement.on_conflict_do_update(
+                index_elements=["store_id", "marketplace", "asin"],
+                set_=update_values,
+            ))
+        if shopify_product_id:
+            for row in session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == normalized_store_id,
+                AmazonAsinRegistry.marketplace == "amazon-us",
+                AmazonAsinRegistry.asin.in_(member_asins),
+            )).all():
+                product_ids = set(row.shopify_product_ids or [])
+                product_ids.add(shopify_product_id)
+                row.shopify_product_ids = sorted(product_ids)
+
+    def resolve_asin_families(self, store_id: str, asins: list[str]) -> dict[str, Any]:
+        normalized_store_id = store_id.strip()
+        normalized_asins = list(dict.fromkeys(str(asin).strip().upper() for asin in asins))
+        if not normalized_store_id:
+            raise ValueError("storeId is required.")
+        if not normalized_asins or len(normalized_asins) > 200 or any(
+            re.fullmatch(r"[A-Z0-9]{10}", asin) is None for asin in normalized_asins
+        ):
+            raise ValueError("asins must contain 1 to 200 normalized Amazon ASINs.")
+        with self.sessions() as session:
+            registry_rows = session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == normalized_store_id,
+                AmazonAsinRegistry.marketplace == "amazon-us",
+                AmazonAsinRegistry.asin.in_(normalized_asins),
+            )).all()
+            by_asin = {row.asin: row for row in registry_rows}
+            parent_asins = {row.parent_asin for row in registry_rows}
+            family_members: dict[str, list[str]] = {}
+            if parent_asins:
+                for row in session.scalars(select(AmazonAsinRegistry).where(
+                    AmazonAsinRegistry.store_id == normalized_store_id,
+                    AmazonAsinRegistry.marketplace == "amazon-us",
+                    AmazonAsinRegistry.parent_asin.in_(parent_asins),
+                )).all():
+                    family_members.setdefault(row.parent_asin, []).append(row.asin)
+            task_asins = set(normalized_asins)
+            for member_asins in family_members.values():
+                task_asins.update(member_asins)
+            active_tasks = session.execute(
+                select(CrawlTask, CrawlJob).join(CrawlJob, CrawlTask.job_id == CrawlJob.id).where(
+                    CrawlTask.asin.in_(task_asins),
+                    CrawlTask.status.in_(["queued", "leased", "running", "cancelling"]),
+                )
+            ).all()
+            active_by_asin = {
+                task.asin: (task, job)
+                for task, job in active_tasks
+                if str((job.settings or {}).get("storeId") or "").strip() == normalized_store_id
+            }
+            grouped: dict[str, dict[str, Any]] = {}
+            for asin in normalized_asins:
+                row = by_asin.get(asin)
+                parent_asin = row.parent_asin if row is not None else asin
+                family = grouped.setdefault(parent_asin, {
+                    "parentAsin": parent_asin,
+                    "inputAsins": [],
+                    "memberAsins": sorted(set(family_members.get(parent_asin, [asin]))),
+                    "isResolved": row is not None,
+                    "databaseStatus": row.status if row is not None else None,
+                    "jobId": row.last_job_id if row is not None else None,
+                })
+                family["inputAsins"].append(asin)
+                active = next(
+                    (
+                        active_by_asin[member_asin]
+                        for member_asin in family["memberAsins"]
+                        if member_asin in active_by_asin
+                    ),
+                    None,
+                )
+                if active is not None:
+                    task, job = active
+                    family["databaseStatus"] = task.status
+                    family["jobId"] = job.id
+            return {"families": list(grouped.values())}
+
+    def backfill_asin_registry(self) -> dict[str, int]:
+        """Rebuild the durable alias ledger from retained pipeline data and Shopify links."""
+        products = 0
+        links = 0
+        with self.sessions.begin() as session:
+            for item, job in session.execute(
+                select(CrawlProductItem, CrawlJob).join(CrawlJob, CrawlProductItem.job_id == CrawlJob.id)
+            ).all():
+                store_id = str((job.settings or {}).get("storeId") or "").strip()
+                product = item.normalized_payload if isinstance(item.normalized_payload, dict) else item.raw_payload
+                if not store_id or not isinstance(product, dict) or self._product_family_identity(product) is None:
+                    continue
+                shopify_result = item.shopify_result if isinstance(item.shopify_result, dict) else {}
+                shopify_product_id = str(shopify_result.get("productId") or "").strip() or None
+                self._upsert_asin_registry(
+                    session,
+                    store_id=store_id,
+                    job_id=item.job_id,
+                    product=product,
+                    status="synced" if item.status == "completed" else "crawled",
+                    shopify_product_id=shopify_product_id,
+                )
+                products += 1
+            for link in session.scalars(select(ShopifyProductLink)).all():
+                parts = link.source_key.split(":", 3)
+                parent_asin = parts[1].strip().upper() if len(parts) >= 2 else ""
+                if re.fullmatch(r"[A-Z0-9]{10}", parent_asin) is None:
+                    continue
+                self._upsert_asin_registry(
+                    session,
+                    store_id=link.store_id,
+                    job_id=None,
+                    product={"parentAsin": parent_asin, "sourceKey": link.source_key},
+                    status="synced",
+                    shopify_product_id=link.shopify_product_id,
+                )
+                links += 1
+        return {"products": products, "links": links}
 
     @staticmethod
     def _event(session, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -1443,6 +1626,14 @@ class CoordinatorStore(CoordinatorObservability):
                 product=product,
                 checksum=str(payload.get("productChecksum") or checksum),
             )
+            job = session.get(CrawlJob, task.job_id)
+            self._upsert_asin_registry(
+                session,
+                store_id=str((job.settings if job else {}).get("storeId") or ""),
+                job_id=task.job_id,
+                product=product,
+                status="crawled",
+            )
             if created:
                 self._event(session, task.job_id, "product_received", {
                     "taskId": task.id,
@@ -2153,6 +2344,14 @@ class CoordinatorStore(CoordinatorObservability):
                 normalized_checksum=normalized_checksum,
                 shopify_result=shopify_result,
             )
+            self._upsert_asin_registry(
+                session,
+                store_id=store_id,
+                job_id=item.job_id,
+                product=item.raw_payload,
+                status="synced",
+                shopify_product_id=str(shopify_result.get("productId") or "").strip() or None,
+            )
             pipeline_result = dict(item.shopify_result or {})
             pipeline_result.update(shopify_result)
             item.shopify_result = pipeline_result
@@ -2211,6 +2410,14 @@ class CoordinatorStore(CoordinatorObservability):
                 store_id=store_id,
                 normalized_checksum=normalized_checksum,
                 shopify_result=shopify_result,
+            )
+            self._upsert_asin_registry(
+                session,
+                store_id=store_id,
+                job_id=item.job_id,
+                product=item.raw_payload,
+                status="synced",
+                shopify_product_id=product_id or None,
             )
             # The normalized payload is the temporary public result. The raw
             # crawler copy is no longer needed after Shopify confirms the write.

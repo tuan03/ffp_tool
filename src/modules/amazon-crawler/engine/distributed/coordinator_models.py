@@ -277,6 +277,28 @@ class ShopifyProductLink(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class AmazonAsinRegistry(Base):
+    """Durable store-scoped alias ledger for one Amazon variation family."""
+
+    __tablename__ = "amazon_asin_registry"
+    __table_args__ = (
+        UniqueConstraint("store_id", "marketplace", "asin", name="uq_amazon_asin_registry_store_asin"),
+        Index("ix_amazon_asin_registry_family", "store_id", "marketplace", "parent_asin"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    store_id: Mapped[str] = mapped_column(String(100), index=True)
+    marketplace: Mapped[str] = mapped_column(String(32), default="amazon-us")
+    asin: Mapped[str] = mapped_column(String(10), index=True)
+    parent_asin: Mapped[str] = mapped_column(String(10), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="crawled", index=True)
+    last_job_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    shopify_product_ids: Mapped[list[str]] = mapped_column(JSON_VALUE, default=list)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class ShopifyOperationIdempotency(Base):
     __tablename__ = "shopify_operation_idempotency"
     __table_args__ = (

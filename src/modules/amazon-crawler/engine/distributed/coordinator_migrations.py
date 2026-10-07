@@ -4,7 +4,7 @@ import json
 
 from sqlalchemy import Column, Index, Integer, MetaData, Table, inspect, select, text
 
-from .coordinator_models import ArchivedTaskAttempt, Base, ClientRecord, CoordinatorState, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
+from .coordinator_models import AmazonAsinRegistry, ArchivedTaskAttempt, Base, ClientRecord, CoordinatorState, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
@@ -14,7 +14,7 @@ from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent
 from . import image_profile_repository  # Register profile tables before creating metadata.
 from .fleet_circuit_breaker import STATE_KEY as FLEET_BREAKER_STATE_KEY, _default_state as default_fleet_breaker_state
 
-MIGRATION_VERSION = 14
+MIGRATION_VERSION = 15
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -164,3 +164,7 @@ def migrate_coordinator(engine) -> None:
                     key=FLEET_BREAKER_STATE_KEY, value=json.dumps(default_fleet_breaker_state()),
                 ))
             connection.execute(MIGRATIONS.insert().values(version=14))
+            versions.add(14)
+        if 15 not in versions:
+            AmazonAsinRegistry.__table__.create(connection, checkfirst=True)
+            connection.execute(MIGRATIONS.insert().values(version=15))

@@ -74,7 +74,7 @@ export function createCrawlerOperatorFetch(options: {
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : String(input), base);
     if (target.origin !== base.origin || target.username || target.password
-      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys)(\/|$)/.test(target.pathname)) {
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys|asin-families)(\/|$)/.test(target.pathname)) {
       throw new Error("Operator credential destination rejected.");
     }
     options.sessionSignal?.throwIfAborted();
@@ -186,8 +186,48 @@ export class AmazonCrawlerServiceError extends Error {
   }
 }
 
-export function createAmazonAsinChecker(fetchImplementation: typeof fetch = fetch): AmazonAsinChecker {
+const AMAZON_ASIN_FAMILY_STATUSES = new Set([
+  "available", "existing", "processing", "crawled_pending_sync", "reconciliation_required",
+]);
+
+function isAsinList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(
+    (asin) => typeof asin === "string" && /^[A-Z0-9]{10}$/.test(asin),
+  );
+}
+
+function isAmazonAsinFamilyPreflight(value: unknown): boolean {
+  return isRecord(value) && typeof value.parentAsin === "string" && /^[A-Z0-9]{10}$/.test(value.parentAsin) &&
+    isAsinList(value.inputAsins) && isAsinList(value.memberAsins) && typeof value.isResolved === "boolean" &&
+    (value.databaseStatus === null || typeof value.databaseStatus === "string") &&
+    (value.jobId === null || typeof value.jobId === "string") &&
+    typeof value.status === "string" && AMAZON_ASIN_FAMILY_STATUSES.has(value.status);
+}
+
+export function createAmazonAsinChecker(
+  fetchImplementation: typeof fetch = fetch,
+  coordinator?: { readonly engineUrl: string; readonly fetchImplementation?: typeof fetch },
+): AmazonAsinChecker {
   return async (storeId, asins): Promise<AmazonAsinPreflightResult> => {
+    let families: unknown = undefined;
+    if (coordinator) {
+      const coordinatorResponse = await (coordinator.fetchImplementation ?? fetchImplementation)(
+        `${normalizeEngineUrl(coordinator.engineUrl)}/api/v1/asin-families/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storeId, asins }),
+        },
+      );
+      const coordinatorBody: unknown = await coordinatorResponse.json().catch(() => null);
+      if (!coordinatorResponse.ok || !isRecord(coordinatorBody) || !Array.isArray(coordinatorBody.families)) {
+        const error = isRecord(coordinatorBody) && typeof coordinatorBody.detail === "string"
+          ? coordinatorBody.detail
+          : "KhÃ´ng kiá»ƒm tra Ä‘Æ°á»£c family ASIN trong FFP.";
+        throw new AmazonCrawlerServiceError(error, "AMAZON_FAMILY_PREFLIGHT_FAILED", coordinatorResponse.status);
+      }
+      families = coordinatorBody.families;
+    }
     const response = await fetchImplementation("/api/shopify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -196,7 +236,7 @@ export function createAmazonAsinChecker(fetchImplementation: typeof fetch = fetc
         operation: "products.preflightAmazonAsins",
         mode: "apply",
         requestId: `amazon-asin-preflight-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
-        payload: { asins },
+        payload: families === undefined ? { asins } : { asins, families },
       }),
     });
     const body: unknown = await response.json().catch(() => null);
@@ -208,8 +248,11 @@ export function createAmazonAsinChecker(fetchImplementation: typeof fetch = fetc
     }
     const preflight = body.data;
     if (typeof preflight.ready !== "boolean" || !Array.isArray(preflight.matches) ||
+      !Array.isArray(preflight.families) || preflight.families.some((family) => !isAmazonAsinFamilyPreflight(family)) ||
+      !isAsinList(preflight.allowedAsins) ||
       preflight.matches.some((match: unknown) => !isRecord(match) || typeof match.asin !== "string" ||
-        typeof match.productId !== "string" || typeof match.title !== "string" || typeof match.adminUrl !== "string")) {
+        typeof match.parentAsin !== "string" || typeof match.productId !== "string" ||
+        typeof match.title !== "string" || typeof match.adminUrl !== "string")) {
       throw new AmazonCrawlerServiceError("Shopify trả về kết quả kiểm tra ASIN không hợp lệ.", "INVALID_ENGINE_RESPONSE");
     }
     return preflight as unknown as AmazonAsinPreflightResult;

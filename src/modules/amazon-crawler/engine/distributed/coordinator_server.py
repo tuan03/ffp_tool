@@ -342,6 +342,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     async def lifespan(_app: FastAPI):
         if create_schema:
             migrate_coordinator(engine)
+        await asyncio.to_thread(store.backfill_asin_registry)
         await asyncio.to_thread(image_service.profiles.seed_shared, project_root / "config" / "image-processing-profiles")
         stop = asyncio.Event()
 
@@ -455,6 +456,19 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if trace is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return trace
+
+    @app.post("/api/v1/asin-families/resolve")
+    def resolve_asin_families(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw_asins = payload.get("asins")
+            if not isinstance(raw_asins, list):
+                raise ValueError("asins must be an array.")
+            return store.resolve_asin_families(
+                str(payload.get("storeId") or ""),
+                [str(asin) for asin in raw_asins],
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post("/api/v1/crawl-jobs", status_code=202)
     async def create_job(payload: dict[str, Any]) -> dict[str, Any]:

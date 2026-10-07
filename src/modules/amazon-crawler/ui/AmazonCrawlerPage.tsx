@@ -8,6 +8,7 @@ import {
   type AmazonCrawlerAgentRelease,
   type AmazonCrawlerAgentReleaseLoader,
   type AmazonAsinChecker,
+  type AmazonAsinFamilyPreflight,
   type AmazonAsinPreflightMatch,
   type AmazonCrawlerClientSummary,
   type AmazonCrawlerAgentRuntimeConfig,
@@ -234,6 +235,7 @@ export function AmazonCrawlerPage({
   const [isCheckingAsins, setIsCheckingAsins] = useState(false);
   const [asinPreflightError, setAsinPreflightError] = useState<string | null>(null);
   const [asinPreflightMatches, setAsinPreflightMatches] = useState<readonly AmazonAsinPreflightMatch[]>([]);
+  const [asinPreflightFamilies, setAsinPreflightFamilies] = useState<readonly AmazonAsinFamilyPreflight[]>([]);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
@@ -1266,21 +1268,22 @@ export function AmazonCrawlerPage({
   }, [detectedProductNiche, settings.productType, currentStoreProductTypes]);
 
   async function checkBeforeCrawl(
-    sources: readonly string[], storeId: string, startJob: () => Promise<void>,
+    sources: readonly string[], storeId: string, startJob: (allowedSources: readonly string[]) => Promise<void>,
   ): Promise<void> {
     if (preflightInFlight.current) return;
     preflightInFlight.current = true;
     setIsCheckingAsins(true);
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
+    setAsinPreflightFamilies([]);
     const checkedUrlText = urlText;
     try {
-      const checked = await runAfterAmazonAsinPreflight(sources, storeId, checkAmazonAsins, async () => {
+      const checked = await runAfterAmazonAsinPreflight(sources, storeId, checkAmazonAsins, async (allowedSources) => {
         const current = getCrawlerSessionState();
         if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId) {
           throw new Error("Link hoặc store đã thay đổi. Vui lòng bấm Start để kiểm tra lại.");
         }
-        await startJob();
+        await startJob(allowedSources);
       });
       if (!checked.ready) {
         setAsinPreflightError("Shopify đang lập chỉ mục custom.amazon_asin. Vui lòng thử lại sau.");
@@ -1289,6 +1292,7 @@ export function AmazonCrawlerPage({
       if (checked.matches.length > 0) {
         setAsinPreflightMatches(checked.matches);
       }
+      setAsinPreflightFamilies(checked.families.filter((family) => family.status !== "available"));
     } catch (caught: unknown) {
       setAsinPreflightError(caught instanceof Error ? caught.message : "Không kiểm tra được ASIN trên Shopify.");
     } finally {
@@ -1300,11 +1304,11 @@ export function AmazonCrawlerPage({
   async function handleStart(): Promise<void> {
     const sources = [...urls];
     const jobSettings = { ...settings };
-    await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async () => {
+    await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (allowedSources) => {
       setSyncMessage(null);
       setCancellationJobId(null);
       setJobControlMessage(null);
-      await startCrawlerJob({ runAmazonCrawler, urls: sources, settings: jobSettings });
+      await startCrawlerJob({ runAmazonCrawler, urls: allowedSources, settings: jobSettings });
     });
   }
 
@@ -2838,10 +2842,26 @@ export function AmazonCrawlerPage({
       {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}
       {asinPreflightMatches.length > 0 ? (
         <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
-          <p className="font-semibold">Đã có {asinPreflightMatches.length} ASIN trên Shopify. Toàn bộ lô cào đã được chặn.</p>
+          <p className="font-semibold">Đã bỏ qua {asinPreflightMatches.length} family đã có trên Shopify. Các family mới vẫn được cào.</p>
           <ul className="mt-2 space-y-1">
             {asinPreflightMatches.map((match) => (
-              <li key={match.asin}>{match.asin} — <a className="underline" href={match.adminUrl} rel="noreferrer" target="_blank">{match.title}</a></li>
+              <li key={`${match.parentAsin}-${match.productId}`}>{match.asin} · family {match.parentAsin} — <a className="underline" href={match.adminUrl} rel="noreferrer" target="_blank">{match.title}</a></li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {asinPreflightFamilies.some((family) => family.status !== "existing") ? (
+        <div role="status" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
+          <p className="font-semibold">Một số family chưa thể tạo job mới:</p>
+          <ul className="mt-2 space-y-1">
+            {asinPreflightFamilies.filter((family) => family.status !== "existing").map((family) => (
+              <li key={family.parentAsin}>
+                {family.inputAsins.join(", ")} · family {family.parentAsin} — {family.status === "processing"
+                  ? "đang được xử lý"
+                  : family.status === "crawled_pending_sync"
+                    ? "đã cào, đang chờ đồng bộ Shopify"
+                    : "database báo đã sync nhưng Shopify không còn sản phẩm"}
+              </li>
             ))}
           </ul>
         </div>

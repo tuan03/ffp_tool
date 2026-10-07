@@ -31,12 +31,20 @@ export async function runAfterAmazonAsinPreflight(
   sources: readonly string[],
   storeId: string,
   checkAmazonAsins: AmazonAsinChecker,
-  startJob: () => Promise<void>,
+  startJob: (sources: readonly string[]) => Promise<void>,
 ): Promise<AmazonAsinPreflightResult> {
   const asins = normalizeAmazonAsins(sources);
   const result = await checkAmazonAsins(storeId, asins);
-  if (result.ready && result.matches.length === 0) {
-    await startJob();
+  if (result.ready && result.allowedAsins.length > 0) {
+    const allowedAsins = new Set(result.allowedAsins);
+    const selectedAsins = new Set<string>();
+    const allowedSources = sources.filter((source) => {
+      const asin = normalizeAmazonAsins([source])[0];
+      if (asin === undefined || !allowedAsins.has(asin) || selectedAsins.has(asin)) return false;
+      selectedAsins.add(asin);
+      return true;
+    });
+    if (allowedSources.length > 0) await startJob(allowedSources);
   }
   return result;
 }

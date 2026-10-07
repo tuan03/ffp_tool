@@ -57,14 +57,34 @@ export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
 
 export interface AmazonAsinPreflightMatch {
   readonly asin: string;
+  readonly parentAsin: string;
   readonly productId: string;
   readonly title: string;
   readonly adminUrl: string;
 }
 
+export type AmazonAsinFamilyStatus =
+  | "available"
+  | "existing"
+  | "processing"
+  | "crawled_pending_sync"
+  | "reconciliation_required";
+
+export interface AmazonAsinFamilyPreflight {
+  readonly parentAsin: string;
+  readonly inputAsins: readonly string[];
+  readonly memberAsins: readonly string[];
+  readonly isResolved: boolean;
+  readonly databaseStatus: string | null;
+  readonly jobId: string | null;
+  readonly status: AmazonAsinFamilyStatus;
+}
+
 export interface AmazonAsinPreflightResult {
   readonly ready: boolean;
   readonly matches: readonly AmazonAsinPreflightMatch[];
+  readonly families: readonly AmazonAsinFamilyPreflight[];
+  readonly allowedAsins: readonly string[];
 }
 
 export interface AmazonAsinChecker {

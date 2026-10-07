@@ -29,6 +29,7 @@ class CoordinatorMigrationTests(unittest.TestCase):
             config_columns = {column["name"] for column in inspect(engine).get_columns("crawler_clients")}
             self.assertTrue({"desired_agent_config", "applied_agent_config", "desired_config_version", "applied_config_version"}.issubset(config_columns))
             self.assertIn("crawler_dlq_actions", inspect(engine).get_table_names())
+            self.assertIn("amazon_asin_registry", inspect(engine).get_table_names())
             indexes = {
                 index["name"]
                 for table in ("task_attempts", "archived_task_attempts")

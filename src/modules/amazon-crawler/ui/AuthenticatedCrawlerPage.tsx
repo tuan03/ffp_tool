@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createAmazonCrawlerRunner,
+  createAmazonAsinChecker,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerCommandController,
   createAmazonCrawlerAdmissionGateController,
@@ -27,6 +28,7 @@ type AmazonCrawlerOperatorPageProps = Required<Pick<AmazonCrawlerPageProps,
   | "clearAmazonCrawlerCache"
   | "retryAmazonCrawlerSyncs"
   | "imageProcessingProfiles"
+  | "checkAmazonAsins"
 >>;
 
 export function createAmazonCrawlerOperatorPageProps(
@@ -44,6 +46,7 @@ export function createAmazonCrawlerOperatorPageProps(
     clearAmazonCrawlerCache: createAmazonCrawlerCacheClearer(options),
     retryAmazonCrawlerSyncs: createAmazonCrawlerSyncRetrier(options),
     imageProcessingProfiles: createImageProcessingProfileManager(options),
+    checkAmazonAsins: createAmazonAsinChecker(fetch, { engineUrl, fetchImplementation }),
   };
 }
 

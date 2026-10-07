@@ -11,81 +11,154 @@ const store: StoreConfig = {
   auth: { type: "static", staticToken: "test-token" },
 };
 
-test("preflight finds exact custom.amazon_asin matches and checks every distinct ASIN", async () => {
+const filterableDefinitions = {
+  asin: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "FILTERABLE" } } },
+  parentAsin: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "FILTERABLE" } } },
+};
+
+test("preflight finds a sibling ASIN through the resolved parent family", async () => {
   const searched: string[] = [];
   const client = {
     async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
-      if (query.includes("metafieldDefinition(identifier")) {
-        return { metafieldDefinition: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "FILTERABLE" } } } } as T;
-      }
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
       const search = String(variables?.query);
       searched.push(search);
-      const asin = search.match(/"([A-Z0-9]{10})"/)?.[1];
-      return { products: { nodes: asin === "B012345678"
-        ? [{ id: "gid://shopify/Product/123", title: "Existing product", metafield: { value: asin } }]
-        : [] } } as T;
+      if (search.includes("amazon_parent_asin")) {
+        return { products: { nodes: [{
+          id: "gid://shopify/Product/123", title: "Existing family", metafield: { value: "B0CHILD001" },
+          parentMetafield: { value: "B0PARENT01" },
+        }] } } as T;
+      }
+      return { products: { nodes: [] } } as T;
     },
   };
 
-  const result = await executeAmazonAsinPreflight(store, client, { asins: ["B012345678", "B098765432", "B012345678"] }, "apply");
-  assert.equal(result.ready, true);
-  assert.deepEqual(result.matches, [{
-    asin: "B012345678", productId: "gid://shopify/Product/123", title: "Existing product",
-    adminUrl: "https://example.myshopify.com/admin/products/123",
-  }]);
-  assert.equal(searched.length, 2);
-  assert.ok(searched.every((search) => search.startsWith("metafields.custom.amazon_asin:")));
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD002"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD002"], memberAsins: ["B0CHILD001", "B0CHILD002"],
+      isResolved: true, databaseStatus: "synced", jobId: "job-1",
+    }],
+  }, "apply");
+
+  assert.equal(result.matches[0]?.parentAsin, "B0PARENT01");
+  assert.equal(result.families[0]?.status, "existing");
+  assert.deepEqual(result.allowedAsins, []);
+  assert.deepEqual(searched, ['metafields.custom.amazon_parent_asin:"B0PARENT01"']);
 });
 
-test("preflight enables missing filter and blocks while Shopify indexes it", async () => {
-  let definitionReads = 0;
-  let productQueries = 0;
+test("preflight finds a legacy product through any known family alias", async () => {
+  const searched: string[] = [];
+  const client = {
+    async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      const search = String(variables?.query);
+      searched.push(search);
+      if (search === 'metafields.custom.amazon_asin:"B0CHILD001"') {
+        return { products: { nodes: [{
+          id: "gid://shopify/Product/456", title: "Legacy family", metafield: { value: "B0CHILD001" },
+          parentMetafield: null,
+        }] } } as T;
+      }
+      return { products: { nodes: [] } } as T;
+    },
+  };
+
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD002"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD002"], memberAsins: ["B0CHILD001", "B0CHILD002"],
+      isResolved: true, databaseStatus: "synced", jobId: "job-1",
+    }],
+  }, "apply");
+
+  assert.equal(result.families[0]?.status, "existing");
+  assert.deepEqual(result.allowedAsins, []);
+  assert.deepEqual(searched, [
+    'metafields.custom.amazon_parent_asin:"B0PARENT01"',
+    'metafields.custom.amazon_asin:"B0PARENT01"',
+    'metafields.custom.amazon_asin:"B0CHILD001"',
+  ]);
+});
+
+test("preflight keeps available families while blocking a crawled family pending sync", async () => {
   const client = {
     async query<T>(_store: StoreConfig, query: string): Promise<T> {
-      if (query.includes("metafieldDefinition(identifier")) {
-        definitionReads++;
-        return { metafieldDefinition: definitionReads === 1 ? null : {
-          type: { name: "single_line_text_field" },
-          capabilities: { adminFilterable: { enabled: true, status: "IN_PROGRESS" } },
-        } } as T;
-      }
-      if (query.includes("metafieldDefinitionCreate")) return { metafieldDefinitionCreate: { userErrors: [] } } as T;
-      productQueries++;
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
       return { products: { nodes: [] } } as T;
+    },
+  };
+
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001", "B0NEW00001"],
+    families: [
+      { parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"], isResolved: true, databaseStatus: "crawled", jobId: "job-1" },
+      { parentAsin: "B0NEW00001", inputAsins: ["B0NEW00001"], memberAsins: ["B0NEW00001"], isResolved: false, databaseStatus: null, jobId: null },
+    ],
+  }, "apply");
+
+  assert.equal(result.families[0]?.status, "crawled_pending_sync");
+  assert.equal(result.families[1]?.status, "available");
+  assert.deepEqual(result.allowedAsins, ["B0NEW00001"]);
+});
+
+test("preflight schedules only one input when known siblings share an available family", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      return { products: { nodes: [] } } as T;
+    },
+  };
+
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001", "B0CHILD002"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001", "B0CHILD002"],
+      memberAsins: ["B0CHILD001", "B0CHILD002"], isResolved: true, databaseStatus: null, jobId: null,
+    }],
+  }, "apply");
+
+  assert.deepEqual(result.allowedAsins, ["B0CHILD001"]);
+});
+
+test("preflight enables both ASIN definitions and blocks while Shopify indexes either definition", async () => {
+  let definitionReads = 0;
+  const mutations: string[] = [];
+  const client = {
+    async query<T>(_store: StoreConfig, query: string): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) {
+        definitionReads++;
+        return (definitionReads === 1 ? { asin: null, parentAsin: null } : {
+          asin: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "FILTERABLE" } } },
+          parentAsin: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "IN_PROGRESS" } } },
+        }) as T;
+      }
+      if (query.includes("metafieldDefinitionCreate")) {
+        mutations.push(query);
+        return { metafieldDefinitionCreate: { userErrors: [] } } as T;
+      }
+      throw new Error("Product lookup must not run while indexing.");
     },
   };
 
   assert.deepEqual(await executeAmazonAsinPreflight(store, client, { asins: ["B012345678"] }, "apply"), {
-    ready: false, matches: [],
+    ready: false, matches: [], families: [], allowedAsins: [],
   });
-  assert.equal(definitionReads, 2);
-  assert.equal(productQueries, 0);
+  assert.equal(mutations.length, 2);
 });
 
-test("preflight enables an existing definition before searching", async () => {
-  let definitionReads = 0;
-  let updated = false;
+test("preflight fails closed after two Shopify lookup failures", async () => {
+  let attempts = 0;
   const client = {
     async query<T>(_store: StoreConfig, query: string): Promise<T> {
-      if (query.includes("metafieldDefinition(identifier")) {
-        definitionReads++;
-        return { metafieldDefinition: {
-          type: { name: "single_line_text_field" },
-          capabilities: { adminFilterable: { enabled: definitionReads > 1, status: definitionReads > 1 ? "FILTERABLE" : "NOT_FILTERABLE" } },
-        } } as T;
-      }
-      if (query.includes("metafieldDefinitionUpdate")) {
-        updated = true;
-        return { metafieldDefinitionUpdate: { userErrors: [] } } as T;
-      }
-      return { products: { nodes: [] } } as T;
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      attempts++;
+      throw new Error("Shopify unavailable");
     },
   };
 
-  const result = await executeAmazonAsinPreflight(store, client, { asins: ["B012345678"] }, "apply");
-  assert.equal(updated, true);
-  assert.equal(result.ready, true);
-  assert.deepEqual(result.matches, []);
+  await assert.rejects(executeAmazonAsinPreflight(store, client, { asins: ["B012345678"] }, "apply"), /Shopify unavailable/);
+  assert.equal(attempts, 2);
 });
 
 test("preflight rejects invalid ASINs and never mutates Shopify in preview", async () => {
