@@ -566,3 +566,110 @@ test("HTTP Handler serves /mcp/ads/install.ps1 and /api/ads-intelligence/mcp/use
   assert.ok(Array.isArray(parsedUsers.users));
 });
 
+test("Ads MCP Server supports compact token projections and pagination for AI Agent context window efficiency", async () => {
+  const { client, server } = await connectInMemoryClient();
+
+  try {
+    // 1. Performance query: compact mode vs full mode
+    const fullPerf = await client.callTool({
+      name: "ads_query_performance",
+      arguments: { storeId: "chillgen", level: "ad" },
+    });
+    const compactPerf = await client.callTool({
+      name: "ads_query_performance",
+      arguments: { storeId: "chillgen", level: "ad", compact: true, limit: 2 },
+    });
+
+    const fullText = JSON.stringify(fullPerf.structuredContent);
+    const compactText = JSON.stringify(compactPerf.structuredContent);
+    assert.ok(compactText.length < fullText.length, "Compact JSON must be significantly smaller than full JSON");
+
+    const compactData = compactPerf.structuredContent as Record<string, any>;
+    assert.ok(compactData.ads.length <= 2);
+    if (compactData.ads.length === 2) {
+      assert.ok(parseFloat(compactData.ads[0].spend) >= parseFloat(compactData.ads[1].spend));
+    }
+
+    // 2. Decision cards: compact mode strips verbose observations & hypotheses
+    const fullDecisions = await client.callTool({
+      name: "ads_get_decision_cards",
+      arguments: { storeId: "chillgen", filter: "all" },
+    });
+    const compactDecisions = await client.callTool({
+      name: "ads_get_decision_cards",
+      arguments: { storeId: "chillgen", filter: "all", compact: true, limit: 2 },
+    });
+
+    const fullDecisionsText = JSON.stringify(fullDecisions.structuredContent);
+    const compactDecisionsText = JSON.stringify(compactDecisions.structuredContent);
+    assert.ok(compactDecisionsText.length < fullDecisionsText.length, "Compact decisions must save context window tokens");
+
+    const compactCard = (compactDecisions.structuredContent as any).decisionCards[0];
+    assert.ok(compactCard.id);
+    assert.ok(compactCard.decision);
+    assert.ok(compactCard.action);
+    assert.equal(compactCard.observations, undefined, "Observations array must be omitted in compact mode");
+
+    // 3. Funnel evidence: compact mode extracts triangulation triage
+    const compactFunnel = await client.callTool({
+      name: "ads_get_funnel_evidence",
+      arguments: { storeId: "chillgen", compact: true },
+    });
+    const funnelContent = compactFunnel.structuredContent as Record<string, any>;
+    assert.ok(funnelContent.triangulation);
+    assert.ok(funnelContent.triangulation.mer !== undefined);
+    assert.ok(funnelContent.triangulation.blendedCpa !== undefined);
+    assert.ok(funnelContent.status);
+
+    // 4. Creative gaps: compact mode omits bulky topCompetitorAds array
+    const compactGaps = await client.callTool({
+      name: "ads_get_competitor_creative_gaps",
+      arguments: { storeId: "chillgen", compact: true },
+    });
+    const gapsContent = compactGaps.structuredContent as Record<string, any>;
+    assert.ok(Array.isArray(gapsContent.creativeGaps));
+    assert.equal(gapsContent.topCompetitorAds, undefined, "topCompetitorAds array must be omitted in compact mode to preserve tokens");
+
+    // 5. Search competitor ads: pagination & compact fields
+    const searchCompact = await client.callTool({
+      name: "ads_search_competitor_ads",
+      arguments: { storeId: "chillgen", limit: 2, offset: 0, compact: true },
+    });
+    const searchContent = searchCompact.structuredContent as Record<string, any>;
+    assert.ok(searchContent.ads.length <= 2);
+    const firstAd = searchContent.ads[0];
+    assert.ok(firstAd.archiveId);
+    assert.ok(firstAd.pageName);
+    assert.equal(firstAd.caption, undefined, "Verbose caption should be omitted in compact mode");
+    assert.equal(firstAd.thumbnailUrl, undefined, "Thumbnail URL should be omitted in compact mode");
+
+    // 6. Generate brief with format: "markdown" only
+    const briefMarkdownOnly = await client.callTool({
+      name: "ads_generate_brief",
+      arguments: {
+        storeId: "chillgen",
+        sourceType: "decision",
+        sourceId: compactCard.id,
+        format: "markdown",
+      },
+    });
+    const briefContent = briefMarkdownOnly.structuredContent as Record<string, any>;
+    assert.equal(briefContent.success, true);
+    assert.ok(briefContent.markdown);
+    assert.equal(briefContent.brief, undefined, "Structured JSON brief must be omitted when format is markdown");
+
+    // 7. Evidence snapshot compact mode
+    const compactEvidence = await client.callTool({
+      name: "ads_get_evidence",
+      arguments: { storeId: "chillgen", evidenceType: "decisions", compact: true },
+    });
+    const evidenceSnap = compactEvidence.structuredContent as Record<string, any>;
+    assert.equal(evidenceSnap.evidenceType, "decisions");
+    assert.ok(Array.isArray(evidenceSnap.snapshot));
+    assert.ok(evidenceSnap.snapshot[0].id);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+

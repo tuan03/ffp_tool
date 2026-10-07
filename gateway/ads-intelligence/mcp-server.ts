@@ -147,6 +147,7 @@ Never leave strategic insights as passive chat advice. When proposing a new crea
    - Triangulate: Call ads_query_performance (use 7d/14d mature window for performance analysis), ads_query_ga4_report, and ads_get_shopify_summary to calculate MER, blended CPA, and click drop-off.
    - Engine Checks: Call ads_get_decision_cards and ads_get_funnel_evidence to inspect pre-computed rule violations.
    - Competitive Context: Call ads_get_competitor_creative_gaps or ads_search_competitor_ads when creative refresh or new angles are needed.
+   - Token Efficiency & Compact Mode: Use compact: true in performance queries, decision cards, and competitor search to minimize context window consumption.
 2. Communication Style & UX:
    - Respond in professional, fluent Vietnamese using standard international performance marketing terminology (CTR, CPA, ROAS, Hook Rate, Hold Rate, MER, Creative Fatigue, etc.).
    - Be quantitatively rigorous: Avoid vague statements like "nên tối ưu Landing Page". Always state specific entity IDs, dollar amounts, and percentage metrics.
@@ -292,13 +293,35 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     "Read store context, unit economics, target CPA/ROAS, guardrails, review windows, and current performance metrics. Zero secret or token exposure.",
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen, jeminise, wrydeco"),
+      compact: z.boolean().default(false).describe("If true, returns concise summary for LLM context window optimization"),
     },
     READ_ONLY,
-    async ({ storeId }) => {
+    async ({ storeId, compact }) => {
       try {
         const targetStore = storeId || defaultStore;
         const profile = loadStoreAdsProfile(targetStore);
         const summary = await service.getStoreSummary(targetStore);
+
+        if (compact) {
+          return jsonResult({
+            storeId: targetStore,
+            currency: profile.reportingCurrency,
+            economics: {
+              targetCpa: profile.business.targetCpa,
+              breakEvenRoas: profile.business.breakEvenRoas,
+              breakEvenCpa: profile.business.breakEvenCpa,
+            },
+            summary: {
+              period: `${summary.periodStart} to ${summary.periodEnd}`,
+              maturity: summary.maturity,
+              spend: summary.spend,
+              purchases: summary.purchases,
+              cpa: summary.cpa,
+              roas: summary.roas,
+              linkCtr: summary.linkCtr,
+            },
+          });
+        }
 
         // Sanitize profile to ensure zero secrets or tokens are exposed
         const sanitizedProfile = {
@@ -353,12 +376,26 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     "Check data freshness, sync health across Meta/GA4/Shopify, attribution window maturity (MATURED vs PROVISIONAL), and blocked decisions.",
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      compact: z.boolean().default(false).describe("If true, returns concise status and maturity gates"),
     },
     READ_ONLY,
-    async ({ storeId }) => {
+    async ({ storeId, compact }) => {
       try {
         const targetStore = storeId || defaultStore;
         const health = await service.getDataHealth(targetStore);
+        if (compact) {
+          return jsonResult({
+            storeId: targetStore,
+            meta: health.metaConnection.status,
+            ga4: health.ga4Connection.status,
+            competitorProvider: health.competitorProvider.status,
+            maturity: health.maturity.status,
+            blockedDecisions: health.maturity.blockedDecisions,
+            cache: health.cacheStats
+              ? { hitRatio: health.cacheStats.hitRatio, coalesced: health.cacheStats.coalesced }
+              : undefined,
+          });
+        }
         return jsonResult({
           storeId: targetStore,
           ...health,
@@ -377,9 +414,11 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
       level: z.enum(["account", "campaign", "adset", "ad"]).default("account").describe("Entity level to query"),
+      compact: z.boolean().default(false).describe("If true, returns compact projection sorted by spend for LLM token efficiency"),
+      limit: z.number().int().min(1).max(100).optional().describe("Max items to return (applies to campaign, adset, and ad levels)"),
     },
     READ_ONLY,
-    async ({ storeId, level }) => {
+    async ({ storeId, level, compact, limit }) => {
       try {
         const targetStore = storeId || defaultStore;
         if (level === "account") {
@@ -404,7 +443,7 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
 
         const hierarchy = await service.getCampaignHierarchy(targetStore);
         if (level === "campaign") {
-          const campaigns = hierarchy.map(c => ({
+          let campaigns = hierarchy.map(c => ({
             id: c.id,
             name: c.name,
             status: c.status,
@@ -414,11 +453,18 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
             cpa: c.cpa,
             adSetsCount: c.adsets.length,
           }));
+          if (compact) {
+            campaigns = campaigns
+              .sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend))
+              .slice(0, limit ?? 20);
+          } else if (limit) {
+            campaigns = campaigns.slice(0, limit);
+          }
           return jsonResult({ storeId: targetStore, level: "campaign", total: campaigns.length, campaigns });
         }
 
         if (level === "adset") {
-          const adSets = hierarchy.flatMap(c =>
+          let adSets = hierarchy.flatMap(c =>
             c.adsets.map(s => ({
               id: s.id,
               campaignId: c.id,
@@ -432,11 +478,18 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
               adsCount: s.ads.length,
             })),
           );
+          if (compact) {
+            adSets = adSets
+              .sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend))
+              .slice(0, limit ?? 25);
+          } else if (limit) {
+            adSets = adSets.slice(0, limit);
+          }
           return jsonResult({ storeId: targetStore, level: "adset", total: adSets.length, adSets });
         }
 
         // level === "ad"
-        const ads = hierarchy.flatMap(c =>
+        let ads = hierarchy.flatMap(c =>
           c.adsets.flatMap(s =>
             s.ads.map(a => ({
               id: a.id,
@@ -454,6 +507,13 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
             })),
           ),
         );
+        if (compact) {
+          ads = ads
+            .sort((a, b) => parseFloat(b.spend) - parseFloat(a.spend))
+            .slice(0, limit ?? 30);
+        } else if (limit) {
+          ads = ads.slice(0, limit);
+        }
         return jsonResult({ storeId: targetStore, level: "ad", total: ads.length, ads });
       } catch (err) {
         return errorResult(`Failed to query performance: ${err instanceof Error ? err.message : String(err)}`);
@@ -468,12 +528,33 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     "Get multi-source funnel evidence and three-way reconciliation (Meta vs GA4 vs Shopify) with drop-off analysis.",
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      compact: z.boolean().default(false).describe("If true, returns concise reconciliation numbers (MER, CPA, drop-off)"),
     },
     READ_ONLY,
-    async ({ storeId }) => {
+    async ({ storeId, compact }) => {
       try {
         const targetStore = storeId || defaultStore;
         const report = await service.getReconciliationReport(targetStore);
+        if (compact) {
+          return jsonResult({
+            storeId: report.storeId,
+            period: `${report.periodStart} to ${report.periodEnd}`,
+            triangulation: {
+              mer: report.shopify.mer,
+              blendedCpa: report.shopify.blendedCpa,
+              metaSpend: report.meta.spend,
+              metaPurchases: report.meta.purchases,
+              shopifyNetSales: report.shopify.netSales,
+              shopifyOrders: report.shopify.totalOrders,
+              purchaseDiscrepancy: report.gaps.purchaseDiscrepancy,
+              clickDropPct: report.gaps.clickDropPct,
+            },
+            status: {
+              ga4: report.ga4.status,
+              shopify: report.shopify.status,
+            },
+          });
+        }
         return jsonResult(report);
       } catch (err) {
         return errorResult(`Failed to get funnel evidence: ${err instanceof Error ? err.message : String(err)}`);
@@ -489,9 +570,11 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
       filter: z.enum(["all", "pause", "scale", "creative", "maturity"]).default("all").describe("Filter decision type"),
+      compact: z.boolean().default(false).describe("If true, returns concise executive decision cards without verbose benchmark evidence"),
+      limit: z.number().int().min(1).max(50).optional().describe("Max decision cards to return"),
     },
     READ_ONLY,
-    async ({ storeId, filter }) => {
+    async ({ storeId, filter, compact, limit }) => {
       try {
         const targetStore = storeId || defaultStore;
         let cards = await service.getDecisionCards(targetStore);
@@ -504,6 +587,28 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
           cards = cards.filter(c => c.decision === "TEST_CREATIVE");
         } else if (filter === "maturity") {
           cards = cards.filter(c => c.decision === "WAIT");
+        }
+
+        if (limit) {
+          cards = cards.slice(0, limit);
+        }
+
+        if (compact) {
+          return jsonResult({
+            storeId: targetStore,
+            filter,
+            count: cards.length,
+            decisionCards: cards.map(c => ({
+              id: c.id,
+              decision: c.decision,
+              priority: c.priority,
+              confidence: c.confidence,
+              title: c.title,
+              entity: `${c.entity.type}: ${c.entity.name} (${c.entity.id})`,
+              summary: c.summary,
+              action: c.recommendedNextStep,
+            })),
+          });
         }
 
         return jsonResult({
@@ -538,12 +643,32 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     "Analyze competitor creative intelligence, active angles, longevity (>30 days), and prioritized creative gaps with citations.",
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
+      compact: z.boolean().default(false).describe("If true, omits full ad copy and thumbnails to save context window tokens"),
     },
     READ_ONLY,
-    async ({ storeId }) => {
+    async ({ storeId, compact }) => {
       try {
         const targetStore = storeId || defaultStore;
         const intel = await service.getCompetitorIntelligence(targetStore);
+        if (compact) {
+          return jsonResult({
+            storeId: targetStore,
+            provider: intel.provider,
+            totalCompetitorAds: intel.totalAds,
+            activeGapsCount: intel.creativeGaps.length,
+            creativeGaps: intel.creativeGaps.map(g => ({
+              id: g.id,
+              patternName: g.patternName,
+              hookType: g.hookType,
+              format: g.format,
+              competitorOccurrences: g.competitorOccurrences,
+              ownStatus: g.ownStatus,
+              whyTestNext: g.whyTestNext,
+            })),
+            topWinningHooks: intel.topWinningHooks.slice(0, 5),
+            formatDistribution: intel.formatDistribution,
+          });
+        }
         return jsonResult({
           storeId: targetStore,
           provider: intel.provider,
@@ -568,9 +693,11 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
       status: z.enum(["all", "running", "completed", "draft"]).default("all").describe("Filter experiment status"),
+      compact: z.boolean().default(false).describe("If true, returns high-level experiment ledger summary"),
+      limit: z.number().int().min(1).max(50).optional().describe("Max experiments to return"),
     },
     READ_ONLY,
-    async ({ storeId, status }) => {
+    async ({ storeId, status, compact, limit }) => {
       try {
         const targetStore = storeId || defaultStore;
         let experiments = await service.getExperiments(targetStore);
@@ -581,6 +708,28 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
           experiments = experiments.filter(e => e.status === "COMPLETED");
         } else if (status === "draft") {
           experiments = experiments.filter(e => e.status === "DRAFT" || e.status === "APPROVED");
+        }
+
+        if (limit) {
+          experiments = experiments.slice(0, limit);
+        }
+
+        if (compact) {
+          return jsonResult({
+            storeId: targetStore,
+            statusFilter: status,
+            count: experiments.length,
+            experiments: experiments.map(e => ({
+              id: e.id,
+              title: e.title,
+              status: e.status,
+              hypothesis: e.hypothesis,
+              primaryMetric: e.measurement.primaryMetric,
+              controlTarget: e.design.control.entityName,
+              variantsCount: e.design.variants.length,
+              outcome: e.learning?.verdict,
+            })),
+          });
         }
 
         return jsonResult({
@@ -604,9 +753,10 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
       sourceType: z.enum(["decision", "gap"]).describe("Source: 'decision' or 'gap'"),
       sourceId: z.string().min(1).describe("ID of the decision card or creative gap"),
+      format: z.enum(["json", "markdown", "both"]).default("both").describe("Format of brief returned ('json', 'markdown', or 'both')"),
     },
     SAFE_WRITE,
-    async ({ storeId, sourceType, sourceId }) => {
+    async ({ storeId, sourceType, sourceId, format }) => {
       try {
         const targetStore = storeId || defaultStore;
         let brief;
@@ -616,15 +766,16 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
           brief = await service.createBriefFromGap(targetStore, sourceId);
         }
 
-        const markdown = formatBriefMarkdown(brief);
+        const markdown = format !== "json" ? formatBriefMarkdown(brief) : undefined;
+        const briefPayload = format !== "markdown" ? brief : undefined;
 
         return jsonResult({
           success: true,
           briefId: brief.briefId,
           title: brief.title,
           status: brief.status,
-          brief,
-          markdown,
+          ...(briefPayload ? { brief: briefPayload } : {}),
+          ...(markdown ? { markdown } : {}),
         });
       } catch (err) {
         return errorResult(`Failed to generate brief: ${err instanceof Error ? err.message : String(err)}`);
@@ -676,26 +827,76 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     {
       storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen"),
       evidenceType: z.enum(["reconciliation", "health", "decisions", "ai_strategic_report"]).default("reconciliation").describe("Type of evidence snapshot"),
+      compact: z.boolean().default(false).describe("If true, returns compact summary of the snapshot"),
     },
     READ_ONLY,
-    async ({ storeId, evidenceType }) => {
+    async ({ storeId, evidenceType, compact }) => {
       try {
         const targetStore = storeId || defaultStore;
         if (evidenceType === "reconciliation") {
           const report = await service.getReconciliationReport(targetStore);
-          return jsonResult({ storeId: targetStore, evidenceType, snapshot: report });
+          return jsonResult({
+            storeId: targetStore,
+            evidenceType,
+            snapshot: compact
+              ? {
+                  period: `${report.periodStart} to ${report.periodEnd}`,
+                  mer: report.shopify.mer,
+                  blendedCpa: report.shopify.blendedCpa,
+                  metaSpend: report.meta.spend,
+                  shopifySales: report.shopify.netSales,
+                  discrepancy: report.gaps.purchaseDiscrepancy,
+                }
+              : report,
+          });
         }
         if (evidenceType === "health") {
           const health = await service.getDataHealth(targetStore);
-          return jsonResult({ storeId: targetStore, evidenceType, snapshot: health });
+          return jsonResult({
+            storeId: targetStore,
+            evidenceType,
+            snapshot: compact
+              ? {
+                  meta: health.metaConnection.status,
+                  ga4: health.ga4Connection.status,
+                  maturity: health.maturity.status,
+                  blocked: health.maturity.blockedDecisions,
+                }
+              : health,
+          });
         }
         if (evidenceType === "decisions") {
           const cards = await service.getDecisionCards(targetStore);
-          return jsonResult({ storeId: targetStore, evidenceType, snapshot: cards });
+          return jsonResult({
+            storeId: targetStore,
+            evidenceType,
+            snapshot: compact
+              ? cards.map(c => ({
+                  id: c.id,
+                  decision: c.decision,
+                  priority: c.priority,
+                  title: c.title,
+                  entity: `${c.entity.type}: ${c.entity.name}`,
+                }))
+              : cards,
+          });
         }
         // ai_strategic_report
         const report = await service.getAiStrategicReport(targetStore);
-        return jsonResult({ storeId: targetStore, evidenceType, snapshot: report });
+        return jsonResult({
+          storeId: targetStore,
+          evidenceType,
+          snapshot: compact
+            ? {
+                storeId: report.storeId,
+                generatedAt: report.generatedAt,
+                modelUsed: report.modelUsed,
+                executiveSummary: report.executiveSummary,
+                rootCausesCount: report.rootCauseHypotheses.length,
+                briefsCount: report.creativeBriefs.length,
+              }
+            : report,
+        });
       } catch (err) {
         return errorResult(`Failed to get evidence snapshot: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -713,13 +914,30 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
       pageId: z.string().optional().describe("Filter by competitor Page ID or brand name"),
       mediaType: z.enum(["all", "video", "image", "carousel"]).default("all").describe("Media format filter"),
       limit: z.number().int().min(1).max(50).default(10).describe("Max items to return"),
+      offset: z.number().int().min(0).default(0).describe("Pagination offset"),
+      compact: z.boolean().default(false).describe("If true, omits long caption text and thumbnail URLs to reduce token usage"),
     },
     READ_ONLY,
-    async ({ storeId, query, pageId, mediaType, limit }) => {
+    async ({ storeId, query, pageId, mediaType, limit, offset, compact }) => {
       try {
         const targetStore = storeId || defaultStore;
-        const results = await service.searchCompetitorAds(targetStore, { query, pageId, mediaType, limit });
-        return jsonResult({ storeId: targetStore, totalFound: results.length, ads: results });
+        const rawResults = await service.searchCompetitorAds(targetStore, { query, pageId, mediaType, limit: (limit ?? 10) + (offset ?? 0) });
+        const results = (offset ?? 0) > 0 ? rawResults.slice(offset) : rawResults;
+        const pageResults = results.slice(0, limit ?? 10);
+
+        if (compact) {
+          const compactAds = pageResults.map(a => ({
+            archiveId: a.archiveId,
+            pageName: a.pageName,
+            headline: a.headline,
+            mediaType: a.mediaType,
+            status: a.status,
+            firstSeen: a.firstSeen,
+          }));
+          return jsonResult({ storeId: targetStore, totalFound: rawResults.length, offset: offset ?? 0, limit: limit ?? 10, ads: compactAds });
+        }
+
+        return jsonResult({ storeId: targetStore, totalFound: rawResults.length, offset: offset ?? 0, limit: limit ?? 10, ads: pageResults });
       } catch (err) {
         return errorResult(`Failed to search competitor ads: ${err instanceof Error ? err.message : String(err)}`);
       }
