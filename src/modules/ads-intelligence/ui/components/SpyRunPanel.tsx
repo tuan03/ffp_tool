@@ -37,23 +37,42 @@ export function SpyRunPanel({ client, storeId }: { readonly client: AdsIntellige
     return () => { disposed = true; };
   }, [client, storeId, reload]);
 
+  const isRunning = job?.status === "running";
+
   useEffect(() => {
     if (!client.getSpyJob) return;
     let disposed = false;
     let fetching = false;
-    const timer = window.setInterval(() => {
+    const pollInterval = isRunning ? 3000 : 30000;
+    const poll = () => {
       if (fetching) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       fetching = true;
-      void client.getSpyJob?.(storeId).then(snapshot => {
+      void client.getSpyJob?.(storeId).then((snapshot) => {
         if (!disposed && snapshot.job) {
           setJob(snapshot.job);
         }
       }).finally(() => { fetching = false; });
-    }, 3000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, [client, storeId]);
+    };
 
-  const isRunning = job?.status === "running";
+    const handleVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        poll();
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+    const timer = window.setInterval(poll, pollInterval);
+    return () => {
+      disposed = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+      window.clearInterval(timer);
+    };
+  }, [client, storeId, isRunning]);
   return <section aria-label="Chạy nghiên cứu đối thủ" className="space-y-4 rounded-2xl border border-indigo-900/60 bg-slate-950/70 p-4 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-slate-100">Nghiên cứu đối thủ</h3><p className="text-xs text-slate-400">Store: <strong className="text-cyan-300">{storeId}</strong> · Tìm tối đa 10 đối thủ đúng sản phẩm, kiểm tra quảng cáo và lưu lên thư viện.</p></div><span className="rounded border border-purple-800 px-2 py-1 text-xs text-purple-300">Skill spy-competitors · MCP ffp-ads</span></div>
     <div className="rounded-xl border border-indigo-900/30 bg-slate-950/80 p-3.5 space-y-2.5 text-xs">

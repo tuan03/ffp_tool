@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type {
   AdsGatewayStore,
@@ -42,6 +42,51 @@ import { SystemHealthTab } from "./tabs/SystemHealthTab";
 
 export type AdsTabId = "decisions" | "hierarchy" | "funnel" | "competitors" | "experiments" | "health";
 
+export interface StoreDataRecord {
+  shopifySummary: AdsShopifySummary | null;
+  summary: AdsStoreSummary | null;
+  campaigns: readonly AdsHierarchyCampaign[];
+  health: AdsDataHealth | null;
+  reconciliation: AdsReconciliationReport | null;
+  decisions: readonly DecisionCard[];
+  aiReport: AiStrategicReport | null;
+  competitorReport: CompetitorIntelligenceReport | null;
+  briefs: readonly CreativeBrief[];
+  experiments: readonly AdsExperiment[];
+  sourceErrors: Record<string, string>;
+  loadedSources: Set<string>;
+  cachedAt: number;
+}
+
+function createEmptyStoreRecord(): StoreDataRecord {
+  return {
+    shopifySummary: null,
+    summary: null,
+    campaigns: [],
+    health: null,
+    reconciliation: null,
+    decisions: [],
+    aiReport: null,
+    competitorReport: null,
+    briefs: [],
+    experiments: [],
+    sourceErrors: {},
+    loadedSources: new Set<string>(),
+    cachedAt: 0,
+  };
+}
+
+const CORE_SOURCES = ["Shopify", "Meta", "Kết nối", "Đối soát"] as const;
+
+const TAB_SOURCES: Record<AdsTabId, readonly string[]> = {
+  decisions: ["Quyết định", "AI"],
+  hierarchy: ["Chiến dịch"],
+  funnel: [],
+  competitors: ["Đối thủ"],
+  experiments: ["Briefs", "Thử nghiệm"],
+  health: [],
+};
+
 export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligenceClient }): React.JSX.Element {
   const [params] = useSearchParams();
   const [stores, setStores] = useState<readonly AdsGatewayStore[]>([]);
@@ -49,17 +94,44 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let active = true;
+    let lastRefreshedAt = Date.now();
     const refresh = async () => {
       try {
         const available = client.getStores ? await client.getStores() : [];
-        if (active) { setStores(available); setError(null); }
-      } catch { if (active) setError("Không tải được danh sách store từ Gateway. Kiểm tra kết nối Gateway."); }
-      finally { if (active) setLoaded(true); }
+        if (active) {
+          setStores(available);
+          setError(null);
+          lastRefreshedAt = Date.now();
+        }
+      } catch {
+        if (active) setError("Không tải được danh sách store từ Gateway. Kiểm tra kết nối Gateway.");
+      } finally {
+        if (active) setLoaded(true);
+      }
     };
     void refresh();
+    const handleVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible" && Date.now() - lastRefreshedAt >= 30000) {
+        void refresh();
+      }
+    };
     window.addEventListener("focus", refresh);
-    const timer = window.setInterval(refresh, 30000);
-    return () => { active = false; window.removeEventListener("focus", refresh); window.clearInterval(timer); };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+    const timer = window.setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void refresh();
+      }
+    }, 30000);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+      window.clearInterval(timer);
+    };
   }, [client]);
   if (error) return <p role="alert" className="p-6 text-amber-300">{error}</p>;
   if (!loaded) return <p role="status" className="p-6">Đang đọc danh sách store từ Gateway…</p>;
@@ -67,15 +139,20 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
   const requested = params.get("storeId") || readActiveStoreId(typeof window !== "undefined" ? window.localStorage : undefined);
   const selected = stores.find(store => store.storeId === requested) ?? stores[0];
   if (!selected) return <p>Chưa chọn store.</p>;
-  return <AdsIntelligenceStorePage key={selected.storeId + selected.shopDomain} client={client} currentStoreId={selected.storeId} stores={stores} />;
+  return <AdsIntelligenceStorePage client={client} currentStoreId={selected.storeId} stores={stores} />;
 }
 
 function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly client: AdsIntelligenceClient; readonly currentStoreId: string; readonly stores: readonly AdsGatewayStore[] }): React.JSX.Element {
   const [, setParams] = useSearchParams();
   const generation = useRef(0);
+  const storeCache = useRef<Map<string, StoreDataRecord>>(new Map());
+  const activeStoreIdRef = useRef(currentStoreId);
+  activeStoreIdRef.current = currentStoreId;
+
   const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<AdsTabId>("decisions");
   const [loading, setLoading] = useState(true);
+  const [isRevalidating, setIsRevalidating] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [actionNotification, setActionNotification] = useState<string | null>(null);
@@ -104,70 +181,302 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
   const [outcomeExperiment, setOutcomeExperiment] = useState<AdsExperiment | null>(null);
   const [savingOutcome, setSavingOutcome] = useState(false);
 
+  // Clear modal and drawer states when store changes
+  useEffect(() => {
+    setSelectedDrawerCard(null);
+    setGuardedProposal(null);
+    setExecutionResult(null);
+    setOutcomeExperiment(null);
+  }, [currentStoreId]);
+
   // Sync store change to URL and global store persistence
   const handleStoreChange = (newStoreId: string) => {
     persistBrowserActiveStoreId(newStoreId);
     setParams({ storeId: newStoreId });
   };
 
-  // Fetch all store data
-  const loadData = async (storeId: string) => {
-    const requestId = ++generation.current;
-    setLoading(true);
-    setSourceErrors({});
-    setShopifySummary(null);
-    setSummary(null); setCampaigns([]); setHealth(null); setReconciliation(null);
-    setDecisions([]); setAiReport(null); setCompetitorReport(null); setBriefs([]); setExperiments([]);
-    if (client.getLocalAiRunners) {
-      void client.getLocalAiRunners().then((res) => {
-        if (res?.runners) setLocalAiRunners(res.runners);
-      }).catch(() => {});
-    }
-    async function loadSource<T>(name: string, task: () => Promise<T>, update: (value: T) => void): Promise<void> {
-      try {
-        const value = await task();
-        if (generation.current === requestId) update(value);
-      } catch (error) {
-        if (generation.current === requestId) setSourceErrors(previous => ({ ...previous, [name]: error instanceof Error ? error.message : "Không lấy được dữ liệu." }));
+  const getSourceFetcher = useCallback(
+    (name: string, storeId: string): (() => Promise<unknown>) | null => {
+      switch (name) {
+        case "Shopify":
+          return () => (client.getShopifySummary ? client.getShopifySummary(storeId) : Promise.resolve(null));
+        case "Meta":
+          return () => client.getStoreSummary(storeId);
+        case "Kết nối":
+          return () => client.getDataHealth(storeId);
+        case "Đối soát":
+          return () => (client.getReconciliationReport ? client.getReconciliationReport(storeId) : Promise.resolve(null));
+        case "Quyết định":
+          return () => (client.getDecisionCards ? client.getDecisionCards(storeId) : Promise.resolve([]));
+        case "AI":
+          return () => (client.getAiStrategicReport ? client.getAiStrategicReport(storeId) : Promise.resolve(null));
+        case "Chiến dịch":
+          return () => client.getCampaignHierarchy(storeId);
+        case "Đối thủ":
+          return () => (client.getCompetitorIntelligence ? client.getCompetitorIntelligence(storeId) : Promise.resolve(null));
+        case "Briefs":
+          return () => (client.getBriefs ? client.getBriefs(storeId) : Promise.resolve([]));
+        case "Thử nghiệm":
+          return () => (client.getExperiments ? client.getExperiments(storeId) : Promise.resolve([]));
+        default:
+          return null;
       }
+    },
+    [client]
+  );
+
+  const applySourceValue = useCallback((name: string, val: unknown) => {
+    switch (name) {
+      case "Shopify":
+        setShopifySummary(val as AdsShopifySummary | null);
+        break;
+      case "Meta":
+        setSummary(val as AdsStoreSummary | null);
+        break;
+      case "Kết nối":
+        setHealth(val as AdsDataHealth | null);
+        break;
+      case "Đối soát":
+        setReconciliation(val as AdsReconciliationReport | null);
+        break;
+      case "Quyết định":
+        setDecisions(val as readonly DecisionCard[]);
+        break;
+      case "AI":
+        setAiReport(val as AiStrategicReport | null);
+        break;
+      case "Chiến dịch":
+        setCampaigns(val as readonly AdsHierarchyCampaign[]);
+        break;
+      case "Đối thủ":
+        setCompetitorReport(val as CompetitorIntelligenceReport | null);
+        break;
+      case "Briefs":
+        setBriefs(val as readonly CreativeBrief[]);
+        break;
+      case "Thử nghiệm":
+        setExperiments(val as readonly AdsExperiment[]);
+        break;
     }
-    await Promise.all([
-      loadSource("Shopify", () => client.getShopifySummary ? client.getShopifySummary(storeId) : Promise.resolve(null), setShopifySummary),
-      loadSource("Meta", () => client.getStoreSummary(storeId), setSummary),
-      loadSource("Chiến dịch", () => client.getCampaignHierarchy(storeId), setCampaigns),
-      loadSource("Kết nối", () => client.getDataHealth(storeId), setHealth),
-      loadSource("Đối soát", () => client.getReconciliationReport ? client.getReconciliationReport(storeId) : Promise.resolve(null), setReconciliation),
-      loadSource("Quyết định", () => client.getDecisionCards ? client.getDecisionCards(storeId) : Promise.resolve([]), setDecisions),
-      loadSource("AI", () => client.getAiStrategicReport ? client.getAiStrategicReport(storeId) : Promise.resolve(null), setAiReport),
-      loadSource("Đối thủ", () => client.getCompetitorIntelligence ? client.getCompetitorIntelligence(storeId) : Promise.resolve(null), setCompetitorReport),
-      loadSource("Briefs", () => client.getBriefs ? client.getBriefs(storeId) : Promise.resolve([]), setBriefs),
-      loadSource("Thử nghiệm", () => client.getExperiments ? client.getExperiments(storeId) : Promise.resolve([]), setExperiments),
-    ]);
-    if (generation.current === requestId) setLoading(false);
-  };
+  }, []);
+
+  const saveSourceToCache = useCallback((storeId: string, name: string, val: unknown) => {
+    let record = storeCache.current.get(storeId);
+    if (!record) {
+      record = createEmptyStoreRecord();
+      storeCache.current.set(storeId, record);
+    }
+    switch (name) {
+      case "Shopify":
+        record.shopifySummary = val as AdsShopifySummary | null;
+        break;
+      case "Meta":
+        record.summary = val as AdsStoreSummary | null;
+        break;
+      case "Kết nối":
+        record.health = val as AdsDataHealth | null;
+        break;
+      case "Đối soát":
+        record.reconciliation = val as AdsReconciliationReport | null;
+        break;
+      case "Quyết định":
+        record.decisions = val as readonly DecisionCard[];
+        break;
+      case "AI":
+        record.aiReport = val as AiStrategicReport | null;
+        break;
+      case "Chiến dịch":
+        record.campaigns = val as readonly AdsHierarchyCampaign[];
+        break;
+      case "Đối thủ":
+        record.competitorReport = val as CompetitorIntelligenceReport | null;
+        break;
+      case "Briefs":
+        record.briefs = val as readonly CreativeBrief[];
+        break;
+      case "Thử nghiệm":
+        record.experiments = val as readonly AdsExperiment[];
+        break;
+    }
+    record.loadedSources.add(name);
+    delete record.sourceErrors[name];
+    record.cachedAt = Date.now();
+  }, []);
+
+  const loadSource = useCallback(
+    async (name: string, storeId: string, requestId: number): Promise<void> => {
+      const fetcher = getSourceFetcher(name, storeId);
+      if (!fetcher) return;
+      try {
+        const val = await fetcher();
+        if (generation.current === requestId && activeStoreIdRef.current === storeId) {
+          applySourceValue(name, val);
+          saveSourceToCache(storeId, name, val);
+          setSourceErrors((prev) => {
+            if (!prev[name]) return prev;
+            const next = { ...prev };
+            delete next[name];
+            return next;
+          });
+        }
+      } catch (err) {
+        if (generation.current === requestId && activeStoreIdRef.current === storeId) {
+          const errMsg = err instanceof Error ? err.message : "Không lấy được dữ liệu.";
+          setSourceErrors((prev) => ({ ...prev, [name]: errMsg }));
+          const record = storeCache.current.get(storeId);
+          if (record) {
+            record.sourceErrors[name] = errMsg;
+          }
+        }
+      }
+    },
+    [getSourceFetcher, applySourceValue, saveSourceToCache]
+  );
+
+  // Fetch store data with SWR and lazy tab loading
+  const loadData = useCallback(
+    async (storeId: string, options?: { force?: boolean }) => {
+      const requestId = ++generation.current;
+      if (options?.force) {
+        storeCache.current.delete(storeId);
+      }
+
+      const cached = storeCache.current.get(storeId);
+      if (cached && !options?.force) {
+        // Hydrate from cache immediately (SWR: zero layout flash)
+        setShopifySummary(cached.shopifySummary);
+        setSummary(cached.summary);
+        setCampaigns(cached.campaigns);
+        setHealth(cached.health);
+        setReconciliation(cached.reconciliation);
+        setDecisions(cached.decisions);
+        setAiReport(cached.aiReport);
+        setCompetitorReport(cached.competitorReport);
+        setBriefs(cached.briefs);
+        setExperiments(cached.experiments);
+        setSourceErrors(cached.sourceErrors);
+        setLoading(false);
+        setIsRevalidating(true);
+      } else {
+        setLoading(true);
+        setIsRevalidating(false);
+        setSourceErrors({});
+        setShopifySummary(null);
+        setSummary(null);
+        setCampaigns([]);
+        setHealth(null);
+        setReconciliation(null);
+        setDecisions([]);
+        setAiReport(null);
+        setCompetitorReport(null);
+        setBriefs([]);
+        setExperiments([]);
+      }
+
+      if (client.getLocalAiRunners) {
+        void client
+          .getLocalAiRunners()
+          .then((res) => {
+            if (res?.runners) setLocalAiRunners(res.runners);
+          })
+          .catch(() => {});
+      }
+
+      // Determine critical sources: CORE + currently active tab sources
+      const tabSources = TAB_SOURCES[activeTab] || [];
+      const sourcesToLoad = Array.from(new Set<string>([...CORE_SOURCES, ...tabSources]));
+
+      await Promise.all(sourcesToLoad.map((name) => loadSource(name, storeId, requestId)));
+
+      if (generation.current === requestId && activeStoreIdRef.current === storeId) {
+        setLoading(false);
+        setIsRevalidating(false);
+
+        // Schedule idle prefetch for remaining tab sources and badge counts
+        const remainingSources = ["Chiến dịch", "Briefs", "Thử nghiệm", "Đối thủ"].filter(
+          (src) => !sourcesToLoad.includes(src)
+        );
+        if (remainingSources.length > 0) {
+          window.setTimeout(() => {
+            if (generation.current === requestId && activeStoreIdRef.current === storeId) {
+              const currentRecord = storeCache.current.get(storeId);
+              const unvisited = remainingSources.filter((src) => !currentRecord?.loadedSources.has(src));
+              if (unvisited.length > 0) {
+                void Promise.all(unvisited.map((src) => loadSource(src, storeId, requestId)));
+              }
+            }
+          }, 1500);
+        }
+      }
+    },
+    [client, activeTab, loadSource]
+  );
 
   useEffect(() => {
     void loadData(currentStoreId);
-    return () => { generation.current++; };
-  }, [currentStoreId]);
+    return () => {
+      generation.current++;
+    };
+  }, [currentStoreId, loadData]);
 
+  // Load missing tab sources on-demand when active tab switches
+  useEffect(() => {
+    const requiredSources = TAB_SOURCES[activeTab] || [];
+    if (requiredSources.length === 0) return;
+
+    const record = storeCache.current.get(currentStoreId);
+    const missing = requiredSources.filter((src) => !record?.loadedSources.has(src));
+    if (missing.length === 0) return;
+
+    const requestId = generation.current;
+    void Promise.all(missing.map((src) => loadSource(src, currentStoreId, requestId)));
+  }, [activeTab, currentStoreId, loadSource]);
+
+  // Page visibility-aware Competitors polling
   useEffect(() => {
     if (activeTab !== "competitors" || !client.getCompetitorIntelligence) return;
     let isDisposed = false;
     let isFetching = false;
+    let lastFetchedAt = Date.now();
     const refreshAds = async () => {
       if (isFetching || !client.getCompetitorIntelligence) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       isFetching = true;
       try {
         const report = await client.getCompetitorIntelligence(currentStoreId);
-        if (!isDisposed && report.storeId === currentStoreId) setCompetitorReport(report);
-      } catch { /* Preserve the last successfully loaded report; source errors are shown by loadData. */ }
-      finally { isFetching = false; }
+        if (!isDisposed && report.storeId === currentStoreId) {
+          lastFetchedAt = Date.now();
+          setCompetitorReport(report);
+          saveSourceToCache(currentStoreId, "Đối thủ", report);
+        }
+      } catch {
+        /* Preserve the last successfully loaded report; source errors are shown by loadData. */
+      } finally {
+        isFetching = false;
+      }
     };
     void refreshAds();
-    const timer = window.setInterval(() => { void refreshAds(); }, 15000);
-    return () => { isDisposed = true; window.clearInterval(timer); };
-  }, [activeTab, client, currentStoreId]);
+    const handleVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible" && Date.now() - lastFetchedAt >= 15000) {
+        void refreshAds();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+    const timer = window.setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void refreshAds();
+      }
+    }, 15000);
+    return () => {
+      isDisposed = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+      window.clearInterval(timer);
+    };
+  }, [activeTab, client, currentStoreId, saveSourceToCache]);
 
   // Actions
   const handleSync = async () => {
@@ -178,10 +487,10 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
         const res = await client.syncNow(currentStoreId);
         setSyncMessage(res.message || "Đã đồng bộ dữ liệu mới nhất!");
       }
-      await loadData(currentStoreId);
+      await loadData(currentStoreId, { force: true });
     } catch (error) {
       setSyncMessage(error instanceof Error ? error.message : "Đồng bộ thất bại.");
-      await loadData(currentStoreId);
+      await loadData(currentStoreId, { force: true });
     } finally {
       setSyncing(false);
       setTimeout(() => setSyncMessage(null), 4000);
@@ -286,7 +595,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
       setExecutionResult(res);
       if (res.success) {
         setActionNotification(`🛡️ Thực thi Guarded Write thành công! (Mã kiểm toán: ${res.auditLogId})`);
-        await loadData(currentStoreId);
+        await loadData(currentStoreId, { force: true });
       }
     } finally {
       setExecutingGuardedWrite(false);
@@ -377,7 +686,8 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
           <ul className="mt-2 space-y-1">{Object.entries(sourceErrors).map(([source, message]) => <li key={source}>{source}: {message}</li>)}</ul>
         </div>
       )}
-      {loading && <p role="status" className="text-xs text-slate-400">Đang tải từng nguồn dữ liệu…</p>}
+      {loading && <p role="status" className="text-xs text-slate-400">Đang tải dữ liệu…</p>}
+      {!loading && isRevalidating && <p role="status" className="text-[11px] text-cyan-400/80 animate-pulse">⚡ Đang làm mới dữ liệu nền…</p>}
       {summary && <p className="text-xs text-slate-400">Kỳ Meta: {summary.periodStart} → {summary.periodEnd} · {summary.timezone} · {summary.currency}</p>}
       {summary?.warnings.map(warning => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
       {reconciliation && <p className="text-xs text-slate-400">{reconciliation.shopify.source}</p>}
@@ -390,10 +700,10 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
       <div className="flex border-b border-slate-800 gap-2 overflow-x-auto whitespace-nowrap">
         {[
           { id: "decisions", label: "🎯 Quyết định & Đề xuất", badge: loading || sourceErrors["Quyết định"] ? null : decisions.length },
-          { id: "hierarchy", label: "📊 Chiến dịch & Ads", badge: loading || sourceErrors["Chiến dịch"] ? null : campaigns.length },
+          { id: "hierarchy", label: "📊 Chiến dịch & Ads", badge: loading || sourceErrors["Chiến dịch"] ? null : (campaigns.length || null) },
           { id: "funnel", label: "🔄 Phễu & Đối soát", badge: null },
           { id: "competitors", label: "🕵️ Spy Đối thủ", badge: null },
-          { id: "experiments", label: "🧪 Briefs & Thử nghiệm", badge: loading || sourceErrors["Briefs"] ? null : briefs.length },
+          { id: "experiments", label: "🧪 Briefs & Thử nghiệm", badge: loading || sourceErrors["Briefs"] ? null : (briefs.length || null) },
           { id: "health", label: "🛡️ Kết nối & Hệ thống", badge: null },
         ].map((tab) => (
           <button
@@ -458,7 +768,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
           )}
 
           {activeTab === "health" && (
-            <SystemHealthTab health={health} shopifySummary={shopifySummary} onSync={() => { void loadData(currentStoreId); }} />
+            <SystemHealthTab health={health} shopifySummary={shopifySummary} onSync={() => { void loadData(currentStoreId, { force: true }); }} />
           )}
         </div>
       }
@@ -495,7 +805,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
           onClose={() => setShowProfileModal(false)}
           onSaved={(savedStoreId) => {
             setActionNotification(`✅ Đã lưu cấu hình Ads cho store ${savedStoreId} thành công! Đang kết nối dữ liệu trực tiếp...`);
-            void loadData(savedStoreId);
+            void loadData(savedStoreId, { force: true });
           }}
         />
       )}
