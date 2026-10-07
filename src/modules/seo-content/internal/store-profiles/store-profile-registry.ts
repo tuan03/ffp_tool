@@ -16,9 +16,28 @@ const STORE_DOMAIN_ALIASES: Readonly<Record<string, readonly string[]>> = Object
 });
 
 export interface StoreProfileQuery {
+  readonly profileId?: string;
   readonly storeId?: string;
   readonly siteDomain?: string;
   readonly url?: string;
+}
+
+export interface SeoStoreProfileSummary {
+  readonly profileId: string;
+  readonly profileVersion: string;
+  readonly storeName: string;
+  readonly niche: string;
+}
+
+export function listSeoStoreProfiles(
+  registry: readonly SeoStoreProfile[] = STORE_PROFILES_REGISTRY,
+): readonly SeoStoreProfileSummary[] {
+  return registry.map((profile) => Object.freeze({
+    profileId: profile.profileId,
+    profileVersion: profile.profileVersion,
+    storeName: profile.storeName,
+    niche: profile.niche,
+  }));
 }
 
 export function normalizeDomain(rawDomainOrUrl?: string): string {
@@ -70,8 +89,14 @@ export function resolveStoreProfile(
   query: StoreProfileQuery,
   registry: readonly SeoStoreProfile[] = STORE_PROFILES_REGISTRY,
 ): SeoStoreProfile | undefined {
+  const profileId = query.profileId?.trim().toLowerCase();
   const storeId = query.storeId?.trim().toLowerCase();
   const normalizedDomain = normalizeDomain(query.siteDomain || query.url);
+
+  if (profileId) {
+    const profile = registry.find((candidate) => candidate.profileId.toLowerCase() === profileId);
+    return profile ? scopeProfileToExecutionStore(profile, query.storeId) : undefined;
+  }
 
   for (const profile of registry) {
     if (

@@ -5,6 +5,7 @@ import {
   CAPOZEN_RUG_PROFILE,
   JEMINISE_BEDDING_PROFILE,
   PREAUREUM_HANDBAG_PROFILE,
+  listSeoStoreProfiles,
   normalizeDomain,
   resolveStoreProfile,
 } from "../internal/store-profiles";
@@ -43,6 +44,17 @@ test("registry resolves the Preaureum handbag profile by store ID and Shopify do
   );
   assert.equal(PREAUREUM_HANDBAG_PROFILE.niche, "Personalized Handbags & Wallets");
   assert.equal(PREAUREUM_HANDBAG_PROFILE.catalogPolicies, undefined);
+});
+
+test("registry exposes safe profile choices and scopes an explicit profile to any runtime store", () => {
+  assert.deepEqual(
+    listSeoStoreProfiles().map(({ profileId }) => profileId),
+    ["capozen-rugs", "jeminise-bedding", "preaureum-handbags"],
+  );
+  const profile = resolveStoreProfile({ profileId: "preaureum-handbags", storeId: "future-store" });
+  assert.equal(profile?.profileId, "preaureum-handbags");
+  assert.equal(profile?.storeId, "future-store");
+  assert.equal(resolveStoreProfile({ profileId: "missing-profile", storeId: "future-store" }), undefined);
 });
 
 test("Jeminise V2 profile is versioned and declares three structured offerings", () => {

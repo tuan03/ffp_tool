@@ -24,6 +24,7 @@ import {
   handleStoreUpdateHttpRequest,
   handleStoreDeleteHttpRequest,
   handleStoreGetHttpRequest,
+  handleStoreSeoProfilesHttpRequest,
 } from "./store-control-handler";
 
 export interface ShopifyGatewayDevPluginOptions {
@@ -100,10 +101,11 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         const isStoreUpdate = req.url && (req.url === "/api/stores/update" || req.url.startsWith("/api/stores/update?"));
         const isStoreDelete = req.url && (req.url === "/api/stores/delete" || req.url.startsWith("/api/stores/delete?"));
         const isStoreGet = req.url && (req.url === "/api/stores/get" || req.url.startsWith("/api/stores/get?"));
+        const isStoreSeoProfiles = req.url && (req.url === "/api/stores/seo-profiles" || req.url.startsWith("/api/stores/seo-profiles?"));
         const isProxyCheck = req.url && (req.url === "/api/proxy/check" || req.url.startsWith("/api/proxy/check?"));
         const isSeoPerformance = req.url && (req.url === "/api/seo-performance" || req.url.startsWith("/api/seo-performance/"));
 
-        const isKnownApi = req.url?.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isProxyCheck || isSeoPerformance;
+        const isKnownApi = req.url?.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isAmazonReviews || isPinterestPodHandover || isPinterestPodDirectSync || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet || isStoreSeoProfiles || isProxyCheck || isSeoPerformance;
 
         const isOauthCallback = req.url && req.url.startsWith("/api/seo-performance/oauth/callback");
 
@@ -244,6 +246,8 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
           await handleStoreDeleteHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
         } else if (isStoreGet) {
           await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+        } else if (isStoreSeoProfiles) {
+          await handleStoreSeoProfilesHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isProxyCheck) {
           await handleProxyCheckHttpRequest(req, res, { authToken, maxBodyBytes });
         } else if (isAutoSeo) {

@@ -505,7 +505,11 @@ async function processClaim(
     try {
       if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
       const targetStoreConfig = configuredStores.find((store) => store.storeId === targetStore);
-      const storeProfile = resolveStoreProfile({ storeId: targetStore, siteDomain: targetStoreConfig?.shopDomain });
+      const storeProfile = resolveStoreProfile({
+        profileId: targetStoreConfig?.seoProfileId,
+        storeId: targetStore,
+        siteDomain: targetStoreConfig?.shopDomain,
+      });
       if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
       if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
       const externalJob = claim.externalSeo
@@ -572,7 +576,11 @@ async function processClaim(
       configuredStores = loadRuntimeStores({ env: loadLocalEnv() });
       claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     }
-    const storeProfile = resolveStoreProfile({ storeId: claimStoreId, siteDomain: claimStoreConfig?.shopDomain });
+    const storeProfile = resolveStoreProfile({
+      profileId: claimStoreConfig?.seoProfileId,
+      storeId: claimStoreId,
+      siteDomain: claimStoreConfig?.shopDomain,
+    });
     if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
     const claimAdminHandle = claimStoreConfig?.shopDomain
       ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")

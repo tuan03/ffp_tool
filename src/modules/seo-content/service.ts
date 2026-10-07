@@ -336,5 +336,5 @@ export function createSeoContentPipelineSummary(
   };
 }
 
-export { resolveStoreProfile, JEMINISE_BEDDING_PROFILE } from "./internal/store-profiles";
+export { listSeoStoreProfiles, resolveStoreProfile, JEMINISE_BEDDING_PROFILE } from "./internal/store-profiles";
 

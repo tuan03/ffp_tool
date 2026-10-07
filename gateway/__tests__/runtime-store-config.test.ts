@@ -26,6 +26,7 @@ test("server consumers load stores registered in the durable runtime registry", 
         stores: [
           {
             storeId: "preaureum_dev",
+            seoProfileId: "preaureum-handbags",
             shopDomain: "leatherbag-3anqqbf8.myshopify.com",
             auth: { type: "static", staticToken: "test-token" },
           },
@@ -38,6 +39,7 @@ test("server consumers load stores registered in the durable runtime registry", 
 
     assert.equal(stores.length, 1);
     assert.equal(stores[0]?.storeId, "preaureum_dev");
+    assert.equal(stores[0]?.seoProfileId, "preaureum-handbags");
     assert.equal(stores[0]?.shopDomain, "leatherbag-3anqqbf8.myshopify.com");
   } finally {
     rmSync(cwd, { force: true, recursive: true });

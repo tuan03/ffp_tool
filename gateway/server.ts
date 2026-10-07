@@ -46,6 +46,7 @@ import {
   handleStoreUpdateHttpRequest,
   handleStoreDeleteHttpRequest,
   handleStoreGetHttpRequest,
+  handleStoreSeoProfilesHttpRequest,
 } from "./store-control-handler";
 
 export interface GatewayServerOptions {
@@ -340,6 +341,7 @@ export function startGatewayServer(
     const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
     const isStoreDelete = url === "/api/stores/delete" || url.startsWith("/api/stores/delete?");
     const isStoreGet = url === "/api/stores/get" || url.startsWith("/api/stores/get?");
+    const isStoreSeoProfiles = url === "/api/stores/seo-profiles" || url.startsWith("/api/stores/seo-profiles?");
     const isProxyCheck = url === "/api/proxy/check" || url.startsWith("/api/proxy/check?");
 
     if (url.startsWith("/mcp/ads") || url.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
@@ -503,6 +505,11 @@ export function startGatewayServer(
 
     if (url === "/api/stores/get" || url.startsWith("/api/stores/get?")) {
       await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (isStoreSeoProfiles) {
+      await handleStoreSeoProfilesHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

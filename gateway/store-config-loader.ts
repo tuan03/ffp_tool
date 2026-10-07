@@ -88,6 +88,12 @@ function parseStoreRawItem(item: unknown): StoreConfig | undefined {
   }
   const storeId = rawStoreId.trim();
 
+  const rawSeoProfileId = obj.seoProfileId ?? obj.seo_profile_id;
+  const seoProfileId =
+    typeof rawSeoProfileId === "string" && rawSeoProfileId.trim()
+      ? rawSeoProfileId.trim()
+      : undefined;
+
   const rawDomain = obj.shopDomain ?? obj.domain;
   if (typeof rawDomain !== "string" || !rawDomain.trim()) {
     return undefined;
@@ -184,6 +190,7 @@ function parseStoreRawItem(item: unknown): StoreConfig | undefined {
 
   return {
     storeId,
+    seoProfileId,
     shopDomain,
     apiVersion,
     auth,
@@ -594,6 +601,10 @@ export function persistStoreToConfigFile(
       apiVersion: store.apiVersion || "2026-07",
       auth: { ...store.auth },
     };
+
+    if (store.seoProfileId) {
+      storeEntry.seoProfileId = store.seoProfileId;
+    }
 
     if (store.proxy && store.proxy.url) {
       storeEntry.proxy = {

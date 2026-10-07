@@ -17,6 +17,7 @@ import {
   handleStoreUpdateHttpRequest,
   handleStoreDeleteHttpRequest,
   handleStoreGetHttpRequest,
+  handleStoreSeoProfilesHttpRequest,
 } from "../store-control-handler";
 import { persistStoreToConfigFile } from "../store-config-loader";
 import type { HttpTransport } from "../types";
@@ -118,6 +119,7 @@ test("handleStoreRegistrationHttpRequest registers a new store with skipVerify a
       method: "POST",
       body: {
         storeId: "dizzy",
+        seoProfileId: "preaureum-handbags",
         shopDomain: "dizzy.myshopify.com",
         clientId: "dizzy_client_123",
         clientSecret: "dizzy_secret_456",
@@ -139,6 +141,7 @@ test("handleStoreRegistrationHttpRequest registers a new store with skipVerify a
     const registered = await storeRegistry.getStore("dizzy");
     assert.ok(registered);
     assert.equal(registered?.storeId, "dizzy");
+    assert.equal(registered?.seoProfileId, "preaureum-handbags");
     assert.equal(registered?.shopDomain, "dizzy.myshopify.com");
     assert.equal(registered?.auth.clientId, "dizzy_client_123");
     assert.equal(registered?.proxy?.url, "http://proxy.example.com:8080");
@@ -149,6 +152,7 @@ test("handleStoreRegistrationHttpRequest registers a new store with skipVerify a
     assert.ok(Array.isArray(savedContent));
     assert.equal(savedContent.length, 1);
     assert.equal(savedContent[0].storeId, "dizzy");
+    assert.equal(savedContent[0].seoProfileId, "preaureum-handbags");
     assert.equal(savedContent[0].shopDomain, "dizzy.myshopify.com");
     assert.equal(savedContent[0].auth.clientId, "dizzy_client_123");
     assert.equal(savedContent[0].proxy.url, "http://proxy.example.com:8080");
@@ -198,6 +202,7 @@ test("handleStoreRegistrationHttpRequest performs preflight test with testOnly: 
       method: "POST",
       body: {
         storeId: "dizzy-test",
+        seoProfileId: "preaureum-handbags",
         shopDomain: "dizzy.myshopify.com",
         accessToken: "shpat_test_token_ok",
         testOnly: true,
@@ -220,6 +225,63 @@ test("handleStoreRegistrationHttpRequest performs preflight test with testOnly: 
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("store registration requires a known SEO profile before persistence", async () => {
+  const storeRegistry = new InMemoryStoreRegistry([]);
+  const tokenProvider = new StaticAccessTokenProvider();
+  const throttleManager = new InMemoryThrottleManager();
+  const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
+  const controlPlane = new StoreControlPlane({ storeRegistry, tokenProvider, graphqlClient });
+
+  const missing = createMockReqRes({
+    method: "POST",
+    body: {
+      storeId: "future-store",
+      shopDomain: "future-store.myshopify.com",
+      accessToken: "test-token",
+      skipVerify: true,
+    },
+  });
+  await handleStoreRegistrationHttpRequest(missing.req, missing.res, controlPlane);
+  assert.equal(missing.getResult().status, 400);
+  assert.match(String((missing.getResult().body.error as Record<string, unknown>).message), /seoProfileId/);
+
+  const unknown = createMockReqRes({
+    method: "POST",
+    body: {
+      storeId: "future-store",
+      shopDomain: "future-store.myshopify.com",
+      seoProfileId: "unknown-profile",
+      accessToken: "test-token",
+      skipVerify: true,
+    },
+  });
+  await handleStoreRegistrationHttpRequest(unknown.req, unknown.res, controlPlane);
+  assert.equal(unknown.getResult().status, 400);
+  assert.match(String((unknown.getResult().body.error as Record<string, unknown>).message), /Unknown SEO profile/);
+  assert.equal(await storeRegistry.getStore("future-store"), undefined);
+});
+
+test("SEO profile discovery exposes only safe choices", async () => {
+  const { req, res, getResult } = createMockReqRes({
+    method: "GET",
+    url: "/api/stores/seo-profiles",
+  });
+
+  await handleStoreSeoProfilesHttpRequest(req, res);
+
+  const result = getResult();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.success, true);
+  const profiles = (result.body.data as { profiles: Array<Record<string, unknown>> }).profiles;
+  assert.deepEqual(profiles.map((profile) => profile.profileId), [
+    "capozen-rugs",
+    "jeminise-bedding",
+    "preaureum-handbags",
+  ]);
+  assert.ok(profiles.every((profile) => !Object.hasOwn(profile, "contentRules")));
+  assert.ok(profiles.every((profile) => !Object.hasOwn(profile, "prohibitedClaims")));
 });
 
 test("handleProxyCheckHttpRequest rejects missing proxy URL with 400", async () => {
@@ -335,6 +397,7 @@ test("handleStoreGetHttpRequest returns 200 with safe metadata and no leaked sec
       proxy: { url: "http://proxy.host:8080", username: "user1", password: "proxypassword" },
       productTypes: ["Rug"],
       defaultProductType: "Rug",
+      seoProfileId: "capozen-rugs",
     },
   ]);
   const tokenProvider = new StaticAccessTokenProvider();
@@ -353,6 +416,7 @@ test("handleStoreGetHttpRequest returns 200 with safe metadata and no leaked sec
   assert.equal(result.body.success, true);
   const data = result.body.data as { store: Record<string, unknown> };
   assert.equal(data.store.storeId, "safe-store");
+  assert.equal(data.store.seoProfileId, "capozen-rugs");
   assert.equal(data.store.clientId, "my-client-id");
   assert.equal(data.store.hasProxy, true);
   assert.equal(data.store.proxyUrl, "http://proxy.host:8080");
@@ -391,6 +455,7 @@ test("handleStoreUpdateHttpRequest updates store and preserves existing secrets 
     const storeRegistry = new InMemoryStoreRegistry([
       {
         storeId: "store-to-update",
+        seoProfileId: "capozen-rugs",
         shopDomain: "store-to-update.myshopify.com",
         apiVersion: "2026-07",
         auth: { type: "client_credentials", clientId: "old-client-id", clientSecret: "secret-preserve-me" },
@@ -413,6 +478,7 @@ test("handleStoreUpdateHttpRequest updates store and preserves existing secrets 
       url: "/api/stores/update",
       body: {
         storeId: "store-to-update",
+        seoProfileId: "preaureum-handbags",
         proxy: {
           url: "http://new-proxy.com:9000",
           username: "new-user",
@@ -438,6 +504,7 @@ test("handleStoreUpdateHttpRequest updates store and preserves existing secrets 
     assert.equal(updated.proxy?.url, "http://new-proxy.com:9000");
     assert.equal(updated.proxy?.username, "new-user");
     assert.equal(updated.proxy?.password, "old-password");
+    assert.equal(updated.seoProfileId, "preaureum-handbags");
 
     // Check file persistence
     assert.equal(existsSync(tempConfigFile), true);
@@ -445,6 +512,7 @@ test("handleStoreUpdateHttpRequest updates store and preserves existing secrets 
     assert.equal(saved[0].storeId, "store-to-update");
     assert.equal(saved[0].proxy?.url, "http://new-proxy.com:9000");
     assert.equal(saved[0].proxy?.password, "old-password");
+    assert.equal(saved[0].seoProfileId, "preaureum-handbags");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
