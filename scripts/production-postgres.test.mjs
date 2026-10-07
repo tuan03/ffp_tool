@@ -43,7 +43,8 @@ test("production deployment transfers Compose from Git instead of regenerating a
   const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
   assert.match(deployJob, /uses: actions\/checkout@v4/);
   assert.match(deployJob, /git ls-files -z \| tar --null -czf/);
-  assert.match(deployJob, /docker compose up -d --build --remove-orphans/);
+  assert.match(deployJob, /docker compose pull/);
+  assert.match(deployJob, /docker compose up -d --remove-orphans/);
   assert.doesNotMatch(deployJob, /docker compose -f compose\.prod\.yaml/);
   assert.doesNotMatch(deployJob, /"services:"/);
   assert.match(deployJob, /prepare-production-postgres\.py/);
