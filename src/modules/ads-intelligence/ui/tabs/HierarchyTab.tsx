@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import type { AdsHierarchyCampaign } from "../../types";
 
 export interface HierarchyTabProps {
@@ -26,11 +26,16 @@ function formatDate(dateStr?: string): string {
 export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE">("ALL");
+  const [displayLimit, setDisplayLimit] = useState(15);
   const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({
     [campaigns[0]?.id || ""]: true,
   });
   const [sortField, setSortField] = useState<SortField>("createdTime");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  useEffect(() => {
+    setDisplayLimit(15);
+  }, [searchQuery, statusFilter]);
 
   const toggleCampaign = (id: string) => {
     setExpandedCampaigns((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -83,6 +88,10 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
     return result;
   }, [campaigns, statusFilter, searchQuery, sortField, sortDirection]);
 
+  const visibleCampaigns = useMemo(() => {
+    return processedCampaigns.slice(0, displayLimit);
+  }, [processedCampaigns, displayLimit]);
+
   return (
     <div className="space-y-4">
       {/* Controls Bar: Search, Status Filter, Counter */}
@@ -128,7 +137,7 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
         </div>
 
         <div className="text-xs text-slate-400">
-          Hiển thị <strong>{processedCampaigns.length}</strong> chiến dịch Meta
+          Hiển thị <strong>{Math.min(visibleCampaigns.length, processedCampaigns.length)}</strong> trên <strong>{processedCampaigns.length}</strong> chiến dịch Meta
         </div>
       </div>
 
@@ -173,14 +182,14 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/80 font-mono text-xs">
-            {processedCampaigns.length === 0 ? (
+            {visibleCampaigns.length === 0 ? (
               <tr>
                 <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
                   Không tìm thấy chiến dịch nào phù hợp với bộ lọc.
                 </td>
               </tr>
             ) : (
-              processedCampaigns.map((camp) => {
+              visibleCampaigns.map((camp) => {
                 const isExpanded = expandedCampaigns[camp.id];
                 return (
                   <React.Fragment key={camp.id}>
@@ -305,6 +314,29 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
           </tbody>
         </table>
       </div>
+
+      {/* Progressive Pagination Controls */}
+      {processedCampaigns.length > displayLimit && (
+        <div className="flex justify-center pt-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setDisplayLimit((prev) => prev + 15)}
+            className="px-5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs font-semibold text-slate-300 hover:text-white transition cursor-pointer flex items-center gap-2 active:scale-95 shadow-sm"
+          >
+            <span>Hiển thị thêm 15 chiến dịch</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+              Còn {processedCampaigns.length - displayLimit}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDisplayLimit(processedCampaigns.length)}
+            className="px-4 py-2 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 text-xs text-slate-400 hover:text-slate-200 transition cursor-pointer active:scale-95"
+          >
+            Hiển thị tất cả
+          </button>
+        </div>
+      )}
     </div>
   );
 }
