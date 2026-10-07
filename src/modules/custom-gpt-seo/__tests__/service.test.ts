@@ -109,10 +109,10 @@ test("Custom GPT client clears only the selected store queue", async () => {
   const client = createCustomGptClient(async (url, init) => {
     requestedUrl = String(url);
     requestedInit = init;
-    return new Response(JSON.stringify({ cleared: 12, preservedActive: 1, preservedSynced: 2 }), { status: 200 });
+    return new Response(JSON.stringify({ cleared: 12, archived: 2, preservedActive: 1, preservedFailed: 0 }), { status: 200 });
   });
 
-  assert.deepEqual(await client.clearQueue("store one"), { cleared: 12, preservedActive: 1, preservedSynced: 2 });
+  assert.deepEqual(await client.clearQueue("store one"), { cleared: 12, archived: 2, preservedActive: 1, preservedFailed: 0 });
   assert.equal(requestedUrl, "/api/v1/gpt-seo/admin/clear?storeId=store%20one");
   assert.equal(requestedInit?.method, "POST");
   assert.deepEqual(JSON.parse(String(requestedInit?.body)), {});

@@ -61,10 +61,14 @@ import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selectio
 import {
   describeJobCancellation,
   formatCancellationPhase,
-  isActiveJobStopping,
   shouldShowStandaloneJobControlMessage,
 } from "./job-cancellation";
-import { formatPipelineTimings } from "./pipeline-timings";
+import { resolveCrawlerJobPresentation } from "./crawler-job-presentation";
+import {
+  crawlerSeoHandoffLabel,
+  crawlerSeoHandoffState,
+  resolveCrawlerSeoHandoffSummary,
+} from "./pipeline-status";
 import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
 import { DeleteStoreModal } from "./components/DeleteStoreModal";
@@ -105,10 +109,6 @@ const JOBS_PER_PAGE = 10;
 
 function formatDownloadSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function pipelineStatusLabel(status: string | undefined): string {
-  return status === "waiting_review" ? "SEO complete" : status ?? "Chưa nhận";
 }
 
 export interface StoreProfile {
@@ -368,13 +368,19 @@ export function AmazonCrawlerPage({
     [urlText],
   );
   const resultProducts = output?.products ?? liveProducts;
+  const durableSeoHandoffSummary = lastJobId
+    ? jobs.find((job) => job.jobId === lastJobId)?.seoQueueHandoff
+    : undefined;
+  const seoHandoffSummary = useMemo(
+    () => resolveCrawlerSeoHandoffSummary(resultProducts, durableSeoHandoffSummary),
+    [durableSeoHandoffSummary, resultProducts],
+  );
   const selectedProduct = useMemo(
     () => resolveSelectedProduct(resultProducts, selectedProductId),
     [resultProducts, selectedProductId],
   );
   const firstMediaUrl = firstProductMediaUrl(selectedProduct);
   const activeMediaUrl = firstMediaUrl ? selectedMediaUrl ?? firstMediaUrl : null;
-  const selectedPipelineTimings = formatPipelineTimings(selectedProduct?.pipeline?.shopify.timings, selectedProduct?.pipeline?.seo.performance);
   const connectedClients = filterConnectedCrawlerClients(clients);
   const outdatedClients = agentRelease === null || isClientSnapshotStale
     ? []
@@ -397,11 +403,6 @@ export function AmazonCrawlerPage({
   );
   const isMaintainingCache = isClearingCache || isInvalidatingCache || isClearingTemporaryData;
   const isCancellationPending = activeManagedJob?.status === "cancelling";
-  const isActiveStopPending = isActiveJobStopping({
-    activeJobId,
-    controlledJobId,
-    isCancellationPending,
-  });
 
   useEffect(() => {
     if (selectedProductId && resultProducts.some((product) => product.id === selectedProductId)) return;
@@ -814,31 +815,36 @@ export function AmazonCrawlerPage({
     };
   }, [loadAmazonCrawlerJob]);
 
-  // 3. Auto-reconnect if a job is currently running on coordinator (e.g. reload during active crawl)
+  // 3. Keep the selected job authoritative through review and Shopify sync.
+  // Session snapshots can otherwise retain pending SEO/image state after an F5.
   useEffect(() => {
-    if (!loadAmazonCrawlerJob || amazonCrawlerJobs || !isRunning || !lastJobId) return;
+    if (!loadAmazonCrawlerJob || !lastJobId) return;
 
     let isMounted = true;
-    const intervalId = window.setInterval(async () => {
+    let intervalId: number | undefined;
+    const refreshSelectedJob = async (): Promise<void> => {
       try {
         const job = await loadAmazonCrawlerJob.loadJob(lastJobId);
         if (!isMounted || !job) return;
 
         hydrateCrawlerSessionFromJob(job);
 
-        if (job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "cancelled" || job.status === "review_pending") {
+        if (["completed", "partial", "failed", "cancelled"].includes(job.status) && intervalId !== undefined) {
           window.clearInterval(intervalId);
+          intervalId = undefined;
         }
       } catch {
         // ignore polling error
       }
-    }, 2000);
+    };
+    void refreshSelectedJob();
+    intervalId = window.setInterval(() => void refreshSelectedJob(), 2_000);
 
     return () => {
       isMounted = false;
-      window.clearInterval(intervalId);
+      if (intervalId !== undefined) window.clearInterval(intervalId);
     };
-  }, [amazonCrawlerJobs, loadAmazonCrawlerJob, isRunning, lastJobId]);
+  }, [loadAmazonCrawlerJob, lastJobId]);
 
   async function handleSelectRecentJob(targetJobId: string): Promise<void> {
     if (!loadAmazonCrawlerJob || !targetJobId) return;
@@ -1268,7 +1274,12 @@ export function AmazonCrawlerPage({
   }, [detectedProductNiche, settings.productType, currentStoreProductTypes]);
 
   async function checkBeforeCrawl(
-    sources: readonly string[], storeId: string, startJob: (allowedSources: readonly string[]) => Promise<void>,
+    sources: readonly string[], storeId: string,
+    startJob: (
+      allowedSources: readonly string[],
+      existingShopifyAsins: readonly string[],
+      refreshFamilyAsins: readonly string[],
+    ) => Promise<void>,
   ): Promise<void> {
     if (preflightInFlight.current) return;
     preflightInFlight.current = true;
@@ -1278,13 +1289,18 @@ export function AmazonCrawlerPage({
     setAsinPreflightFamilies([]);
     const checkedUrlText = urlText;
     try {
-      const checked = await runAfterAmazonAsinPreflight(sources, storeId, checkAmazonAsins, async (allowedSources) => {
+      const checked = await runAfterAmazonAsinPreflight(
+        sources,
+        storeId,
+        checkAmazonAsins,
+        async (allowedSources, existingShopifyAsins, refreshFamilyAsins) => {
         const current = getCrawlerSessionState();
         if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId) {
           throw new Error("Link hoặc store đã thay đổi. Vui lòng bấm Start để kiểm tra lại.");
         }
-        await startJob(allowedSources);
-      });
+          await startJob(allowedSources, existingShopifyAsins, refreshFamilyAsins);
+        },
+      );
       if (!checked.ready) {
         setAsinPreflightError("Shopify đang lập chỉ mục custom.amazon_asin. Vui lòng thử lại sau.");
         return;
@@ -1292,7 +1308,9 @@ export function AmazonCrawlerPage({
       if (checked.matches.length > 0) {
         setAsinPreflightMatches(checked.matches);
       }
-      setAsinPreflightFamilies(checked.families.filter((family) => family.status !== "available"));
+      setAsinPreflightFamilies(checked.families.filter((family) =>
+        family.status !== "available" || family.hasExistingFamilyProducts || family.recoveredStaleRegistry,
+      ));
     } catch (caught: unknown) {
       setAsinPreflightError(caught instanceof Error ? caught.message : "Không kiểm tra được ASIN trên Shopify.");
     } finally {
@@ -1304,11 +1322,21 @@ export function AmazonCrawlerPage({
   async function handleStart(): Promise<void> {
     const sources = [...urls];
     const jobSettings = { ...settings };
-    await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (allowedSources) => {
+    await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
+      allowedSources,
+      existingShopifyAsins,
+      refreshFamilyAsins,
+    ) => {
       setSyncMessage(null);
       setCancellationJobId(null);
       setJobControlMessage(null);
-      await startCrawlerJob({ runAmazonCrawler, urls: allowedSources, settings: jobSettings });
+      await startCrawlerJob({
+        runAmazonCrawler,
+        urls: allowedSources,
+        settings: jobSettings,
+        existingShopifyAsins,
+        refreshFamilyAsins,
+      });
     });
   }
 
@@ -1445,11 +1473,20 @@ export function AmazonCrawlerPage({
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
     const sources = urls.length > 0 ? [...urls] : [...job.inputs];
-    await checkBeforeCrawl(sources, settings.storeId || "capozen", async () => {
+    await checkBeforeCrawl(sources, settings.storeId || "capozen", async (
+      allowedSources,
+      existingShopifyAsins,
+      refreshFamilyAsins,
+    ) => {
       setControlledJobId(job.jobId);
       setCancellationJobId(null);
       try {
-        const replacement = await amazonCrawlerJobs.replace(job.jobId, { ...settings, urls: sources });
+        const replacement = await amazonCrawlerJobs.replace(job.jobId, {
+          ...settings,
+          urls: allowedSources,
+          existingShopifyAsins,
+          refreshFamilyAsins,
+        });
         updateCrawlerSession({ activeJobId: replacement.jobId, isRunning: true, progress: replacement.progress, error: null });
         setJobs((current) => [replacement, ...current]);
         setJobControlTone("success");
@@ -2613,17 +2650,14 @@ export function AmazonCrawlerPage({
           {jobs.length === 0 ? <p className="text-sm text-slate-400">{!hasLoadedJobs ? "Đang tải danh sách job…" : isJobSnapshotStale ? "Chưa thể xác minh danh sách job do lỗi kết nối." : "Chưa có job trên coordinator."}</p> : (
             <div className="grid gap-2">
               {visibleJobs.map((job) => {
-                const isActiveJob = ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status);
+                const presentation = resolveCrawlerJobPresentation(job);
                 const cancellationMessage = describeJobCancellation(job);
-                const executionStateMessage = job.executionState === "pausing"
-                  ? " · Đang tạm dừng"
-                  : job.executionState === "paused" ? " · Đã tạm dừng" : "";
                 return (
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
                     <div className="min-w-0">
                       <p className="font-mono text-xs text-cyan-300">{job.jobId}</p>
-                      <p className="text-sm text-slate-300">
-                        {job.status}{executionStateMessage} · {job.progress.completed}/{job.progress.total} link
+                      <p className={`text-sm ${presentation.tone === "success" ? "text-emerald-300" : presentation.tone === "warning" ? "text-amber-300" : presentation.tone === "error" ? "text-rose-300" : presentation.tone === "active" ? "text-cyan-200" : "text-slate-300"}`}>
+                        {presentation.label}
                       </p>
                       {job.progress.items?.filter((task): task is typeof task & { taskId: string } =>
                         Boolean(task.taskId) && ["queued", "running", "cancelling"].includes(task.status)
@@ -2667,9 +2701,9 @@ export function AmazonCrawlerPage({
                       ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {isActiveJob && job.status !== "cancelling" ? (
+                      {presentation.canPause || presentation.canCancel ? (
                         <>
-                          <button
+                          {presentation.canPause ? <button
                             className="rounded border border-amber-500 px-3 py-1 text-xs font-semibold text-amber-300 disabled:opacity-50"
                             disabled={isJobSnapshotStale || controlledJobId !== null}
                             type="button"
@@ -2679,21 +2713,11 @@ export function AmazonCrawlerPage({
                               ? "Đang cập nhật..."
                               : job.executionState === "pausing" ? "Tiếp tục ngay"
                                 : job.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
-                          </button>
-                          <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>Hủy job</button>
+                          </button> : null}
+                          {presentation.canCancel ? <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>{job.status === "cancelling" ? "Buộc dừng ngay" : "Hủy job"}</button> : null}
                         </>
-                      ) : job.status === "cancelling" ? (
-                        <button
-                          className="rounded border border-amber-600 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-300 hover:border-rose-500 hover:bg-rose-950/60 hover:text-rose-200 transition-colors"
-                          type="button"
-                          title="Bấm để buộc dừng ngay lập tức (Force Stop)"
-                          disabled={isJobSnapshotStale || controlledJobId === job.jobId}
-                          onClick={() => void handleStopJob(job.jobId)}
-                        >
-                          {controlledJobId === job.jobId ? "Đang dừng..." : "Buộc dừng ngay ✕"}
-                        </button>
                       ) : null}
-                      {job.status === "review_pending" ? (
+                      {presentation.hasReachedSeoQueue ? (
                         <button
                           className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300"
                           type="button"
@@ -2704,18 +2728,17 @@ export function AmazonCrawlerPage({
                             } catch {
                               // ignore
                             }
-                            navigate(`/seo-review?storeId=${encodeURIComponent(targetStore)}`);
+                            navigate(`/gpt-seo?storeId=${encodeURIComponent(targetStore)}`);
                           }}
                         >
-                          Kiểm duyệt SEO
+                          Mở SEO Queue
                         </button>
-                      ) : ["completed", "partial", "cancelled"].includes(job.status) ? (
+                      ) : null}
+                      {["completed", "partial", "cancelled", "review_pending"].includes(job.status) ? (
                         <>
                           <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
                           <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
                         </>
-                      ) : job.status === "cancelling" ? (
-                        <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)} title="Hủy bỏ và xóa job">Delete</button>
                       ) : null}
                     </div>
                   </div>
@@ -2738,32 +2761,6 @@ export function AmazonCrawlerPage({
 
       <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
-        {activeManagedJob && ["queued", "running", "waiting_captcha"].includes(activeManagedJob.status) ? (
-          <button
-            className="rounded-lg border border-amber-500 px-5 py-2 font-semibold text-amber-300 disabled:opacity-50"
-            disabled={isJobSnapshotStale || controlledJobId !== null}
-            type="button"
-            onClick={() => void handlePauseResumeJob(activeManagedJob)}
-          >
-            {controlledJobId === activeManagedJob.jobId
-              ? "Đang cập nhật..."
-              : activeManagedJob.executionState === "pausing" ? "Tiếp tục ngay"
-                : activeManagedJob.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
-          </button>
-        ) : null}
-        <button
-          className={`rounded-lg border px-5 py-2 font-semibold transition-colors ${
-            isCancellationPending
-              ? "border-amber-500 text-amber-300 hover:border-rose-500 hover:text-rose-200 hover:bg-rose-950/40"
-              : "border-rose-400 text-rose-300"
-          } disabled:opacity-50`}
-          disabled={!isRunning || controlledJobId !== null}
-          type="button"
-          onClick={() => void handleStop()}
-          title={isCancellationPending ? "Bấm lại để buộc dừng ngay lập tức (Force Stop)" : undefined}
-        >
-          {isCancellationPending ? "Buộc dừng ngay" : isActiveStopPending ? "Đang dừng..." : "Hủy job"}
-        </button>
         <button
           className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40"
           type="button"
@@ -2773,10 +2770,10 @@ export function AmazonCrawlerPage({
             } catch {
               // ignore
             }
-            navigate(`/seo-review?storeId=${encodeURIComponent(activeStoreId)}`);
+            navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`);
           }}
         >
-          Mở SEO Review
+          Mở SEO Queue
         </button>
         {output === null && resultProducts.length === 0 ? null : (
           <>
@@ -2831,7 +2828,7 @@ export function AmazonCrawlerPage({
                   : job.acceptedInputs;
                 return (
                   <option key={job.id} value={job.id}>
-                    {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {job.status})
+                    {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {resolveCrawlerJobPresentation(job).label})
                   </option>
                 );
               })}
@@ -2842,7 +2839,7 @@ export function AmazonCrawlerPage({
       {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}
       {asinPreflightMatches.length > 0 ? (
         <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
-          <p className="font-semibold">Đã bỏ qua {asinPreflightMatches.length} family đã có trên Shopify. Các family mới vẫn được cào.</p>
+          <p className="font-semibold">Shopify đã có {asinPreflightMatches.length} ASIN trong family. Hệ thống vẫn kiểm tra family mới nhất và sẽ bỏ qua các sản phẩm này khi agent gửi kết quả.</p>
           <ul className="mt-2 space-y-1">
             {asinPreflightMatches.map((match) => (
               <li key={`${match.parentAsin}-${match.productId}`}>{match.asin} · family {match.parentAsin} — <a className="underline" href={match.adminUrl} rel="noreferrer" target="_blank">{match.title}</a></li>
@@ -2850,11 +2847,27 @@ export function AmazonCrawlerPage({
           </ul>
         </div>
       ) : null}
-      {asinPreflightFamilies.some((family) => family.status !== "existing") ? (
+      {asinPreflightFamilies.some((family) => family.status === "available" &&
+        (family.hasExistingFamilyProducts || family.recoveredStaleRegistry)) ? (
+        <div role="status" className="rounded-lg border border-cyan-700 bg-cyan-950/30 p-3 text-sm text-cyan-100">
+          <p className="font-semibold">Đang cào bổ sung những ASIN chưa có trên Shopify:</p>
+          <ul className="mt-2 space-y-1">
+            {asinPreflightFamilies.filter((family) => family.status === "available" &&
+              (family.hasExistingFamilyProducts || family.recoveredStaleRegistry)).map((family) => (
+              <li key={family.parentAsin}>
+                {family.inputAsins.join(", ")} · family {family.parentAsin} — {family.recoveredStaleRegistry
+                  ? "registry cũ không còn job/dữ liệu pipeline; đã cho phép cào lại an toàn"
+                  : "family đã có sản phẩm khác; sản phẩm đã sync sẽ được bỏ qua"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {asinPreflightFamilies.some((family) => family.status !== "existing" && family.status !== "available") ? (
         <div role="status" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
           <p className="font-semibold">Một số family chưa thể tạo job mới:</p>
           <ul className="mt-2 space-y-1">
-            {asinPreflightFamilies.filter((family) => family.status !== "existing").map((family) => (
+            {asinPreflightFamilies.filter((family) => family.status !== "existing" && family.status !== "available").map((family) => (
               <li key={family.parentAsin}>
                 {family.inputAsins.join(", ")} · family {family.parentAsin} — {family.status === "processing"
                   ? "đang được xử lý"
@@ -2965,11 +2978,27 @@ export function AmazonCrawlerPage({
       {output === null && resultProducts.length === 0 ? null : (
         <section className="space-y-4">
           {output ? (
-            <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4 sm:grid-cols-4">
-              <p><span className="block text-xs text-slate-400">Products</span>{output.statistics.products}</p>
-              <p><span className="block text-xs text-slate-400">Source variants</span>{output.statistics.sourceVariants}</p>
-              <p><span className="block text-xs text-slate-400">Final variants</span>{output.statistics.finalVariants}</p>
-              <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
+            <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+              <div className="grid gap-3 sm:grid-cols-4">
+                <p><span className="block text-xs text-slate-400">Products</span>{Math.max(output.statistics.products, seoHandoffSummary.totalProducts)}</p>
+                <p><span className="block text-xs text-slate-400">Source variants</span>{resultProducts.length > 0 ? output.statistics.sourceVariants : "—"}</p>
+                <p><span className="block text-xs text-slate-400">Final variants</span>{resultProducts.length > 0 ? output.statistics.finalVariants : "—"}</p>
+                <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+                <p>
+                  SEO Queue: <strong className="text-emerald-300">{seoHandoffSummary.handedOver}/{seoHandoffSummary.totalProducts} đã bàn giao</strong>
+                  {seoHandoffSummary.pending > 0 ? <> · <strong className="text-cyan-300">{seoHandoffSummary.pending} đang chuẩn bị</strong></> : null}
+                  {seoHandoffSummary.notHandedOver > 0 ? <> · <strong className="text-rose-300">{seoHandoffSummary.notHandedOver} chưa bàn giao</strong></> : null}
+                </p>
+                <button
+                  className="rounded border border-cyan-700 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:border-cyan-500 hover:text-white"
+                  type="button"
+                  onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)}
+                >
+                  Mở SEO Queue →
+                </button>
+              </div>
             </div>
           ) : (
             <p className="rounded-xl border border-cyan-800 bg-cyan-950/20 p-3 text-sm text-cyan-200">
@@ -2998,6 +3027,7 @@ export function AmazonCrawlerPage({
                 {resultProducts.map((product) => {
                   const isSelected = product.id === selectedProduct?.id;
                   const mediaUrl = firstProductMediaUrl(product);
+                  const handoffState = crawlerSeoHandoffState(product.pipeline);
                   return (
                     <button
                       key={product.id}
@@ -3013,7 +3043,7 @@ export function AmazonCrawlerPage({
                         <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
                           {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
                           {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
-                          {product.pipeline ? <span className={`rounded px-1.5 py-0.5 ${product.pipeline.status === "completed" || product.pipeline.status === "waiting_review" ? "bg-emerald-900/60 text-emerald-200" : product.pipeline.status === "failed" || product.pipeline.status === "reconciliation_required" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>Pipeline: {pipelineStatusLabel(product.pipeline.status)}</span> : null}
+                          <span className={`rounded px-1.5 py-0.5 ${handoffState === "handed_over" ? "bg-emerald-900/60 text-emerald-200" : handoffState === "not_handed_over" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>{crawlerSeoHandoffLabel(product.pipeline)}</span>
                           {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
                         </span>
                       </span>
@@ -3050,30 +3080,16 @@ export function AmazonCrawlerPage({
                       <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
                         <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
                         <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
-                        <div><dt className="text-slate-500">Pipeline</dt><dd className={selectedProduct.pipeline?.status === "waiting_review" ? "text-emerald-300" : undefined}>{pipelineStatusLabel(selectedProduct.pipeline?.status)}</dd></div>
-                        <div><dt className="text-slate-500">SEO</dt><dd>{selectedProduct.pipeline?.seo.status ?? "pending"}{selectedProduct.pipeline?.seo.engine ? ` · ${selectedProduct.pipeline.seo.engine}` : ""}</dd></div>
-                        <div><dt className="text-slate-500">Ảnh</dt><dd>{selectedProduct.pipeline?.imageProcessing?.status ?? "pending"}{selectedProduct.pipeline?.imageProcessing?.profileSlug ? ` · ${selectedProduct.pipeline.imageProcessing.profileSlug}` : ""}</dd></div>
-                        <div><dt className="text-slate-500">Proxy Shopify</dt><dd>{selectedProduct.pipeline?.shopify.proxyProfile ?? "—"}</dd></div>
+                        <div><dt className="text-slate-500">SEO Queue</dt><dd className={crawlerSeoHandoffState(selectedProduct.pipeline) === "handed_over" ? "text-emerald-300" : undefined}>{crawlerSeoHandoffLabel(selectedProduct.pipeline)}</dd></div>
+                        <div><dt className="text-slate-500">Xử lý ảnh</dt><dd>Tiếp tục tự động sau SEO theo profile đã chọn</dd></div>
                       </dl>
                       <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
-                      {selectedProduct.pipeline?.shopify.adminUrl ? <a className="ml-4 mt-4 inline-block text-sm font-semibold text-emerald-300 hover:text-emerald-200" href={selectedProduct.pipeline.shopify.adminUrl} rel="noreferrer" target="_blank">Mở trên Shopify ↗</a> : null}
-                      {selectedPipelineTimings.length > 0 ? (
-                        <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900/70 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Thời gian xử lý</p>
-                          <div className="mt-2 grid gap-1 text-xs text-slate-300 sm:grid-cols-2">
-                            {selectedPipelineTimings.map((timing) => <span key={timing}>{timing}</span>)}
-                          </div>
-                        </div>
-                      ) : null}
+                      <button className="ml-4 mt-4 text-sm font-semibold text-emerald-300 hover:text-emerald-200" type="button" onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)}>Mở SEO Queue ↗</button>
                       {selectedProduct.sourceVariants.some((variant) => variant.diagnostics?.fetchMode === "failed") ? (
                         <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">
                           Amazon: Không tải được trang ASIN con {selectedProduct.sourceVariants.filter((variant) => variant.diagnostics?.fetchMode === "failed").map((variant) => variant.asin).join(", ")}. Kiểm tra CAPTCHA hoặc kết nối proxy rồi cào lại.
                         </p>
-                      ) : selectedProduct.pipeline?.shopify.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Shopify: {selectedProduct.pipeline.shopify.error}</p> : null}
-                      {selectedProduct.pipeline?.seo.fallbackStages?.length ? <p className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO fallback: {selectedProduct.pipeline.seo.fallbackStages.join(", ")}</p> : null}
-                      {selectedProduct.pipeline?.seo.warnings?.map((warning) => <p key={warning} className="mt-3 rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">SEO: {warning}</p>)}
-                      {selectedProduct.pipeline?.seo.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">SEO: {selectedProduct.pipeline.seo.error}</p> : null}
-                      {selectedProduct.pipeline?.imageProcessing?.error ? <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">Ảnh: {selectedProduct.pipeline.imageProcessing.error}</p> : null}
+                      ) : null}
                     </div>
                   </div>
 

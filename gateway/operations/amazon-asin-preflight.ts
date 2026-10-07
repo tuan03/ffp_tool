@@ -47,7 +47,7 @@ const ENABLE_PARENT_FILTER = `mutation EnableAmazonParentAsinFilter {
   }) { userErrors { message } }
 }`;
 const PRODUCT_QUERY = `query ProductByAmazonFamily($query: String!) {
-  products(first: 5, query: $query) {
+  products(first: 200, query: $query) {
     nodes {
       id title handle
       metafield(namespace: "custom", key: "amazon_asin") { value }
@@ -89,6 +89,9 @@ export interface AmazonAsinFamilyPreflight {
   readonly databaseStatus: string | null;
   readonly jobId: string | null;
   readonly status: AmazonAsinFamilyStatus;
+  readonly hasExistingFamilyProducts: boolean;
+  readonly recoveredStaleRegistry: boolean;
+  readonly hasSyncedFamilyMembers: boolean;
 }
 
 export interface AmazonAsinPreflightResult {
@@ -105,6 +108,8 @@ interface FamilyInput {
   readonly isResolved: boolean;
   readonly databaseStatus: string | null;
   readonly jobId: string | null;
+  readonly recoveredStaleRegistry: boolean;
+  readonly hasSyncedFamilyMembers: boolean;
 }
 
 function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly string[]): FamilyInput[] {
@@ -116,6 +121,8 @@ function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly
       isResolved: false,
       databaseStatus: null,
       jobId: null,
+      recoveredStaleRegistry: false,
+      hasSyncedFamilyMembers: false,
     }));
   }
   if (!Array.isArray(payload.families) || payload.families.length === 0 || payload.families.length > 200) {
@@ -144,6 +151,8 @@ function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly
       isResolved: family.isResolved === true,
       databaseStatus: typeof family.databaseStatus === "string" ? family.databaseStatus : null,
       jobId: typeof family.jobId === "string" ? family.jobId : null,
+      recoveredStaleRegistry: family.recoveredStaleRegistry === true,
+      hasSyncedFamilyMembers: family.hasSyncedFamilyMembers === true,
     };
   });
   if (asins.some((asin) => !coveredAsins.has(asin))) {
@@ -237,48 +246,74 @@ export async function executeAmazonAsinPreflight(
     }
   }
 
-  const matches: Array<AmazonAsinMatch | undefined> = new Array(families.length);
+  const matches: AmazonAsinMatch[] = [];
+  const matchedProducts = new Set<string>();
+  function addMatch(asin: string, parentAsin: string, product: ProductNode): void {
+    if (!/^[A-Z0-9]{10}$/.test(asin)) return;
+    const key = `${asin}\0${product.id}`;
+    if (matchedProducts.has(key)) return;
+    matchedProducts.add(key);
+    matches.push({
+      asin,
+      parentAsin,
+      productId: product.id,
+      title: product.title,
+      adminUrl: `https://${store.shopDomain}/admin/products/${product.id.split("/").at(-1)}`,
+    });
+  }
   const familyResults: Array<AmazonAsinFamilyPreflight | undefined> = new Array(families.length);
   let nextIndex = 0;
   async function checkNext(): Promise<void> {
     while (nextIndex < families.length) {
       const index = nextIndex++;
       const family = families[index];
-      const parentNodes = await queryProducts(`metafields.custom.amazon_parent_asin:"${family.parentAsin}"`);
-      let product = parentNodes.find((candidate) => candidate.parentMetafield?.value === family.parentAsin);
-      if (!product) {
-        for (const asin of family.memberAsins) {
-          const asinNodes = await queryProducts(`metafields.custom.amazon_asin:"${asin}"`);
-          product = asinNodes.find((candidate) => candidate.metafield?.value === asin);
-          if (product) break;
+      let exactProduct: ProductNode | undefined;
+      let exactAsin: string | undefined;
+      for (const asin of family.inputAsins) {
+        const asinNodes = await queryProducts(`metafields.custom.amazon_asin:"${asin}"`);
+        exactProduct = asinNodes.find((candidate) => candidate.metafield?.value === asin);
+        if (exactProduct) {
+          exactAsin = asin;
+          break;
         }
       }
+      const shopifyParentAsin = exactProduct?.parentMetafield?.value;
+      const effectiveParentAsin = shopifyParentAsin && /^[A-Z0-9]{10}$/.test(shopifyParentAsin)
+        ? shopifyParentAsin
+        : family.parentAsin;
+      const parentNodes = await queryProducts(`metafields.custom.amazon_parent_asin:"${effectiveParentAsin}"`);
+      const hasExistingFamilyProducts = family.hasSyncedFamilyMembers || parentNodes.some(
+        (candidate) => candidate.parentMetafield?.value === effectiveParentAsin,
+      );
+
+      for (const candidate of parentNodes) {
+        if (candidate.parentMetafield?.value === effectiveParentAsin && candidate.metafield?.value) {
+          addMatch(candidate.metafield.value, effectiveParentAsin, candidate);
+        }
+      }
+      if (exactProduct && exactAsin) addMatch(exactAsin, effectiveParentAsin, exactProduct);
 
       let status: AmazonAsinFamilyStatus = "available";
-      if (product) {
-        status = "existing";
-        matches[index] = {
-          asin: family.inputAsins[0],
-          parentAsin: family.parentAsin,
-          productId: product.id,
-          title: product.title,
-          adminUrl: `https://${store.shopDomain}/admin/products/${product.id.split("/").at(-1)}`,
-        };
-      } else if (["queued", "leased", "running", "cancelling"].includes(family.databaseStatus ?? "")) {
+      if (["queued", "leased", "running", "cancelling"].includes(family.databaseStatus ?? "")) {
         status = "processing";
       } else if (family.databaseStatus === "crawled") {
         status = "crawled_pending_sync";
-      } else if (family.databaseStatus === "synced") {
+      } else if (family.databaseStatus === "synced" && !exactProduct && !hasExistingFamilyProducts) {
         status = "reconciliation_required";
       }
-      familyResults[index] = { ...family, status };
+      familyResults[index] = {
+        ...family,
+        parentAsin: effectiveParentAsin,
+        status,
+        hasExistingFamilyProducts: hasExistingFamilyProducts || exactProduct !== undefined,
+      };
     }
   }
   await Promise.all(Array.from({ length: Math.min(4, families.length) }, () => checkNext()));
   const resolvedFamilies = familyResults.filter((family): family is AmazonAsinFamilyPreflight => family !== undefined);
   return {
     ready: true,
-    matches: matches.filter((match): match is AmazonAsinMatch => match !== undefined),
+    matches,
     families: resolvedFamilies,
     allowedAsins: resolvedFamilies
       .filter((family) => family.status === "available")

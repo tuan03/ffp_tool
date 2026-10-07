@@ -53,6 +53,8 @@ export interface AmazonCrawlerSettings {
 
 export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
   urls: readonly string[];
+  existingShopifyAsins?: readonly string[];
+  refreshFamilyAsins?: readonly string[];
 }
 
 export interface AmazonAsinPreflightMatch {
@@ -78,6 +80,9 @@ export interface AmazonAsinFamilyPreflight {
   readonly databaseStatus: string | null;
   readonly jobId: string | null;
   readonly status: AmazonAsinFamilyStatus;
+  readonly hasExistingFamilyProducts?: boolean;
+  readonly recoveredStaleRegistry?: boolean;
+  readonly hasSyncedFamilyMembers?: boolean;
 }
 
 export interface AmazonAsinPreflightResult {
@@ -161,7 +166,7 @@ export interface ProductPipelineMetadata {
   seo: {
     performance?: SeoPipelinePerformance;
     status: "pending" | "running" | "completed" | "failed";
-    engine?: "gemini" | "heuristic" | "mixed";
+    engine?: "gemini" | "heuristic" | "mixed" | "codex_mcp" | "custom_gpt";
     fieldsApplied?: string[];
     fallbackStages?: string[];
     warnings?: string[];
@@ -466,6 +471,14 @@ export interface AmazonCrawlerJobSnapshot {
   completedAt: string | null;
   replacementOfJobId: string | null;
   cancellation: AmazonCrawlerCancellationSummary;
+  seoQueueHandoff?: AmazonCrawlerSeoQueueHandoffSummary;
+}
+
+export interface AmazonCrawlerSeoQueueHandoffSummary {
+  totalProducts: number;
+  handedOver: number;
+  pending: number;
+  notHandedOver: number;
 }
 
 export interface AmazonCrawlerPendingAgentCancellation {
@@ -688,6 +701,7 @@ export interface AmazonCrawlerReviewItem {
   readonly storeId: string;
   readonly decision: AmazonCrawlerReviewDecision;
   readonly syncStatus: AmazonCrawlerReviewSyncStatus;
+  readonly syncGeneration?: number;
   readonly version: number;
   readonly rejectionReason?: string | null;
   readonly syncError?: string | null;
@@ -712,6 +726,7 @@ export interface AmazonCrawlerReviewClient {
   update(itemId: string, expectedVersion: number, patch: AmazonCrawlerReviewEditPatch): Promise<AmazonCrawlerReviewItem>;
   decide(itemId: string, expectedVersion: number, decision: AmazonCrawlerReviewDecision, reason?: string): Promise<AmazonCrawlerReviewItem>;
   sync(itemId: string): Promise<AmazonCrawlerReviewItem>;
+  reconcile(itemId: string): Promise<AmazonCrawlerReviewItem>;
   syncAllApproved(): Promise<{ readonly queued: number; readonly itemIds: readonly string[] }>;
   markSynced(itemId: string, info?: { productId?: string; productHandle?: string; adminUrl?: string }): Promise<AmazonCrawlerReviewItem>;
   markFailed(itemId: string, error?: string): Promise<AmazonCrawlerReviewItem>;
@@ -892,6 +907,7 @@ export interface AmazonCrawlerJobSummary {
   acceptedInputs: number;
   productCounts?: Record<string, number>;
   progress?: AmazonCrawlerProgress;
+  seoQueueHandoff?: AmazonCrawlerSeoQueueHandoffSummary;
 }
 
 export interface AmazonCrawlerHydratedJob {

@@ -409,7 +409,14 @@ test("eligibility marks a confirmed Shopify sync as current SEO", () => {
     state: "current",
     reason: "SHOPIFY_SYNCED",
   });
-  assert.deepEqual(queue.clearQueue("capozen"), { cleared: 0, preservedActive: 0, preservedSynced: 1 });
+  assert.deepEqual(queue.clearQueue("capozen"), {
+    cleared: 0,
+    archived: 1,
+    preservedActive: 0,
+    preservedFailed: 0,
+  });
+  assert.equal(queue.listFiltered("capozen", {}).length, 0);
+  assert.equal(queue.findLatestSourceJob("capozen", "auto_seo", "synced-product")?.shopifySyncStatus, "SYNCED");
   db.close();
 });
 

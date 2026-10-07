@@ -1500,8 +1500,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         return result
 
     @app.post("/api/v1/product-reviews/{item_id}/sync")
-    def queue_product_review_sync(item_id: str) -> dict[str, Any]:
-        result = store.queue_product_review_sync(item_id)
+    def queue_product_review_sync(item_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        result = store.queue_product_review_sync(
+            item_id,
+            reconcile=bool((payload or {}).get("reconcile", False)),
+        )
         if result is None:
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("notApproved"):
@@ -1510,6 +1513,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("reconciliationRequired"):
             raise HTTPException(status_code=409, detail="Shopify write needs reconciliation before retrying.")
+        if result.get("alreadySynced"):
+            raise HTTPException(status_code=409, detail="Product is already synced; use reconciliation to verify or recreate it.")
         return result
 
     @app.post("/api/v1/product-reviews/sync-approved")

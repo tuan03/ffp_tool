@@ -59,6 +59,7 @@ interface PipelineClaim {
       readonly processedImages: number;
     };
     readonly assetsNormalized?: number;
+    readonly syncGeneration?: number;
     readonly [key: string]: unknown;
   } | null;
   readonly settings: {
@@ -776,6 +777,11 @@ async function processClaim(
       amazonParentAsin: claim.inputAsin,
     });
     const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
+    const parsedSyncGeneration = Number(claim.review?.syncGeneration ?? 0);
+    const syncGeneration = Number.isSafeInteger(parsedSyncGeneration) && parsedSyncGeneration >= 0
+      ? parsedSyncGeneration
+      : 0;
+    const syncRequestPrefix = `pipeline-${claim.id}-r${syncGeneration}-${finalChecksum}`;
     if (isNoOp) {
       shopifyProduct = stripProcessingTokens(shopifyProduct);
     }
@@ -783,7 +789,8 @@ async function processClaim(
       const jobId = claim.externalSeo.jobId;
       gptSyncToken = await acquireCustomGptSync({
         isApproved: claim.review?.decision === "approved", isCheckpointUnchanged: isNoOp,
-        readState: () => gptRequest<{ status: string } | null>(`sync-state?jobId=${encodeURIComponent(jobId)}`),
+        isExplicitReconciliation: syncGeneration > 0,
+        readState: () => gptRequest<{ token?: string; status: string } | null>(`sync-state?jobId=${encodeURIComponent(jobId)}`),
         saveApproval: () => gptRequest("review-state", { jobId, state: { reviewDecision: "approved", updatedAt: Date.now() } }),
         beginSync: () => gptRequest<{ token: string }>("begin-sync", { jobId }),
       });
@@ -795,7 +802,7 @@ async function processClaim(
           shopifyProduct,
           runner,
           effectiveProxyStoreId,
-          `pipeline-${claim.id}-${finalChecksum}`,
+          syncRequestPrefix,
           cancellationController.signal,
         );
       } catch (error: unknown) {
@@ -844,7 +851,7 @@ async function processClaim(
       const gateway = createShopifyGatewayAdapter(effectiveProxyStoreId, {
         runner,
         mode: "apply",
-        getRequestId: (operation) => `pipeline-${claim.id}-${finalChecksum}-${operation}`,
+        getRequestId: (operation) => `${syncRequestPrefix}-${operation}`,
       });
       const baseInput = fromCustomizationNormalizerProduct(shopifyProduct, {
         vendor: storeVendor,
@@ -903,7 +910,7 @@ async function processClaim(
               productIdsToAdd: [syncResult.productId],
             },
             mode: "apply",
-            requestId: `pipeline-${claim.id}-${finalChecksum}-collection-${colId}`,
+            requestId: `${syncRequestPrefix}-collection-${colId}`,
           });
           console.log(`[Shopify pipeline] Attached product ${syncResult.productId} to collection ${colId}`);
         } catch (collectionError: unknown) {
@@ -921,7 +928,7 @@ async function processClaim(
             await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
               workerId,
               storeId: claimStoreId,
-              normalizedChecksum: `incomplete:${finalChecksum}`,
+              normalizedChecksum: checksum({ state: "incomplete", finalChecksum }),
               shopify: {
                 productId: createdProductId,
                 productHandle: syncResult.productHandle,

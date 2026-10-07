@@ -23,6 +23,7 @@ import type {
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerJobController,
   AmazonCrawlerJobSummary,
+  AmazonCrawlerSeoQueueHandoffSummary,
   AmazonCrawlerOutput,
   AmazonCrawlerProduct,
   AmazonCrawlerProgress,
@@ -248,7 +249,10 @@ export function createAmazonAsinChecker(
     }
     const preflight = body.data;
     if (typeof preflight.ready !== "boolean" || !Array.isArray(preflight.matches) ||
-      !Array.isArray(preflight.families) || preflight.families.some((family) => !isAmazonAsinFamilyPreflight(family)) ||
+      !Array.isArray(preflight.families) || preflight.families.some((family) => !isAmazonAsinFamilyPreflight(family) ||
+        (family.hasExistingFamilyProducts !== undefined && typeof family.hasExistingFamilyProducts !== "boolean") ||
+        (family.recoveredStaleRegistry !== undefined && typeof family.recoveredStaleRegistry !== "boolean") ||
+        (family.hasSyncedFamilyMembers !== undefined && typeof family.hasSyncedFamilyMembers !== "boolean")) ||
       !isAsinList(preflight.allowedAsins) ||
       preflight.matches.some((match: unknown) => !isRecord(match) || typeof match.asin !== "string" ||
         typeof match.parentAsin !== "string" || typeof match.productId !== "string" ||
@@ -375,6 +379,17 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
   };
 }
 
+function readSeoQueueHandoff(value: unknown): AmazonCrawlerSeoQueueHandoffSummary {
+  if (!isRecord(value)) {
+    return { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 };
+  }
+  const totalProducts = typeof value.totalProducts === "number" ? value.totalProducts : 0;
+  const handedOver = typeof value.handedOver === "number" ? value.handedOver : 0;
+  const pending = typeof value.pending === "number" ? value.pending : 0;
+  const notHandedOver = typeof value.notHandedOver === "number" ? value.notHandedOver : 0;
+  return { totalProducts, handedOver, pending, notHandedOver };
+}
+
 function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
   const core = readSnapshot(value);
   if (!isRecord(value)) {
@@ -448,6 +463,7 @@ function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {
       cacheGeneration: typeof cancellation.cacheGeneration === "number" ? cancellation.cacheGeneration : null,
       isExecutionConfirmed: cancellation.isExecutionConfirmed === true,
     },
+    seoQueueHandoff: readSeoQueueHandoff(value.seoQueueHandoff),
   };
 }
 
@@ -1218,6 +1234,7 @@ function readReviewItem(value: unknown): AmazonCrawlerReviewItem {
     typeof value.storeId !== "string" ||
     !["pending", "approved", "rejected"].includes(String(value.decision)) ||
     !["idle", "queued", "syncing", "synced", "failed"].includes(String(value.syncStatus)) ||
+    (value.syncGeneration !== undefined && (!Number.isSafeInteger(value.syncGeneration) || Number(value.syncGeneration) < 0)) ||
     typeof value.version !== "number" ||
     !isRecord(value.target) ||
     !isRecord(value.product)
@@ -1315,6 +1332,11 @@ export function createAmazonCrawlerReviewClient({
     },
     async sync(itemId: string) {
       return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/sync`, "POST"));
+    },
+    async reconcile(itemId: string) {
+      return readReviewItem(await sendJson(`${reviewUrl}/${encodeURIComponent(itemId)}/sync`, "POST", {
+        reconcile: true,
+      }));
     },
     async syncAllApproved() {
       const value = await sendJson(`${reviewUrl}/sync-approved`, "POST");
@@ -1500,6 +1522,9 @@ export function createAmazonCrawlerJobLoader({
             acceptedInputs: typeof jobRecord.acceptedInputs === "number" ? jobRecord.acceptedInputs : 0,
             productCounts: isRecord(jobRecord.productCounts) ? (jobRecord.productCounts as Record<string, number>) : undefined,
             progress: isRecord(jobRecord.progress) ? (jobRecord.progress as unknown as AmazonCrawlerProgress) : undefined,
+            seoQueueHandoff: isRecord(jobRecord.seoQueueHandoff)
+              ? readSeoQueueHandoff(jobRecord.seoQueueHandoff)
+              : undefined,
           };
         });
       } catch {

@@ -6,6 +6,7 @@ import type { Pool } from "pg";
 
 import { PostgresSeoCheckpointStore } from "../checkpoint/postgres-checkpoint-store";
 import type { SeoCheckpoint } from "../checkpoint/types";
+import { KeywordClaimConflictError } from "../conflict-control/corpus-errors";
 import { PostgresSeoConflictCorpus } from "../conflict-control/postgres-seo-conflict-corpus";
 import type { SeoConflictCorpusFile } from "../conflict-control/seo-conflict-corpus";
 import { PostgresSiteNicheCache } from "../site-niche/postgres-site-niche-cache";
@@ -101,8 +102,16 @@ export async function importSeoContentLegacyData(
     if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.products)) throw new Error(`Invalid legacy corpus: ${corpusPath}`);
     for (const product of parsed.products) {
       const corpus = new PostgresSeoConflictCorpus(pool, { storeId: product.storeId });
-      await corpus.upsertProduct({ identity: product, title: product.title, approvedKeywords: product.keywords });
-      corpusProducts++;
+      try {
+        await corpus.upsertProduct({ identity: product, title: product.title, approvedKeywords: product.keywords });
+        corpusProducts++;
+      } catch (error) {
+        // PostgreSQL is authoritative after the first migration. A later
+        // legacy-file revision must not overwrite an already claimed keyword
+        // or prevent the server from starting; unrelated legacy rows can
+        // still be imported and this source fingerprint is then retired.
+        if (!(error instanceof KeywordClaimConflictError)) throw error;
+      }
     }
     await markImported(pool, "corpus-json", corpusPath, hash);
   }

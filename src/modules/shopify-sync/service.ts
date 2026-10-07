@@ -1,3 +1,4 @@
+import { buildAeoMetafields, validateAeoInput } from "./aeo-metafields";
 import type {
   CreateProductInput,
   CreateProductOutput,
@@ -276,6 +277,7 @@ export async function syncSingleProduct(
       product.amazonParentAsin,
       "custom.amazon_parent_asin",
     );
+    validateAeoInput(product.aeo);
 
     // 1. Create Product & Media Gallery & Options/Variants
     const productWriteInput = {
@@ -557,6 +559,26 @@ export async function syncSingleProduct(
         throw new Error("Failed to set required custom.ffp_source_key metafield.");
       }
       metafieldMs += Date.now() - sourceMetafieldStartedAt;
+    }
+
+    const aeoMetafields = buildAeoMetafields(writtenProduct.productId, product.aeo);
+    for (const aeoMetafield of aeoMetafields) {
+      const aeoMetafieldStartedAt = Date.now();
+      try {
+        throwIfCancelled();
+        const aeoMetafieldResult = await gateway.setProductMetafield({
+          ...aeoMetafield,
+          productId: writtenProduct.productId,
+        });
+        if (!aeoMetafieldResult.success) {
+          throw new Error(
+            `Failed to set required ${aeoMetafield.namespace}.${aeoMetafield.key} metafield.`,
+          );
+        }
+        metafieldSet = true;
+      } finally {
+        metafieldMs += Date.now() - aeoMetafieldStartedAt;
+      }
     }
 
     return {

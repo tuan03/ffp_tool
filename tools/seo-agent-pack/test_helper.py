@@ -63,7 +63,9 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(worker.retry_delay("99999", 0, now=0))
 
     def test_https_and_redirect_guard(self):
-        for url in ["http://example.com/mcp/seo-worker", "https://user:secret@example.com/mcp/seo-worker", "https://example.com/mcp/seo-worker?token=x"]:
+        self.assertEqual(worker.endpoint("http://127.0.0.1:3011/mcp/seo-worker"), "http://127.0.0.1:3011/mcp/seo-worker")
+        self.assertEqual(worker.endpoint("http://localhost:3011/mcp/seo-worker"), "http://localhost:3011/mcp/seo-worker")
+        for url in ["http://example.com/mcp/seo-worker", "http://192.168.1.231:3011/mcp/seo-worker", "https://user:secret@example.com/mcp/seo-worker", "https://example.com/mcp/seo-worker?token=x"]:
             with self.assertRaises(ValueError):
                 worker.endpoint(url)
         with self.assertRaises(RuntimeError):

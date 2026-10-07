@@ -4,6 +4,8 @@ import assertStrict from "node:assert/strict";
 
 import {
   buildProductDescriptionHtml,
+  buildAeoMetafields,
+  buildAeoSuiteHtml,
   compactCustomizerConfigForMetafield,
   fromCustomizationNormalizerProduct,
   getShopifySyncRunner,
@@ -35,6 +37,49 @@ test("buildProductDescriptionHtml formats description, bullet points and specs t
   assertStrict.ok(html.includes("Dimensions"));
 });
 
+const SAMPLE_AEO_JSON_LD = JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    { "@type": "Product", name: "Faith & Family Handbag" },
+    { "@type": "FAQPage", mainEntity: [] },
+  ],
+});
+
+test("buildAeoSuiteHtml creates escaped semantic HTML for summary and FAQ", () => {
+  const html = buildAeoSuiteHtml({
+    quickSummary: "A <strong>grounded</strong> summary & overview.",
+    faq: [{ question: "Is it <safe>?", answer: "Yes & documented." }],
+    jsonLd: SAMPLE_AEO_JSON_LD,
+  });
+
+  assertStrict.match(html, /<h2>AEO Suite \(AI Search &amp; Overview Optimization\)<\/h2>/);
+  assertStrict.match(html, /A &lt;strong&gt;grounded&lt;\/strong&gt; summary &amp; overview\./);
+  assertStrict.match(html, /<dt>Is it &lt;safe&gt;\?<\/dt>/);
+  assertStrict.match(html, /<dd>Yes &amp; documented\.<\/dd>/);
+});
+
+test("buildAeoMetafields validates Product and FAQPage JSON-LD before Shopify writes", () => {
+  const fields = buildAeoMetafields("gid://shopify/Product/1", {
+    quickSummary: "Grounded product summary.",
+    faq: [{ question: "What is included?", answer: "The pictured product." }],
+    jsonLd: SAMPLE_AEO_JSON_LD,
+  });
+
+  assertStrict.deepEqual(fields.map(({ key, type }) => ({ key, type })), [
+    { key: "aeo_suite_html", type: "multi_line_text_field" },
+    { key: "aeo_json_ld", type: "json" },
+  ]);
+  assertStrict.equal(fields[1].value, SAMPLE_AEO_JSON_LD);
+  assertStrict.throws(
+    () => buildAeoMetafields("gid://shopify/Product/1", {
+      quickSummary: "Grounded product summary.",
+      faq: [{ question: "What is included?", answer: "The pictured product." }],
+      jsonLd: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Product" }] }),
+    }),
+    /Product and FAQPage/,
+  );
+});
+
 test("fromCustomizationNormalizerProduct adapts normalized crawl product into ShopifySyncProductInput", () => {
   const crawlProduct: CrawlProduct = {
     id: "prod-100",
@@ -44,7 +89,13 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
     description: "A great bag",
     descriptionHtml: "<p>SEO description without re-escaping</p>",
     handle: "seo-handbag-c01",
-    seo: { title: "SEO Handbag", description: "Personalized handbag SEO description" },
+    seo: {
+      title: "SEO Handbag",
+      description: "Personalized handbag SEO description",
+      aeo_quick_summary: "A grounded handbag summary.",
+      aeo_faq: [{ question: "What is shown?", answer: "A personalized handbag." }],
+      aeo_json_ld: SAMPLE_AEO_JSON_LD,
+    },
     bulletPoints: ["Feature 1"],
     media: [
       {
@@ -93,6 +144,11 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.deepEqual(adapted.seo, {
     title: "SEO Handbag",
     description: "Personalized handbag SEO description",
+  });
+  assertStrict.deepEqual(adapted.aeo, {
+    quickSummary: "A grounded handbag summary.",
+    faq: [{ question: "What is shown?", answer: "A personalized handbag." }],
+    jsonLd: SAMPLE_AEO_JSON_LD,
   });
   assertStrict.ok(adapted.tags?.includes("has-customizer"));
   assertStrict.ok(adapted.tags?.includes("asin:B0GQ33XWW7"));
@@ -314,7 +370,14 @@ test("syncSingleProduct coordinates required operations through an injected Shop
     },
   };
 
-  const customProd = shopifySyncMockData.products[0];
+  const customProd: ShopifySyncProductInput = {
+    ...shopifySyncMockData.products[0],
+    aeo: {
+      quickSummary: "A grounded handbag summary.",
+      faq: [{ question: "What is shown?", answer: "A personalized handbag." }],
+      jsonLd: SAMPLE_AEO_JSON_LD,
+    },
+  };
   const result = await syncSingleProduct(customProd, { gateway: fakeHiepGateway });
 
   assertStrict.equal(result.success, true);
@@ -336,6 +399,18 @@ test("syncSingleProduct coordinates required operations through an injected Shop
   assertStrict.deepEqual(metafields.get("custom.amazon_parent_asin"), {
     type: "single_line_text_field",
     value: "B0PARENT01",
+  });
+  assertStrict.equal(
+    metafields.get("custom.aeo_suite_html")?.type,
+    "multi_line_text_field",
+  );
+  assertStrict.match(
+    metafields.get("custom.aeo_suite_html")?.value ?? "",
+    /A grounded handbag summary\./,
+  );
+  assertStrict.deepEqual(metafields.get("custom.aeo_json_ld"), {
+    type: "json",
+    value: SAMPLE_AEO_JSON_LD,
   });
   assertStrict.equal(typeof result.timings?.productWriteMs, "number");
   assertStrict.equal(typeof result.timings?.variantsMs, "number");

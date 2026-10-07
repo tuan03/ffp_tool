@@ -25,7 +25,7 @@ test("stale coordinator snapshots show unknown presence instead of a false onlin
   assert.deepEqual(getCrawlerClientPresence(false, "offline", false), { label: "offline", tone: "offline" });
 });
 
-test("crawler page shows SEO complete after restoring a job awaiting review", () => {
+test("crawler page stops at SEO Queue handoff after restoring a downstream job", () => {
   clearCrawlerSession();
   const sourceProduct = amazonCrawlerMockOutput.products[0];
   assert.ok(sourceProduct);
@@ -55,8 +55,11 @@ test("crawler page shows SEO complete after restoring a job awaiting review", ()
     }),
   ));
 
-  assert.match(markup, /Pipeline: SEO complete/);
-  assert.doesNotMatch(markup, /Pipeline: waiting_review/);
+  assert.match(markup, /Đã bàn giao SEO Queue/);
+  assert.match(markup, /Mở SEO Queue/);
+  assert.doesNotMatch(markup, /Chờ kiểm duyệt SEO|Shopify:|Proxy Shopify|SEO fallback/);
+  assert.match(markup, /Xử lý ảnh/);
+  assert.match(markup, /Tiếp tục tự động sau SEO theo profile đã chọn/);
   assert.match(markup, />Tải Agent cho Windows</);
   assert.match(markup, /https:\/\/github\.com\/tuan03\/ffp_tool\/releases\/latest/);
   clearCrawlerSession();

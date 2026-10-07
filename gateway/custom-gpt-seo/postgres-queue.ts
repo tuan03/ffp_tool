@@ -179,7 +179,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async listFiltered(storeId: string, filters: QueueListFilters, offset = 0): Promise<readonly GptSeoJob[]> {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?", "status!='CANCELLED'"];
+    const conditions = ["store_id=?", "status!='CANCELLED'", "COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''"];
     const parameters: Array<string | number> = [storeId];
     if (filters.provider) {
       conditions.push("provider=?");
@@ -195,7 +195,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async countFiltered(storeId: string, filters: QueueListFilters): Promise<number> {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?", "status!='CANCELLED'"];
+    const conditions = ["store_id=?", "status!='CANCELLED'", "COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''"];
     const parameters: string[] = [storeId];
     if (filters.provider) {
       conditions.push("provider=?");
@@ -212,6 +212,12 @@ export class PostgresCustomGptQueue implements SeoQueue {
     const rows = provider
       ? (await this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' GROUP BY status").all(storeId, provider))
       : (await this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' GROUP BY status").all(storeId));
+    return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
+  }
+  async visibleCounts(storeId: string, provider?: ExternalSeoProvider): Promise<Readonly<Record<string, number>>> {
+    const rows = provider
+      ? (await this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' GROUP BY status").all(storeId, provider))
+      : (await this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' GROUP BY status").all(storeId));
     return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
   }
   private async write(job: GptSeoJob): Promise<void> {
@@ -393,25 +399,39 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async clearQueue(storeId: string): Promise<ClearQueueResult> {
     return await this.transaction(async () => {
-      const rows = await this.db.prepare("SELECT id,payload,batch_id FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' ORDER BY created_at,id").all(storeId);
+      const rows = await this.db.prepare("SELECT id,payload,batch_id FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' ORDER BY created_at,id").all(storeId);
       let cleared = 0;
+      let archived = 0;
       let preservedActive = 0;
-      let preservedSynced = 0;
+      let preservedFailed = 0;
       for (const row of rows) {
         const jobId = String(row.id);
         const job = json(row.payload) as GptSeoJob;
-        const hasPublish = Boolean(await this.db.prepare("SELECT 1 FROM seo_publish_operations WHERE job_id=?").get(jobId));
-        const hasSync = Boolean(await this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status!='ROLLED_BACK'").get(jobId));
-        if (hasPublish || hasSync) {
-          preservedSynced += 1;
-          continue;
-        }
+        const publishState = String((await this.db.prepare("SELECT state FROM seo_publish_operations WHERE job_id=?").get(jobId))?.state ?? "");
+        const syncStatus = String((await this.db.prepare("SELECT status FROM gpt_sync WHERE job_id=?").get(jobId))?.status ?? "");
         const workerLease = await this.db.prepare("SELECT lease_id,expires_at FROM seo_worker_jobs WHERE job_id=?").get(jobId);
-        const hasActiveBatch = row.batch_id !== null && Boolean(await this.db.prepare("SELECT 1 FROM gpt_batches WHERE id=? AND active=1 AND expires_at>?").get(String(row.batch_id), this.now()));
+        const canBatchStillMutateJob = ["IN_PROGRESS", "NEEDS_CHANGES", "WAITING_INPUT", "VALIDATING"].includes(job.status);
+        const hasActiveBatch = canBatchStillMutateJob && row.batch_id !== null && Boolean(await this.db.prepare("SELECT 1 FROM gpt_batches WHERE id=? AND active=1 AND expires_at>?").get(String(row.batch_id), this.now()));
         const hasActiveWorkerLease = Boolean(workerLease?.lease_id) && Number(workerLease?.expires_at ?? 0) > this.now();
         const hasActiveFinalizer = job.status === "VALIDATING" && Number(job.finalizerUntil ?? 0) > this.now();
-        if (hasActiveBatch || hasActiveWorkerLease || hasActiveFinalizer) {
+        const hasUnresolvedPublish = ["QUEUED", "CHECKING", "WRITING", "UNCERTAIN"].includes(publishState);
+        if (hasActiveBatch || hasActiveWorkerLease || hasActiveFinalizer ||
+            syncStatus === "SYNCING" || syncStatus === "UNKNOWN" || hasUnresolvedPublish) {
           preservedActive += 1;
+          continue;
+        }
+        if (syncStatus === "SYNCED" || publishState === "SUCCEEDED" || job.status === "REVIEW_READY") {
+          await this.write({
+            ...job,
+            queueArchivedAt: this.now(),
+            queueArchiveReason: "OPERATOR_QUEUE_CLEAR",
+          });
+          await this.audit(storeId, jobId, "QUEUE_ARCHIVED");
+          archived += 1;
+          continue;
+        }
+        if (syncStatus === "FAILED" || publishState === "BLOCKED") {
+          preservedFailed += 1;
           continue;
         }
         await this.write({ ...job, status: "CANCELLED", cancellationReason: "OPERATOR_QUEUE_CLEAR", error: "Removed from Queue by operator" });
@@ -419,7 +439,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
         await this.audit(storeId, jobId, "QUEUE_CLEARED");
         cleared += 1;
       }
-      return { cleared, preservedActive, preservedSynced };
+      return { cleared, archived, preservedActive, preservedFailed };
     });
   }
   async pendingFinalization(): Promise<readonly GptSeoJob[]> {
@@ -536,10 +556,14 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
       if (job.status !== "REVIEW_READY") throw new Error("Sync requires a ready review");
-      if ((await this.versioning.getStoreFlags(storeId)).writeEnabled) {
+      // Amazon crawler products are published as a complete product by the
+      // Coordinator pipeline. The SEO publisher only updates an existing
+      // Shopify product, so its store-wide gate does not apply to this source.
+      const isCrawlerProductSync = job.source === "amazon";
+      if (!isCrawlerProductSync && (await this.versioning.getStoreFlags(storeId)).writeEnabled) {
         throw new Error("BACKEND_PUBLISH_REQUIRED: versioning-enabled stores cannot use the browser publisher");
       }
-      if ((await this.publisher.status(storeId, jobId)).managed) throw new Error("BACKEND_PUBLISH_REQUIRED: use the operator publish endpoint");
+      if (!isCrawlerProductSync && (await this.publisher.status(storeId, jobId)).managed) throw new Error("BACKEND_PUBLISH_REQUIRED: use the operator publish endpoint");
       const newer = (await this.db.prepare("SELECT 1 FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND rowid>(SELECT rowid FROM gpt_jobs WHERE id=?) LIMIT 1").get(storeId, job.source, job.sourceIdentity, jobId));
       if (newer) throw new Error("Sync conflict: a newer source revision exists");
       if ((await this.reviewState(storeId, jobId)).reviewDecision !== "approved") throw new Error("Sync requires human approval saved on the server");

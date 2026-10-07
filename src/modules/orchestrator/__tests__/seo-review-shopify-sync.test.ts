@@ -185,6 +185,17 @@ describe("seo-review-shopify-sync", () => {
       seoTitle: "Best Ceramic Mug | Custom Print",
       seoDescription: "High quality ceramic mug with durable print.",
       handle: "approved-ceramic-mug",
+      aeo: {
+        quickSummary: "A ceramic mug with a custom print.",
+        faq: [{ question: "What is this product?", answer: "It is a ceramic mug." }],
+        jsonLd: JSON.stringify({
+          "@context": "https://schema.org",
+          "@graph": [
+            { "@type": "Product", name: "Approved Ceramic Mug" },
+            { "@type": "FAQPage", mainEntity: [] },
+          ],
+        }),
+      },
       images: [
         {
           id: "gid://shopify/ProductImage/111",
@@ -210,6 +221,10 @@ describe("seo-review-shopify-sync", () => {
       assert.equal(updateCall.payload.product.images?.[0]?.altText, "Ceramic Mug Front View");
       const vMeta = updateCall.payload.product.metafields?.find((m) => m.key === "seo_version");
       assert.equal(vMeta?.value, "1");
+      const aeoHtml = updateCall.payload.product.metafields?.find((m) => m.key === "aeo_suite_html");
+      assert.match(aeoHtml?.value ?? "", /AEO Suite/);
+      const aeoJsonLd = updateCall.payload.product.metafields?.find((m) => m.key === "aeo_json_ld");
+      assert.equal(aeoJsonLd?.type, "json");
     }
 
     const metaCall = executedInputs.find((i) => i.operation === "metafields.set");
@@ -224,7 +239,9 @@ describe("seo-review-shopify-sync", () => {
   });
 
   it("pushes Amazon Crawler product with sourceCrawlProduct using shopify-sync adapter", async () => {
+    const executedInputs: ShopifyApiInput[] = [];
     const runner = createMockRunner(async (input) => {
+      executedInputs.push(input);
       if (input.operation === "stores.list") {
         return {
           storeId: "capozen",
@@ -284,6 +301,17 @@ describe("seo-review-shopify-sync", () => {
       seoTitle: "Custom Photo Blanket | Cozy Living",
       seoDescription: "Personalized fleece blankets with vibrant print.",
       handle: "custom-photo-blanket",
+      aeo: {
+        quickSummary: "A custom photo blanket with a fleece construction.",
+        faq: [{ question: "What is this product?", answer: "It is a custom photo blanket." }],
+        jsonLd: JSON.stringify({
+          "@context": "https://schema.org",
+          "@graph": [
+            { "@type": "Product", name: "Enriched Custom Blanket" },
+            { "@type": "FAQPage", mainEntity: [] },
+          ],
+        }),
+      },
       images: [
         {
           previewUrl: "https://images-na.ssl-images-amazon.com/img1.jpg",
@@ -301,6 +329,15 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(result.success, true);
     assert.equal(result.productId, "gid://shopify/Product/crawl-sync-777");
     assert.equal(result.adminUrl, "https://admin.shopify.com/store/capozen/products/crawl-sync-777");
+    const metafieldCalls = executedInputs.filter((input) => input.operation === "metafields.set");
+    assert.equal(
+      metafieldCalls.some((input) => input.operation === "metafields.set" && input.payload.key === "aeo_suite_html"),
+      true,
+    );
+    assert.equal(
+      metafieldCalls.some((input) => input.operation === "metafields.set" && input.payload.key === "aeo_json_ld"),
+      true,
+    );
   });
 
   it("handles errors gracefully and returns success: false with descriptive message", async () => {

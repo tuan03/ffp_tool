@@ -147,6 +147,8 @@ export interface GptSeoJob extends GptSeoEnqueue {
   readonly settings: GptSeoSettings;
   readonly status: GptJobStatus;
   readonly cancellationReason?: "OPERATOR_QUEUE_CLEAR";
+  readonly queueArchivedAt?: number;
+  readonly queueArchiveReason?: "OPERATOR_QUEUE_CLEAR";
   readonly shopifySyncStatus?: "SYNCING" | "UNKNOWN" | "SYNCED" | "ROLLED_BACK" | "FAILED";
   readonly checkpoints: Partial<Record<GptStage, unknown>>;
   readonly result?: unknown;
@@ -168,8 +170,9 @@ export interface GptSeoBatch {
 }
 export interface ClearQueueResult {
   readonly cleared: number;
+  readonly archived: number;
   readonly preservedActive: number;
-  readonly preservedSynced: number;
+  readonly preservedFailed: number;
 }
 export interface GptLeaseMutation {
   readonly batchId: string;

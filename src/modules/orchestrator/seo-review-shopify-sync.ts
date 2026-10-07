@@ -13,7 +13,9 @@ import {
 } from "../seo-content/browser";
 import {
   fromCustomizationNormalizerProduct,
+  buildAeoMetafieldValues,
   syncSingleProduct,
+  type ShopifyAeoInput,
   type ShopifyManagedResources,
   type ShopifyMetafieldInput,
   type ShopifySyncProductInput,
@@ -39,6 +41,7 @@ export interface SeoReviewPushProductItem {
   readonly handle: string;
   readonly images: readonly SeoReviewPushImageItem[];
   readonly sourceCrawlProduct?: CrawlProduct;
+  readonly aeo?: ShopifyAeoInput;
   readonly tags?: readonly string[];
   readonly vendor?: string;
   readonly productType?: string;
@@ -153,6 +156,16 @@ export async function pushSeoReviewProductToShopify(
     const effectiveVendor = product.vendor || fallbackVendor;
 
     let finalMetafields = product.metafields ? [...product.metafields] : undefined;
+    if (!product.sourceCrawlProduct && product.aeo) {
+      const aeoMetafields = buildAeoMetafieldValues(product.aeo);
+      const aeoKeys = new Set(aeoMetafields.map((metafield) => `${metafield.namespace}:${metafield.key}`));
+      finalMetafields = [
+        ...(finalMetafields ?? []).filter(
+          (metafield) => !aeoKeys.has(`${metafield.namespace}:${metafield.key}`),
+        ),
+        ...aeoMetafields,
+      ];
+    }
 
     // By default, always upload the print master file to Shopify Files so it has a permanent Shopify CDN URL!
     if (finalMetafields && finalMetafields.length > 0) {
@@ -265,6 +278,11 @@ export async function pushSeoReviewProductToShopify(
             url: img.webpUrl || img.previewUrl,
           },
         })),
+        ...(product.aeo ? {
+          aeo_quick_summary: product.aeo.quickSummary,
+          aeo_faq: product.aeo.faq,
+          aeo_json_ld: product.aeo.jsonLd,
+        } : {}),
       };
 
       const enrichedCrawlProduct = applySeoContentToCustomizationProduct(crawl, seoOutput, {

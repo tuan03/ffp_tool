@@ -9,6 +9,17 @@ export interface ShopifySeoInput {
   readonly description: string;
 }
 
+export interface ShopifyAeoFaqItem {
+  readonly question: string;
+  readonly answer: string;
+}
+
+export interface ShopifyAeoInput {
+  readonly quickSummary: string;
+  readonly faq: readonly ShopifyAeoFaqItem[];
+  readonly jsonLd: string;
+}
+
 export interface ShopifySyncOptions {
   readonly signal?: AbortSignal;
   readonly dryRun?: boolean;
@@ -104,6 +115,7 @@ export interface ShopifySyncProductInput {
   readonly descriptionHtml: string;
   readonly handle?: string;
   readonly seo?: ShopifySeoInput;
+  readonly aeo?: ShopifyAeoInput;
   readonly vendor?: string;
   readonly productType?: string;
   readonly tags?: readonly string[];
@@ -228,7 +240,7 @@ export interface SetMetafieldInput {
   readonly productId: string;
   readonly namespace: string;
   readonly key: string;
-  readonly type: "json" | "single_line_text_field";
+  readonly type: "json" | "multi_line_text_field" | "single_line_text_field";
   readonly value: string;
 }
 

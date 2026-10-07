@@ -62,6 +62,11 @@ SEO_READY_PRODUCT_STATUSES = {
     "waiting_review", "sync_queued", "syncing", "shopify_writing",
     "stopping_after_write", "completed", "rejected", "reconciliation_required", "deleted",
 }
+SEO_QUEUE_HANDOFF_DOWNSTREAM_STATUSES = {
+    "image_processing", "waiting_review", "sync_queued", "syncing",
+    "shopify_writing", "stopping_after_write", "completed", "rejected",
+    "reconciliation_required", "deleted",
+}
 CANCELLABLE_PRODUCT_STATUSES = ACTIVE_PRODUCT_STATUSES | {"cancelling"}
 CANCELLATION_UNCONFIRMED_ATTEMPT_STATUSES = {
     "cancelled_unconfirmed",
@@ -197,6 +202,53 @@ class CoordinatorStore(CoordinatorObservability):
         return parent_asin, sorted(member_asins)
 
     @staticmethod
+    def _product_exact_asins(product: dict[str, Any]) -> set[str]:
+        primary_asin = str(product.get("asin") or "").strip().upper()
+        parent_asin = str(product.get("parentAsin") or "").strip().upper()
+        exact_asins: set[str] = set()
+        if re.fullmatch(r"[A-Z0-9]{10}", primary_asin):
+            exact_asins.add(primary_asin)
+        for variant in product.get("sourceVariants") or []:
+            if not isinstance(variant, dict):
+                continue
+            asin = str(variant.get("asin") or "").strip().upper()
+            if re.fullmatch(r"[A-Z0-9]{10}", asin) and asin != parent_asin:
+                exact_asins.add(asin)
+        return exact_asins
+
+    @classmethod
+    def _existing_shopify_product(
+        cls,
+        session,
+        job: CrawlJob | None,
+        product: dict[str, Any],
+    ) -> tuple[set[str], list[str]] | None:
+        store_id = str((job.settings if job else {}).get("storeId") or "").strip()
+        exact_asins = cls._product_exact_asins(product)
+        preflight_shopify_asins = {
+            str(asin).strip().upper()
+            for asin in ((job.settings if job else {}).get("existingShopifyAsins") or [])
+            if re.fullmatch(r"[A-Z0-9]{10}", str(asin).strip().upper())
+        }
+        existing_shopify_rows = []
+        if store_id and exact_asins:
+            existing_shopify_rows = session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == store_id,
+                AmazonAsinRegistry.marketplace == "amazon-us",
+                AmazonAsinRegistry.asin.in_(exact_asins),
+                AmazonAsinRegistry.status == "synced",
+            )).all()
+            existing_shopify_rows = [row for row in existing_shopify_rows if row.shopify_product_ids]
+        if not existing_shopify_rows and not (exact_asins & preflight_shopify_asins):
+            return None
+        shopify_product_ids = sorted({
+            product_id
+            for row in existing_shopify_rows
+            for product_id in (row.shopify_product_ids or [])
+        })
+        return exact_asins, shopify_product_ids
+
+    @staticmethod
     def _upsert_asin_registry(
         session,
         *,
@@ -214,6 +266,12 @@ class CoordinatorStore(CoordinatorObservability):
         now = utc_now()
         insert_factory = postgres_insert if session.get_bind().dialect.name == "postgresql" else sqlite_insert
         for asin in member_asins:
+            existing_row = session.scalar(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == normalized_store_id,
+                AmazonAsinRegistry.marketplace == "amazon-us",
+                AmazonAsinRegistry.asin == asin,
+            ))
+            preserves_synced_member = status == "crawled" and existing_row is not None and existing_row.status == "synced"
             statement = insert_factory(AmazonAsinRegistry).values(
                 id=_id(),
                 store_id=normalized_store_id,
@@ -229,10 +287,10 @@ class CoordinatorStore(CoordinatorObservability):
             )
             update_values: dict[str, Any] = {
                 "parent_asin": parent_asin,
-                "status": status,
+                "status": "synced" if preserves_synced_member else status,
                 "updated_at": now,
             }
-            if job_id:
+            if job_id and not preserves_synced_member:
                 update_values["last_job_id"] = job_id
             if status == "synced":
                 update_values["synced_at"] = now
@@ -268,6 +326,8 @@ class CoordinatorStore(CoordinatorObservability):
             by_asin = {row.asin: row for row in registry_rows}
             parent_asins = {row.parent_asin for row in registry_rows}
             family_members: dict[str, list[str]] = {}
+            family_rows: dict[str, list[AmazonAsinRegistry]] = {}
+            family_has_synced_members: dict[str, bool] = {}
             if parent_asins:
                 for row in session.scalars(select(AmazonAsinRegistry).where(
                     AmazonAsinRegistry.store_id == normalized_store_id,
@@ -275,6 +335,9 @@ class CoordinatorStore(CoordinatorObservability):
                     AmazonAsinRegistry.parent_asin.in_(parent_asins),
                 )).all():
                     family_members.setdefault(row.parent_asin, []).append(row.asin)
+                    family_rows.setdefault(row.parent_asin, []).append(row)
+                    if row.status == "synced" and row.shopify_product_ids:
+                        family_has_synced_members[row.parent_asin] = True
             task_asins = set(normalized_asins)
             for member_asins in family_members.values():
                 task_asins.update(member_asins)
@@ -289,17 +352,68 @@ class CoordinatorStore(CoordinatorObservability):
                 for task, job in active_tasks
                 if str((job.settings or {}).get("storeId") or "").strip() == normalized_store_id
             }
+            candidate_job_ids = {
+                row.last_job_id
+                for rows in family_rows.values()
+                for row in rows
+                if row.last_job_id
+            }
+            retained_asins_by_job: dict[str, set[str]] = {}
+            existing_job_ids: set[str] = set()
+            if candidate_job_ids:
+                existing_job_ids = set(session.scalars(select(CrawlJob.id).where(
+                    CrawlJob.id.in_(candidate_job_ids),
+                )).all())
+                for item in session.scalars(select(CrawlProductItem).where(
+                    CrawlProductItem.job_id.in_(candidate_job_ids),
+                    CrawlProductItem.status != "deleted",
+                )).all():
+                    product = item.normalized_payload if isinstance(item.normalized_payload, dict) else item.raw_payload
+                    if not isinstance(product, dict):
+                        continue
+                    identity = self._product_family_identity(product)
+                    if identity is not None:
+                        retained_asins_by_job.setdefault(item.job_id, set()).update(identity[1])
             grouped: dict[str, dict[str, Any]] = {}
             for asin in normalized_asins:
                 row = by_asin.get(asin)
                 parent_asin = row.parent_asin if row is not None else asin
+                def is_stale_crawled(candidate: AmazonAsinRegistry) -> bool:
+                    return bool(
+                        candidate.status == "crawled"
+                        and not (candidate.shopify_product_ids or [])
+                        and (
+                            not candidate.last_job_id
+                            or candidate.last_job_id not in existing_job_ids
+                            or candidate.asin not in retained_asins_by_job.get(candidate.last_job_id, set())
+                        )
+                    )
+
+                recovered_stale_registry = bool(row is not None and is_stale_crawled(row))
+                pending_family_rows = [
+                    candidate
+                    for candidate in family_rows.get(parent_asin, [])
+                    if candidate.status == "crawled" and not is_stale_crawled(candidate)
+                ]
+                family_database_status = (
+                    "crawled"
+                    if pending_family_rows
+                    else None if recovered_stale_registry else (row.status if row is not None else None)
+                )
+                family_job_id = (
+                    pending_family_rows[0].last_job_id
+                    if pending_family_rows
+                    else None if recovered_stale_registry else (row.last_job_id if row is not None else None)
+                )
                 family = grouped.setdefault(parent_asin, {
                     "parentAsin": parent_asin,
                     "inputAsins": [],
                     "memberAsins": sorted(set(family_members.get(parent_asin, [asin]))),
                     "isResolved": row is not None,
-                    "databaseStatus": row.status if row is not None else None,
-                    "jobId": row.last_job_id if row is not None else None,
+                    "databaseStatus": family_database_status,
+                    "jobId": family_job_id,
+                    "recoveredStaleRegistry": recovered_stale_registry,
+                    "hasSyncedFamilyMembers": family_has_synced_members.get(parent_asin, False),
                 })
                 family["inputAsins"].append(asin)
                 active = next(
@@ -314,6 +428,7 @@ class CoordinatorStore(CoordinatorObservability):
                     task, job = active
                     family["databaseStatus"] = task.status
                     family["jobId"] = job.id
+                    family["recoveredStaleRegistry"] = False
             return {"families": list(grouped.values())}
 
     def backfill_asin_registry(self) -> dict[str, int]:
@@ -380,6 +495,36 @@ class CoordinatorStore(CoordinatorObservability):
         return "pausing" if active_tasks else "paused"
 
     @staticmethod
+    def _seo_queue_handoff_summary(session, job_id: str) -> dict[str, int]:
+        rows = session.execute(select(
+            CrawlProductItem.status,
+            CrawlProductItem.shopify_result,
+        ).where(CrawlProductItem.job_id == job_id)).all()
+        handed_over = 0
+        pending = 0
+        not_handed_over = 0
+        for status, raw_result in rows:
+            pipeline_result = raw_result if isinstance(raw_result, dict) else {}
+            external_seo = pipeline_result.get("externalSeo")
+            has_external_job = (
+                isinstance(external_seo, dict)
+                and isinstance(external_seo.get("jobId"), str)
+                and bool(external_seo["jobId"].strip())
+            )
+            if has_external_job or status in SEO_QUEUE_HANDOFF_DOWNSTREAM_STATUSES:
+                handed_over += 1
+            elif status in {"failed", "cancelled"}:
+                not_handed_over += 1
+            else:
+                pending += 1
+        return {
+            "totalProducts": len(rows),
+            "handedOver": handed_over,
+            "pending": pending,
+            "notHandedOver": not_handed_over,
+        }
+
+    @staticmethod
     def _refresh_job(session, job_id: str) -> None:
         job = session.get(CrawlJob, job_id)
         if job is None:
@@ -438,6 +583,7 @@ class CoordinatorStore(CoordinatorObservability):
             product_statuses = Counter(session.scalars(
                 select(CrawlProductItem.status).where(CrawlProductItem.job_id == job_id)
             ).all())
+            handoff = CoordinatorStore._seo_queue_handoff_summary(session, job_id)
             has_review_work = any(
                 product_statuses.get(status, 0)
                 for status in {"waiting_review", "sync_queued"}
@@ -446,7 +592,19 @@ class CoordinatorStore(CoordinatorObservability):
                 product_statuses.get(status, 0)
                 for status in {"received", "normalizing", "seo", "image_processing", "retry_wait"}
             )
-            if has_pre_review_work:
+            has_active_pipeline_work = any(
+                product_statuses.get(status, 0)
+                for status in ACTIVE_PRODUCT_STATUSES
+            )
+            if (
+                handoff["handedOver"] > 0
+                and handoff["pending"] == 0
+                and (has_pre_review_work or has_review_work or has_active_pipeline_work)
+            ):
+                job.status = "review_pending"
+                job.started_at = job.started_at or utc_now()
+                job.completed_at = job.completed_at or utc_now()
+            elif has_pre_review_work:
                 job.status = "running"
                 job.started_at = job.started_at or utc_now()
                 job.completed_at = None
@@ -454,7 +612,7 @@ class CoordinatorStore(CoordinatorObservability):
                 job.status = "review_pending"
                 job.started_at = job.started_at or utc_now()
                 job.completed_at = utc_now()
-            elif any(product_statuses.get(status, 0) for status in ACTIVE_PRODUCT_STATUSES):
+            elif has_active_pipeline_work:
                 job.status = "running"
                 job.started_at = job.started_at or utc_now()
                 job.completed_at = None
@@ -492,6 +650,26 @@ class CoordinatorStore(CoordinatorObservability):
         if len(raw_urls) > 200:
             raise ValueError("A job may contain at most 200 inputs.")
         settings = CrawlSettings.from_api(payload).api_dict()
+        raw_existing_shopify_asins = payload.get("existingShopifyAsins") or []
+        if not isinstance(raw_existing_shopify_asins, list) or len(raw_existing_shopify_asins) > 200:
+            raise ValueError("existingShopifyAsins must be an array of at most 200 ASINs.")
+        existing_shopify_asins = list(dict.fromkeys(
+            str(asin).strip().upper() for asin in raw_existing_shopify_asins
+        ))
+        if any(re.fullmatch(r"[A-Z0-9]{10}", asin) is None for asin in existing_shopify_asins):
+            raise ValueError("existingShopifyAsins must contain normalized Amazon ASINs.")
+        if existing_shopify_asins:
+            settings["existingShopifyAsins"] = existing_shopify_asins
+        raw_refresh_family_asins = payload.get("refreshFamilyAsins") or []
+        if not isinstance(raw_refresh_family_asins, list) or len(raw_refresh_family_asins) > 200:
+            raise ValueError("refreshFamilyAsins must be an array of at most 200 ASINs.")
+        refresh_family_asins = list(dict.fromkeys(
+            str(asin).strip().upper() for asin in raw_refresh_family_asins
+        ))
+        if any(re.fullmatch(r"[A-Z0-9]{10}", asin) is None for asin in refresh_family_asins):
+            raise ValueError("refreshFamilyAsins must contain normalized Amazon ASINs.")
+        if refresh_family_asins:
+            settings["refreshFamilyAsins"] = refresh_family_asins
         allowed_agent_group = str(payload.get("allowedAgentGroup", payload.get("allowed_agent_group", "")) or "").strip()
         if allowed_agent_group and (len(allowed_agent_group) > 80
                 or not allowed_agent_group[0].isalnum()
@@ -1487,8 +1665,20 @@ class CoordinatorStore(CoordinatorObservability):
                 return {"status": "invalid", "taskId": task.id, "reason": "job_identity"}
             products = payload.get("products") if isinstance(payload.get("products"), list) else []
             retained_products: list[Any] = []
+            job = session.get(CrawlJob, task.job_id)
             for product in products:
                 if isinstance(product, dict) and product.get("id"):
+                    existing_shopify_product = self._existing_shopify_product(session, job, product)
+                    if existing_shopify_product is not None:
+                        exact_asins, shopify_product_ids = existing_shopify_product
+                        self._event(session, task.job_id, "product_skipped_existing_shopify", {
+                            "taskId": task.id,
+                            "sourceKey": _source_key(product),
+                            "asins": sorted(exact_asins),
+                            "shopifyProductIds": shopify_product_ids,
+                            "transport": "final_result",
+                        })
+                        continue
                     item, _created = self._upsert_product_item(
                         session,
                         task=task,
@@ -1509,7 +1699,6 @@ class CoordinatorStore(CoordinatorObservability):
             ))
             task.status = "completed"
             task.next_retry_at = None
-            job = session.get(CrawlJob, task.job_id)
             amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
             negative = session.get(CoordinatorState, self._negative_key(task.asin, amazon_zip))
             if negative is not None:
@@ -1613,6 +1802,22 @@ class CoordinatorStore(CoordinatorObservability):
             ))
             if attempt is None:
                 return {"status": "stale"}
+            job = session.get(CrawlJob, task.job_id)
+            existing_shopify_product = self._existing_shopify_product(session, job, product)
+            if existing_shopify_product is not None:
+                exact_asins, shopify_product_ids = existing_shopify_product
+                self._event(session, task.job_id, "product_skipped_existing_shopify", {
+                    "taskId": task.id,
+                    "sourceKey": source_key,
+                    "asins": sorted(exact_asins),
+                    "shopifyProductIds": shopify_product_ids,
+                })
+                return self._save_receipt(session, receipt_id, task_id, payload, {
+                    "status": "duplicate",
+                    "reason": "existing_shopify_product",
+                    "sourceKey": source_key,
+                    "shopifyProductIds": shopify_product_ids,
+                })
             existing = session.scalar(select(CrawlProductItem).where(
                 CrawlProductItem.job_id == task.job_id, CrawlProductItem.source_key == source_key,
             ))
@@ -1626,7 +1831,6 @@ class CoordinatorStore(CoordinatorObservability):
                 product=product,
                 checksum=str(payload.get("productChecksum") or checksum),
             )
-            job = session.get(CrawlJob, task.job_id)
             self._upsert_asin_registry(
                 session,
                 store_id=str((job.settings if job else {}).get("storeId") or ""),
@@ -1862,6 +2066,7 @@ class CoordinatorStore(CoordinatorObservability):
             "storeId": str(review.get("storeId") or settings.get("storeId") or ""),
             "decision": str(review.get("decision") or "pending"),
             "syncStatus": str(review.get("syncStatus") or "idle"),
+            "syncGeneration": int(review.get("syncGeneration") or 0),
             "version": int(review.get("version") or 1),
             "rejectionReason": review.get("rejectionReason"),
             "syncError": review.get("syncError"),
@@ -2079,7 +2284,7 @@ class CoordinatorStore(CoordinatorObservability):
             self._refresh_job(session, item.job_id)
             return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
 
-    def queue_product_review_sync(self, item_id: str) -> dict[str, Any] | None:
+    def queue_product_review_sync(self, item_id: str, *, reconcile: bool = False) -> dict[str, Any] | None:
         with self.sessions.begin() as session:
             item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
             if item is None:
@@ -2090,10 +2295,36 @@ class CoordinatorStore(CoordinatorObservability):
             review = dict(pipeline_result.get("review") or {})
             if str(review.get("decision") or "pending") != "approved":
                 return {"notApproved": True}
-            if item.status == "reconciliation_required":
+            if item.status == "reconciliation_required" and not reconcile:
                 return {"reconciliationRequired": True}
+            current_sync_status = str(review.get("syncStatus") or "idle")
+            if current_sync_status == "synced" and not reconcile:
+                return {"alreadySynced": True}
             if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
                 return self._review_snapshot(item, session.get(CrawlJob, item.job_id))
+            if reconcile:
+                legacy_product_id = str(pipeline_result.get("productId") or "").strip()
+                if legacy_product_id:
+                    job = session.get(CrawlJob, item.job_id)
+                    settings = dict(job.settings or {}) if job is not None and isinstance(job.settings, dict) else {}
+                    effective_store_id = str(review.get("storeId") or settings.get("storeId") or "").strip()
+                    self._upsert_shopify_link(
+                        session,
+                        item=item,
+                        store_id=effective_store_id,
+                        normalized_checksum=item.checksum,
+                        shopify_result=pipeline_result,
+                    )
+                    self._upsert_asin_registry(
+                        session,
+                        store_id=effective_store_id,
+                        job_id=item.job_id,
+                        product=dict(item.normalized_payload or item.raw_payload or {}),
+                        status="synced",
+                        shopify_product_id=legacy_product_id,
+                    )
+                review["syncGeneration"] = int(review.get("syncGeneration") or 0) + 1
+                review["reconciliationRequestedAt"] = utc_iso(utc_now())
             review.update({
                 "syncStatus": "queued",
                 "syncError": None,
@@ -2166,11 +2397,31 @@ class CoordinatorStore(CoordinatorObservability):
             if admin_url:
                 pipeline_result["adminUrl"] = admin_url
             pipeline_result["review"] = review
+            if product_id:
+                job = session.get(CrawlJob, item.job_id)
+                settings = dict(job.settings or {}) if job is not None and isinstance(job.settings, dict) else {}
+                effective_store_id = str(review.get("storeId") or settings.get("storeId") or "").strip()
+                self._upsert_shopify_link(
+                    session,
+                    item=item,
+                    store_id=effective_store_id,
+                    normalized_checksum=item.checksum,
+                    shopify_result=pipeline_result,
+                )
+                self._upsert_asin_registry(
+                    session,
+                    store_id=effective_store_id,
+                    job_id=item.job_id,
+                    product=dict(item.normalized_payload or item.raw_payload or {}),
+                    status="synced",
+                    shopify_product_id=product_id,
+                )
             item.shopify_result = pipeline_result
             item.status = "completed"
             item.last_error = None
             item.next_attempt_at = None
             item.claim_expires_at = None
+            item.claimed_by = None
             item.completed_at = utc_now()
             self._event(session, item.job_id, "product_review_synced", {
                 "productItemId": item.id,
@@ -3622,6 +3873,7 @@ class CoordinatorStore(CoordinatorObservability):
             select(CrawlProductItem.status, func.count(CrawlProductItem.id))
             .where(CrawlProductItem.job_id == job.id).group_by(CrawlProductItem.status)
         ).all())
+        handoff = CoordinatorStore._seo_queue_handoff_summary(session, job.id)
         completed = sum(int(task_counts.get(status, 0)) for status in TERMINAL_TASK_STATUSES)
         event_payload = session.scalar(
             select(JobEvent.payload).where(JobEvent.job_id == job.id, JobEvent.event_type == "task_progress")
@@ -3651,7 +3903,7 @@ class CoordinatorStore(CoordinatorObservability):
         retry_phase = str(retry_error.get("phase") or "shopify") if isinstance(retry_error, dict) else None
         phase = str(latest.get("phase") or "product")
         if job.status in {"completed", "partial", "cancelled", "review_pending"}:
-            phase = "export" if job.status != "review_pending" else "review"
+            phase = "export" if job.status != "review_pending" else "seo"
         elif product_counts.get("syncing") or product_counts.get("shopify_writing") or retry_phase == "shopify":
             phase = "shopify"
         elif retry_phase == "image_processing":
@@ -3672,7 +3924,9 @@ class CoordinatorStore(CoordinatorObservability):
                 CrawlTask.job_id == job.id, CrawlTask.status != "failed", CrawlTask.last_error["stage"].as_string() == "job",
             )) or 0)
         message = str(latest.get("message") or f"Đã xử lý {completed}/{job.accepted_inputs} link.")
-        if phase in {"seo", "image_processing", "shopify"}:
+        if job.status == "review_pending":
+            message = f"Đã bàn giao {handoff['handedOver']}/{handoff['totalProducts']} sản phẩm sang SEO Queue."
+        elif phase in {"seo", "image_processing", "shopify"}:
             message = f"Đang xử lý {phase}: {completed}/{job.accepted_inputs} link đã crawl."
         elif job.status in {"completed", "partial", "cancelled", "review_pending"}:
             message = f"Đã xử lý {completed}/{job.accepted_inputs} link."
@@ -3686,6 +3940,7 @@ class CoordinatorStore(CoordinatorObservability):
                 "message": message[:240],
             },
             "taskCounts": task_counts, "productCounts": product_counts,
+            "seoQueueHandoff": handoff,
             "createdAt": utc_iso(job.created_at),
             "startedAt": utc_iso(job.started_at) if job.started_at else None,
             "completedAt": utc_iso(job.completed_at) if job.completed_at else None,
@@ -3696,7 +3951,7 @@ class CoordinatorStore(CoordinatorObservability):
             jobs = session.scalars(select(CrawlJob).order_by(CrawlJob.created_at.desc()).limit(max(1, min(limit, 500)))).all()
             snapshots = []
             for job in jobs:
-                if job.status == "review_pending":
+                if job.status in {"running", "review_pending"}:
                     self._refresh_job(session, job.id)
                 if job.status == "cancelling":
                     snapshots.append(self._job_snapshot(session, job, include_task_details=False))
@@ -4092,6 +4347,7 @@ class CoordinatorStore(CoordinatorObservability):
             .where(CrawlProductItem.job_id == job.id)
             .group_by(CrawlProductItem.status)
         ).all())
+        handoff = CoordinatorStore._seo_queue_handoff_summary(session, job.id)
         product_total = sum(product_counts.values())
         seo_ready_count = sum(int(product_counts.get(status, 0)) for status in SEO_READY_PRODUCT_STATUSES)
         retry_errors = session.scalars(
@@ -4108,7 +4364,7 @@ class CoordinatorStore(CoordinatorObservability):
         is_terminal = job.status in {"completed", "partial", "cancelled", "review_pending"}
         has_pipeline_work = any(product_counts.get(status, 0) for status in ACTIVE_PRODUCT_STATUSES)
         if job.status == "review_pending":
-            phase = "review"
+            phase = "seo"
         elif is_terminal:
             phase = "export"
         elif any(product_counts.get(status, 0) for status in {
@@ -4125,7 +4381,7 @@ class CoordinatorStore(CoordinatorObservability):
             phase = str(latest_batch_progress.get("phase") or ("product" if progress_events else "queued"))
         terminal_count = completed + failed + cancelled
         if job.status == "review_pending":
-            progress_message = f"SEO hoàn tất {seo_ready_count}/{product_total} sản phẩm; đã chuyển sang SEO Review."
+            progress_message = f"Đã bàn giao {handoff['handedOver']}/{handoff['totalProducts']} sản phẩm sang SEO Queue."
         elif is_terminal:
             progress_message = f"Đã xử lý {terminal_count}/{job.accepted_inputs} link."
         elif has_pipeline_work and terminal_count == job.accepted_inputs:
@@ -4144,6 +4400,7 @@ class CoordinatorStore(CoordinatorObservability):
             "message": progress_message,
             "items": progress_items,
             "productCounts": product_counts,
+            "seoQueueHandoff": handoff,
         }
         if isinstance(latest_batch_progress.get("browserPool"), dict):
             progress["browserPool"] = latest_batch_progress["browserPool"]
@@ -4216,6 +4473,7 @@ class CoordinatorStore(CoordinatorObservability):
             "requestedInputs": job.requested_inputs, "acceptedInputs": job.accepted_inputs,
             "rejectedInputs": job.rejected_inputs, "taskCounts": counts,
             "productCounts": product_counts,
+            "seoQueueHandoff": handoff,
             "progress": progress,
             "replacementOfJobId": control.replacement_of_job_id if control else None,
             "cancellation": {

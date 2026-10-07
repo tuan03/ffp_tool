@@ -769,7 +769,9 @@ export function ProductSplitView({
                     title={
                       activeProduct.storeId && currentStoreId && activeProduct.storeId.toLowerCase() !== currentStoreId.toLowerCase()
                         ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
-                        : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
+                        : activeProduct.coordinatorReview
+                          ? "Kiểm tra sản phẩm trên Shopify và tạo lại qua Pipeline Worker nếu đã bị xóa"
+                          : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
                     }
                     onClick={() => onRetrySync(activeProduct.id)}
                     disabled={activeProduct.isSyncing}
@@ -778,7 +780,7 @@ export function ProductSplitView({
                     <span>
                       {activeProduct.storeId && currentStoreId && activeProduct.storeId.toLowerCase() !== currentStoreId.toLowerCase()
                         ? `🔄 Sync sang ${currentStoreId}`
-                        : "🔄 Sync lại"}
+                        : activeProduct.coordinatorReview ? "🔎 Kiểm tra / Tạo lại" : "🔄 Sync lại"}
                     </span>
                   </button>
                 ) : null}

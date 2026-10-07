@@ -35,6 +35,10 @@ test("production client challenges operators before serving the SPA and protecte
     nginxConfig,
     /location ~ \^\/api\/\(shopify\|stores\|auto-seo\|proxy\|review-images\|amazon-reviews\) \{\s+auth_basic "FFP Tool";\s+auth_basic_user_file \/etc\/nginx\/\.htpasswd;/s,
   );
+  assert.match(
+    nginxConfig,
+    /location = \/mcp\/seo-worker \{[\s\S]*?auth_basic off;[\s\S]*?proxy_pass http:\/\/server:3001;/s,
+  );
 });
 
 test("production client keeps health checks public and separate from protected APIs", async () => {

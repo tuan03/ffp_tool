@@ -6255,6 +6255,7 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
       if (body.query.includes("PipelineProductState")) {
         return createMockResponse({ data: { node: {
+          options: [{ name: "Size" }],
           media: { nodes: [] },
           variants: { nodes: [
             { id: "gid://shopify/ProductVariant/manual" },
@@ -6346,11 +6347,86 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
     assert.equal(product.variants[0]?.sku, "TWIN");
   });
 
+  it("products.update creates missing product options before synchronizing variants", async () => {
+    let createdOptions: unknown;
+    const calls: string[] = [];
+    const fakeTransport: HttpTransport = async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as { query: string; variables: Record<string, unknown> };
+      if (body.query.includes("PipelineProductState")) {
+        return createMockResponse({ data: { node: {
+          options: [{ name: "Title" }],
+          media: { nodes: [] },
+          variants: { nodes: [{ id: "gid://shopify/ProductVariant/default" }] },
+        } } });
+      }
+      if (body.query.includes("productUpdate(")) {
+        calls.push("product-update");
+        return createMockResponse({ data: { productUpdate: {
+          product: {
+            id: "gid://shopify/Product/options", title: "Options product", handle: "options-product",
+            status: "ACTIVE", variants: { edges: [] }, createdAt: "2026-09-01", updatedAt: "2026-09-22",
+          },
+          userErrors: [],
+        } } });
+      }
+      if (body.query.includes("ProductOptionsCreateForSync")) {
+        calls.push("options-create");
+        createdOptions = body.variables.options;
+        return createMockResponse({ data: { productOptionsCreate: {
+          product: { id: "gid://shopify/Product/options" }, userErrors: [],
+        } } });
+      }
+      if (body.query.includes("ProductVariantsBulkUpdateForSync")) {
+        calls.push("variants-update");
+        return createMockResponse({ data: { productVariantsBulkUpdate: {
+          productVariants: [{
+            id: "gid://shopify/ProductVariant/default", title: "Medium / No", price: "39.95",
+            inventoryItem: { sku: "MEDIUM-NO" },
+          }],
+          userErrors: [],
+        } } });
+      }
+      return createMockResponse({});
+    };
+    const registry = new InMemoryStoreRegistry([{
+      storeId: "store-options", shopDomain: "options.myshopify.com", apiVersion: "2026-07",
+      auth: { type: "static", staticToken: "tok" },
+    }]);
+    const client = new ShopifyGraphqlClient({
+      tokenProvider: new StaticAccessTokenProvider(),
+      throttleManager: new InMemoryThrottleManager(),
+      baseTransport: fakeTransport,
+    });
+    const dispatcher = new GatewayDispatcher({ storeRegistry: registry, graphqlClient: client });
+
+    const response = await dispatcher.dispatch({
+      storeId: "store-options", operation: "products.update", mode: "apply", requestId: "req-options",
+      payload: {
+        id: "gid://shopify/Product/options",
+        product: { variants: [{
+          price: "39.95", sku: "MEDIUM-NO",
+          optionValues: [
+            { optionName: "Choose Product Size", name: "Medium" },
+            { optionName: "Matching Wallet", name: "No" },
+          ],
+        }] },
+      },
+    });
+
+    assert.equal(response.success, true);
+    assert.deepEqual(createdOptions, [
+      { name: "Choose Product Size", values: [{ name: "Medium" }] },
+      { name: "Matching Wallet", values: [{ name: "No" }] },
+    ]);
+    assert.deepEqual(calls, ["product-update", "options-create", "variants-update"]);
+  });
+
   it("products.update reports reconciliation when managed variant synchronization fails after product update", async () => {
     const fakeTransport: HttpTransport = async (_url, options) => {
       const body = JSON.parse(options?.body as string) as { query: string };
       if (body.query.includes("PipelineProductState")) {
         return createMockResponse({ data: { node: {
+          options: [{ name: "Size" }],
           media: { nodes: [] },
           variants: { nodes: [{ id: "gid://shopify/ProductVariant/old-1" }] },
         } } });
@@ -6862,6 +6938,100 @@ describe("Gateway: Architectural & Operational Hardening (P1)", () => {
       assert.equal(data.metafields[0]?.id, "gid://shopify/Metafield/mf-batch-1");
       assert.equal(data.metafields[1]?.id, "gid://shopify/Metafield/mf-batch-2");
       assert.ok(requestPayload);
+    });
+
+    it("creates and pins AEO product metafield definitions before writing values", async () => {
+      const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+      const dispatcher = setupTestGateway(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as {
+          query: string;
+          variables: Record<string, unknown>;
+        };
+        requests.push(body);
+        if (body.query.includes("query MetafieldDefinition")) {
+          return createMockResponse({ data: { metafieldDefinition: null } });
+        }
+        if (body.query.includes("mutation MetafieldDefinitionCreate")) {
+          const definition = body.variables.definition as {
+            namespace: string;
+            key: string;
+            type: string;
+          };
+          return createMockResponse({
+            data: {
+              metafieldDefinitionCreate: {
+                createdDefinition: {
+                  id: `gid://shopify/MetafieldDefinition/${definition.key}`,
+                  namespace: definition.namespace,
+                  key: definition.key,
+                  type: { name: definition.type },
+                },
+                userErrors: [],
+              },
+            },
+          });
+        }
+        return createMockResponse({
+          data: {
+            metafieldsSet: {
+              metafields: [
+                {
+                  id: "gid://shopify/Metafield/aeo-html",
+                  namespace: "custom",
+                  key: "aeo_suite_html",
+                  type: "multi_line_text_field",
+                  value: "<section>AEO</section>",
+                  ownerType: "PRODUCT",
+                },
+                {
+                  id: "gid://shopify/Metafield/aeo-json",
+                  namespace: "custom",
+                  key: "aeo_json_ld",
+                  type: "json",
+                  value: "{\"@context\":\"https://schema.org\"}",
+                  ownerType: "PRODUCT",
+                },
+              ],
+              userErrors: [],
+            },
+          },
+        });
+      });
+
+      const response = await dispatcher.dispatch({
+        storeId: "store-test",
+        operation: "metafields.set",
+        mode: "apply",
+        requestId: "req-aeo-definitions",
+        payload: {
+          ownerId: "gid://shopify/Product/aeo-product",
+          metafields: [
+            {
+              namespace: "custom",
+              key: "aeo_suite_html",
+              type: "multi_line_text_field",
+              value: "<section>AEO</section>",
+            },
+            {
+              namespace: "custom",
+              key: "aeo_json_ld",
+              type: "json",
+              value: "{\"@context\":\"https://schema.org\"}",
+            },
+          ],
+        },
+      });
+
+      assert.equal(response.success, true);
+      assert.equal(requests.filter((request) => request.query.includes("query MetafieldDefinition")).length, 2);
+      const creates = requests.filter((request) => request.query.includes("mutation MetafieldDefinitionCreate"));
+      assert.equal(creates.length, 2);
+      for (const request of creates) {
+        const definition = request.variables.definition as { ownerType: string; pin: boolean };
+        assert.equal(definition.ownerType, "PRODUCT");
+        assert.equal(definition.pin, true);
+      }
+      assert.ok(requests.at(-1)?.query.includes("mutation MetafieldsSet"));
     });
 
     it("executes products.create preserving gallery photos sent via media array", async () => {

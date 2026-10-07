@@ -208,6 +208,7 @@ const PIPELINE_PRODUCT_STATE_QUERY = `
   query PipelineProductState($id: ID!) {
     node(id: $id) {
       ... on Product {
+        options { name }
         media(first: 100) {
           pageInfo {
             hasNextPage
@@ -217,6 +218,15 @@ const PIPELINE_PRODUCT_STATE_QUERY = `
         }
         variants(first: 250) { nodes { id } }
       }
+    }
+  }
+`;
+
+const PRODUCT_OPTIONS_CREATE_FOR_SYNC = `
+  mutation ProductOptionsCreateForSync($productId: ID!, $options: [OptionCreateInput!]!) {
+    productOptionsCreate(productId: $productId, options: $options, variantStrategy: LEAVE_AS_IS) {
+      product { id }
+      userErrors { field message }
     }
   }
 `;
@@ -1093,9 +1103,11 @@ export async function executeProductsUpdate(
   const shouldReplaceMedia = productPatch.replaceMedia === true || requestedMediaIdsToDelete.length > 0;
   let existingVariantIds: string[] = [];
   let existingMediaIds: string[] = [];
+  let existingOptionNames = new Set<string>();
   if (desiredVariants !== undefined || shouldReplaceMedia) {
     interface PipelineProductStateResponse {
       readonly node: {
+        readonly options?: readonly { readonly name: string }[];
         readonly media?: {
           readonly pageInfo?: { readonly hasNextPage: boolean; readonly endCursor?: string | null };
           readonly nodes?: readonly { readonly id: string }[];
@@ -1108,6 +1120,9 @@ export async function executeProductsUpdate(
       PIPELINE_PRODUCT_STATE_QUERY,
       { id },
       { isWrite: false },
+    );
+    existingOptionNames = new Set(
+      state.node?.options?.map((option) => option.name.trim()).filter(Boolean) ?? [],
     );
     existingVariantIds = state.node?.variants?.nodes?.map((variant) => variant.id) ?? [];
     if (requestedMediaIdsToDelete.length > 0) {
@@ -1409,6 +1424,38 @@ export async function executeProductsUpdate(
   let synchronizedVariants: ProductVariantSummary[] | undefined;
   if (desiredVariants !== undefined) {
     try {
+    const desiredOptions = new Map<string, Set<string>>();
+    for (const variant of desiredVariants) {
+      if (!Array.isArray(variant.optionValues)) continue;
+      for (const rawOptionValue of variant.optionValues as readonly Record<string, unknown>[]) {
+        const optionName = typeof rawOptionValue.optionName === "string" ? rawOptionValue.optionName.trim() : "";
+        const valueName = typeof rawOptionValue.name === "string" ? rawOptionValue.name.trim() : "";
+        if (!optionName || !valueName) continue;
+        const values = desiredOptions.get(optionName) ?? new Set<string>();
+        values.add(valueName);
+        desiredOptions.set(optionName, values);
+      }
+    }
+    const missingOptions = [...desiredOptions.entries()]
+      .filter(([optionName]) => !existingOptionNames.has(optionName))
+      .map(([name, values]) => ({ name, values: [...values].map((value) => ({ name: value })) }));
+    if (missingOptions.length > 0) {
+      interface ProductOptionsCreateResponse {
+        readonly productOptionsCreate: {
+          readonly product: { readonly id: string } | null;
+          readonly userErrors: readonly MutationUserErrorItem[];
+        };
+      }
+      const createdOptions = await client.query<ProductOptionsCreateResponse>(
+        store,
+        PRODUCT_OPTIONS_CREATE_FOR_SYNC,
+        { productId: id, options: missingOptions },
+        { isWrite: true, requestId: requestId ? `${requestId}:options-create` : undefined },
+      );
+      if (createdOptions.productOptionsCreate.userErrors.length > 0) {
+        throw mapUserErrorsToGatewayError(createdOptions.productOptionsCreate.userErrors);
+      }
+    }
     const toVariantInput = (variant: Record<string, unknown>, variantId?: string): Record<string, unknown> => {
       const value: Record<string, unknown> = {};
       if (variantId) value.id = variantId;

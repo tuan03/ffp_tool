@@ -22,6 +22,174 @@ export const METAFIELDS_SET_MUTATION = `
   }
 `;
 
+const METAFIELD_DEFINITION_QUERY = `
+  query MetafieldDefinition($identifier: MetafieldDefinitionIdentifierInput!) {
+    metafieldDefinition(identifier: $identifier) {
+      id
+      namespace
+      key
+      type {
+        name
+      }
+    }
+  }
+`;
+
+const METAFIELD_DEFINITION_CREATE_MUTATION = `
+  mutation MetafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
+    metafieldDefinitionCreate(definition: $definition) {
+      createdDefinition {
+        id
+        namespace
+        key
+        type {
+          name
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+interface ManagedMetafieldDefinition {
+  readonly namespace: "custom";
+  readonly key: string;
+  readonly name: string;
+  readonly description: string;
+  readonly type: string;
+}
+
+const MANAGED_PRODUCT_METAFIELD_DEFINITIONS: readonly ManagedMetafieldDefinition[] = [
+  {
+    namespace: "custom",
+    key: "aeo_suite_html",
+    name: "AEO Suite (AI Search & Overview Optimization)",
+    description: "HTML summary and FAQ content generated and approved by FFP SEO Review.",
+    type: "multi_line_text_field",
+  },
+  {
+    namespace: "custom",
+    key: "aeo_json_ld",
+    name: "Schema.org JSON-LD (@graph: Product & FAQPage)",
+    description: "Validated Schema.org JSON-LD containing Product and FAQPage nodes.",
+    type: "json",
+  },
+] as const;
+
+interface MetafieldDefinitionNode {
+  readonly id: string;
+  readonly namespace: string;
+  readonly key: string;
+  readonly type: { readonly name: string };
+}
+
+interface MetafieldDefinitionQueryResponse {
+  readonly metafieldDefinition: MetafieldDefinitionNode | null;
+}
+
+interface MetafieldDefinitionCreateResponse {
+  readonly metafieldDefinitionCreate: {
+    readonly createdDefinition: MetafieldDefinitionNode | null;
+    readonly userErrors: readonly (MutationUserErrorItem & { readonly code?: string })[];
+  };
+}
+
+const definitionEnsurePromises = new Map<string, Promise<void>>();
+
+function assertDefinitionType(
+  definition: MetafieldDefinitionNode,
+  expected: ManagedMetafieldDefinition,
+): void {
+  if (definition.type.name !== expected.type) {
+    throw new GatewayError(
+      `Metafield definition ${expected.namespace}.${expected.key} uses type ${definition.type.name}; expected ${expected.type}`,
+      "SHOPIFY_USER_ERROR",
+      400,
+    );
+  }
+}
+
+async function loadMetafieldDefinition(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  definition: ManagedMetafieldDefinition,
+): Promise<MetafieldDefinitionNode | null> {
+  const response = await client.query<MetafieldDefinitionQueryResponse>(
+    store,
+    METAFIELD_DEFINITION_QUERY,
+    {
+      identifier: {
+        ownerType: "PRODUCT",
+        namespace: definition.namespace,
+        key: definition.key,
+      },
+    },
+  );
+  return response.metafieldDefinition;
+}
+
+async function ensureMetafieldDefinition(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  definition: ManagedMetafieldDefinition,
+  requestId?: string,
+): Promise<void> {
+  const ensureKey = `${store.shopDomain}:${definition.namespace}:${definition.key}:${definition.type}`;
+  const existingPromise = definitionEnsurePromises.get(ensureKey);
+  if (existingPromise) return existingPromise;
+
+  const ensurePromise = (async () => {
+    const existing = await loadMetafieldDefinition(store, client, definition);
+    if (existing) {
+      assertDefinitionType(existing, definition);
+      return;
+    }
+
+    const response = await client.query<MetafieldDefinitionCreateResponse>(
+      store,
+      METAFIELD_DEFINITION_CREATE_MUTATION,
+      {
+        definition: {
+          ownerType: "PRODUCT",
+          namespace: definition.namespace,
+          key: definition.key,
+          name: definition.name,
+          description: definition.description,
+          type: definition.type,
+          pin: true,
+        },
+      },
+      { isWrite: true, requestId: requestId ? `${requestId}:definition:${definition.key}` : undefined },
+    );
+    const created = response.metafieldDefinitionCreate.createdDefinition;
+    if (created) {
+      assertDefinitionType(created, definition);
+      return;
+    }
+
+    // Another concurrent worker can create the same store definition between
+    // our read and write. Re-read before treating the mutation error as fatal.
+    const racedDefinition = await loadMetafieldDefinition(store, client, definition);
+    if (racedDefinition) {
+      assertDefinitionType(racedDefinition, definition);
+      return;
+    }
+    throw mapUserErrorsToGatewayError(response.metafieldDefinitionCreate.userErrors);
+  })();
+
+  definitionEnsurePromises.set(ensureKey, ensurePromise);
+  try {
+    await ensurePromise;
+  } catch (error: unknown) {
+    definitionEnsurePromises.delete(ensureKey);
+    throw error;
+  }
+}
+
 export interface MetafieldSummary {
   readonly id: string;
   readonly namespace: string;
@@ -173,6 +341,17 @@ export async function executeMetafieldsSet(
       metafieldId: previewMetafields[0]?.id,
       metafields: previewMetafields,
     };
+  }
+
+  const requiredDefinitions = MANAGED_PRODUCT_METAFIELD_DEFINITIONS.filter((definition) =>
+    normalized.some((item) =>
+      item.ownerId.startsWith("gid://shopify/Product/") &&
+      item.namespace === definition.namespace &&
+      item.key === definition.key,
+    ),
+  );
+  for (const definition of requiredDefinitions) {
+    await ensureMetafieldDefinition(store, client, definition, requestId);
   }
 
   const chunkedResult = await executeChunkedWrite<NormalizedMetafieldItem, MetafieldSummary[]>({

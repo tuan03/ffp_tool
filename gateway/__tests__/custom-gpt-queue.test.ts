@@ -254,7 +254,7 @@ test("cancelling a ready review preserves its result and checkpoints", () => {
   } finally { db.close(); }
 });
 
-test("clearing a store queue hides safe jobs, preserves active and synced jobs, and permits re-enqueue", () => {
+test("clearing a store queue hides safe jobs, preserves active work, archives synced jobs, and permits re-enqueue", () => {
   const { queue, db } = setup();
   try {
     const settings = queue.configure("capozen", { provider: "custom_gpt", batchSize: 1 });
@@ -265,15 +265,63 @@ test("clearing a store queue hides safe jobs, preserves active and synced jobs, 
     const otherStore = queue.enqueue({ storeId: "other", source: "auto_seo", sourceIdentity: "other", input: source, original: {}, settings });
     db.prepare("INSERT INTO gpt_sync(job_id,token,status) VALUES (?,?,?)").run(synced.id, "sync-token", "SYNCED");
 
-    assert.deepEqual(queue.clearQueue("capozen"), { cleared: 1, preservedActive: 1, preservedSynced: 1 });
+    assert.deepEqual(queue.clearQueue("capozen"), {
+      cleared: 1,
+      archived: 1,
+      preservedActive: 1,
+      preservedFailed: 0,
+    });
     assert.equal(queue.get("capozen", pending.id).status, "CANCELLED");
     assert.deepEqual(new Set(queue.list("capozen").map(job => job.id)), new Set([active.id, synced.id]));
+    assert.deepEqual(queue.listFiltered("capozen", {}).map(job => job.id), [active.id]);
+    assert.equal(queue.get("capozen", synced.id).queueArchiveReason, "OPERATOR_QUEUE_CLEAR");
+    assert.equal(typeof queue.get("capozen", synced.id).queueArchivedAt, "number");
+    assert.deepEqual(queue.visibleCounts("capozen"), { IN_PROGRESS: 1 });
     assert.equal(queue.list("other")[0]?.id, otherStore.id);
 
     const replacement = queue.enqueue({ storeId: "capozen", source: "auto_seo", sourceIdentity: "pending", input: source, original: {}, settings });
     assert.notEqual(replacement.id, pending.id);
     assert.equal(replacement.status, "PENDING");
   } finally { db.close(); }
+});
+
+test("clearing archives a ready review from SEO Queue without removing it from SEO Review", () => {
+  const { queue, db } = setup();
+  try {
+    queue.configure("capozen", { provider: "custom_gpt", batchSize: 1 });
+    const job = queue.enqueue({
+      storeId: "capozen",
+      source: "auto_seo",
+      sourceIdentity: "ready-review",
+      input: source,
+      original: {},
+    });
+    const batch = queue.claim("capozen", "ready-review-claim", "custom_gpt", "custom_gpt");
+    queue.checkpoint("capozen", job.id, {
+      batchId: batch.id,
+      leaseToken: batch.leaseToken,
+      requestId: "ready-review-submit",
+      stage: "submission",
+      payload: { title: "Reviewed SEO title" },
+    });
+    queue.finish("capozen", job.id, { title: "Reviewed SEO title" });
+    queue.saveReviewState("capozen", job.id, { reviewDecision: "approved" });
+
+    assert.deepEqual(queue.clearQueue("capozen"), {
+      cleared: 0,
+      archived: 1,
+      preservedActive: 0,
+      preservedFailed: 0,
+    });
+    assert.equal(queue.listFiltered("capozen", {}).length, 0);
+    assert.equal(queue.visibleCounts("capozen").REVIEW_READY, undefined);
+    assert.equal(queue.list("capozen", "REVIEW_READY")[0]?.id, job.id);
+    assert.deepEqual(queue.reviewState("capozen", job.id), { reviewDecision: "approved" });
+    assert.deepEqual(queue.get("capozen", job.id).result, { title: "Reviewed SEO title" });
+    assert.equal(typeof queue.get("capozen", job.id).queueArchivedAt, "number");
+  } finally {
+    db.close();
+  }
 });
 
 test("AEO backfill resets only unsynced ready reviews and retains reusable checkpoints", () => {

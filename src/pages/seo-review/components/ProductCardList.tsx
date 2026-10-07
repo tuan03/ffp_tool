@@ -372,7 +372,9 @@ export function ProductCardList({
                       title={
                         product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
                           ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
-                          : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
+                          : product.coordinatorReview
+                            ? "Kiểm tra sản phẩm trên Shopify và tạo lại qua Pipeline Worker nếu đã bị xóa"
+                            : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
                       }
                       onClick={() => onRetrySync(product.id)}
                       disabled={product.isSyncing}
@@ -382,7 +384,7 @@ export function ProductCardList({
                       <span>
                         {product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
                           ? `Sync sang ${currentStoreId}`
-                          : "Sync lại"}
+                          : product.coordinatorReview ? "Kiểm tra / Tạo lại" : "Sync lại"}
                       </span>
                     </button>
                   ) : null}

@@ -25,7 +25,12 @@ from engine.distributed import AGENT_VERSION
 from engine.crawler_core import CrawlSettings
 from engine.cache import RawFamilyCache
 from engine.distributed.client_store import ClientStore
-from engine.distributed.client_agent import DistributedCrawlerAgent, progress_for_assignment, progress_targets
+from engine.distributed.client_agent import (
+    DistributedCrawlerAgent,
+    progress_for_assignment,
+    progress_targets,
+    refresh_requested_family_caches,
+)
 from engine.distributed.client_config import AgentConfig
 from engine.distributed.client_main import _configure_packaged_browser, _resolve_config_path
 from engine.distributed.instance_lock import AgentAlreadyRunningError, AgentInstanceLock
@@ -1432,6 +1437,24 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task_progress["items"][0]["asin"], "B0HG4NRG98")
         self.assertEqual(task_progress["items"][0]["variantCompleted"], 3)
 
+    def test_incremental_family_assignment_invalidates_only_its_seed_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RawFamilyCache(Path(directory))
+            selected_key = "B012345678:90001:us-v1"
+            retained_key = "B098765432:90001:us-v1"
+            cache.save(selected_key, cache_family())
+            cache.save(retained_key, cache_family())
+
+            removed = refresh_requested_family_caches(
+                cache,
+                [{"asin": "B012345678"}, {"asin": "B000000001"}],
+                {"amazonZip": "90001", "refreshFamilyAsins": ["B012345678"]},
+            )
+
+            self.assertGreaterEqual(removed["removedFiles"], 1)
+            self.assertIsNone(cache.load(selected_key))
+            self.assertIsNotNone(cache.load(retained_key))
+
     async def test_stop_disconnects_an_online_agent_promptly(self) -> None:
         async def coordinator(websocket: object) -> None:
             raw = await websocket.recv()
@@ -1664,7 +1687,7 @@ class CoordinatorStoreTests(unittest.TestCase):
             "productThreads": 4,
         })
 
-    def test_job_waits_for_every_product_to_finish_seo_before_review_pending(self) -> None:
+    def test_job_stops_tracking_after_every_product_reaches_seo_queue(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
         with self.sessions.begin() as session:
             tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job["id"])).all()
@@ -1683,7 +1706,9 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         in_progress = self.store.get_job(str(job["id"]))
         self.assertEqual(in_progress["status"], "running")
-        self.assertIn("SEO hoàn tất 1/2 sản phẩm", in_progress["progress"]["message"])
+        self.assertEqual(in_progress["seoQueueHandoff"], {
+            "totalProducts": 2, "handedOver": 1, "pending": 1, "notHandedOver": 0,
+        })
         self.assertEqual([item["id"] for item in self.store.list_product_reviews()], ["review-item-0"])
         with self.sessions.begin() as session:
             item = session.get(CrawlProductItem, "review-item-1")
@@ -1693,7 +1718,37 @@ class CoordinatorStoreTests(unittest.TestCase):
             self.store._refresh_job(session, str(job["id"]))
         complete = self.store.get_job(str(job["id"]))
         self.assertEqual(complete["status"], "review_pending")
-        self.assertIn("SEO hoàn tất 2/2 sản phẩm", complete["progress"]["message"])
+        self.assertIn("Đã bàn giao 2/2 sản phẩm sang SEO Queue", complete["progress"]["message"])
+
+    def test_external_seo_handoff_finishes_crawler_job_without_stopping_pipeline_claims(self) -> None:
+        job = self.store.create_job({"urls": ["B0HANDOFF1", "B0HANDOFF2"]})
+        with self.sessions.begin() as session:
+            tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job["id"])).all()
+            for index, task in enumerate(tasks):
+                task.status = "completed"
+                session.add(CrawlProductItem(
+                    id=f"handoff-item-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=f"handoff-source-{index}", product_id=f"handoff-product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"handoff-checksum-{index}",
+                    raw_payload={}, normalized_payload={"media": []}, status="retry_wait",
+                    shopify_result={"externalSeo": {"jobId": f"seo-job-{index}", "provider": "codex_mcp"}},
+                    next_attempt_at=utc_now() - timedelta(seconds=1),
+                ))
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+
+        complete = self.store.get_job(str(job["id"]))
+        self.assertEqual(complete["status"], "review_pending")
+        self.assertEqual(complete["seoQueueHandoff"], {
+            "totalProducts": 2, "handedOver": 2, "pending": 0, "notHandedOver": 0,
+        })
+
+        claimed = self.store.claim_product_items(
+            worker_id="pipeline-worker", store_id="preaureum_dev", limit=2,
+        )
+
+        self.assertEqual(len(claimed), 2)
+        self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
 
     def test_delete_all_reviews_hides_ready_items_but_skips_active_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
@@ -2906,6 +2961,187 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(rebuilt["parentAsin"], "B0PARENT01")
         self.assertEqual(rebuilt["databaseStatus"], "synced")
 
+    def test_family_registry_recovers_a_crawled_alias_when_its_pipeline_job_is_gone(self) -> None:
+        with self.sessions.begin() as session:
+            session.add(AmazonAsinRegistry(
+                id="registry-stale", store_id="capozen", marketplace="amazon-us",
+                asin="B0CHILD003", parent_asin="B0PARENT01", status="crawled",
+                last_job_id="deleted-job", shopify_product_ids=[],
+            ))
+            session.add(AmazonAsinRegistry(
+                id="registry-existing-sibling", store_id="capozen", marketplace="amazon-us",
+                asin="B0CHILD001", parent_asin="B0PARENT01", status="synced",
+                last_job_id="older-job", shopify_product_ids=["gid://shopify/Product/123"],
+                synced_at=utc_now(),
+            ))
+
+        resolved = self.store.resolve_asin_families("capozen", ["B0CHILD003"])["families"][0]
+
+        self.assertIsNone(resolved["databaseStatus"])
+        self.assertIsNone(resolved["jobId"])
+        self.assertTrue(resolved["recoveredStaleRegistry"])
+        self.assertTrue(resolved["hasSyncedFamilyMembers"])
+
+    def test_product_upload_skips_an_exact_asin_already_synced_to_shopify(self) -> None:
+        job = self.store.create_job({"urls": ["B0CHILD002"], "storeId": "capozen"})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        with self.sessions.begin() as session:
+            session.add(AmazonAsinRegistry(
+                id="registry-synced", store_id="capozen", marketplace="amazon-us",
+                asin="B0CHILD001", parent_asin="B0PARENT01", status="synced",
+                last_job_id="older-job", shopify_product_ids=["gid://shopify/Product/123"],
+                synced_at=utc_now(),
+            ))
+        product = {
+            "id": "product-existing", "sourceKey": "amazon:B0PARENT01:design:existing",
+            "asin": "B0CHILD001", "parentAsin": "B0PARENT01", "title": "Existing",
+        }
+
+        response = self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-existing",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-existing"},
+        )
+
+        self.assertEqual(response["status"], "duplicate")
+        self.assertEqual(response["reason"], "existing_shopify_product")
+        with self.sessions() as session:
+            self.assertEqual(list(session.scalars(select(CrawlProductItem))), [])
+
+    def test_product_upload_skips_a_preflight_shopify_discovery_seed(self) -> None:
+        job = self.store.create_job({
+            "urls": ["B0PARENT01"], "storeId": "capozen",
+            "existingShopifyAsins": ["B0PARENT01"],
+            "refreshFamilyAsins": ["B0PARENT01"],
+        })
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(lease["settings"]["refreshFamilyAsins"], ["B0PARENT01"])
+        product = {
+            "id": "product-seed", "sourceKey": "amazon:B0PARENT01:design:seed",
+            "asin": "B0PARENT01", "parentAsin": "B0PARENT01", "title": "Existing seed",
+        }
+
+        response = self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-seed",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-seed"},
+        )
+
+        self.assertEqual(response["status"], "duplicate")
+        self.assertEqual(response["reason"], "existing_shopify_product")
+        with self.sessions() as session:
+            self.assertEqual(list(session.scalars(select(CrawlProductItem))), [])
+
+    def test_product_upload_skips_only_the_split_product_containing_an_existing_shopify_asin(self) -> None:
+        job = self.store.create_job({
+            "urls": ["B0PARENT01"], "storeId": "capozen",
+            "existingShopifyAsins": ["B0CHILD002"],
+            "refreshFamilyAsins": ["B0PARENT01"],
+        })
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        products = [
+            {
+                "id": "product-existing", "sourceKey": "amazon:B0PARENT01:design:existing",
+                "asin": "B0CHILD001", "parentAsin": "B0PARENT01", "title": "Existing",
+                "sourceVariants": [{"asin": "B0CHILD001"}, {"asin": "B0CHILD002"}],
+            },
+            {
+                "id": "product-new-a", "sourceKey": "amazon:B0PARENT01:design:new-a",
+                "asin": "B0CHILD003", "parentAsin": "B0PARENT01", "title": "New A",
+                "sourceVariants": [{"asin": "B0CHILD003"}],
+            },
+            {
+                "id": "product-new-b", "sourceKey": "amazon:B0PARENT01:design:new-b",
+                "asin": "B0CHILD004", "parentAsin": "B0PARENT01", "title": "New B",
+                "sourceVariants": [{"asin": "B0CHILD004"}],
+            },
+        ]
+
+        responses = [
+            self.store.accept_product(
+                lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"],
+                f"checksum-{index}",
+                {"jobId": job["id"], "product": product, "productChecksum": f"checksum-{index}"},
+            )
+            for index, product in enumerate(products)
+        ]
+
+        self.assertEqual(responses[0]["status"], "duplicate")
+        self.assertEqual(responses[0]["reason"], "existing_shopify_product")
+        self.assertEqual([response["status"] for response in responses[1:]], ["accepted", "accepted"])
+        final_payload = {"jobId": job["id"], "products": products}
+        final_response = self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "final-checksum", final_payload,
+        )
+        self.assertEqual(final_response["status"], "accepted")
+        with self.sessions() as session:
+            stored_products = list(session.scalars(select(CrawlProductItem).order_by(CrawlProductItem.source_key)))
+            self.assertEqual(
+                [item.source_key for item in stored_products],
+                ["amazon:B0PARENT01:design:new-a", "amazon:B0PARENT01:design:new-b"],
+            )
+            result = session.get(TaskResult, lease["taskId"])
+            self.assertEqual(
+                [product["sourceKey"] for product in result.payload["products"]],
+                ["amazon:B0PARENT01:design:new-a", "amazon:B0PARENT01:design:new-b"],
+            )
+
+    def test_parent_shopify_match_does_not_skip_new_split_products_in_the_family(self) -> None:
+        job = self.store.create_job({
+            "urls": ["B0PARENT01"], "storeId": "capozen",
+            "existingShopifyAsins": ["B0PARENT01"],
+            "refreshFamilyAsins": ["B0PARENT01"],
+        })
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-new", "sourceKey": "amazon:B0PARENT01:design:new",
+            "asin": "B0CHILD003", "parentAsin": "B0PARENT01", "title": "New",
+            "sourceVariants": [{"asin": "B0CHILD003"}],
+        }
+
+        response = self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-new",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-new"},
+        )
+
+        self.assertEqual(response["status"], "accepted")
+
+    def test_crawling_an_unsynced_sibling_does_not_downgrade_the_synced_parent(self) -> None:
+        job = self.store.create_job({"urls": ["B0CHILD002"], "storeId": "capozen"})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        with self.sessions.begin() as session:
+            session.add(AmazonAsinRegistry(
+                id="registry-parent", store_id="capozen", marketplace="amazon-us",
+                asin="B0PARENT01", parent_asin="B0PARENT01", status="synced",
+                last_job_id="older-job", shopify_product_ids=["gid://shopify/Product/123"],
+                synced_at=utc_now(),
+            ))
+        product = {
+            "id": "product-new", "sourceKey": "amazon:B0PARENT01:design:new",
+            "asin": "B0CHILD002", "parentAsin": "B0PARENT01", "title": "New child",
+        }
+
+        response = self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-new",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-new"},
+        )
+
+        self.assertEqual(response["status"], "accepted")
+        with self.sessions() as session:
+            parent = session.scalar(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == "capozen", AmazonAsinRegistry.asin == "B0PARENT01",
+            ))
+            child = session.scalar(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == "capozen", AmazonAsinRegistry.asin == "B0CHILD002",
+            ))
+            self.assertIsNotNone(parent)
+            self.assertEqual(parent.status, "synced")
+            self.assertIsNotNone(child)
+            self.assertEqual(child.status, "crawled")
+
     def test_same_source_key_reuses_shopify_mapping_across_sequential_jobs(self) -> None:
         source_key = "amazon:B0FR4MSS2H:design:ocean"
         product = {
@@ -3094,6 +3330,14 @@ class CoordinatorStoreTests(unittest.TestCase):
         failed_review = self.store.list_product_reviews()[0]
         self.assertEqual(failed_review["syncStatus"], "failed")
         self.assertEqual(self.store.queue_product_review_sync(claim["id"]), {"reconciliationRequired": True})
+        reconciliation = self.store.queue_product_review_sync(claim["id"], reconcile=True)
+        self.assertEqual(reconciliation["syncStatus"], "queued")
+        self.assertEqual(reconciliation["syncGeneration"], 1)
+        reconciliation_claim = self.store.claim_product_items(
+            worker_id="worker-4", store_id="store-1", limit=1,
+        )[0]
+        self.assertEqual(reconciliation_claim["stage"], "sync")
+        self.assertEqual(reconciliation_claim["review"]["syncGeneration"], 1)
 
     def test_approved_review_completes_only_after_sync_claim(self) -> None:
         source_key = "amazon:B0REVW0001:none:none"
@@ -4090,6 +4334,42 @@ class CoordinatorApiTests(unittest.TestCase):
                 ).json()["items"][0]
                 self.assertEqual(sync_claim["stage"], "sync")
                 self.assertEqual(sync_claim["product"]["title"], "Approved product title")
+                synced = store.mark_product_review_synced(
+                    claim["id"],
+                    product_id="gid://shopify/Product/123",
+                    product_handle="approved-product-title",
+                )
+                self.assertEqual(synced["syncStatus"], "synced")
+                with store.sessions() as session:
+                    link = session.scalar(select(ShopifyProductLink).where(
+                        ShopifyProductLink.store_id == "store-1",
+                        ShopifyProductLink.source_key == source_key,
+                    ))
+                    self.assertIsNotNone(link)
+                    self.assertEqual(link.shopify_product_id, "gid://shopify/Product/123")
+                    registry = session.scalar(select(AmazonAsinRegistry).where(
+                        AmazonAsinRegistry.store_id == "store-1",
+                        AmazonAsinRegistry.asin == "B0REVIEW03",
+                    ))
+                    self.assertIsNotNone(registry)
+                    self.assertEqual(registry.status, "synced")
+                self.assertEqual(
+                    client.post(f"/api/v1/product-reviews/{claim['id']}/sync").status_code,
+                    409,
+                )
+                reconcile = client.post(
+                    f"/api/v1/product-reviews/{claim['id']}/sync",
+                    json={"reconcile": True},
+                )
+                self.assertEqual(reconcile.status_code, 200)
+                self.assertEqual(reconcile.json()["syncStatus"], "queued")
+                self.assertEqual(reconcile.json()["syncGeneration"], 1)
+                reconciliation_claim = client.post(
+                    "/api/v1/internal/product-pipeline/claim",
+                    json={"workerId": "worker-3", "storeId": "store-1", "limit": 1},
+                ).json()["items"][0]
+                self.assertEqual(reconciliation_claim["stage"], "sync")
+                self.assertEqual(reconciliation_claim["review"]["syncGeneration"], 1)
 
     def test_image_profile_preview_supports_unsaved_draft_and_job_pins_revision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

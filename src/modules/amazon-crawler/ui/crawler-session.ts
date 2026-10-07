@@ -264,6 +264,8 @@ export interface StartCrawlerJobOptions {
   runAmazonCrawler: AmazonCrawlerRunner;
   urls: readonly string[];
   settings?: AmazonCrawlerSettings;
+  existingShopifyAsins?: readonly string[];
+  refreshFamilyAsins?: readonly string[];
   onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
 }
 
@@ -271,6 +273,8 @@ export async function startCrawlerJob({
   runAmazonCrawler,
   urls,
   settings,
+  existingShopifyAsins,
+  refreshFamilyAsins,
   onProducts,
 }: StartCrawlerJobOptions): Promise<AmazonCrawlerOutput | null> {
   if (urls.length === 0 || sessionState.isRunning) return null;
@@ -312,7 +316,7 @@ export async function startCrawlerJob({
 
   try {
     const crawlerOutput = await runAmazonCrawler({
-      input: { ...jobSettings, urls },
+      input: { ...jobSettings, urls, existingShopifyAsins, refreshFamilyAsins },
       onProgress: (nextProgress) => {
         sessionState = { ...sessionState, progress: nextProgress };
         if (nextProgress.phase === "captcha" && !didAlertCaptcha) {

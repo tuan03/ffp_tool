@@ -184,7 +184,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       if (offset === 0) await refresh();
       setNotice({
         kind: "success",
-        text: `Đã dọn ${result.cleared} sản phẩm. Giữ lại ${result.preservedActive} đang xử lý và ${result.preservedSynced} đã/đang Sync Shopify.`,
+        text: `Đã dọn ${result.cleared} sản phẩm và lưu trữ ${result.archived} sản phẩm đã bàn giao/đồng bộ. Giữ lại ${result.preservedActive} đang xử lý và ${result.preservedFailed} cần xử lý lỗi.`,
       });
     } catch (error) {
       setNotice({ kind: "error", text: error instanceof Error ? error.message : "Không dọn được Queue." });

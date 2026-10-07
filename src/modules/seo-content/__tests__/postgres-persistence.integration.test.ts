@@ -143,6 +143,52 @@ test("legacy corpus importer is idempotent", {
   }
 });
 
+test("legacy corpus importer preserves authoritative keyword claims after the source file changes", {
+  skip: connectionString ? false : "SEO_CONTENT_TEST_DATABASE_URL is not configured",
+}, async () => {
+  const pool = new Pool({ connectionString });
+  const marker = `seo-import-conflict-${Date.now()}`;
+  const directory = await mkdtemp(join(tmpdir(), "seo-import-conflict-"));
+  const corpusPath = resolve(directory, "seo-conflict-corpus.json");
+  const product = (productId: string, keyword: string) => ({
+    storeId: marker,
+    productKey: `store:${marker}:id:${productId}`,
+    productId,
+    updatedAt: new Date().toISOString(),
+    keywords: [{ keyword, normalizedKeyword: keyword, rank: 0 }],
+  });
+  try {
+    await runSeoContentMigrations(pool);
+    await writeFile(corpusPath, JSON.stringify({
+      schemaVersion: 1, normalizationVersion: 1, revision: 1,
+      updatedAt: new Date().toISOString(), products: [product("first", "claimed keyword")],
+    }), "utf8");
+    await importSeoContentLegacyData(pool, { corpusJsonPaths: [corpusPath], checkpointDirectory: join(directory, "none") });
+
+    await writeFile(corpusPath, JSON.stringify({
+      schemaVersion: 1, normalizationVersion: 1, revision: 2,
+      updatedAt: new Date().toISOString(),
+      products: [product("conflicting", "claimed keyword"), product("new", "new keyword")],
+    }), "utf8");
+    const imported = await importSeoContentLegacyData(pool, {
+      corpusJsonPaths: [corpusPath], checkpointDirectory: join(directory, "none"),
+    });
+    const replay = await importSeoContentLegacyData(pool, {
+      corpusJsonPaths: [corpusPath], checkpointDirectory: join(directory, "none"),
+    });
+    const snapshot = await new PostgresSeoConflictCorpus(pool, { storeId: marker }).getSnapshot();
+
+    assert.equal(imported.corpusProducts, 1);
+    assert.equal(replay.skippedSources, 1);
+    assert.deepEqual(snapshot.products.map(entry => entry.productId).sort(), ["first", "new"]);
+  } finally {
+    await clearTestRows(pool, marker).catch(() => undefined);
+    await pool.query("DELETE FROM seo_legacy_imports WHERE source_key=$1", [corpusPath]).catch(() => undefined);
+    await pool.end();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("legacy corpus importer treats blank handles as missing identities", {
   skip: connectionString ? false : "SEO_CONTENT_TEST_DATABASE_URL is not configured",
 }, async () => {

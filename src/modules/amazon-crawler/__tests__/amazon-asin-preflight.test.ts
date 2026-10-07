@@ -93,3 +93,65 @@ test("preflight starts only after a ready and duplicate-free Shopify response", 
   }), start);
   assert.equal(started, 1);
 });
+
+test("preflight starts an unresolved exact Shopify match as a discovery seed", async () => {
+  let startedSources: readonly string[] = [];
+  let skippedShopifyAsins: readonly string[] = [];
+  let refreshedFamilyAsins: readonly string[] = [];
+  await runAfterAmazonAsinPreflight(
+    ["B0PARENT01"], "capozen",
+    async () => ({
+      ready: true,
+      matches: [{
+        asin: "B0PARENT01", parentAsin: "B0PARENT01", productId: "gid://shopify/Product/1",
+        title: "Existing seed", adminUrl: "https://example.com/1",
+      }],
+      families: [{
+        parentAsin: "B0PARENT01", inputAsins: ["B0PARENT01"], memberAsins: ["B0PARENT01"],
+        isResolved: false, databaseStatus: null, jobId: null, status: "available",
+        hasExistingFamilyProducts: true,
+      }],
+      allowedAsins: ["B0PARENT01"],
+    }),
+    async (sources, existingShopifyAsins, refreshFamilyAsins) => {
+      startedSources = sources;
+      skippedShopifyAsins = existingShopifyAsins;
+      refreshedFamilyAsins = refreshFamilyAsins;
+    },
+  );
+
+  assert.deepEqual(startedSources, ["B0PARENT01"]);
+  assert.deepEqual(skippedShopifyAsins, ["B0PARENT01"]);
+  assert.deepEqual(refreshedFamilyAsins, ["B0PARENT01"]);
+});
+
+test("preflight refreshes an existing seed and skips every Shopify sibling in its family", async () => {
+  let startedSources: readonly string[] = [];
+  let skippedShopifyAsins: readonly string[] = [];
+  let refreshedFamilyAsins: readonly string[] = [];
+  await runAfterAmazonAsinPreflight(
+    ["B0CHILD001"], "capozen",
+    async () => ({
+      ready: true,
+      matches: [
+        { asin: "B0CHILD001", parentAsin: "B0PARENT01", productId: "1", title: "One", adminUrl: "https://example.com/1" },
+        { asin: "B0CHILD002", parentAsin: "B0PARENT01", productId: "2", title: "Two", adminUrl: "https://example.com/2" },
+      ],
+      families: [{
+        parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001", "B0CHILD002"],
+        isResolved: true, databaseStatus: "synced", jobId: "job-1", status: "available",
+        hasExistingFamilyProducts: true,
+      }],
+      allowedAsins: ["B0CHILD001"],
+    }),
+    async (sources, existingShopifyAsins, refreshFamilyAsins) => {
+      startedSources = sources;
+      skippedShopifyAsins = existingShopifyAsins;
+      refreshedFamilyAsins = refreshFamilyAsins;
+    },
+  );
+
+  assert.deepEqual(startedSources, ["B0CHILD001"]);
+  assert.deepEqual(skippedShopifyAsins, ["B0CHILD001", "B0CHILD002"]);
+  assert.deepEqual(refreshedFamilyAsins, ["B0CHILD001"]);
+});

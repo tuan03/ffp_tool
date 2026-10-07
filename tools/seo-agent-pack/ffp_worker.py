@@ -32,8 +32,9 @@ ALLOWED_KEYRINGS = {
 
 def endpoint(value):
     parsed = urllib.parse.urlsplit(value)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError("An HTTPS endpoint without credentials/query is required")
+    is_loopback_http = parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+    if (parsed.scheme != "https" and not is_loopback_http) or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("An HTTPS endpoint, or HTTP loopback endpoint, without credentials/query is required")
     if parsed.path != "/mcp/seo-worker":
         raise ValueError("Endpoint must end with /mcp/seo-worker")
     return value
@@ -50,7 +51,7 @@ def secret_store():
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise RuntimeError("Endpoint redirect refused; verify the configured HTTPS endpoint")
+        raise RuntimeError("Endpoint redirect refused; verify the configured FFP endpoint")
 
 
 def can_retry(message):
@@ -244,7 +245,7 @@ def main():
     vault = secret_store()
     service = "ffp-seo-worker:" + options.endpoint
     if options.command == "doctor":
-        print("Python >=3.11, HTTPS endpoint and supported OS vault available. This does not certify live connectivity or cross-platform acceptance.")
+        print("Python >=3.11, secure endpoint policy and supported OS vault available. This does not certify live connectivity or cross-platform acceptance.")
         return
     if options.command == "logout":
         if vault.get_password(service, options.profile):

@@ -872,6 +872,9 @@ test("review client keeps approval separate from explicit Shopify sync", async (
   assert.equal((requests.at(-1)?.body as { decision?: string }).decision, "approved");
   const queued = await client.sync("review-1");
   assert.equal(queued.syncStatus, "queued");
+  const reconciled = await client.reconcile("review-1");
+  assert.equal(reconciled.syncStatus, "queued");
+  assert.deepEqual(requests.at(-1)?.body, { reconcile: true });
   assert.deepEqual(await client.syncAllApproved(), { queued: 1, itemIds: ["review-1"] });
   assert.deepEqual(await client.delete("review-1"), { deleted: true });
   assert.deepEqual(await client.deleteAll(), { deleted: 1, skipped: 0 });
@@ -880,6 +883,7 @@ test("review client keeps approval separate from explicit Shopify sync", async (
     method,
   })), [
     { path: "/api/v1/product-reviews/review-1/decision", method: "POST" },
+    { path: "/api/v1/product-reviews/review-1/sync", method: "POST" },
     { path: "/api/v1/product-reviews/review-1/sync", method: "POST" },
     { path: "/api/v1/product-reviews/sync-approved", method: "POST" },
     { path: "/api/v1/product-reviews/review-1", method: "DELETE" },

@@ -3,6 +3,14 @@ export {
   fromCustomizationNormalizerBatch,
   fromCustomizationNormalizerProduct,
 } from "./adapter";
+export {
+  AEO_JSON_LD_METAFIELD,
+  AEO_SUITE_HTML_METAFIELD,
+  buildAeoMetafieldValues,
+  buildAeoMetafields,
+  buildAeoSuiteHtml,
+  validateAeoInput,
+} from "./aeo-metafields";
 
 export { mockShopifySyncExpectedOutput, shopifySyncMockData } from "./mocks/data";
 export { runMockShopifySync } from "./mocks/runner";
@@ -33,6 +41,8 @@ export type {
   SetMetafieldInput,
   SetMetafieldOutput,
   ShopifyCredentials,
+  ShopifyAeoFaqItem,
+  ShopifyAeoInput,
   ShopifyCustomizationAssetInput,
   ShopifyGateway,
   ShopifyManagedResources,

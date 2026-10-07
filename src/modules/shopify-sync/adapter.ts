@@ -6,6 +6,7 @@ import type {
 } from "../customization-normalizer";
 import type {
   ShopifyCustomizationAssetInput,
+  ShopifyAeoFaqItem,
   ShopifyMediaInput,
   ShopifyProductCustomizerInput,
   ShopifySyncBatchInput,
@@ -54,6 +55,18 @@ function escapeHtml(text: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseAeoFaq(value: unknown): readonly ShopifyAeoFaqItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const faq: ShopifyAeoFaqItem[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.question !== "string" || typeof entry.answer !== "string") {
+      return undefined;
+    }
+    faq.push({ question: entry.question, answer: entry.answer });
+  }
+  return faq;
 }
 
 function normalizeAsin(value: unknown): string | undefined {
@@ -115,7 +128,30 @@ export function fromCustomizationNormalizerProduct(
     ? product.descriptionHtml
     : buildProductDescriptionHtml(product);
   const seo = product.seo && typeof product.seo === "object"
-    ? product.seo as { readonly title?: unknown; readonly description?: unknown }
+    ? product.seo as {
+        readonly title?: unknown;
+        readonly description?: unknown;
+        readonly aeo_quick_summary?: unknown;
+        readonly aeo_faq?: unknown;
+        readonly aeo_json_ld?: unknown;
+      }
+    : undefined;
+  const aeoFaq = parseAeoFaq(seo?.aeo_faq);
+  const hasAeo = seo?.aeo_quick_summary !== undefined ||
+    seo?.aeo_faq !== undefined ||
+    seo?.aeo_json_ld !== undefined;
+  if (hasAeo && (typeof seo?.aeo_quick_summary !== "string" ||
+      aeoFaq === undefined ||
+      typeof seo.aeo_json_ld !== "string")) {
+    throw new Error("AEO output requires a quick summary, FAQ items, and Schema.org JSON-LD.");
+  }
+  const aeo = hasAeo && typeof seo?.aeo_quick_summary === "string" &&
+      aeoFaq !== undefined && typeof seo.aeo_json_ld === "string"
+    ? {
+        quickSummary: seo.aeo_quick_summary,
+        faq: aeoFaq,
+        jsonLd: seo.aeo_json_ld,
+      }
     : undefined;
 
   const media: ShopifyMediaInput[] = (product.media || [])
@@ -224,6 +260,7 @@ export function fromCustomizationNormalizerProduct(
     seo: typeof seo?.title === "string" && typeof seo.description === "string"
       ? { title: seo.title, description: seo.description }
       : undefined,
+    aeo,
     vendor: options?.vendor ?? "FFP Store",
     productType,
     tags: Array.from(tags),

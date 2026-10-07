@@ -127,7 +127,7 @@ export class CustomGptQueue {
   }
   listFiltered(storeId: string, filters: QueueListFilters, offset = 0): readonly GptSeoJob[] {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?", "status!='CANCELLED'"];
+    const conditions = ["store_id=?", "status!='CANCELLED'", "COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''"];
     const parameters: Array<string | number> = [storeId];
     if (filters.provider) {
       conditions.push("provider=?");
@@ -143,7 +143,7 @@ export class CustomGptQueue {
   }
   countFiltered(storeId: string, filters: QueueListFilters): number {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?", "status!='CANCELLED'"];
+    const conditions = ["store_id=?", "status!='CANCELLED'", "COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''"];
     const parameters: string[] = [storeId];
     if (filters.provider) {
       conditions.push("provider=?");
@@ -160,6 +160,12 @@ export class CustomGptQueue {
     const rows = provider
       ? this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' GROUP BY status").all(storeId, provider)
       : this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' GROUP BY status").all(storeId);
+    return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
+  }
+  visibleCounts(storeId: string, provider?: ExternalSeoProvider): Readonly<Record<string, number>> {
+    const rows = provider
+      ? this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' GROUP BY status").all(storeId, provider)
+      : this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' GROUP BY status").all(storeId);
     return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
   }
   private write(job: GptSeoJob): void {
@@ -326,22 +332,34 @@ export class CustomGptQueue {
   }
   clearQueue(storeId: string): ClearQueueResult {
     return this.transaction(() => {
-      const rows = this.db.prepare("SELECT id,payload,batch_id FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' ORDER BY created_at,id").all(storeId);
+      const rows = this.db.prepare("SELECT id,payload,batch_id FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' ORDER BY created_at,id").all(storeId);
       let cleared = 0;
+      let archived = 0;
       let preservedActive = 0;
-      let preservedSynced = 0;
+      let preservedFailed = 0;
       for (const row of rows) {
         const jobId = String(row.id);
         const job = json(row.payload) as GptSeoJob;
-        const hasSync = Boolean(this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status!='ROLLED_BACK'").get(jobId));
-        if (hasSync) {
-          preservedSynced += 1;
+        const syncStatus = String(this.db.prepare("SELECT status FROM gpt_sync WHERE job_id=?").get(jobId)?.status ?? "");
+        const canBatchStillMutateJob = ["IN_PROGRESS", "NEEDS_CHANGES", "WAITING_INPUT", "VALIDATING"].includes(job.status);
+        const hasActiveBatch = canBatchStillMutateJob && row.batch_id !== null && Boolean(this.db.prepare("SELECT 1 FROM gpt_batches WHERE id=? AND active=1 AND expires_at>?").get(String(row.batch_id), this.now()));
+        const hasActiveFinalizer = job.status === "VALIDATING" && Number(job.finalizerUntil ?? 0) > this.now();
+        if (hasActiveBatch || hasActiveFinalizer || syncStatus === "SYNCING" || syncStatus === "UNKNOWN") {
+          preservedActive += 1;
           continue;
         }
-        const hasActiveBatch = row.batch_id !== null && Boolean(this.db.prepare("SELECT 1 FROM gpt_batches WHERE id=? AND active=1 AND expires_at>?").get(String(row.batch_id), this.now()));
-        const hasActiveFinalizer = job.status === "VALIDATING" && Number(job.finalizerUntil ?? 0) > this.now();
-        if (hasActiveBatch || hasActiveFinalizer) {
-          preservedActive += 1;
+        if (syncStatus === "SYNCED" || job.status === "REVIEW_READY") {
+          this.write({
+            ...job,
+            queueArchivedAt: this.now(),
+            queueArchiveReason: "OPERATOR_QUEUE_CLEAR",
+          });
+          this.audit(storeId, jobId, "QUEUE_ARCHIVED");
+          archived += 1;
+          continue;
+        }
+        if (syncStatus === "FAILED") {
+          preservedFailed += 1;
           continue;
         }
         this.write({ ...job, status: "CANCELLED", cancellationReason: "OPERATOR_QUEUE_CLEAR", error: "Removed from Queue by operator" });
@@ -349,7 +367,7 @@ export class CustomGptQueue {
         this.audit(storeId, jobId, "QUEUE_CLEARED");
         cleared += 1;
       }
-      return { cleared, preservedActive, preservedSynced };
+      return { cleared, archived, preservedActive, preservedFailed };
     });
   }
   pendingFinalization(): readonly GptSeoJob[] {

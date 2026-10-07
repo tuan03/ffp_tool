@@ -63,6 +63,7 @@ export function getAmazonCrawlerReviewClient(environment: AppEnvironment, engine
     update: async () => { throw new Error("Mock review item was not found."); },
     decide: async () => { throw new Error("Mock review item was not found."); },
     sync: async () => { throw new Error("Mock review item was not found."); },
+    reconcile: async () => { throw new Error("Mock review item was not found."); },
     syncAllApproved: async () => ({ queued: 0, itemIds: [] }),
     markSynced: async () => { throw new Error("Mock review item was not found."); },
     markFailed: async () => { throw new Error("Mock review item was not found."); },

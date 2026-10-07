@@ -223,7 +223,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             queue.listFiltered(storeId, filters, offset),
             queue.countFiltered(storeId, filters),
           ]);
-          result = { jobs: jobs.map(job => ({ ...job, original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts: (await queue.counts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
+          result = { jobs: jobs.map(job => ({ ...job, original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts: (await queue.visibleCounts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
         case "admin/reviews": {

@@ -83,6 +83,32 @@ def progress_for_assignment(progress_payload: dict[str, Any], assignment: dict[s
     return task_progress
 
 
+def refresh_requested_family_caches(
+    cache: RawFamilyCache,
+    assignments: list[dict[str, Any]],
+    settings: dict[str, Any],
+) -> dict[str, int]:
+    raw_asins = settings.get("refreshFamilyAsins") or []
+    if not isinstance(raw_asins, list):
+        raise ValueError("refreshFamilyAsins must be an array.")
+    refresh_asins = {str(asin).strip().upper() for asin in raw_asins}
+    if any(re.fullmatch(r"[A-Z0-9]{10}", asin) is None for asin in refresh_asins):
+        raise ValueError("refreshFamilyAsins contains an invalid ASIN.")
+    amazon_zip = str(settings.get("amazonZip") or "90001").strip()
+    removed_files = 0
+    removed_bytes = 0
+    refreshed: set[str] = set()
+    for assignment in assignments:
+        asin = str(assignment.get("asin") or "").strip().upper()
+        if asin not in refresh_asins or asin in refreshed:
+            continue
+        refreshed.add(asin)
+        result = cache.invalidate(f"{asin}:{amazon_zip}:us-v1")
+        removed_files += int(result.get("removedFiles") or 0)
+        removed_bytes += int(result.get("removedBytes") or 0)
+    return {"removedFiles": removed_files, "removedBytes": removed_bytes}
+
+
 class DistributedCrawlerAgent:
     def __init__(
         self,
@@ -1659,6 +1685,7 @@ class DistributedCrawlerAgent:
     def _run_batch_group(self, batch: list[dict[str, Any]], cancel_event: threading.Event, loop: asyncio.AbstractEventLoop) -> None:
         first = batch[0]
         effective_settings = self._agent_limits().apply(dict(first.get("settings") or {}))
+        refresh_requested_family_caches(self.cache, batch, effective_settings)
         settings = CrawlSettings.from_api(effective_settings)
         actual_settings = settings.api_dict()
         assignments_by_source = {str(assignment["url"]): assignment for assignment in batch}

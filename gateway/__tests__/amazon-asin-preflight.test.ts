@@ -16,7 +16,7 @@ const filterableDefinitions = {
   parentAsin: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "FILTERABLE" } } },
 };
 
-test("preflight finds a sibling ASIN through the resolved parent family", async () => {
+test("preflight allows an unsynced sibling when another product from the parent family exists", async () => {
   const searched: string[] = [];
   const client = {
     async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -37,27 +37,32 @@ test("preflight finds a sibling ASIN through the resolved parent family", async 
     asins: ["B0CHILD002"],
     families: [{
       parentAsin: "B0PARENT01", inputAsins: ["B0CHILD002"], memberAsins: ["B0CHILD001", "B0CHILD002"],
-      isResolved: true, databaseStatus: "synced", jobId: "job-1",
+      isResolved: true, databaseStatus: null, jobId: null, recoveredStaleRegistry: true,
+      hasSyncedFamilyMembers: true,
     }],
   }, "apply");
 
-  assert.equal(result.matches[0]?.parentAsin, "B0PARENT01");
-  assert.equal(result.families[0]?.status, "existing");
-  assert.deepEqual(result.allowedAsins, []);
-  assert.deepEqual(searched, ['metafields.custom.amazon_parent_asin:"B0PARENT01"']);
+  assert.deepEqual(result.matches.map((match) => match.asin), ["B0CHILD001"]);
+  assert.equal(result.families[0]?.status, "available");
+  assert.equal(result.families[0]?.hasExistingFamilyProducts, true);
+  assert.deepEqual(result.allowedAsins, ["B0CHILD002"]);
+  assert.deepEqual(searched, [
+    'metafields.custom.amazon_asin:"B0CHILD002"',
+    'metafields.custom.amazon_parent_asin:"B0PARENT01"',
+  ]);
 });
 
-test("preflight finds a legacy product through any known family alias", async () => {
+test("preflight reuses an exact requested ASIN as an incremental family discovery seed", async () => {
   const searched: string[] = [];
   const client = {
     async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
       if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
       const search = String(variables?.query);
       searched.push(search);
-      if (search === 'metafields.custom.amazon_asin:"B0CHILD001"') {
+      if (search === 'metafields.custom.amazon_asin:"B0CHILD002"') {
         return { products: { nodes: [{
-          id: "gid://shopify/Product/456", title: "Legacy family", metafield: { value: "B0CHILD001" },
-          parentMetafield: null,
+          id: "gid://shopify/Product/456", title: "Exact child", metafield: { value: "B0CHILD002" },
+          parentMetafield: { value: "B0PARENT01" },
         }] } } as T;
       }
       return { products: { nodes: [] } } as T;
@@ -72,12 +77,88 @@ test("preflight finds a legacy product through any known family alias", async ()
     }],
   }, "apply");
 
-  assert.equal(result.families[0]?.status, "existing");
-  assert.deepEqual(result.allowedAsins, []);
+  assert.equal(result.families[0]?.status, "available");
+  assert.equal(result.families[0]?.hasExistingFamilyProducts, true);
+  assert.deepEqual(result.allowedAsins, ["B0CHILD002"]);
   assert.deepEqual(searched, [
+    'metafields.custom.amazon_asin:"B0CHILD002"',
     'metafields.custom.amazon_parent_asin:"B0PARENT01"',
-    'metafields.custom.amazon_asin:"B0PARENT01"',
+  ]);
+});
+
+test("preflight uses an unresolved exact ASIN as a family discovery seed", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      const search = String(variables?.query);
+      if (search === 'metafields.custom.amazon_asin:"B0PARENT01"') {
+        return { products: { nodes: [{
+          id: "gid://shopify/Product/789", title: "Existing seed", metafield: { value: "B0PARENT01" },
+          parentMetafield: null,
+        }] } } as T;
+      }
+      return { products: { nodes: [] } } as T;
+    },
+  };
+
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0PARENT01"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0PARENT01"], memberAsins: ["B0PARENT01"],
+      isResolved: false, databaseStatus: null, jobId: null,
+    }],
+  }, "apply");
+
+  assert.equal(result.matches[0]?.asin, "B0PARENT01");
+  assert.equal(result.families[0]?.status, "available");
+  assert.equal(result.families[0]?.hasExistingFamilyProducts, true);
+  assert.deepEqual(result.allowedAsins, ["B0PARENT01"]);
+});
+
+test("preflight recovers an unresolved family parent from the exact Shopify product", async () => {
+  const searched: string[] = [];
+  const client = {
+    async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      const search = String(variables?.query);
+      searched.push(search);
+      if (search === 'metafields.custom.amazon_asin:"B0CHILD001"') {
+        return { products: { nodes: [{
+          id: "gid://shopify/Product/123", title: "Existing seed", metafield: { value: "B0CHILD001" },
+          parentMetafield: { value: "B0PARENT01" },
+        }] } } as T;
+      }
+      if (search === 'metafields.custom.amazon_parent_asin:"B0PARENT01"') {
+        return { products: { nodes: [
+          {
+            id: "gid://shopify/Product/123", title: "Existing seed", metafield: { value: "B0CHILD001" },
+            parentMetafield: { value: "B0PARENT01" },
+          },
+          {
+            id: "gid://shopify/Product/456", title: "Existing sibling", metafield: { value: "B0CHILD002" },
+            parentMetafield: { value: "B0PARENT01" },
+          },
+        ] } } as T;
+      }
+      return { products: { nodes: [] } } as T;
+    },
+  };
+
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"],
+    families: [{
+      parentAsin: "B0CHILD001", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"],
+      isResolved: false, databaseStatus: null, jobId: null,
+    }],
+  }, "apply");
+
+  assert.equal(result.families[0]?.parentAsin, "B0PARENT01");
+  assert.equal(result.families[0]?.status, "available");
+  assert.deepEqual(result.matches.map((match) => match.asin), ["B0CHILD001", "B0CHILD002"]);
+  assert.deepEqual(result.allowedAsins, ["B0CHILD001"]);
+  assert.deepEqual(searched, [
     'metafields.custom.amazon_asin:"B0CHILD001"',
+    'metafields.custom.amazon_parent_asin:"B0PARENT01"',
   ]);
 });
 
@@ -100,6 +181,33 @@ test("preflight keeps available families while blocking a crawled family pending
   assert.equal(result.families[0]?.status, "crawled_pending_sync");
   assert.equal(result.families[1]?.status, "available");
   assert.deepEqual(result.allowedAsins, ["B0NEW00001"]);
+});
+
+test("preflight does not start incremental discovery while the family is pending sync", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      const search = String(variables?.query);
+      if (search.includes("amazon_asin")) {
+        return { products: { nodes: [{
+          id: "gid://shopify/Product/456", title: "Existing child", metafield: { value: "B0CHILD001" },
+          parentMetafield: { value: "B0PARENT01" },
+        }] } } as T;
+      }
+      return { products: { nodes: [] } } as T;
+    },
+  };
+
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"],
+      isResolved: true, databaseStatus: "crawled", jobId: "job-pending",
+    }],
+  }, "apply");
+
+  assert.equal(result.families[0]?.status, "crawled_pending_sync");
+  assert.deepEqual(result.allowedAsins, []);
 });
 
 test("preflight schedules only one input when known siblings share an available family", async () => {

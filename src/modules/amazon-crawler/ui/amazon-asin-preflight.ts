@@ -31,7 +31,11 @@ export async function runAfterAmazonAsinPreflight(
   sources: readonly string[],
   storeId: string,
   checkAmazonAsins: AmazonAsinChecker,
-  startJob: (sources: readonly string[]) => Promise<void>,
+  startJob: (
+    sources: readonly string[],
+    existingShopifyAsins: readonly string[],
+    refreshFamilyAsins: readonly string[],
+  ) => Promise<void>,
 ): Promise<AmazonAsinPreflightResult> {
   const asins = normalizeAmazonAsins(sources);
   const result = await checkAmazonAsins(storeId, asins);
@@ -44,7 +48,20 @@ export async function runAfterAmazonAsinPreflight(
       selectedAsins.add(asin);
       return true;
     });
-    if (allowedSources.length > 0) await startJob(allowedSources);
+    if (allowedSources.length > 0) {
+      const allowedParentAsins = new Set(
+        result.families
+          .filter((family) => family.status === "available" && family.inputAsins.some((asin) => allowedAsins.has(asin)))
+          .map((family) => family.parentAsin),
+      );
+      const existingShopifyAsins = [...new Set(
+        result.matches
+          .filter((match) => allowedParentAsins.has(match.parentAsin))
+          .map((match) => match.asin),
+      )];
+      const refreshFamilyAsins = existingShopifyAsins.length > 0 ? [...allowedAsins] : [];
+      await startJob(allowedSources, existingShopifyAsins, refreshFamilyAsins);
+    }
   }
   return result;
 }

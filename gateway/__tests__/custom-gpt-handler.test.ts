@@ -388,7 +388,12 @@ test("administration clears only safe jobs in the selected store", async () => {
       body: JSON.stringify({}),
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { cleared: 1, preservedActive: 0, preservedSynced: 0 });
+    assert.deepEqual(await response.json(), {
+      cleared: 1,
+      archived: 0,
+      preservedActive: 0,
+      preservedFailed: 0,
+    });
     assert.equal(queue.list("capozen").length, 0);
     assert.equal(queue.list("other").length, 1);
   } finally {

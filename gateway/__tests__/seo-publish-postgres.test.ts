@@ -33,6 +33,13 @@ test("PostgreSQL publish claim is exclusive and legacy Review APIs cannot overri
     assert.equal((await first.reviewState("demo", "job")).backendPublishRequired, true);
     assert.equal((await first.reviewState("demo", "job")).shopifySyncStatus, "syncing");
     await assert.rejects(second.beginSync("demo", "job"), /BACKEND_PUBLISH_REQUIRED/);
+    const crawlerJob = { ...job, id: "crawler-job", source: "amazon", sourceIdentity: "amazon:B0TEST123" };
+    await pool.query(`INSERT INTO "${schema}".gpt_jobs(id,store_id,dedup,status,payload,created_at) VALUES ('crawler-job','demo','crawler-dedup','REVIEW_READY',$1,2)`, [JSON.stringify(crawlerJob)]);
+    await pool.query(`INSERT INTO "${schema}".gpt_review_state VALUES ('crawler-job',$1)`, [JSON.stringify(review)]);
+    const crawlerSyncToken = await second.beginSync("demo", "crawler-job");
+    assert.equal((await second.syncState("demo", "crawler-job"))?.status, "SYNCING");
+    await second.finishSync("demo", "crawler-job", crawlerSyncToken, "SYNCED");
+    assert.equal((await second.syncState("demo", "crawler-job"))?.status, "SYNCED");
     const leases = await Promise.all([first.publisher.claim(), second.publisher.claim()]);
     assert.equal(leases.filter(Boolean).length, 1);
     const lease = leases.find(lease => lease !== null);
