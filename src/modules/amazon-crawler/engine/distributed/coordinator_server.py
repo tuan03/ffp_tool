@@ -387,6 +387,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     app.state.is_ready = False
     security = AgentSecurity(sessions, agent_environment) if agent_environment is not None else None
     app.state.agent_security = security
+    operator_boundary_enabled = operator_credentials is not None or operator_auth_disabled
+    unauthenticated_agent_command_types = frozenset({"PAUSE", "RESUME"})
+
+    def require_agent_command_support(command_type: str) -> None:
+        if security is not None:
+            return
+        if operator_boundary_enabled and command_type in unauthenticated_agent_command_types:
+            return
+        raise HTTPException(status_code=503, detail="Authenticated agent command is unavailable.")
+
     if security is not None:
         install_enrollment_routes(app, security)
     if operator_credentials is not None or operator_auth_disabled:
@@ -947,6 +957,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/clients/bulk-commands", status_code=202)
     async def submit_bulk_agent_command(payload: BulkAgentCommandRequest, request: Request) -> dict[str, Any]:
         actor = require_operator_actor(request)
+        require_agent_command_support(payload.type)
         if payload.allAgents == bool(payload.agentGroup):
             raise HTTPException(status_code=422, detail="Choose exactly one explicit group or allAgents scope.")
         clients = await asyncio.to_thread(store.list_clients)
@@ -993,8 +1004,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.post("/api/v1/clients/{client_id}/commands", status_code=202)
     async def submit_agent_command(client_id: str, payload: AgentCommandRequest) -> dict[str, Any]:
-        if security is None:
-            raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
+        require_agent_command_support(payload.type)
         command_payload_value: dict[str, Any] | None = None
         if payload.type == "RELOAD_CONFIG":
             try:
@@ -1148,13 +1158,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.get("/api/v1/clients/{client_id}/commands")
     async def list_agent_commands(client_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
-        if security is None:
+        if not operator_boundary_enabled and security is None:
             raise HTTPException(status_code=503, detail="Authenticated agent commands are unavailable.")
         history = await asyncio.to_thread(command_ledger.history, client_id, limit=limit)
         return {"commands": history}
 
     async def dispatch_next_agent_command(client_id: str, after_sequence: int = 0) -> None:
-        if security is None:
+        if not operator_boundary_enabled and security is None:
             return
         rows = await asyncio.to_thread(command_ledger.commands_after, client_id, after_sequence)
         commands = rows[0]

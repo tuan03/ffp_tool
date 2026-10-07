@@ -1099,6 +1099,79 @@ class AgentCommandWebSocketTests(unittest.TestCase):
             self.assertEqual(len(history.json()["commands"][0]["events"]), 5)
             self.assertEqual(client.get("/api/v1/clients", auth=auth).json()[0]["appliedExecutionState"], "PAUSED")
 
+    def test_public_agent_mode_delivers_only_pause_and_resume_commands(self) -> None:
+        with ExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            stack.enter_context(patch.dict(os.environ, {
+                "PINTEREST_RUNTIME_ROOT": str(root / "pinterest"),
+                "IMAGE_PROCESSING_CACHE_DIR": str(root / "images"),
+            }))
+            stack.enter_context(patch("engine.distributed.coordinator_server.find_project_root", return_value=root))
+            app = create_coordinator_app(
+                database_url=f"sqlite:///{(root / 'public-commands.db').as_posix()}",
+                operator_auth_disabled=True,
+            )
+            client = stack.enter_context(TestClient(app))
+            agent_id = uuid.uuid4().hex
+            command_url = f"/api/v1/clients/{agent_id}/commands"
+
+            with client.websocket_connect("/api/v1/worker/connect") as socket:
+                socket.send_json({
+                    "type": "hello", "protocolVersion": "5", "clientId": agent_id,
+                    "displayName": "public fixture", "maxConcurrentInputs": 1,
+                    "availableSlots": 1, "lastProcessedCommandSequence": 0,
+                    "desiredExecutionState": "RUNNING",
+                    "capabilities": {"mediaGalleryV2": True, "amazon": True},
+                })
+                acknowledgement = socket.receive_json()
+                self.assertEqual(acknowledgement["type"], "hello_ack")
+                self.assertEqual(acknowledgement["commands"], [])
+
+                pause_response = client.post(command_url, json={
+                    "requestId": uuid.uuid4().hex, "type": "PAUSE",
+                })
+                self.assertEqual(pause_response.status_code, 202, pause_response.text)
+                pause_command = socket.receive_json()
+                self.assertEqual(pause_command["type"], "command_batch")
+                self.assertEqual(pause_command["commands"][0]["type"], "PAUSE")
+                for status in ("ACKED", "RUNNING", "SUCCESS"):
+                    socket.send_json({
+                        "type": "command_update",
+                        "commandId": pause_response.json()["commandId"],
+                        "sequence": 1,
+                        "status": status,
+                        **({"appliedExecutionState": "PAUSED"} if status == "SUCCESS" else {}),
+                    })
+                self.assertEqual(socket.receive_json()["commands"], [])
+
+                resume_response = client.post(command_url, json={
+                    "requestId": uuid.uuid4().hex, "type": "RESUME",
+                })
+                self.assertEqual(resume_response.status_code, 202, resume_response.text)
+                resume_command = socket.receive_json()
+                self.assertEqual(resume_command["commands"][-1]["type"], "RESUME")
+                self.assertEqual(resume_command["commands"][-1]["sequence"], 2)
+                for status in ("ACKED", "RUNNING", "SUCCESS"):
+                    socket.send_json({
+                        "type": "command_update",
+                        "commandId": resume_response.json()["commandId"],
+                        "sequence": 2,
+                        "status": status,
+                        **({"appliedExecutionState": "RUNNING"} if status == "SUCCESS" else {}),
+                    })
+                self.assertEqual(socket.receive_json()["commands"], [])
+
+            history = client.get(command_url)
+            self.assertEqual(history.status_code, 200, history.text)
+            self.assertEqual([row["type"] for row in history.json()["commands"]], ["PAUSE", "RESUME"])
+            self.assertTrue(all(row["status"] == "SUCCESS" for row in history.json()["commands"]))
+            blocked = client.post(command_url, json={
+                "requestId": uuid.uuid4().hex, "type": "RESTART_AGENT",
+                "reason": "public mode must not restart agents",
+            })
+            self.assertEqual(blocked.status_code, 503, blocked.text)
+            self.assertEqual(blocked.json()["detail"], "Authenticated agent command is unavailable.")
+
     def test_reload_config_is_validated_persisted_and_acknowledged_by_version(self) -> None:
         with ExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
