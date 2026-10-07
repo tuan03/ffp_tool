@@ -69,6 +69,15 @@ function ModalLoadingFallback() {
 
 export type AdsTabId = "decisions" | "hierarchy" | "funnel" | "competitors" | "experiments" | "health";
 
+const tabPreloaders: Record<AdsTabId, () => void> = {
+  decisions: () => { void import("./tabs/DecisionsTab"); },
+  hierarchy: () => { void import("./tabs/HierarchyTab"); },
+  funnel: () => { void import("./tabs/FunnelTab"); },
+  competitors: () => { void import("./tabs/CompetitorsTab"); },
+  experiments: () => { void import("./tabs/ExperimentsTab"); },
+  health: () => { void import("./tabs/SystemHealthTab"); },
+};
+
 export interface StoreDataRecord {
   shopifySummary: AdsShopifySummary | null;
   summary: AdsStoreSummary | null;
@@ -737,6 +746,8 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id as AdsTabId)}
+            onMouseEnter={() => tabPreloaders[tab.id as AdsTabId]?.()}
+            onFocus={() => tabPreloaders[tab.id as AdsTabId]?.()}
             className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px flex items-center gap-1.5 cursor-pointer ${
               activeTab === tab.id
                 ? "border-cyan-400 text-cyan-300 bg-slate-900/60 shadow-sm"
