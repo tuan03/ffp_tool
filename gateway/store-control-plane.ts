@@ -1,3 +1,5 @@
+import { resolveStoreProfile } from "../src/modules/seo-content";
+
 import { GatewayError } from "./errors";
 import { normalizeShopDomain, type StoreRegistry } from "./store-registry";
 import type { ShopifyGraphqlClient } from "./shopify-graphql-client";
@@ -20,6 +22,7 @@ export type StoreAuthInput =
 
 export interface RegisterStoreInput {
   readonly storeId: string;
+  readonly seoProfileId?: string;
   readonly shopDomain: string;
   readonly apiVersion?: string;
   readonly auth: StoreAuthInput;
@@ -31,6 +34,7 @@ export interface RegisterStoreInput {
 
 export interface UpdateStoreCredentialsInput {
   readonly storeId: string;
+  readonly seoProfileId?: string;
   readonly shopDomain?: string;
   readonly auth?: StoreAuthInput;
   readonly proxy?: StoreProxyConfig | null;
@@ -113,6 +117,19 @@ function mapAuthInputToStoreAuthConfig(auth: StoreAuthInput): StoreAuthConfig {
   }
 
   throw new GatewayError("Unsupported authentication type", "SHOPIFY_INVALID_INPUT", 400);
+}
+
+function normalizeSeoProfileId(seoProfileId: string | undefined): string | undefined {
+  if (seoProfileId === undefined) return undefined;
+  const normalized = seoProfileId.trim();
+  if (!normalized) {
+    throw new GatewayError("seoProfileId cannot be empty", "SHOPIFY_INVALID_INPUT", 400);
+  }
+  const profile = resolveStoreProfile({ profileId: normalized });
+  if (!profile) {
+    throw new GatewayError(`Unknown SEO profile: ${normalized}`, "SHOPIFY_INVALID_INPUT", 400);
+  }
+  return profile.profileId;
 }
 
 /**
@@ -216,6 +233,7 @@ export class StoreControlPlane {
 
     const candidateConfig: StoreConfig = {
       storeId,
+      seoProfileId: normalizeSeoProfileId(input.seoProfileId),
       shopDomain: normalizedDomain,
       apiVersion,
       auth: storeAuth,
@@ -354,8 +372,12 @@ export class StoreControlPlane {
     const defaultProductType =
       input.defaultProductType !== undefined ? input.defaultProductType : existing.defaultProductType;
 
+    const seoProfileId =
+      input.seoProfileId !== undefined ? normalizeSeoProfileId(input.seoProfileId) : existing.seoProfileId;
+
     const candidateConfig: StoreConfig = {
       ...existing,
+      seoProfileId,
       shopDomain,
       apiVersion,
       auth: storeAuth,
@@ -502,6 +524,10 @@ export class StoreControlPlane {
 
     const candidateConfig: StoreConfig = {
       storeId,
+      seoProfileId:
+        input.seoProfileId !== undefined
+          ? normalizeSeoProfileId(input.seoProfileId)
+          : existing?.seoProfileId,
       shopDomain: normalizedDomain,
       apiVersion,
       auth: storeAuth,

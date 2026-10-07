@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { GptSeoEnqueue, GptSeoJob } from "../../src/modules/custom-gpt-seo";
+import { resolveStoreProfile } from "../../src/modules/seo-content";
 import { assertV2WorkerJob, normalizeSeoEnqueue, parseSeoGenerationInput } from "../custom-gpt-seo/input-contract";
 import type { SeoWorkerRepository } from "../seo-worker/repository";
 import { createWorkerWorkflow } from "../seo-worker/workflow";
@@ -31,6 +32,29 @@ test("V2 boundary accepts exactly images, niche and storeProfile and normalizes 
   assert.deepEqual(Object.keys(normalized.input).sort(), ["images", "niche", "storeProfile"]);
   assert.equal(normalized.execution.productId, "123");
   assert.equal(normalized.execution.sourceIdentity, "123");
+});
+
+test("V2 boundary accepts a runtime store alias resolved from its registered Shopify domain", () => {
+  const runtimeStoreId = "preaureum_dev";
+  const runtimeProfile = resolveStoreProfile({
+    storeId: runtimeStoreId,
+    siteDomain: "leatherbag-3anqqbf8.myshopify.com",
+  });
+  assert.ok(runtimeProfile);
+
+  const normalized = normalizeSeoEnqueue({
+    ...enqueue,
+    input: {
+      ...enqueue.input,
+      niche: runtimeProfile.niche,
+      storeProfile: runtimeProfile,
+    },
+    execution: { ...enqueue.execution, storeId: runtimeStoreId },
+  });
+
+  assert.equal(normalized.input.storeProfile.profileId, "preaureum-handbags");
+  assert.equal(normalized.input.storeProfile.storeId, runtimeStoreId);
+  assert.equal(normalized.execution.storeId, runtimeStoreId);
 });
 
 test("V2 boundary rejects legacy semantic fields and image alt text", () => {

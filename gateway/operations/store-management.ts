@@ -4,6 +4,7 @@ import type { StoreConfig } from "../types";
 
 export interface GatewayStoreSummary {
   readonly storeId: string;
+  readonly seoProfileId?: string;
   readonly shopDomain: string;
   readonly apiVersion?: string;
   readonly authType: "static" | "client_credentials";
@@ -19,6 +20,7 @@ export interface GatewayStoreSummary {
 export function toStoreSummary(config: StoreConfig, connected?: boolean): GatewayStoreSummary {
   return {
     storeId: config.storeId,
+    seoProfileId: config.seoProfileId,
     shopDomain: config.shopDomain,
     apiVersion: config.apiVersion,
     authType: config.auth.type,

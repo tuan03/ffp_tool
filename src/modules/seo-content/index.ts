@@ -9,6 +9,7 @@ export {
   unregisterSeoContentKeywords,
   runSeoContent,
   runSeoContentDetailed,
+  listSeoStoreProfiles,
   resolveStoreProfile,
   JEMINISE_BEDDING_PROFILE,
 } from "./service";

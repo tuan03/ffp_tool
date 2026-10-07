@@ -5,6 +5,7 @@ import {
   CAPOZEN_RUG_PROFILE,
   JEMINISE_BEDDING_PROFILE,
   PREAUREUM_HANDBAG_PROFILE,
+  listSeoStoreProfiles,
   normalizeDomain,
   resolveStoreProfile,
 } from "../internal/store-profiles";
@@ -29,12 +30,31 @@ test("registry resolves the Capozen rug profile by store ID and Shopify domain",
 
 test("registry resolves the Preaureum handbag profile by store ID and Shopify domain", () => {
   assert.equal(resolveStoreProfile({ storeId: "preaureum" }), PREAUREUM_HANDBAG_PROFILE);
+  const developmentProfile = resolveStoreProfile({
+    storeId: "preaureum_dev",
+    siteDomain: "leatherbag-3anqqbf8.myshopify.com",
+  });
+  assert.equal(developmentProfile?.profileId, PREAUREUM_HANDBAG_PROFILE.profileId);
+  assert.equal(developmentProfile?.profileVersion, PREAUREUM_HANDBAG_PROFILE.profileVersion);
+  assert.equal(developmentProfile?.storeId, "preaureum_dev");
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.storeId, "preaureum");
   assert.equal(
     resolveStoreProfile({ siteDomain: "leatherbag-3anqqbf8.myshopify.com" }),
     PREAUREUM_HANDBAG_PROFILE,
   );
   assert.equal(PREAUREUM_HANDBAG_PROFILE.niche, "Personalized Handbags & Wallets");
   assert.equal(PREAUREUM_HANDBAG_PROFILE.catalogPolicies, undefined);
+});
+
+test("registry exposes safe profile choices and scopes an explicit profile to any runtime store", () => {
+  assert.deepEqual(
+    listSeoStoreProfiles().map(({ profileId }) => profileId),
+    ["capozen-rugs", "jeminise-bedding", "preaureum-handbags"],
+  );
+  const profile = resolveStoreProfile({ profileId: "preaureum-handbags", storeId: "future-store" });
+  assert.equal(profile?.profileId, "preaureum-handbags");
+  assert.equal(profile?.storeId, "future-store");
+  assert.equal(resolveStoreProfile({ profileId: "missing-profile", storeId: "future-store" }), undefined);
 });
 
 test("Jeminise V2 profile is versioned and declares three structured offerings", () => {

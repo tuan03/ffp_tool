@@ -36,7 +36,7 @@ import { assertHostSecurity, createGatewayHttpHandler, isGatewayAuthorized, isSa
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { ShopifyGraphqlClient } from "./shopify-graphql-client";
 import { InMemoryStoreRegistry } from "./store-registry";
-import { loadBootstrappedStores, loadLocalEnv } from "./store-config-loader";
+import { getRuntimeStoreConfigFile, loadLocalEnv, loadRuntimeStores } from "./store-config-loader";
 import { InMemoryThrottleManager } from "./throttle-manager";
 import { CompositeTokenProvider } from "./token-provider";
 import { StoreControlPlane } from "./store-control-plane";
@@ -46,6 +46,7 @@ import {
   handleStoreUpdateHttpRequest,
   handleStoreDeleteHttpRequest,
   handleStoreGetHttpRequest,
+  handleStoreSeoProfilesHttpRequest,
 } from "./store-control-handler";
 
 export interface GatewayServerOptions {
@@ -57,10 +58,6 @@ export interface GatewayServerOptions {
   readonly maxBodyBytes?: number;
   readonly reviewImageBridgeBaseUrl?: string;
   readonly customGptHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
-}
-
-export function getRuntimeStoreConfigFile(env: Readonly<Record<string, string>>): string {
-  return env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
 }
 
 function formatAutoSeoStartupFailure(error: unknown): string {
@@ -148,7 +145,7 @@ export function startGatewayServer(
   }
 
   const storeConfigFile = getRuntimeStoreConfigFile(env);
-  const stores = loadBootstrappedStores({ env, configFile: storeConfigFile });
+  const stores = loadRuntimeStores({ env });
   if (!options.customGptHandler && getAutoSeoDatabaseUrl() && (env.GPT_SEO_ACTION_KEYS_JSON || env.GPT_SEO_ACTION_KEY || env.GPT_SEO_MCP_KEYS_JSON)) getCustomGptRuntime();
 
   const storeRegistry = new InMemoryStoreRegistry(stores);
@@ -196,10 +193,7 @@ export function startGatewayServer(
   const syncStores = () => {
     try {
       const freshEnv = loadLocalEnv();
-      const freshStores = loadBootstrappedStores({
-        env: freshEnv,
-        configFile: getRuntimeStoreConfigFile(freshEnv),
-      });
+      const freshStores = loadRuntimeStores({ env: freshEnv });
       const freshIds = new Set(freshStores.map((s) => s.storeId));
       for (const store of freshStores) {
         if (!storeRegistry.getStore(store.storeId)) {
@@ -347,6 +341,7 @@ export function startGatewayServer(
     const isStoreUpdate = url === "/api/stores/update" || url.startsWith("/api/stores/update?");
     const isStoreDelete = url === "/api/stores/delete" || url.startsWith("/api/stores/delete?");
     const isStoreGet = url === "/api/stores/get" || url.startsWith("/api/stores/get?");
+    const isStoreSeoProfiles = url === "/api/stores/seo-profiles" || url.startsWith("/api/stores/seo-profiles?");
     const isProxyCheck = url === "/api/proxy/check" || url.startsWith("/api/proxy/check?");
 
     if (url.startsWith("/mcp/ads") || url.startsWith("/api/ads-intelligence/") || isShopify || isAutoSeo || isStoreRegister || isStoreUpdate || isStoreDelete || isStoreGet) {
@@ -510,6 +505,11 @@ export function startGatewayServer(
 
     if (url === "/api/stores/get" || url.startsWith("/api/stores/get?")) {
       await handleStoreGetHttpRequest(req, res, storeControlPlane, { authToken, maxBodyBytes });
+      return;
+    }
+
+    if (isStoreSeoProfiles) {
+      await handleStoreSeoProfilesHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
 

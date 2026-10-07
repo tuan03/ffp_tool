@@ -3,8 +3,16 @@ import { useEffect, useState } from "react";
 export interface AddedStoreInfo {
   readonly storeId: string;
   readonly shopDomain: string;
+  readonly seoProfileId?: string;
   readonly productTypes?: readonly string[];
   readonly defaultProductType?: string;
+}
+
+interface SeoProfileOption {
+  readonly profileId: string;
+  readonly profileVersion: string;
+  readonly storeName: string;
+  readonly niche: string;
 }
 
 export interface AddStoreModalProps {
@@ -26,6 +34,8 @@ export function AddStoreModal({
 
   const [storeId, setStoreId] = useState("");
   const [shopDomain, setShopDomain] = useState("");
+  const [seoProfileId, setSeoProfileId] = useState("");
+  const [seoProfiles, setSeoProfiles] = useState<readonly SeoProfileOption[]>([]);
   const [productTypesInput, setProductTypesInput] = useState("");
   const [authType, setAuthType] = useState<"client_credentials" | "static_access_token">("client_credentials");
   const [clientId, setClientId] = useState("");
@@ -42,6 +52,7 @@ export function AddStoreModal({
   const [isTesting, setIsTesting] = useState(false);
   const [isTestingProxy, setIsTestingProxy] = useState(false);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
   const [proxyCheckResult, setProxyCheckResult] = useState<{
     success: boolean;
     ip?: string;
@@ -50,6 +61,47 @@ export function AddStoreModal({
     error?: string;
   } | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    setIsLoadingProfiles(true);
+    void fetch("/api/stores/seo-profiles")
+      .then(async (response) => {
+        const payload: unknown = await response.json();
+        if (!response.ok || !payload || typeof payload !== "object") {
+          throw new Error("Không tải được danh sách SEO profile.");
+        }
+        const profiles = (payload as { data?: { profiles?: unknown } }).data?.profiles;
+        if (!Array.isArray(profiles)) {
+          throw new Error("Danh sách SEO profile không hợp lệ.");
+        }
+        const validProfiles = profiles.filter((profile): profile is SeoProfileOption => {
+          if (!profile || typeof profile !== "object") return false;
+          const candidate = profile as Record<string, unknown>;
+          return typeof candidate.profileId === "string"
+            && typeof candidate.profileVersion === "string"
+            && typeof candidate.storeName === "string"
+            && typeof candidate.niche === "string";
+        });
+        if (isMounted) setSeoProfiles(validProfiles);
+      })
+      .catch((error: unknown) => {
+        if (isMounted) {
+          setSeoProfiles([]);
+          setStatusMessage({
+            type: "error",
+            text: error instanceof Error ? error.message : "Không tải được danh sách SEO profile.",
+          });
+        }
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingProfiles(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -72,6 +124,7 @@ export function AddStoreModal({
           const s = json.data.store;
           setStoreId(s.storeId || editStoreId!);
           setShopDomain(s.shopDomain || "");
+          setSeoProfileId(s.seoProfileId || "");
           setProductTypesInput(Array.isArray(s.productTypes) ? s.productTypes.join(", ") : "");
           setAuthType(s.authType === "static" ? "static_access_token" : "client_credentials");
           setClientId(s.clientId || "");
@@ -105,6 +158,7 @@ export function AddStoreModal({
   function resetForm(): void {
     setStoreId("");
     setShopDomain("");
+    setSeoProfileId("");
     setProductTypesInput("");
     setClientId("");
     setClientSecret("");
@@ -232,6 +286,7 @@ export function AddStoreModal({
     return {
       storeId: trimmedId,
       shopDomain: trimmedDomain || undefined,
+      seoProfileId: seoProfileId.trim() || undefined,
       auth,
       proxy,
       testOnly,
@@ -243,6 +298,7 @@ export function AddStoreModal({
   function validateInput(): string | null {
     if (!storeId.trim()) return "Vui lòng nhập Store ID (ví dụ: dizzy).";
     if (!isEditMode && !shopDomain.trim()) return "Vui lòng nhập Shopify Domain (ví dụ: dizzy.myshopify.com).";
+    if (!seoProfileId.trim()) return "Vui lòng chọn SEO profile cho store.";
 
     if (!isEditMode) {
       if (authType === "client_credentials") {
@@ -336,6 +392,7 @@ export function AddStoreModal({
       const registeredStore = data.data?.store;
       const finalStoreId = registeredStore?.storeId || storeId.trim().toLowerCase();
       const finalShopDomain = registeredStore?.shopDomain || shopDomain.trim().toLowerCase();
+      const finalSeoProfileId = registeredStore?.seoProfileId || seoProfileId.trim();
       const parsedTypes = productTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
       const finalProductTypes =
         registeredStore?.productTypes || (parsedTypes.length > 0 ? parsedTypes : undefined);
@@ -346,6 +403,7 @@ export function AddStoreModal({
         onStoreUpdated?.({
           storeId: finalStoreId,
           shopDomain: finalShopDomain,
+          seoProfileId: finalSeoProfileId,
           productTypes: finalProductTypes,
           defaultProductType: finalDefaultType,
         });
@@ -353,6 +411,7 @@ export function AddStoreModal({
         onStoreAdded({
           storeId: finalStoreId,
           shopDomain: finalShopDomain,
+          seoProfileId: finalSeoProfileId,
           productTypes: finalProductTypes,
           defaultProductType: finalDefaultType,
         });
@@ -467,6 +526,32 @@ export function AddStoreModal({
                 <span className="text-[10px] text-slate-500">Domain hoặc link admin myshopify</span>
               </label>
             </div>
+
+            <label className="grid gap-1 text-xs font-medium text-slate-300">
+              <span>
+                SEO profile <span className="text-rose-400">*</span>
+              </span>
+              <select
+                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                disabled={isLoading || isTesting || isLoadingProfiles}
+                name="ffp_seo_profile_id"
+                required
+                value={seoProfileId}
+                onChange={(event) => setSeoProfileId(event.target.value)}
+              >
+                <option value="">
+                  {isLoadingProfiles ? "Đang tải SEO profile..." : "Chọn chính sách SEO cho store"}
+                </option>
+                {seoProfiles.map((profile) => (
+                  <option key={profile.profileId} value={profile.profileId}>
+                    {profile.storeName} — {profile.niche} (v{profile.profileVersion})
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-slate-500">
+                Profile quy định niche và các giới hạn nội dung; Store ID thực tế vẫn được giữ riêng cho queue và Shopify.
+              </span>
+            </label>
 
             {/* Product Types / Niche */}
             <label className="grid gap-1 text-xs font-medium text-slate-300">

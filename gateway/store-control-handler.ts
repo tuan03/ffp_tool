@@ -1,5 +1,7 @@
 import type http from "node:http";
 
+import { listSeoStoreProfiles } from "../src/modules/seo-content";
+
 import { GatewayError } from "./errors";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { checkProxyConnection } from "./proxy-transport";
@@ -9,6 +11,36 @@ import type { StoreProxyConfig } from "./types";
 export interface StoreControlHandlerOptions {
   readonly authToken?: string;
   readonly maxBodyBytes?: number;
+}
+
+export async function handleStoreSeoProfilesHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  options?: StoreControlHandlerOptions,
+): Promise<void> {
+  if (req.method !== "GET") {
+    res.statusCode = 405;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({
+      success: false,
+      error: { code: "SHOPIFY_INVALID_INPUT", message: "Method Not Allowed" },
+    }));
+    return;
+  }
+
+  if (options?.authToken && !isGatewayAuthorized(req.headers, options.authToken)) {
+    res.statusCode = 401;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({
+      success: false,
+      error: { code: "SHOPIFY_AUTH_FAILED", message: "Unauthorized: Invalid or missing Gateway authentication token" },
+    }));
+    return;
+  }
+
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ success: true, data: { profiles: listSeoStoreProfiles() } }));
 }
 
 export async function handleStoreRegistrationHttpRequest(
@@ -101,6 +133,7 @@ export async function handleStoreRegistrationHttpRequest(
   const rec = body as Record<string, unknown>;
   const storeId = typeof rec.storeId === "string" ? rec.storeId.trim() : "";
   const rawDomain = typeof rec.shopDomain === "string" ? rec.shopDomain.trim() : "";
+  const seoProfileId = typeof rec.seoProfileId === "string" ? rec.seoProfileId.trim() : "";
 
   if (!storeId) {
     res.statusCode = 400;
@@ -121,6 +154,18 @@ export async function handleStoreRegistrationHttpRequest(
       JSON.stringify({
         success: false,
         error: { code: "SHOPIFY_INVALID_INPUT", message: "shopDomain is required" },
+      }),
+    );
+    return;
+  }
+
+  if (!seoProfileId) {
+    res.statusCode = 400;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: { code: "SHOPIFY_INVALID_INPUT", message: "seoProfileId is required" },
       }),
     );
     return;
@@ -212,6 +257,7 @@ export async function handleStoreRegistrationHttpRequest(
 
   const registrationInput: RegisterStoreInput = {
     storeId,
+    seoProfileId,
     shopDomain: rawDomain,
     apiVersion,
     auth,
@@ -479,6 +525,10 @@ export async function handleStoreUpdateHttpRequest(
   }
 
   const rawDomain = typeof rec.shopDomain === "string" ? rec.shopDomain.trim() : undefined;
+  const seoProfileId =
+    typeof rec.seoProfileId === "string" && rec.seoProfileId.trim()
+      ? rec.seoProfileId.trim()
+      : undefined;
 
   // Parse Auth (optional on update)
   let auth: StoreAuthInput | undefined;
@@ -547,6 +597,7 @@ export async function handleStoreUpdateHttpRequest(
 
   const updateInput: UpdateStoreCredentialsInput = {
     storeId,
+    seoProfileId,
     shopDomain: rawDomain,
     apiVersion: rawApiVersion,
     auth,

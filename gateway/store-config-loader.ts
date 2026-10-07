@@ -10,6 +10,16 @@ export interface StoreBootstrapOptions {
   readonly cwd?: string;
   readonly configFile?: string;
 }
+
+export interface RuntimeStoreBootstrapOptions {
+  readonly env?: Record<string, string>;
+  readonly cwd?: string;
+}
+
+export function getRuntimeStoreConfigFile(env: Readonly<Record<string, string>>): string {
+  return env.GATEWAY_STORES_FILE?.trim() || ".runtime/stores.local.json";
+}
+
 /**
  * Loads key-value pairs from .env.local if present, merged onto process.env.
  */
@@ -77,6 +87,12 @@ function parseStoreRawItem(item: unknown): StoreConfig | undefined {
     return undefined;
   }
   const storeId = rawStoreId.trim();
+
+  const rawSeoProfileId = obj.seoProfileId ?? obj.seo_profile_id;
+  const seoProfileId =
+    typeof rawSeoProfileId === "string" && rawSeoProfileId.trim()
+      ? rawSeoProfileId.trim()
+      : undefined;
 
   const rawDomain = obj.shopDomain ?? obj.domain;
   if (typeof rawDomain !== "string" || !rawDomain.trim()) {
@@ -174,6 +190,7 @@ function parseStoreRawItem(item: unknown): StoreConfig | undefined {
 
   return {
     storeId,
+    seoProfileId,
     shopDomain,
     apiVersion,
     auth,
@@ -499,6 +516,21 @@ export function loadBootstrappedStores(options?: StoreBootstrapOptions): StoreCo
   return Array.from(storesByStoreId.values());
 }
 
+/**
+ * Loads the same durable store registry used by the Gateway control plane.
+ * Server-side consumers must use this entry point so stores registered at
+ * runtime are visible without duplicating credentials in environment files.
+ */
+export function loadRuntimeStores(options?: RuntimeStoreBootstrapOptions): StoreConfig[] {
+  const cwd = options?.cwd || process.cwd();
+  const env = options?.env || loadLocalEnv(cwd);
+  return loadBootstrappedStores({
+    cwd,
+    env,
+    configFile: getRuntimeStoreConfigFile(env),
+  });
+}
+
 let configMutex = Promise.resolve();
 
 async function withConfigMutex<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -569,6 +601,10 @@ export function persistStoreToConfigFile(
       apiVersion: store.apiVersion || "2026-07",
       auth: { ...store.auth },
     };
+
+    if (store.seoProfileId) {
+      storeEntry.seoProfileId = store.seoProfileId;
+    }
 
     if (store.proxy && store.proxy.url) {
       storeEntry.proxy = {

@@ -9,8 +9,8 @@ import { bindExternalSeoProduct } from "../src/modules/seo-content";
 import { PostgresSeoContentRuntime } from "../src/modules/seo-content/server";
 
 import {
-  loadBootstrappedStores,
   loadLocalEnv,
+  loadRuntimeStores,
   startGatewayServer,
 } from "../gateway/index";
 import { getAutoSeoDatabaseUrl } from "../gateway/auto-seo-database-url";
@@ -148,7 +148,7 @@ interface PipelineTimings {
   totalMs?: number;
 }
 
-let configuredStores = loadBootstrappedStores({ env });
+let configuredStores = loadRuntimeStores({ env });
 let baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : (configuredStores.length > 0 ? configuredStores[0] : undefined);
 if (!storeId && baseStore) {
   storeId = baseStore.storeId;
@@ -505,7 +505,11 @@ async function processClaim(
     try {
       if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
       const targetStoreConfig = configuredStores.find((store) => store.storeId === targetStore);
-      const storeProfile = resolveStoreProfile({ storeId: targetStore, siteDomain: targetStoreConfig?.shopDomain });
+      const storeProfile = resolveStoreProfile({
+        profileId: targetStoreConfig?.seoProfileId,
+        storeId: targetStore,
+        siteDomain: targetStoreConfig?.shopDomain,
+      });
       if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
       if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
       const externalJob = claim.externalSeo
@@ -569,10 +573,14 @@ async function processClaim(
     throwIfCancelled();
     let claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     if (!claimStoreConfig) {
-      configuredStores = loadBootstrappedStores({ env: loadLocalEnv() });
+      configuredStores = loadRuntimeStores({ env: loadLocalEnv() });
       claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
     }
-    const storeProfile = resolveStoreProfile({ storeId: claimStoreId, siteDomain: claimStoreConfig?.shopDomain });
+    const storeProfile = resolveStoreProfile({
+      profileId: claimStoreConfig?.seoProfileId,
+      storeId: claimStoreId,
+      siteDomain: claimStoreConfig?.shopDomain,
+    });
     if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
     const claimAdminHandle = claimStoreConfig?.shopDomain
       ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
@@ -1186,7 +1194,7 @@ async function main(): Promise<void> {
     while (!storeId || !baseStore) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       const freshEnv = loadLocalEnv();
-      configuredStores = loadBootstrappedStores({ env: freshEnv });
+      configuredStores = loadRuntimeStores({ env: freshEnv });
       storeId = (freshEnv.GATEWAY_STORE_ID || process.env.GATEWAY_STORE_ID || (configuredStores.length > 0 ? configuredStores[0].storeId : ""))?.trim();
       baseStore = storeId ? configuredStores.find((store) => store.storeId === storeId) : undefined;
       if (storeId && baseStore) {
