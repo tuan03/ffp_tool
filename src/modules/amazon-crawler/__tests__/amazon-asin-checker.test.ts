@@ -70,3 +70,15 @@ test("crawler ASIN checker rejects Shopify failures instead of assuming no dupli
 
   await assert.rejects(checker("capozen", ["B012345678"]), /Shopify permission denied/);
 });
+
+test("crawler ASIN checker reports a readable coordinator routing failure", async () => {
+  const checker = createAmazonAsinChecker(
+    async () => new Response(null, { status: 404 }),
+    { engineUrl: "https://crawler.example.com" },
+  );
+
+  await assert.rejects(
+    checker("capozen", ["B012345678"]),
+    /Không kiểm tra được family ASIN trong FFP\./,
+  );
+});

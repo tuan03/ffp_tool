@@ -67,7 +67,7 @@ test("production client proxies active crawler operator APIs through the coordin
     readFile("src/modules/amazon-crawler/ui/components/AmazonCrawlerDeadLetterPanel.tsx", "utf8"),
   ]);
   const coordinatorRoute = nginxConfig.match(/location ~ \^\/api\/v1\/\(([^)]*)\)\(\/\|\$\)/)?.[1] ?? "";
-  for (const route of ["operator", "dead-letter", "crawl-tasks", "admission-gate", "fleet-circuit-breaker", "agent-keys"]) {
+  for (const route of ["operator", "dead-letter", "crawl-tasks", "admission-gate", "fleet-circuit-breaker", "agent-keys", "asin-families"]) {
     assert.ok(coordinatorRoute.split("|").includes(route), `Nginx must proxy ${route}`);
   }
   assert.match(crawlerService, /api\/v1\/operator\/security/);

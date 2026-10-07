@@ -223,7 +223,7 @@ export function createAmazonAsinChecker(
       if (!coordinatorResponse.ok || !isRecord(coordinatorBody) || !Array.isArray(coordinatorBody.families)) {
         const error = isRecord(coordinatorBody) && typeof coordinatorBody.detail === "string"
           ? coordinatorBody.detail
-          : "KhÃ´ng kiá»ƒm tra Ä‘Æ°á»£c family ASIN trong FFP.";
+          : "Không kiểm tra được family ASIN trong FFP.";
         throw new AmazonCrawlerServiceError(error, "AMAZON_FAMILY_PREFLIGHT_FAILED", coordinatorResponse.status);
       }
       families = coordinatorBody.families;
