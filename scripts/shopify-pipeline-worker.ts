@@ -3,6 +3,7 @@ import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
+import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
 import { bindExternalSeoProduct } from "../src/modules/seo-content";
@@ -163,6 +164,17 @@ let proxyStores = storeId
 let effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [baseStore] : []);
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
+
+function getPipelineStoreProfile(targetStoreId: string): ReturnType<typeof resolvePipelineStoreProfile> {
+  const resolved = resolvePipelineStoreProfile({
+    storeId: targetStoreId,
+    stores: configuredStores,
+    reloadStores: () => loadRuntimeStores({ env: loadLocalEnv() }),
+    resolveProfile: resolveStoreProfile,
+  });
+  configuredStores = [...resolved.stores];
+  return resolved;
+}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -505,13 +517,8 @@ async function processClaim(
     });
     try {
       if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
-      const targetStoreConfig = configuredStores.find((store) => store.storeId === targetStore);
-      const storeProfile = resolveStoreProfile({
-        profileId: targetStoreConfig?.seoProfileId,
-        storeId: targetStore,
-        siteDomain: targetStoreConfig?.shopDomain,
-      });
-      if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
+      const { storeProfile } = getPipelineStoreProfile(targetStore);
+      if (!storeProfile) throw new Error(`STORE_PROFILE_REQUIRED:${targetStore}`);
       if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
       const externalJob = claim.externalSeo
         ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)
@@ -572,17 +579,8 @@ async function processClaim(
 
   try {
     throwIfCancelled();
-    let claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
-    if (!claimStoreConfig) {
-      configuredStores = loadRuntimeStores({ env: loadLocalEnv() });
-      claimStoreConfig = configuredStores.find((store) => store.storeId === claimStoreId);
-    }
-    const storeProfile = resolveStoreProfile({
-      profileId: claimStoreConfig?.seoProfileId,
-      storeId: claimStoreId,
-      siteDomain: claimStoreConfig?.shopDomain,
-    });
-    if (!storeProfile) throw new Error("STORE_PROFILE_REQUIRED");
+    const { storeConfig: claimStoreConfig, storeProfile } = getPipelineStoreProfile(claimStoreId);
+    if (!storeProfile) throw new Error(`STORE_PROFILE_REQUIRED:${claimStoreId}`);
     const claimAdminHandle = claimStoreConfig?.shopDomain
       ? claimStoreConfig.shopDomain.replace(/\.myshopify\.com$/i, "")
       : claimStoreId;
