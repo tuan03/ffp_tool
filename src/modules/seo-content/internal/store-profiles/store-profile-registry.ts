@@ -45,6 +45,24 @@ export function normalizeDomain(rawDomainOrUrl?: string): string {
   return domain;
 }
 
+function scopeProfileToExecutionStore(
+  profile: SeoStoreProfile,
+  requestedStoreId: string | undefined,
+): SeoStoreProfile {
+  const executionStoreId = requestedStoreId?.trim();
+  if (!executionStoreId || executionStoreId === profile.storeId) {
+    return profile;
+  }
+
+  // A runtime store may intentionally reuse a versioned policy profile through
+  // its registered Shopify domain. Keep that policy immutable while binding
+  // the semantic input to the exact execution store required by GPT SEO.
+  return Object.freeze({
+    ...profile,
+    storeId: executionStoreId,
+  });
+}
+
 /**
  * Resolves a StoreContentProfile based on storeId, siteDomain, or url.
  */
@@ -62,7 +80,7 @@ export function resolveStoreProfile(
         profile.storeId.toLowerCase() === storeId
       )
     ) {
-      return profile;
+      return scopeProfileToExecutionStore(profile, query.storeId);
     }
 
     if (normalizedDomain) {
@@ -73,7 +91,7 @@ export function resolveStoreProfile(
           normalizedDomain === normalizedAlias ||
           normalizedDomain.endsWith(`.${normalizedAlias}`)
         ) {
-          return profile;
+          return scopeProfileToExecutionStore(profile, query.storeId);
         }
       }
     }
