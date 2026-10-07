@@ -43,6 +43,35 @@ export function generateAdsOpenApiSpec(serverBaseUrl = "http://localhost:3001"):
       },
     },
     paths: {
+      "/api/ads-intelligence/overview": {
+        get: {
+          operationId: "getAdsOverview",
+          summary: "Get bundled overview (Summary, Health, Reconciliation, and Cache Stats)",
+          description: "Returns aggregated store overview in a single network roundtrip with in-flight coalesced metrics.",
+          parameters: [
+            {
+              name: "storeId",
+              in: "query",
+              required: false,
+              schema: { type: "string", default: "chillgen" },
+              description: "Store ID",
+            },
+            {
+              name: "refresh",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description: "Force live refresh bypassing cache",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Bundled overview containing summary, health, reconciliation, and cacheStats",
+              content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+            },
+          },
+        },
+      },
       "/api/ads-intelligence/summary": {
         get: {
           operationId: "getAdsSummary",

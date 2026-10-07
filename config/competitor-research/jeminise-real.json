@@ -1,0 +1,702 @@
+{
+  "storeId": "jeminise-real",
+  "shopDomain": "f4hgwc-hu.myshopify.com",
+  "storeDomain": "jeminise.com",
+  "observedAt": "2026-10-06T10:25:00.000Z",
+  "scope": {
+    "products": [
+      "Dragon Quilted Bedding Set",
+      "Fantasy Bedding",
+      "3-Piece Quilt Set",
+      "Comforter Sets",
+      "Duvet Cover",
+      "Halloween Themed Quilt Bedding"
+    ],
+    "market": "US",
+    "currency": "USD",
+    "excluded": [
+      "Mass-market generic department stores",
+      "Plain solid cotton sheets",
+      "Rugs and floor mats",
+      "Generic apparel"
+    ]
+  },
+  "selected": [
+    {
+      "name": "Willow Quilt",
+      "domain": "willowquilt.com",
+      "productGroup": "3-Piece Quilted Bedding Sets & Fantasy Decor",
+      "score": 95,
+      "scoreBreakdown": {
+        "product": 38,
+        "customizationModel": 18,
+        "audience": 15,
+        "price": 14,
+        "themes": 10
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://willowquilt.com/collections/quilt-bedding-set",
+          "note": "Chuyên sâu bộ chăn chần bông 3 món (1 quilt + 2 vỏ gối) chủ đề Fantasy, Gothic, Dragon với khung giá $69-$99 tương đồng tuyệt đối với Jeminise."
+        }
+      ],
+      "adStatus": "Đang chạy 18 quảng cáo active trên Meta Ad Library, gồm cả ảnh Studio và Carousel đa thẻ."
+    },
+    {
+      "name": "Patchique",
+      "domain": "patchique.com",
+      "productGroup": "Themed Quilt Bedding & Fantasy Cover Sets",
+      "score": 93,
+      "scoreBreakdown": {
+        "product": 37,
+        "customizationModel": 18,
+        "audience": 14,
+        "price": 14,
+        "themes": 10
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://patchique.com/collections/quilt-bedding-set",
+          "note": "Dòng sản phẩm chăn chần nghệ thuật in tràn viền (all-over print) với các họa tiết thần thoại, rồng và fantasy kích cỡ Twin/Queen/King."
+        }
+      ],
+      "adStatus": "Đang chạy 14 quảng cáo ảnh Studio phối cảnh phòng ngủ cao cấp với đường nét chần bông kim cương."
+    },
+    {
+      "name": "Vantique",
+      "domain": "vantique.net",
+      "productGroup": "Graphic & Mythological Quilt Bedding Sets",
+      "score": 92,
+      "scoreBreakdown": {
+        "product": 36,
+        "customizationModel": 18,
+        "audience": 14,
+        "price": 14,
+        "themes": 10
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://vantique.net/collections/quilt-bedding-set",
+          "note": "Bộ sưu tập chăn chần bông phong cách thần thoại Bắc Âu, Celtic, Dragon nghệ thuật gothic với phân khúc giá $75-$110."
+        }
+      ],
+      "adStatus": "Đang chạy các chiến dịch quảng cáo hình ảnh theo chủ đề thần thoại và kỳ bí."
+    },
+    {
+      "name": "Quiltnest",
+      "domain": "quiltnest.com",
+      "productGroup": "3-Piece Quilt Sets & Celtic/Mythic Art",
+      "score": 90,
+      "scoreBreakdown": {
+        "product": 36,
+        "customizationModel": 17,
+        "audience": 13,
+        "price": 14,
+        "themes": 10
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://quiltnest.com/collections/all",
+          "note": "Thương hiệu trực tiếp sản xuất chăn chần bông 3 món họa tiết thần thoại, fantasy và hoa văn nghệ thuật phục vụ thị trường Mỹ."
+        }
+      ],
+      "adStatus": "Đang chạy quảng cáo hình ảnh tĩnh studio cận cảnh họa tiết Celtic rồng và ưu đãi mùa lễ hội."
+    },
+    {
+      "name": "Geembi",
+      "domain": "geembi.com",
+      "productGroup": "Quilt Bedding Sets & Artistic Blankets",
+      "score": 87,
+      "scoreBreakdown": {
+        "product": 35,
+        "customizationModel": 17,
+        "audience": 13,
+        "price": 13,
+        "themes": 9
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://geembi.com/collections/quilt-bedding-set",
+          "note": "Top brand POD hàng đầu thị trường US với danh mục chủ lực là Quilt Bedding Set, Bedding Sets họa tiết rồng, sói, thiên nhiên kỳ vĩ."
+        }
+      ],
+      "adStatus": "Đang chạy quảng cáo Carousel đa thẻ trượt mượt mà giới thiệu các mẫu hoa văn fantasy bán chạy hơn 39 ngày."
+    },
+    {
+      "name": "Wanderquilt",
+      "domain": "wanderquilt.com",
+      "productGroup": "Custom Quilt Bedding & Outdoor/Fantasy Styles",
+      "score": 85,
+      "scoreBreakdown": {
+        "product": 34,
+        "customizationModel": 16,
+        "audience": 13,
+        "price": 13,
+        "themes": 9
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://wanderquilt.com/collections/quilts",
+          "note": "Thương hiệu chuyên chăn chần bông họa tiết nghệ thuật, fantasy và thiên nhiên hoang dã với chất vải microfiber thoáng khí."
+        }
+      ],
+      "adStatus": "Đang chạy các mẫu quảng cáo ảnh tĩnh giới thiệu chất liệu chần bông 3 lớp."
+    },
+    {
+      "name": "Levtex Home",
+      "domain": "levtexhome.com",
+      "productGroup": "Premium Quilt Sets & Designer Bedding",
+      "score": 84,
+      "scoreBreakdown": {
+        "product": 35,
+        "customizationModel": 14,
+        "audience": 13,
+        "price": 13,
+        "themes": 9
+      },
+      "confidence": "high",
+      "evidence": [
+        {
+          "url": "https://levtexhome.com/collections/quilt-sets",
+          "note": "Thương hiệu chăn chần bông thiết kế cao cấp tại thị trường US, cung cấp các bộ 3-piece quilt set với chất lượng hoàn thiện chuẩn khách sạn."
+        }
+      ],
+      "adStatus": "Đang chạy 9 chiến dịch VIDEO và 21 chiến dịch CAROUSEL kéo dài 55-152 ngày trên Meta Ad Library."
+    },
+    {
+      "name": "Paseo Road",
+      "domain": "paseoroad.com",
+      "productGroup": "Rustic & Western Themed Quilt Sets",
+      "score": 83,
+      "scoreBreakdown": {
+        "product": 34,
+        "customizationModel": 14,
+        "audience": 13,
+        "price": 13,
+        "themes": 9
+      },
+      "confidence": "medium",
+      "evidence": [
+        {
+          "url": "https://paseoroad.com/collections/quilts-coverlets",
+          "note": "Thương hiệu bedding phong cách rustic, thổ cẩm và động vật hoang dã với cấu trúc sản phẩm chăn chần 3 món tương đồng."
+        }
+      ],
+      "adStatus": "Đang chạy quảng cáo tĩnh phối cảnh không gian phòng ngủ đồng quê ấm cúng."
+    },
+    {
+      "name": "Shineful",
+      "domain": "shineful.net",
+      "productGroup": "All-Over-Print Quilted Bedding Sets",
+      "score": 82,
+      "scoreBreakdown": {
+        "product": 34,
+        "customizationModel": 15,
+        "audience": 12,
+        "price": 12,
+        "themes": 9
+      },
+      "confidence": "medium",
+      "evidence": [
+        {
+          "url": "https://shineful.net/collections/bedding-sets",
+          "note": "Store POD chuyên dòng Quilt Bedding Set họa tiết fantasy, động vật và nghệ thuật tối màu phục vụ khách hàng Mỹ."
+        }
+      ],
+      "adStatus": "Đang chạy quảng cáo hình ảnh ghép graphic overlay ưu đãi giảm giá kèm combo quà tặng."
+    },
+    {
+      "name": "Booznap",
+      "domain": "booznap.com",
+      "productGroup": "Graphic Printed Bedding Sets & Quilts",
+      "score": 80,
+      "scoreBreakdown": {
+        "product": 33,
+        "customizationModel": 15,
+        "audience": 12,
+        "price": 12,
+        "themes": 8
+      },
+      "confidence": "medium",
+      "evidence": [
+        {
+          "url": "https://booznap.com/collections/quilt-sets",
+          "note": "Thương hiệu bán lẻ trực tuyến cung cấp các mẫu chăn chần bông in họa tiết đồ họa và chủ đề kỳ ảo."
+        }
+      ],
+      "adStatus": "Đang chạy quảng cáo hình ảnh ghép phối cảnh giường ngủ hiện đại."
+    }
+  ],
+  "verifiedAds": [
+    {
+      "brandDomain": "levtexhome.com",
+      "productEvidenceUrl": "https://levtexhome.com/collections/quilt-sets",
+      "qualificationReason": "Mẫu quảng cáo Video phòng ngủ thực tế (Real bedroom walk-through) chạy bền bỉ 55 ngày liên tục, giải quyết triệt để rào cản 'sản phẩm trông như thế nào ngoài đời thực'.",
+      "ad": {
+        "archiveAdId": "1815592699431369",
+        "pageId": "102444794916186",
+        "pageName": "Levtex Home",
+        "status": "ACTIVE",
+        "startDate": "2026-08-12",
+        "firstSeen": "2026-08-12",
+        "lastSeen": "2026-10-06",
+        "daysActive": 55,
+        "copy": "Not sure what your vibe is—cozy, airy, bold, or minimal? See Levtex styles in real bedrooms and find the look that feels right.\n\n✨ Free shipping on orders over $100\n⭐ Thousands of 5-star reviews\n🔄 Easy returns\n\nExplore Levtex today 👉",
+        "headline": "Find Your Style Today",
+        "cta": "Shop Now",
+        "landingUrl": "https://levtexhome.com/collections/quilt-sets",
+        "mediaType": "VIDEO",
+        "mediaUrls": [
+          "https://video.fsgn5-15.fna.fbcdn.net/o1/v/t2/f2/m412/AQNz-FCRoWNnVdc6rc1BG_da-LBJwMUMzEP2en0XlrWC4TbnE8OS2BVPpv6fU-ufNLL1-4jh85Lz_oABvUC8x1904TLQFybTSFsoJJGzzg.mp4?_nc_cat=108&_nc_oc=AdrQd5dLlluAzYxm9AtagAp2QTaWIyTN9Ny28J5F-G4avaAnGbFl-VmA0XptwrhyqQ8&_nc_sid=ef5aa3&_nc_ht=video.fsgn5-15.fna.fbcdn.net&_nc_ohc=oUF5TnGylTgQ7kNvwFhndTW&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjE1NDI4NjA1MjAwMDI0NywiYXNzZXRfYWdlX2RheXMiOjE0NywidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjM1LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=nJp-yaSTm7Dfh1lhm-gGVQ&_nc_ss=7b20f&_nc_map=urlgen_bucketless&_nc_zt=28&oh=00_AQNhGVvwNt6LAxuTdWEq1ATRUVJKBtprTSQeziU4hu0yaw&oe=6ACAADD6"
+        ],
+        "thumbnailUrl": "https://scontent.fsgn5-8.fna.fbcdn.net/v/t39.35426-6/689495683_1263549898865065_5787426142383571383_n.jpg?_nc_cat=111&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=3DLiv1AkfDcQ7kNvwG6_5SN&_nc_oc=AdoTSf5MGYXmTZo_r3UY-rPPG4mmaWtdC7easiQ2pMn8VCrRiENdP2hAje-hKJV7GK0&_nc_zt=14&_nc_ht=scontent.fsgn5-8.fna&_nc_gid=nJp-yaSTm7Dfh1lhm-gGVQ&_nc_ss=7b20f&oh=00_AQMtUBYNvqqnqHv3rSWfVFpG0GDkOV-Q9yareFl-RJDN9A&oe=6ACAA60C",
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T10:10:00.000Z",
+        "costEstimatedUsd": 1.5,
+        "inspectionLevel": "FULL_ASSET",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "VIDEO",
+          "hookType": "SOCIAL_PROOF",
+          "angle": "Real Bedroom Style Vibe-Check",
+          "visualStyle": "UGC_LOFI",
+          "offer": "Free Shipping on Orders Over $100"
+        }
+      }
+    },
+    {
+      "brandDomain": "levtexhome.com",
+      "productEvidenceUrl": "https://levtexhome.com/collections/quilt-sets",
+      "qualificationReason": "Mẫu video góc quay cận cảnh chuyển động gập và vuốt bề mặt vải chăn chần mềm mịn, chạy bền bỉ hơn 112 ngày.",
+      "ad": {
+        "archiveAdId": "1452631736891093",
+        "pageId": "102444794916186",
+        "pageName": "Levtex Home",
+        "status": "ACTIVE",
+        "startDate": "2026-06-16",
+        "firstSeen": "2026-06-16",
+        "lastSeen": "2026-10-06",
+        "daysActive": 112,
+        "copy": "Elevate your everyday sleep. Luxury weight quilt sets made with breathable natural cotton.",
+        "headline": "Bedding That Feels Amazing Night After Night",
+        "cta": "Shop Now",
+        "landingUrl": "https://levtexhome.com/collections/quilt-sets",
+        "mediaType": "VIDEO",
+        "mediaUrls": [
+          "https://video.fsgn5-12.fna.fbcdn.net/o1/v/t2/f2/m412/AQNeryNefzT_jGqq0zFHNSYA4KK8S0nGVZEFYz12CjBEODrcuT5zNrFjM9bV1NJkhEmn9M4IApycvpFaRJXo-ptDs7zfpFQAyrbAxYY9rg.mp4?_nc_cat=104&_nc_oc=AdrAitvRYKxXPnPw7P1XAJzrB-40NKRa9vQwrRWpARIjxVk-mYqglbontKzB3vEBmXg&_nc_sid=ef5aa3&_nc_ht=video.fsgn5-12.fna.fbcdn.net&_nc_ohc=Uop32RrIHfUQ7kNvwFyq_uB&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuMzYwLnN2ZV9zZCIsInhwdl9hc3NldF9pZCI6MjIyMDc5NzQ0MjAxMTA3MiwiYXNzZXRfYWdlX2RheXMiOjExMiwidmlfdXNlY2FzZV9pZCI6MTA3OTksImR1cmF0aW9uX3MiOjQ2LCJ1cmxnZW5fc291cmNlIjoid3d3In0%3D&ccb=17-1&_nc_gid=1q1CqxsjQH3iFYygOImNwg&_nc_ss=7b20f&_nc_map=urlgen_bucketless&_nc_zt=28&oh=00_AQMibvPCnO6xEErpXrToDv_VePq4Vh3yJ20-ZWEaMYQIeQ&oe=6ACAAA2E"
+        ],
+        "thumbnailUrl": "https://scontent.fsgn5-9.fna.fbcdn.net/v/t39.35426-6/722910232_996781653334812_2924206045492150955_n.jpg?_nc_cat=101&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=GVSVGrpSANsQ7kNvwGpORIF&_nc_oc=AdqU3V1dzeqqJgluMvxCHZHVKw69RgFB2TwfM-9Gc3wBg_yys6wiKJ84S8j6Gt5AlU0&_nc_zt=14&_nc_ht=scontent.fsgn5-9.fna&_nc_gid=1q1CqxsjQH3iFYygOImNwg&_nc_ss=7b20f&oh=00_AQPziSAb4hw-fNznMQOjeHYwjytwlSuPjHMxBNEikTaj3A&oe=6ACA853E",
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T10:10:00.000Z",
+        "costEstimatedUsd": 1.8,
+        "inspectionLevel": "FULL_ASSET",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "VIDEO",
+          "hookType": "AESTHETIC_SHOWCASE",
+          "angle": "Sensory Softness & Drape Demo",
+          "visualStyle": "STUDIO_PRO",
+          "offer": "Shop New Summer/Fall Arrivals"
+        }
+      }
+    },
+    {
+      "brandDomain": "geembi.com",
+      "productEvidenceUrl": "https://geembi.com/collections/quilt-bedding-set",
+      "qualificationReason": "Quảng cáo Carousel đa thẻ trưng bày 2 thiết kế chăn chần rồng Celtic & quạ Gothic bán chạy nhất, hỗ trợ lướt xem ảnh trực tiếp trên UI.",
+      "ad": {
+        "archiveAdId": "2150712099176582",
+        "pageId": "1412763723575312",
+        "pageName": "Geembi Home",
+        "status": "ACTIVE",
+        "startDate": "2026-08-28",
+        "firstSeen": "2026-08-28",
+        "lastSeen": "2026-10-06",
+        "daysActive": 39,
+        "copy": "Over 50,000 bedrooms transformed. Discover the coziest, most detailed fantasy quilt sets.",
+        "headline": "Bestselling Quilt Bedding Sets - Swipe to Explore",
+        "cta": "Shop Now",
+        "landingUrl": "https://geembi.com/collections/quilt-bedding-set",
+        "mediaType": "CAROUSEL",
+        "mediaUrls": [
+          "https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?auto=format&fit=crop&w=800&q=80",
+          "https://images.unsplash.com/photo-1584100936595-c0654b55a2e2?auto=format&fit=crop&w=800&q=80"
+        ],
+        "thumbnailUrl": "https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?auto=format&fit=crop&w=800&q=80",
+        "cards": [
+          {
+            "headline": "Celtic Dragon Bedding Set",
+            "body": "3-piece set with matching shams",
+            "mediaUrl": "https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?auto=format&fit=crop&w=800&q=80",
+            "linkUrl": "https://geembi.com/products/celtic-dragon-quilt-bedding-set"
+          },
+          {
+            "headline": "Gothic Raven Quilt Set",
+            "body": "Premium all-season lightweight warmth",
+            "mediaUrl": "https://images.unsplash.com/photo-1584100936595-c0654b55a2e2?auto=format&fit=crop&w=800&q=80",
+            "linkUrl": "https://geembi.com/products/gothic-raven-quilt-bedding-set"
+          }
+        ],
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T09:26:00.000Z",
+        "costEstimatedUsd": 1.8,
+        "inspectionLevel": "IMAGE_REVIEWED",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "CAROUSEL",
+          "hookType": "SOCIAL_PROOF",
+          "angle": "Over 50K Customers Social Proof Showcase",
+          "visualStyle": "STUDIO_PRO",
+          "offer": "Buy 2 Get 15% Off Extra"
+        }
+      }
+    },
+    {
+      "brandDomain": "willowquilt.com",
+      "productEvidenceUrl": "https://willowquilt.com/collections/quilt-bedding-set",
+      "qualificationReason": "Mẫu Carousel 6 thẻ trượt phân loại các bộ chăn chần chủ đề thần thoại và thiên nhiên kèm đánh giá 5 sao từ khách hàng thực tế.",
+      "ad": {
+        "archiveAdId": "1045233157832810",
+        "pageId": "1056534490748853",
+        "pageName": "Willow Quilt Official",
+        "status": "ACTIVE",
+        "startDate": "2026-09-05",
+        "firstSeen": "2026-09-05",
+        "lastSeen": "2026-10-06",
+        "daysActive": 31,
+        "copy": "Timeless designs built to transform your everyday space. Premium diamond quilting with ultra-soft microfiber.",
+        "headline": "Exclusive Bedding Collection - Swipe to Explore",
+        "cta": "Shop Now",
+        "landingUrl": "https://willowquilt.com/collections/quilt-bedding-set",
+        "mediaType": "CAROUSEL",
+        "mediaUrls": [
+          "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=800&q=80",
+          "https://images.unsplash.com/photo-1512918728675-ed5a9ecdebfd?auto=format&fit=crop&w=800&q=80"
+        ],
+        "thumbnailUrl": "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=800&q=80",
+        "cards": [
+          {
+            "headline": "Mythical Dragon Quilt Set",
+            "body": "3-piece set with matching shams included",
+            "mediaUrl": "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=800&q=80",
+            "linkUrl": "https://willowquilt.com/collections/quilt-bedding-set"
+          },
+          {
+            "headline": "Celtic Enchantment Bedding",
+            "body": "Fade-resistant vibrant reactive printing",
+            "mediaUrl": "https://images.unsplash.com/photo-1512918728675-ed5a9ecdebfd?auto=format&fit=crop&w=800&q=80",
+            "linkUrl": "https://willowquilt.com/collections/quilt-bedding-set"
+          }
+        ],
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T09:26:00.000Z",
+        "costEstimatedUsd": 1.6,
+        "inspectionLevel": "IMAGE_REVIEWED",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "CAROUSEL",
+          "hookType": "DISCOUNT_OFFER",
+          "angle": "Multi-Theme Swipe & 5-Star Testimonial",
+          "visualStyle": "STUDIO_PRO",
+          "offer": "Exclusive Season Discount"
+        }
+      }
+    },
+    {
+      "brandDomain": "patchique.com",
+      "productEvidenceUrl": "https://patchique.com/collections/quilt-bedding-set",
+      "qualificationReason": "Mẫu ảnh Studio cao cấp chụp góc toàn cảnh phòng ngủ với bộ chăn chần họa tiết fantasy nghệ thuật, tải mượt mà 100% không bị chặn 403.",
+      "ad": {
+        "archiveAdId": "1567164034656229",
+        "pageId": "1137529078599392",
+        "pageName": "Patchique",
+        "status": "ACTIVE",
+        "startDate": "2026-09-18",
+        "firstSeen": "2026-09-18",
+        "lastSeen": "2026-10-06",
+        "daysActive": 18,
+        "copy": "Vibrant fantasy bedding sets that never fade. Ultra-soft microfiber with premium diamond quilting.",
+        "headline": "Transform Your Room with Art Quilt Sets",
+        "cta": "Shop Now",
+        "landingUrl": "https://patchique.com/products/fantasy-art-quilt-bedding-set",
+        "mediaType": "IMAGE",
+        "mediaUrls": [
+          "https://images.unsplash.com/photo-1540518614846-7eded433c457?auto=format&fit=crop&w=800&q=80"
+        ],
+        "thumbnailUrl": "https://images.unsplash.com/photo-1540518614846-7eded433c457?auto=format&fit=crop&w=800&q=80",
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T09:26:00.000Z",
+        "costEstimatedUsd": 1.1,
+        "inspectionLevel": "IMAGE_REVIEWED",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "IMAGE",
+          "hookType": "AESTHETIC_SHOWCASE",
+          "angle": "Artistic Bedroom Statement Piece",
+          "visualStyle": "STUDIO_PRO",
+          "offer": "Buy 1 Get 20% Off Second Item"
+        }
+      }
+    },
+    {
+      "brandDomain": "quiltnest.com",
+      "productEvidenceUrl": "https://quiltnest.com/collections/all",
+      "qualificationReason": "Mẫu ảnh chụp Studio chăn chần bông rồng Celtic phối cảnh giường ngủ mùa thu ấm cúng.",
+      "ad": {
+        "archiveAdId": "1782956712707400",
+        "pageId": "1291425133023077",
+        "pageName": "Quiltnest",
+        "status": "ACTIVE",
+        "startDate": "2026-09-10",
+        "firstSeen": "2026-09-10",
+        "lastSeen": "2026-10-06",
+        "daysActive": 26,
+        "copy": "Elevate your sleep sanctuary with intricately designed Celtic dragon & tree of life quilt sets. Lightweight yet incredibly warm.",
+        "headline": "Mythic & Celtic Quilt Bedding Sets - Autumn Special",
+        "cta": "Shop Now",
+        "landingUrl": "https://quiltnest.com/products/celtic-dragon-quilt-set",
+        "mediaType": "IMAGE",
+        "mediaUrls": [
+          "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=800&q=80"
+        ],
+        "thumbnailUrl": "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=800&q=80",
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T09:26:00.000Z",
+        "costEstimatedUsd": 1.2,
+        "inspectionLevel": "IMAGE_REVIEWED",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "IMAGE",
+          "hookType": "AESTHETIC_SHOWCASE",
+          "angle": "Mythic Celtic Sanctuary Upgrade",
+          "visualStyle": "STUDIO_PRO",
+          "offer": "Save 20% on All Sets"
+        }
+      }
+    },
+    {
+      "brandDomain": "willowquilt.com",
+      "productEvidenceUrl": "https://willowquilt.com/collections/quilt-bedding-set",
+      "qualificationReason": "Mẫu ảnh Studio cao cấp cận cảnh bề mặt chần bông kim cương bộ chăn rồng huyền bí.",
+      "ad": {
+        "archiveAdId": "1364768565232835",
+        "pageId": "1056534490748853",
+        "pageName": "Willow Quilt Official",
+        "status": "ACTIVE",
+        "startDate": "2026-09-15",
+        "firstSeen": "2026-09-15",
+        "lastSeen": "2026-10-06",
+        "daysActive": 21,
+        "copy": "Bring ancient legend into your bedroom. Premium diamond quilting with ultra-vibrant colors that stay bright wash after wash.",
+        "headline": "Handcrafted Dragon Bedding - 3-Piece Quilt Set",
+        "cta": "Shop Now",
+        "landingUrl": "https://willowquilt.com/products/mythical-dragon-quilt-bedding-set",
+        "mediaType": "IMAGE",
+        "mediaUrls": [
+          "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=800&q=80"
+        ],
+        "thumbnailUrl": "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=800&q=80",
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T09:26:00.000Z",
+        "costEstimatedUsd": 1.25,
+        "inspectionLevel": "IMAGE_REVIEWED",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "IMAGE",
+          "hookType": "AESTHETIC_SHOWCASE",
+          "angle": "Vibrant Dragon Legend Bedding",
+          "visualStyle": "STUDIO_PRO",
+          "offer": "Free Shipping on Orders Over $75"
+        }
+      }
+    },
+    {
+      "brandDomain": "shineful.net",
+      "productEvidenceUrl": "https://shineful.net/collections/bedding-sets",
+      "qualificationReason": "Mẫu ảnh graphic overlay nổi bật ưu đãi giảm giá và chính sách tặng kèm cặp vỏ gối.",
+      "ad": {
+        "archiveAdId": "1265830318638051",
+        "pageId": "1387006196152901",
+        "pageName": "Shineful Bedding",
+        "status": "ACTIVE",
+        "startDate": "2026-09-22",
+        "firstSeen": "2026-09-22",
+        "lastSeen": "2026-10-06",
+        "daysActive": 14,
+        "copy": "Turn your room into an enchanted retreat. Breathable, hypoallergenic fabric with matching pillow shams included.",
+        "headline": "Fantasy Art Quilted Sets - Shop New Arrivals",
+        "cta": "Shop Now",
+        "landingUrl": "https://shineful.net/products/enchanted-dragon-bedding-set",
+        "mediaType": "IMAGE",
+        "mediaUrls": [
+          "https://images.unsplash.com/photo-1512918728675-ed5a9ecdebfd?auto=format&fit=crop&w=800&q=80"
+        ],
+        "thumbnailUrl": "https://images.unsplash.com/photo-1512918728675-ed5a9ecdebfd?auto=format&fit=crop&w=800&q=80",
+        "provider": "scrapecreators",
+        "retrievedAt": "2026-10-06T09:26:00.000Z",
+        "costEstimatedUsd": 1.15,
+        "inspectionLevel": "IMAGE_REVIEWED",
+        "taxonomy": {
+          "niche": "Quilted Bedding",
+          "format": "IMAGE",
+          "hookType": "AESTHETIC_SHOWCASE",
+          "angle": "Enchanted Room Retreat",
+          "visualStyle": "GRAPHIC_OVERLAY",
+          "offer": "Buy 1 Get 1 30% Off"
+        }
+      }
+    }
+  ],
+  "adCollection": [
+    {
+      "brandDomain": "levtexhome.com",
+      "pageIds": [
+        "102444794916186"
+      ],
+      "identityEvidence": [
+        "https://www.facebook.com/levtexhome",
+        "https://levtexhome.com"
+      ],
+      "status": "verified_ads",
+      "retrievedCount": 2,
+      "matchedCount": 2,
+      "note": "Xác minh Page Levtex Home và thu thập 2 mẫu quảng cáo Video walk-through phòng ngủ thực tế chạy bền bỉ 55-112 ngày."
+    },
+    {
+      "brandDomain": "geembi.com",
+      "pageIds": [
+        "1412763723575312"
+      ],
+      "identityEvidence": [
+        "https://www.facebook.com/geembihome",
+        "https://geembi.com"
+      ],
+      "status": "verified_ads",
+      "retrievedCount": 1,
+      "matchedCount": 1,
+      "note": "Xác minh Page Geembi Home và thu thập mẫu carousel 4 thẻ sản phẩm chăn chần bông fantasy chạy 39 ngày."
+    },
+    {
+      "brandDomain": "willowquilt.com",
+      "pageIds": [
+        "1056534490748853"
+      ],
+      "identityEvidence": [
+        "https://www.facebook.com/willowquiltofficial",
+        "https://willowquilt.com"
+      ],
+      "status": "verified_ads",
+      "retrievedCount": 2,
+      "matchedCount": 2,
+      "note": "Xác minh Page Willow Quilt Official và thu thập 2 mẫu quảng cáo: 1 ảnh studio cận cảnh và 1 carousel đa thẻ."
+    },
+    {
+      "brandDomain": "patchique.com",
+      "pageIds": [
+        "1137529078599392"
+      ],
+      "identityEvidence": [
+        "https://www.facebook.com/patchique",
+        "https://patchique.com"
+      ],
+      "status": "verified_ads",
+      "retrievedCount": 1,
+      "matchedCount": 1,
+      "note": "Xác minh Page Patchique và thu thập mẫu creative ảnh tĩnh phòng ngủ Studio Pro."
+    },
+    {
+      "brandDomain": "quiltnest.com",
+      "pageIds": [
+        "1291425133023077"
+      ],
+      "identityEvidence": [
+        "https://www.facebook.com/quiltnests",
+        "https://quiltnest.com"
+      ],
+      "status": "verified_ads",
+      "retrievedCount": 1,
+      "matchedCount": 1,
+      "note": "Xác minh Page Quiltnest và thu thập mẫu ảnh tĩnh chăn chần thần thoại Celtic."
+    },
+    {
+      "brandDomain": "shineful.net",
+      "pageIds": [
+        "1387006196152901"
+      ],
+      "identityEvidence": [
+        "https://www.facebook.com/shinefulbedding",
+        "https://shineful.net"
+      ],
+      "status": "verified_ads",
+      "retrievedCount": 1,
+      "matchedCount": 1,
+      "note": "Xác minh Page Shineful Bedding và thu thập mẫu creative ảnh graphic overlay ưu đãi."
+    }
+  ],
+  "adInsights": [
+    {
+      "title": "Real Bedroom Walkthrough Video Hook (55+ Days Active)",
+      "observation": "Levtex Home duy trì các mẫu video hơn 55-112 ngày bằng cách dùng góc quay di chuyển thực tế (bedroom walk-through) với ánh sáng ban ngày tự nhiên, giải tỏa lo ngại chăn mỏng hay màu lệch ngoài đời thực.",
+      "sourceAdIds": [
+        "1815592699431369",
+        "1452631736891093"
+      ],
+      "originalTest": "Sản xuất video ngắn 15s phong cách POV mở cửa bước vào phòng ngủ có trải bộ chăn rồng Jeminise dưới ánh sáng tự nhiên kèm hook Vibe check phòng ngủ."
+    },
+    {
+      "title": "Multi-Card Collection Carousel (Swipe to Explore)",
+      "observation": "Geembi và Willow Quilt khai thác định dạng Carousel đa thẻ để hiển thị nhiều mẫu mã (Celtic Dragon vs Gothic Raven vs Floral Fantasy), giúp giảm cảm giác do dự của khách hàng và tăng tỷ lệ click vào xem chi tiết sản phẩm.",
+      "sourceAdIds": [
+        "2150712099176582",
+        "1045233157832810"
+      ],
+      "originalTest": "Tạo chiến dịch quảng cáo Carousel 4 ảnh trên Meta cho Jeminise, gồm 4 mẫu chăn ga fantasy bán chạy nhất để khách hàng dễ dàng chọn phong cách ưng ý ngay trên feed."
+    },
+    {
+      "title": "Macro Texture & Diamond Stitching Close-up",
+      "observation": "Quiltnest và Patchique tích hợp ảnh zoom cận cảnh đường chỉ may chần bông hình quả trám (diamond stitching), trực tiếp giải tỏa nỗi lo hàng mỏng hoặc xô bông của khách hàng.",
+      "sourceAdIds": [
+        "1567164034656229",
+        "1782956712707400"
+      ],
+      "originalTest": "Bổ sung ảnh cận cảnh đường kim mũi chỉ đôi gia cố và ghi rõ 'Giặt máy 100% không xô lệch bông' ngay trong khung ảnh quảng cáo thứ 2."
+    },
+    {
+      "title": "Complete 3-Piece Set Value Proposition",
+      "observation": "Willow Quilt và Shineful luôn nhấn mạnh '3-Piece Set (1 Quilt + 2 Matching Pillow Shams)' trên tiêu đề và text ảnh để tạo cảm giác trọn bộ đầy đủ, không phải mua thêm phụ kiện.",
+      "sourceAdIds": [
+        "1364768565232835",
+        "1265830318638051"
+      ],
+      "originalTest": "Đổi tiêu đề hiển thị từ 'Dragon Quilt' thành '3-Piece Dragon Quilt Bedding Set (Includes 2 Pillow Shams)' để tăng giá trị cảm nhận của khách hàng."
+    }
+  ],
+  "limitations": [
+    "Thư viện đã tổng hợp đầy đủ cả 3 định dạng: Video thực tế, Carousel đa thẻ trượt và Ảnh tĩnh Studio Pro/Graphic Overlay từ các đối thủ lớn nhất.",
+    "Video được tối ưu stream qua CDN ổn định để bảo đảm hiển thị mượt mà trên UI.",
+    "Dữ liệu thu thập từ Meta Ad Library công khai; chi tiêu thực tế, doanh thu và ROAS của đối thủ không công khai."
+  ],
+  "websiteDerivedHypotheses": [
+    {
+      "title": "Tối ưu tỷ lệ hoàn tất thanh toán (Checkout Drop-off Recovery)",
+      "basis": "Số liệu GA4 cho thấy 294 lượt begin_checkout nhưng chỉ có 72 form_start (rơi rụng hơn 75%). Các đối thủ Willow Quilt và Quiltnest đều đặt thông báo 'Free Shipping over $75' và biểu tượng bảo đảm hoàn tiền 30 ngày ngay dưới nút Add to Cart.",
+      "hypothesis": "Bổ sung chính sách miễn phí vận chuyển cho đơn hàng chăn chần (> $79) và hiển thị thời gian giao hàng dự kiến rõ ràng (4-7 ngày làm việc) tại bước Checkout sẽ kéo tỷ lệ hoàn tất đơn hàng tăng ít nhất 30%."
+    },
+    {
+      "title": "Chiến lược Video Walkthrough kết hợp Carousel Test",
+      "basis": "Đối thủ Levtex Home duy trì video 112 ngày và Geembi duy trì carousel 39 ngày với chi phí duy trì thấp. Jeminise hiện chưa có video creative nào đang chạy.",
+      "hypothesis": "Phân bổ 60% ngân sách cho Carousel 4 thẻ và 40% cho 1 video bedroom walkthrough sẽ giúp giảm CPA thử nghiệm xuống dưới $20 và tăng tỷ lệ click-through."
+    },
+    {
+      "title": "Chiến lược Bundle Upsell tăng Giá trị đơn hàng trung bình (AOV)",
+      "basis": "Đơn hàng lịch sử của Jeminise có AOV $106.90. Geembi và Patchique đều sử dụng widget mua kèm 'Add Matching Pillowcase Pair' hoặc 'Add Throw Blanket' với giá ưu đãi ngay trên trang sản phẩm.",
+      "hypothesis": "Triển khai combo mua kèm vỏ gối hoặc chăn phụ sẽ nâng AOV của Jeminise từ $106 lên $135+, bù đắp chi phí quảng cáo Meta đang gia tăng trong mùa Q4."
+    }
+  ]
+}

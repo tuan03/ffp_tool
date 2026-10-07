@@ -14,10 +14,12 @@ export function CompetitorResearchPanel({ storeId, client }: {
   useEffect(() => {
     let isDisposed = false;
     let isFetching = false;
+    let lastFetchedAt = Date.now();
     setResearch(null);
     setIsLoading(true);
     const refresh = async () => {
       if (isFetching) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       isFetching = true;
       try {
         const response = await client.getCompetitorResearch?.(storeId);
@@ -25,6 +27,7 @@ export function CompetitorResearchPanel({ storeId, client }: {
           if (response?.research && response.research.storeId !== storeId) throw new Error("Kết quả không thuộc cửa hàng đang chọn.");
           setResearch(response?.research ?? null);
           setError(null);
+          lastFetchedAt = Date.now();
         }
       } catch {
         if (!isDisposed) setError("Chưa tải được nghiên cứu. Kiểm tra kết nối backend rồi thử lại.");
@@ -34,8 +37,26 @@ export function CompetitorResearchPanel({ storeId, client }: {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, 15000);
-    return () => { isDisposed = true; window.clearInterval(timer); };
+    const handleVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible" && Date.now() - lastFetchedAt >= 15000) {
+        void refresh();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+    const timer = window.setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void refresh();
+      }
+    }, 15000);
+    return () => {
+      isDisposed = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+      window.clearInterval(timer);
+    };
   }, [client, storeId, revision]);
 
   return (

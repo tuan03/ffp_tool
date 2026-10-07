@@ -6,29 +6,91 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
-  deploy:
-    name: Deploy root Compose to VPS
+  verify:
+    name: Pre-deploy quality gate
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: Restore TypeScript build cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}-
+            tsbuildinfo-${{ runner.os }}-
+
+      - name: Validate TypeScript types
+        run: npm run typecheck
+
+      - name: Run deployment contract tests
+        run: node --test scripts/production-postgres.test.mjs scripts/production-search-console.test.mjs scripts/production-service-tokens.test.mjs scripts/restart-gpt-seo.test.mjs
+
+      - name: Run MCP and Gateway core tests
+        run: npx tsx --test gateway/__tests__/ads-intelligence-mcp.test.ts
+
+      - name: Build client production distribution
+        env:
+          VITE_AGENT_INSTALL_URL: https://${{ secrets.DOMAIN || 'ffp.b6-team.site' }}
+        run: npm run build:client
+
+      - name: Upload client distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: dist/
+          retention-days: 1
+
+  deploy:
+    name: Deploy root Compose to VPS
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download client distribution artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: dist
+
       - name: Package tracked deployment source
-        run: git ls-files -z | tar --null -czf ffp-tool-deploy.tar.gz --files-from -
+        run: git ls-files -z | tar --null -czf ffp-tool-deploy.tar.gz --files-from - dist
 
       - name: Copy deployment source to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: ffp-tool-deploy.tar.gz
-          target: /tmp
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/deploy_key ffp-tool-deploy.tar.gz "${VPS_USER}@${VPS_HOST}:/tmp/ffp-tool-deploy.tar.gz"
+          rm -f ~/.ssh/deploy_key
 
       - name: Encode environment secrets
         id: prep
@@ -63,6 +125,7 @@ jobs:
             tar -xzf "$ARCHIVE" -C "$DEPLOY_DIR"
             rm -f "$ARCHIVE"
             cd "$DEPLOY_DIR"
+            [ -d "$DEPLOY_DIR/dist" ] && chmod -R a+rX "$DEPLOY_DIR/dist"
 
             # Retire files left by either legacy production topology.
             rm -f compose.prod.yaml deploy/amazon-crawler-coordinator/docker-compose.yml .env.production.example
@@ -194,9 +257,10 @@ jobs:
             # Remove only the retired stateless container; its bind-mounted data remains on disk.
             docker rm -f ffp-tool-app >/dev/null 2>&1 || true
             if ! docker compose up -d --build --remove-orphans --wait --wait-timeout 180; then
-              echo "Server failed to become healthy; printing bounded diagnostics." >&2
+              echo "Server or client failed to become healthy; printing bounded diagnostics." >&2
               docker compose ps || true
               docker compose logs --no-color --tail=200 server || true
+              docker compose logs --no-color --tail=200 client || true
               exit 1
             fi
             if ! docker exec ffp-server pgrep -f '[s]hopify-pipeline-worker.ts' > /dev/null; then
@@ -205,37 +269,47 @@ jobs:
               exit 1
             fi
 
-            echo "=== [5/6] Configuring host HTTPS reverse proxy ==="
+            echo "=== [5/6] Verifying host HTTPS reverse proxy ==="
             DOMAIN="${TARGET_DOMAIN:-ffp.b6-team.site}"
             NGINX_CONF="/etc/nginx/sites-available/$DOMAIN.conf"
             NGINX_ENABLED="/etc/nginx/sites-enabled/$DOMAIN.conf"
             if [ ! -f "$NGINX_CONF" ]; then
-              sudo bash -c "printf '%s\n' \
-                'server {' \
-                '    listen 80;' \
-                '    listen [::]:80;' \
-                '    server_name $DOMAIN;' \
-                '    client_max_body_size 50M;' \
-                '    location / {' \
-                '        proxy_pass http://127.0.0.1:$CLIENT_PORT;' \
-                '        proxy_http_version 1.1;' \
-                '        proxy_set_header Upgrade \$http_upgrade;' \
-                '        proxy_set_header Connection \"upgrade\";' \
-                '        proxy_set_header Host \$host;' \
-                '        proxy_set_header X-Real-IP \$remote_addr;' \
-                '        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;' \
-                '        proxy_set_header X-Forwarded-Proto \$scheme;' \
-                '        proxy_connect_timeout 60s;' \
-                '        proxy_send_timeout 300s;' \
-                '        proxy_read_timeout 300s;' \
-                '    }' \
-                '}' > '$NGINX_CONF'"
-              sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+              if [ -f scripts/setup-vps-host.sh ]; then
+                sudo bash scripts/setup-vps-host.sh "$DOMAIN" "$CLIENT_PORT"
+              else
+                sudo bash -c "printf '%s\n' \
+                  'server {' \
+                  '    listen 80;' \
+                  '    listen [::]:80;' \
+                  '    server_name $DOMAIN;' \
+                  '    client_max_body_size 50M;' \
+                  '    location / {' \
+                  '        proxy_pass http://127.0.0.1:$CLIENT_PORT;' \
+                  '        proxy_http_version 1.1;' \
+                  '        proxy_set_header Upgrade \$http_upgrade;' \
+                  '        proxy_set_header Connection \"upgrade\";' \
+                  '        proxy_set_header Host \$host;' \
+                  '        proxy_set_header X-Real-IP \$remote_addr;' \
+                  '        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;' \
+                  '        proxy_set_header X-Forwarded-Proto \$scheme;' \
+                  '        proxy_connect_timeout 60s;' \
+                  '        proxy_send_timeout 300s;' \
+                  '        proxy_read_timeout 300s;' \
+                  '    }' \
+                  '}' > '$NGINX_CONF'"
+                sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+                sudo nginx -t
+                sudo systemctl reload nginx
+              fi
             else
-              sudo sed -i -E "s#proxy_pass http://127\.0\.0\.1:[0-9]+;#proxy_pass http://127.0.0.1:$CLIENT_PORT;#" "$NGINX_CONF"
+              if grep -q "proxy_pass http://127\.0\.0\.1:$CLIENT_PORT;" "$NGINX_CONF" 2>/dev/null; then
+                echo "Nginx reverse proxy already configured on port $CLIENT_PORT (skipping reload)."
+              else
+                sudo sed -i -E "s#proxy_pass http://127\.0\.0\.1:[0-9]+;#proxy_pass http://127.0.0.1:$CLIENT_PORT;#" "$NGINX_CONF"
+                sudo nginx -t
+                sudo systemctl reload nginx
+              fi
             fi
-            sudo nginx -t
-            sudo systemctl reload nginx
             if ! sudo grep -q "ssl_certificate" "$NGINX_CONF" 2>/dev/null; then
               sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || {
                 echo "Certbot reported a warning. Verify DNS for $DOMAIN." >&2
@@ -255,6 +329,15 @@ jobs:
             if [ "$HEALTHY" = "false" ]; then
               docker compose logs --tail=50
               exit 1
+            fi
+
+            if [ -n "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -n "$INCOMING_FFP_OPERATOR_PASSWORD" ]; then
+              STATIC_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$INCOMING_FFP_OPERATOR_USERNAME:$INCOMING_FFP_OPERATOR_PASSWORD" "http://127.0.0.1:$CLIENT_PORT/" || echo "000")
+              if [ "$STATIC_CODE" = "403" ]; then
+                echo "Client static web root returned 403 Forbidden! Printing diagnostics:" >&2
+                docker compose logs --tail=100 client >&2
+                exit 1
+              fi
             fi
 
             docker compose ps

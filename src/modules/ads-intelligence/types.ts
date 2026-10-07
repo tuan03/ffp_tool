@@ -128,6 +128,17 @@ export interface AdsDataHealth {
     readonly reason: string;
     readonly blockedDecisions: readonly string[];
   };
+  readonly cacheStats?: {
+    readonly hits: number;
+    readonly misses: number;
+    readonly hitRatio?: number;
+    readonly coalesced?: number;
+    readonly inFlightCount?: number;
+    readonly keysCount?: number;
+    readonly totalKeys?: number;
+    readonly stores?: readonly string[];
+    readonly lastSyncedAt?: string | null;
+  };
 }
 
 export interface AdsReconciliationReport {

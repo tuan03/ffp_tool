@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 
 import { verifiedCompetitorAdSchema, adCollectionSchema } from "./competitor-ad-research";
 import { getAdsGatewayStore } from "./gateway-connection";
+import { prefetchCompetitorMedia } from "./media-proxy";
 
 const storeIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/);
 const domainSchema = z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/);
@@ -49,19 +50,51 @@ export interface CompetitorResearchRepository {
   save(input: unknown): Promise<CompetitorResearch>;
 }
 
-export function createCompetitorResearchRepository(root = resolve(".runtime/ads-intelligence/competitor-research")): CompetitorResearchRepository {
+export function createCompetitorResearchRepository(
+  root = resolve(".runtime/ads-intelligence/competitor-research"),
+  seedRoot = resolve("config/competitor-research")
+): CompetitorResearchRepository {
   // Serialize writes in this gateway; atomic rename protects readers from partial JSON.
   let pending: Promise<unknown> = Promise.resolve();
   const pathFor = (storeId: string) => resolve(root, `${storeIdSchema.parse(storeId)}.json`);
+  const seedPathFor = (storeId: string) => resolve(seedRoot, `${storeIdSchema.parse(storeId)}.json`);
+
   const get = async (storeId: string): Promise<CompetitorResearch | null> => {
+    storeIdSchema.parse(storeId);
+    let runtimeReport: CompetitorResearch | null = null;
     try {
       const report = competitorResearchSchema.parse(JSON.parse(await readFile(pathFor(storeId), "utf8")));
       if (report.storeId !== storeId) throw new Error("RESEARCH_STORE_MISMATCH");
-      return report;
+      runtimeReport = report;
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-      throw error;
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        // runtime file not found
+      } else {
+        throw error;
+      }
     }
+
+    let seedReport: CompetitorResearch | null = null;
+    try {
+      const report = competitorResearchSchema.parse(JSON.parse(await readFile(seedPathFor(storeId), "utf8")));
+      if (report.storeId === storeId) seedReport = report;
+    } catch {
+      // seed file not found or invalid, non-fatal
+    }
+
+    if (runtimeReport && seedReport) {
+      const runtimeTime = Date.parse(runtimeReport.observedAt);
+      const seedTime = Date.parse(seedReport.observedAt);
+      if (seedTime > runtimeTime) {
+        try {
+          const target = pathFor(storeId);
+          await writeFile(target, JSON.stringify(seedReport, null, 2), { mode: 0o600 });
+        } catch { /* ignore cache sync error */ }
+        return seedReport;
+      }
+      return runtimeReport;
+    }
+    return runtimeReport ?? seedReport;
   };
   return {
     get,
@@ -98,5 +131,24 @@ export async function publishCompetitorResearch(input: unknown): Promise<Competi
   const report = competitorResearchSchema.parse(input);
   const store = await getAdsGatewayStore(report.storeId);
   if (report.shopDomain !== store.shopDomain) throw new Error("RESEARCH_STORE_MISMATCH");
-  return competitorResearchRepository.save(report);
+  const saved = await competitorResearchRepository.save(report);
+
+  // Background prefetch all verified media so it is cached and never expires
+  try {
+    const mediaUrls: string[] = [];
+    for (const entry of saved.verifiedAds ?? []) {
+      mediaUrls.push(...entry.ad.mediaUrls);
+      if (entry.ad.thumbnailUrl) mediaUrls.push(entry.ad.thumbnailUrl);
+      for (const card of entry.ad.cards ?? []) {
+        if (card.mediaUrl) mediaUrls.push(card.mediaUrl);
+      }
+    }
+    if (mediaUrls.length > 0) {
+      prefetchCompetitorMedia(mediaUrls);
+    }
+  } catch {
+    // Ignore prefetch errors in background
+  }
+
+  return saved;
 }

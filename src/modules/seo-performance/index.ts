@@ -6,6 +6,7 @@ export type { PageKind, SearchMetrics, PerformanceDataSource, PerformanceIntegra
   BenchmarkProductItem, BenchmarkSummaryKpis, BenchmarkFilters, ProductSeoDetailData, BatchDetailData, ConnectionsSyncData,
   ProductVersionHistoryItem, ProductFieldDiff, ProductMediaAltDiff, ProductQueryItem, ProductGa4Data,
   BenchmarkComparisonMode, BenchmarkDataStatus, BenchmarkMeasurementStatus, BenchmarkPerformanceStatus,
+  AutoSeoResult,
 } from "./types";
 export { createSeoPerformanceClient } from "./service";
 export { getSeoPerformanceClient } from "./runtime";

@@ -7,6 +7,7 @@ import type { PerformanceService } from "./service";
 import { filtersSchema } from "./service";
 import { loadSearchReport, reportFiltersSchema, reportViewSchema } from "./report";
 import {
+  handleAutoSeoEnqueue,
   loadBatchDetail,
   loadBenchmarkProducts,
   loadConnectionsSync,
@@ -110,6 +111,12 @@ export async function handlePerformanceHttp(req: IncomingMessage, res: ServerRes
         case "backfill": {
           const input = z.object({ source: z.enum(["gsc", "ga4"]), days: z.number().int().min(1).max(90).default(28) }).strict().parse(payload);
           send(res, 202, await service.start(storeId, input.source === "gsc" ? "gsc_sync" : "ga4_sync"));
+          return;
+        }
+        case "benchmark/auto-seo":
+        case "auto-seo": {
+          const input = z.object({ productId: z.string().min(1).max(200) }).strict().parse(payload);
+          send(res, 200, await handleAutoSeoEnqueue(service, storeId, input.productId));
           return;
         }
       }

@@ -18,12 +18,16 @@ export function CompetitorsTab({
   onCreateBriefFromGap,
 }: CompetitorsTabProps): React.JSX.Element {
   const [formatFilter, setFormatFilter] = useState<string>("ALL");
+  const [visibleCount, setVisibleCount] = useState<number>(12);
 
   const ads = competitorReport?.ads ?? [];
   const filteredAds = ads.filter((ad) => {
     if (formatFilter === "ALL") return true;
     return ad.mediaType === formatFilter;
   });
+
+  const displayedAds = filteredAds.slice(0, visibleCount);
+  const remainingCount = filteredAds.length - displayedAds.length;
 
   const gaps = competitorReport?.creativeGaps || [];
 
@@ -81,7 +85,10 @@ export function CompetitorsTab({
             <button
               key={fmt}
               type="button"
-              onClick={() => setFormatFilter(fmt)}
+              onClick={() => {
+                setFormatFilter(fmt);
+                setVisibleCount(12);
+              }}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 formatFilter === fmt
                   ? "bg-slate-800 text-cyan-300 border border-cyan-500/50"
@@ -94,7 +101,7 @@ export function CompetitorsTab({
         </div>
 
         <div className="text-xs text-slate-400 font-mono">
-          Hiển thị {filteredAds.length} mẫu quảng cáo
+          Hiển thị {displayedAds.length}/{filteredAds.length} mẫu quảng cáo
         </div>
       </div>
 
@@ -116,7 +123,7 @@ export function CompetitorsTab({
 
       {/* 3. Visual Ad Card Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredAds.map((ad) => {
+        {displayedAds.map((ad) => {
           const isLongObservedAd = ad.daysActive >= 30;
 
           return (
@@ -198,6 +205,19 @@ export function CompetitorsTab({
           );
         })}
       </div>
+
+      {remainingCount > 0 && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={() => setVisibleCount((prev) => prev + 12)}
+            className="px-5 py-2.5 rounded-xl border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-cyan-300 font-semibold text-xs shadow-md transition cursor-pointer flex items-center gap-2 active:scale-95"
+          >
+            <span>Hiển thị thêm (+12 mẫu)</span>
+            <span className="text-[11px] text-slate-400 font-mono">(Còn {remainingCount} mẫu)</span>
+          </button>
+        </div>
+      )}
 
       {/* 4. Creative Gaps Analysis */}
       {gaps.length > 0 && (

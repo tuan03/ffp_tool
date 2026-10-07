@@ -26,7 +26,7 @@ async function connectInMemoryClient(storeId = "chillgen") {
   return { client, server };
 }
 
-test("Ads MCP Server initializes with instructions and registers all 37 tools including Gateway store discovery", async () => {
+test("Ads MCP Server initializes with instructions and registers all 39 tools including Gateway store discovery", async () => {
   const { client, server } = await connectInMemoryClient();
 
   try {
@@ -40,9 +40,10 @@ test("Ads MCP Server initializes with instructions and registers all 37 tools in
     const toolsResponse = await client.listTools();
     const toolNames = toolsResponse.tools.map(t => t.name);
 
-    // 15 canonical tools
+    // 16 canonical tools
     const canonicalTools = [
       "ads_get_store_overview",
+      "ads_get_diagnostic_bundle",
       "ads_get_data_health",
       "ads_query_performance",
       "ads_get_funnel_evidence",
@@ -63,9 +64,10 @@ test("Ads MCP Server initializes with instructions and registers all 37 tools in
       assert.ok(toolNames.includes(tool), `Expected tool ${tool} to be registered`);
     }
 
-    // 15 README Step 16 aliases
+    // 16 README Step 16 aliases
     const aliasTools = [
       "ffp_get_store_context",
+      "ffp_get_diagnostic_bundle",
       "ffp_get_data_health",
       "ffp_query_performance",
       "ffp_get_funnel_evidence",
@@ -86,7 +88,7 @@ test("Ads MCP Server initializes with instructions and registers all 37 tools in
       assert.ok(toolNames.includes(alias), `Expected alias ${alias} to be registered`);
     }
 
-    assert.equal(toolNames.length, 37);
+    assert.equal(toolNames.length, 39);
     assert.ok(toolNames.includes("ads_publish_competitor_research"));
     assert.ok(toolNames.includes("ads_get_competitor_research"));
     assert.ok(toolNames.includes("ads_list_stores"));
@@ -123,6 +125,20 @@ test("Ads MCP Server tools execute correctly and return structured data", async 
     // Ensure no secrets leaked
     assert.equal(overviewData.profile.metaAccessToken, undefined);
     assert.equal(overviewData.profile.proxyUrl, undefined);
+
+    // 1b. ads_get_diagnostic_bundle
+    const bundleRes = await client.callTool({
+      name: "ads_get_diagnostic_bundle",
+      arguments: { storeId: "chillgen", compact: true },
+    });
+    assert.ok(bundleRes.structuredContent);
+    const bundleData = bundleRes.structuredContent as Record<string, any>;
+    assert.equal(bundleData.storeId, "chillgen");
+    assert.equal(bundleData.currency, "USD");
+    assert.ok(bundleData.overview);
+    assert.ok(bundleData.dataHealth);
+    assert.ok(Array.isArray(bundleData.topDecisions));
+    assert.ok(typeof bundleData.creativeGapsCount === "number");
 
     // 2. ads_get_data_health
     const healthRes = await client.callTool({
@@ -360,7 +376,7 @@ test("Ads MCP HTTP Handler serves GET probe info and handles requests", async ()
   const parsed = JSON.parse(responseBody);
   assert.equal(parsed.status, "ok");
   assert.equal(parsed.server, "ffp-ads-intelligence");
-  assert.equal(parsed.toolsCount, 37);
+  assert.equal(parsed.toolsCount, 39);
 });
 
 test("OpenAPI spec generator produces valid 3.1.0 schema with all endpoints", async () => {
@@ -431,7 +447,7 @@ test("Gateway HTTP handler serves /api/ads-intelligence/openapi.json and /mcp/in
   assert.equal(mcpInfoStatus, 200);
   const parsedMcp = JSON.parse(mcpInfoBody);
   assert.equal(parsedMcp.server, "ffp-ads-intelligence");
-  assert.equal(parsedMcp.toolsCount, 37);
+  assert.equal(parsedMcp.toolsCount, 39);
 });
 
 test("McpUserManager manages users, verifies tokens, and records audit logs", async () => {
@@ -564,5 +580,112 @@ test("HTTP Handler serves /mcp/ads/install.ps1 and /api/ads-intelligence/mcp/use
   assert.equal(usersStatus, 200);
   const parsedUsers = JSON.parse(usersBody);
   assert.ok(Array.isArray(parsedUsers.users));
+});
+
+test("Ads MCP Server supports compact token projections and pagination for AI Agent context window efficiency", async () => {
+  const { client, server } = await connectInMemoryClient();
+
+  try {
+    // 1. Performance query: compact mode vs full mode
+    const fullPerf = await client.callTool({
+      name: "ads_query_performance",
+      arguments: { storeId: "chillgen", level: "ad" },
+    });
+    const compactPerf = await client.callTool({
+      name: "ads_query_performance",
+      arguments: { storeId: "chillgen", level: "ad", compact: true, limit: 2 },
+    });
+
+    const fullText = JSON.stringify(fullPerf.structuredContent);
+    const compactText = JSON.stringify(compactPerf.structuredContent);
+    assert.ok(compactText.length < fullText.length, "Compact JSON must be significantly smaller than full JSON");
+
+    const compactData = compactPerf.structuredContent as Record<string, any>;
+    assert.ok(compactData.ads.length <= 2);
+    if (compactData.ads.length === 2) {
+      assert.ok(parseFloat(compactData.ads[0].spend) >= parseFloat(compactData.ads[1].spend));
+    }
+
+    // 2. Decision cards: compact mode strips verbose observations & hypotheses
+    const fullDecisions = await client.callTool({
+      name: "ads_get_decision_cards",
+      arguments: { storeId: "chillgen", filter: "all" },
+    });
+    const compactDecisions = await client.callTool({
+      name: "ads_get_decision_cards",
+      arguments: { storeId: "chillgen", filter: "all", compact: true, limit: 2 },
+    });
+
+    const fullDecisionsText = JSON.stringify(fullDecisions.structuredContent);
+    const compactDecisionsText = JSON.stringify(compactDecisions.structuredContent);
+    assert.ok(compactDecisionsText.length < fullDecisionsText.length, "Compact decisions must save context window tokens");
+
+    const compactCard = (compactDecisions.structuredContent as any).decisionCards[0];
+    assert.ok(compactCard.id);
+    assert.ok(compactCard.decision);
+    assert.ok(compactCard.action);
+    assert.equal(compactCard.observations, undefined, "Observations array must be omitted in compact mode");
+
+    // 3. Funnel evidence: compact mode extracts triangulation triage
+    const compactFunnel = await client.callTool({
+      name: "ads_get_funnel_evidence",
+      arguments: { storeId: "chillgen", compact: true },
+    });
+    const funnelContent = compactFunnel.structuredContent as Record<string, any>;
+    assert.ok(funnelContent.triangulation);
+    assert.ok(funnelContent.triangulation.mer !== undefined);
+    assert.ok(funnelContent.triangulation.blendedCpa !== undefined);
+    assert.ok(funnelContent.status);
+
+    // 4. Creative gaps: compact mode omits bulky topCompetitorAds array
+    const compactGaps = await client.callTool({
+      name: "ads_get_competitor_creative_gaps",
+      arguments: { storeId: "chillgen", compact: true },
+    });
+    const gapsContent = compactGaps.structuredContent as Record<string, any>;
+    assert.ok(Array.isArray(gapsContent.creativeGaps));
+    assert.equal(gapsContent.topCompetitorAds, undefined, "topCompetitorAds array must be omitted in compact mode to preserve tokens");
+
+    // 5. Search competitor ads: pagination & compact fields
+    const searchCompact = await client.callTool({
+      name: "ads_search_competitor_ads",
+      arguments: { storeId: "chillgen", limit: 2, offset: 0, compact: true },
+    });
+    const searchContent = searchCompact.structuredContent as Record<string, any>;
+    assert.ok(searchContent.ads.length <= 2);
+    const firstAd = searchContent.ads[0];
+    assert.ok(firstAd.archiveId);
+    assert.ok(firstAd.pageName);
+    assert.equal(firstAd.caption, undefined, "Verbose caption should be omitted in compact mode");
+    assert.equal(firstAd.thumbnailUrl, undefined, "Thumbnail URL should be omitted in compact mode");
+
+    // 6. Generate brief with format: "markdown" only
+    const briefMarkdownOnly = await client.callTool({
+      name: "ads_generate_brief",
+      arguments: {
+        storeId: "chillgen",
+        sourceType: "decision",
+        sourceId: compactCard.id,
+        format: "markdown",
+      },
+    });
+    const briefContent = briefMarkdownOnly.structuredContent as Record<string, any>;
+    assert.equal(briefContent.success, true);
+    assert.ok(briefContent.markdown);
+    assert.equal(briefContent.brief, undefined, "Structured JSON brief must be omitted when format is markdown");
+
+    // 7. Evidence snapshot compact mode
+    const compactEvidence = await client.callTool({
+      name: "ads_get_evidence",
+      arguments: { storeId: "chillgen", evidenceType: "decisions", compact: true },
+    });
+    const evidenceSnap = compactEvidence.structuredContent as Record<string, any>;
+    assert.equal(evidenceSnap.evidenceType, "decisions");
+    assert.ok(Array.isArray(evidenceSnap.snapshot));
+    assert.ok(evidenceSnap.snapshot[0].id);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 

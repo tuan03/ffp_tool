@@ -497,6 +497,11 @@ export interface AdsDataHealth {
   readonly cacheStats?: {
     readonly hits: number;
     readonly misses: number;
+    readonly hitRatio?: number;
+    readonly coalesced?: number;
+    readonly inFlightCount?: number;
+    readonly keysCount?: number;
+    readonly totalKeys?: number;
     readonly lastSyncedAt: string | null;
   };
 }

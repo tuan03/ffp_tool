@@ -103,37 +103,47 @@ function ensureEnvLoaded(): void {
 }
 
 export class AdsIntelligenceService {
+  private readonly metaClientCache = new Map<string, MetaClient>();
+  private readonly ga4ClientCache = new Map<string, Ga4Client>();
+  private readonly shopifyClient = new ShopifyOrdersClient();
+
   private getMetaClient(storeId?: string): MetaClient | null {
     ensureEnvLoaded();
     const token = process.env[storeId ? loadStoreAdsProfile(storeId).meta.secretRef || "META_ACCESS_TOKEN" : "META_ACCESS_TOKEN"]?.trim();
     if (!token) return null;
-    const proxyUrl = process.env.META_PROXY_URL?.trim();
-    return new MetaClient({
+    const proxyUrl = process.env.META_PROXY_URL?.trim() || "";
+    const cacheKey = `${token}:${proxyUrl}`;
+    const existing = this.metaClientCache.get(cacheKey);
+    if (existing) return existing;
+
+    const client = new MetaClient({
       accessToken: token,
-      proxyUrl,
+      proxyUrl: proxyUrl || undefined,
       apiVersion: "v26.0",
     });
+    this.metaClientCache.set(cacheKey, client);
+    return client;
   }
 
   private getGa4Client(storeId?: string): Ga4Client {
     ensureEnvLoaded();
-    return new Ga4Client({ credentialsPath: storeId ? loadStoreAdsProfile(storeId).ga4.credentialRef ?? undefined : undefined });
+    const credRef = storeId ? loadStoreAdsProfile(storeId).ga4.credentialRef ?? undefined : undefined;
+    const cacheKey = credRef || "default";
+    const existing = this.ga4ClientCache.get(cacheKey);
+    if (existing) return existing;
+
+    const client = new Ga4Client({ credentialsPath: credRef });
+    this.ga4ClientCache.set(cacheKey, client);
+    return client;
   }
 
   private getShopifyClient(): ShopifyOrdersClient {
-    return new ShopifyOrdersClient();
+    return this.shopifyClient;
   }
 
   async testMetaAccountConnection(accountId: string): Promise<{ success: boolean; account: { id: string; name: string; currency: string; timezone: string; status: number } }> {
-    ensureEnvLoaded();
-    const token = process.env.META_ACCESS_TOKEN?.trim();
-    if (!token) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
-    const proxyUrl = process.env.META_PROXY_URL?.trim();
-    const meta = new MetaClient({
-      accessToken: token,
-      proxyUrl,
-      apiVersion: "v26.0",
-    });
+    const meta = this.getMetaClient();
+    if (!meta) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
     const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
     const account = await meta.getAccount(normalizedId);
     return {
@@ -149,15 +159,8 @@ export class AdsIntelligenceService {
   }
 
   async listMetaAccounts(): Promise<readonly { id: string; name: string; currency: string; timezone: string; status: number }[]> {
-    ensureEnvLoaded();
-    const token = process.env.META_ACCESS_TOKEN?.trim();
-    if (!token) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
-    const proxyUrl = process.env.META_PROXY_URL?.trim();
-    const meta = new MetaClient({
-      accessToken: token,
-      proxyUrl,
-      apiVersion: "v26.0",
-    });
+    const meta = this.getMetaClient();
+    if (!meta) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
     const accounts = await meta.getAdAccounts();
     return accounts.map((acc) => ({
       id: acc.id,
@@ -200,93 +203,125 @@ export class AdsIntelligenceService {
   async getStoreSummary(storeId = "chillgen", forceRefresh = false): Promise<AdsStoreSummary> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:summary`;
+    let staleCached: AdsStoreSummary | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AdsStoreSummary>(cacheKey);
+      const cached = adsIntelligenceCache.get<AdsStoreSummary>(cacheKey, true);
       if (cached) {
-        return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        if (!cached.isStale) {
+          return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        }
+        staleCached = { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
       }
     }
 
-    const meta = this.getMetaClient(storeId);
-    const profile = loadStoreAdsProfile(storeId);
-    const accountId = profile.meta.accountIds[0] || "";
+    const inFlight = adsIntelligenceCache.getInFlight<AdsStoreSummary>(cacheKey);
+    if (inFlight) {
+      if (staleCached) return staleCached;
+      return inFlight;
+    }
 
-    if (!meta || !accountId) throw new Error("META_NOT_CONFIGURED");
-    const [account, insights] = await Promise.all([
-      meta.getAccount(accountId),
-      meta.getAccountInsights(accountId, "maximum"),
-    ]);
-    if (account.currency !== profile.reportingCurrency) throw new Error("ADS_CURRENCY_MISMATCH");
-    const rawInsight = insights[0];
-    if (!rawInsight) throw new Error("META_NO_INSIGHTS_FOR_PERIOD");
-    if (!rawInsight.date_start || !rawInsight.date_stop) throw new Error("META_REPORT_PERIOD_MISSING");
+    const fetchTask = (async (): Promise<AdsStoreSummary> => {
+      const meta = this.getMetaClient(storeId);
+      const profile = loadStoreAdsProfile(storeId);
+      const accountId = profile.meta.accountIds[0] || "";
 
-    const rawActionsRecord: Record<string, unknown> = {
-      actions: rawInsight.actions ?? [],
-      action_values: rawInsight.action_values ?? [],
-    };
-    const wm = websiteMetrics(rawActionsRecord, rawInsight.spend);
-    if (wm.metrics.purchase === null || wm.metrics.purchase_value === null) throw new Error("META_WEBSITE_CONVERSIONS_UNRESOLVED");
+      if (!meta || !accountId) throw new Error("META_NOT_CONFIGURED");
+      const [account, insights] = await Promise.all([
+        meta.getAccount(accountId),
+        meta.getAccountInsights(accountId, "maximum"),
+      ]);
+      if (account.currency !== profile.reportingCurrency) throw new Error("ADS_CURRENCY_MISMATCH");
+      const rawInsight = insights[0];
+      if (!rawInsight) throw new Error("META_NO_INSIGHTS_FOR_PERIOD");
+      if (!rawInsight.date_start || !rawInsight.date_stop) throw new Error("META_REPORT_PERIOD_MISSING");
 
-    const linkClickAction = rawInsight.actions?.find((a) => a.action_type === "link_click");
-    const linkClicks = linkClickAction ? linkClickAction.value : "0";
-    const numImpressions = Number(rawInsight.impressions) || 1;
-    const linkCtrVal = ((Number(linkClicks) / numImpressions) * 100).toFixed(2) + "%";
+      const rawActionsRecord: Record<string, unknown> = {
+        actions: rawInsight.actions ?? [],
+        action_values: rawInsight.action_values ?? [],
+      };
+      const wm = websiteMetrics(rawActionsRecord, rawInsight.spend);
+      if (wm.metrics.purchase === null || wm.metrics.purchase_value === null) throw new Error("META_WEBSITE_CONVERSIONS_UNRESOLVED");
 
-    const periodStop = rawInsight.date_stop ?? new Date().toISOString().slice(0, 10);
-    const stopTime = new Date(periodStop).getTime();
-    const isProvisional = Date.now() - stopTime < 7 * 86400000;
+      const linkClickAction = rawInsight.actions?.find((a) => a.action_type === "link_click");
+      const linkClicks = linkClickAction ? linkClickAction.value : "0";
+      const numImpressions = Number(rawInsight.impressions) || 1;
+      const linkCtrVal = ((Number(linkClicks) / numImpressions) * 100).toFixed(2) + "%";
 
-    const summary: AdsStoreSummary = {
-      storeId,
-      accountId: account.id,
-      accountName: account.name,
-      currency: account.currency,
-      timezone: account.timezone_name,
-      periodStart: rawInsight.date_start,
-      periodEnd: periodStop,
-      maturity: isProvisional ? "PROVISIONAL" : "FINALIZED",
-      spend: rawInsight.spend,
-      impressions: rawInsight.impressions,
-      clicks: rawInsight.clicks,
-      linkClicks,
-      linkCtr: linkCtrVal,
-      cpc: rawInsight.cpc ?? "0.00",
-      cpm: rawInsight.cpm ?? "0.00",
-      lpv: wm.metrics.landing_page_views ?? "0",
-      atc: wm.metrics.add_to_cart ?? "0",
-      checkout: wm.metrics.checkout ?? "0",
-      purchases: wm.metrics.purchase ?? "0",
-      purchaseValue: wm.metrics.purchase_value ?? "0.00",
-      cpa: wm.metrics.cpa,
-      roas: wm.metrics.roas,
-      warnings: [
-        ...(profile.ga4.propertyId && listAvailableStoreProfileIds().filter(id => loadStoreAdsProfile(id).ga4.propertyId === profile.ga4.propertyId && loadStoreAdsProfile(id).shopify.shopDomain !== profile.shopify.shopDomain).length > 0
-          ? ["GA4 property được cấu hình cho nhiều store. Phiên truy cập là tổng property, chưa được phân tách theo store."] : []),
-        ...(isProvisional
-          ? ["Dữ liệu trong vòng 7 ngày gần nhất được gắn nhãn PROVISIONAL do độ trễ ghi nhận chuyển đổi."]
-          : []),
-        ...wm.warnings,
-      ],
-      fromCache: false,
-      cachedAt: new Date().toISOString(),
-    };
+      const periodStop = rawInsight.date_stop ?? new Date().toISOString().slice(0, 10);
+      const stopTime = new Date(periodStop).getTime();
+      const isProvisional = Date.now() - stopTime < 7 * 86400000;
 
-    adsIntelligenceCache.set(cacheKey, summary);
-    return summary;
+      const summary: AdsStoreSummary = {
+        storeId,
+        accountId: account.id,
+        accountName: account.name,
+        currency: account.currency,
+        timezone: account.timezone_name,
+        periodStart: rawInsight.date_start,
+        periodEnd: periodStop,
+        maturity: isProvisional ? "PROVISIONAL" : "FINALIZED",
+        spend: rawInsight.spend,
+        impressions: rawInsight.impressions,
+        clicks: rawInsight.clicks,
+        linkClicks,
+        linkCtr: linkCtrVal,
+        cpc: rawInsight.cpc ?? "0.00",
+        cpm: rawInsight.cpm ?? "0.00",
+        lpv: wm.metrics.landing_page_views ?? "0",
+        atc: wm.metrics.add_to_cart ?? "0",
+        checkout: wm.metrics.checkout ?? "0",
+        purchases: wm.metrics.purchase ?? "0",
+        purchaseValue: wm.metrics.purchase_value ?? "0.00",
+        cpa: wm.metrics.cpa,
+        roas: wm.metrics.roas,
+        warnings: [
+          ...(profile.ga4.propertyId && listAvailableStoreProfileIds().filter(id => loadStoreAdsProfile(id).ga4.propertyId === profile.ga4.propertyId && loadStoreAdsProfile(id).shopify.shopDomain !== profile.shopify.shopDomain).length > 0
+            ? ["GA4 property được cấu hình cho nhiều store. Phiên truy cập là tổng property, chưa được phân tách theo store."] : []),
+          ...(isProvisional
+            ? ["Dữ liệu trong vòng 7 ngày gần nhất được gắn nhãn PROVISIONAL do độ trễ ghi nhận chuyển đổi."]
+            : []),
+          ...wm.warnings,
+        ],
+        fromCache: false,
+        cachedAt: new Date().toISOString(),
+      };
+
+      adsIntelligenceCache.set(cacheKey, summary);
+      return summary;
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getCampaignHierarchy(storeId = "chillgen", forceRefresh = false): Promise<readonly AdsHierarchyCampaign[]> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:hierarchy`;
+    let staleCached: readonly AdsHierarchyCampaign[] | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<readonly AdsHierarchyCampaign[]>(cacheKey);
+      const cached = adsIntelligenceCache.get<readonly AdsHierarchyCampaign[]>(cacheKey, true);
       if (cached) {
-        return cached.data;
+        if (!cached.isStale) {
+          return cached.data;
+        }
+        staleCached = cached.data;
       }
     }
 
-    const meta = this.getMetaClient(storeId);
+    const inFlight = adsIntelligenceCache.getInFlight<readonly AdsHierarchyCampaign[]>(cacheKey);
+    if (inFlight) {
+      if (staleCached) return staleCached;
+      return inFlight;
+    }
+
+    const fetchTask = (async (): Promise<readonly AdsHierarchyCampaign[]> => {
+      const meta = this.getMetaClient(storeId);
     const profile = loadStoreAdsProfile(storeId);
     const accountId = profile.meta.accountIds[0] || "";
 
@@ -430,19 +465,40 @@ export class AdsIntelligenceService {
 
     adsIntelligenceCache.set(cacheKey, result);
     return result;
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getDataHealth(storeId = "chillgen", forceRefresh = false): Promise<AdsDataHealth> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:health`;
+    let staleCached: AdsDataHealth | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AdsDataHealth>(cacheKey);
+      const cached = adsIntelligenceCache.get<AdsDataHealth>(cacheKey, true);
       if (cached) {
-        return cached.data;
+        if (!cached.isStale) {
+          return cached.data;
+        }
+        staleCached = cached.data;
       }
     }
 
-    const meta = this.getMetaClient();
+    const inFlight = adsIntelligenceCache.getInFlight<AdsDataHealth>(cacheKey);
+    if (inFlight) {
+      if (staleCached) return staleCached;
+      return inFlight;
+    }
+
+    const fetchTask = (async (): Promise<AdsDataHealth> => {
+      const meta = this.getMetaClient();
     const ga4 = this.getGa4Client();
     const profile = loadStoreAdsProfile(storeId);
     const accountId = profile.meta.accountIds[0] || "act_1010295448281555";
@@ -512,6 +568,16 @@ export class AdsIntelligenceService {
 
     adsIntelligenceCache.set(cacheKey, health);
     return health;
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getCompetitorAds(storeId = "chillgen", forceRefresh = false): Promise<readonly CompetitorAdCard[]> {
@@ -533,14 +599,25 @@ export class AdsIntelligenceService {
   async getReconciliationReport(storeId = "chillgen", forceRefresh = false): Promise<AdsReconciliationReport> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:reconciliation`;
+    let staleCached: AdsReconciliationReport | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AdsReconciliationReport>(cacheKey);
+      const cached = adsIntelligenceCache.get<AdsReconciliationReport>(cacheKey, true);
       if (cached) {
-        return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        if (!cached.isStale) {
+          return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        }
+        staleCached = { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
       }
     }
 
-    const summary = await this.getStoreSummary(storeId, forceRefresh);
+    const inFlight = adsIntelligenceCache.getInFlight<AdsReconciliationReport>(cacheKey);
+    if (inFlight) {
+      if (staleCached) return staleCached;
+      return inFlight;
+    }
+
+    const fetchTask = (async (): Promise<AdsReconciliationReport> => {
+      const summary = await this.getStoreSummary(storeId, forceRefresh);
     const profile = loadStoreAdsProfile(storeId);
     if (!profile.ga4.propertyId) throw new Error("GA4_PROPERTY_NOT_CONFIGURED");
     if (listAvailableStoreProfileIds().filter(id => loadStoreAdsProfile(id).ga4.propertyId === profile.ga4.propertyId && loadStoreAdsProfile(id).shopify.shopDomain !== profile.shopify.shopDomain).length > 0) {
@@ -618,39 +695,70 @@ export class AdsIntelligenceService {
 
     adsIntelligenceCache.set(cacheKey, report);
     return report;
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getDecisionCards(storeId = "chillgen", forceRefresh = false): Promise<readonly DecisionCard[]> {
     const cacheKey = `${storeId}:decisions`;
+    let staleCached: readonly DecisionCard[] | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<readonly DecisionCard[]>(cacheKey);
+      const cached = adsIntelligenceCache.get<readonly DecisionCard[]>(cacheKey, true);
       if (cached) {
-        return cached.data;
+        if (!cached.isStale) {
+          return cached.data;
+        }
+        staleCached = cached.data;
       }
     }
 
-    const profile = loadStoreAdsProfile(storeId);
-    const [summary, reconciliation] = await Promise.all([
-      this.getStoreSummary(storeId, forceRefresh),
-      this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
-    ]);
-
-    let campaigns: readonly AdsHierarchyCampaign[] = [];
-    try {
-      campaigns = await this.getCampaignHierarchy(storeId, forceRefresh);
-    } catch {
-      // Gracefully handle if hierarchy is unavailable
+    const inFlight = adsIntelligenceCache.getInFlight<readonly DecisionCard[]>(cacheKey);
+    if (inFlight) {
+      if (staleCached) return staleCached;
+      return inFlight;
     }
 
-    const cards = decisionEngine.evaluate({
-      summary,
-      campaigns,
-      reconciliation,
-      profile,
-    });
+    const fetchTask = (async (): Promise<readonly DecisionCard[]> => {
+      const profile = loadStoreAdsProfile(storeId);
+      const [summary, reconciliation] = await Promise.all([
+        this.getStoreSummary(storeId, forceRefresh),
+        this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
+      ]);
 
-    adsIntelligenceCache.set(cacheKey, cards, 15 * 60 * 1000);
-    return cards;
+      let campaigns: readonly AdsHierarchyCampaign[] = [];
+      try {
+        campaigns = await this.getCampaignHierarchy(storeId, forceRefresh);
+      } catch {
+        // Gracefully handle if hierarchy is unavailable
+      }
+
+      const cards = decisionEngine.evaluate({
+        summary,
+        campaigns,
+        reconciliation,
+        profile,
+      });
+
+      adsIntelligenceCache.set(cacheKey, cards, 15 * 60 * 1000);
+      return cards;
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getAiStrategicReport(
@@ -661,41 +769,62 @@ export class AdsIntelligenceService {
     const runner = options?.runner || "codex";
     const model = options?.model;
     const cacheKey = `${storeId}:ai-report:${runner}:${model || "default"}`;
+    let staleCached: AiStrategicReport | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AiStrategicReport>(cacheKey);
+      const cached = adsIntelligenceCache.get<AiStrategicReport>(cacheKey, true);
       if (cached) {
-        return { ...cached.data, fromCache: true };
+        if (!cached.isStale) {
+          return { ...cached.data, fromCache: true };
+        }
+        staleCached = { ...cached.data, fromCache: true };
       }
     }
 
-    const profile = loadStoreAdsProfile(storeId);
-    const [summary, reconciliation, decisionCards, competitorReport] = await Promise.all([
-      this.getStoreSummary(storeId, forceRefresh),
-      this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
-      this.getDecisionCards(storeId, forceRefresh),
-      this.getCompetitorIntelligence(storeId, forceRefresh).catch(() => null),
-    ]);
-
-    let campaigns: readonly AdsHierarchyCampaign[] = [];
-    try {
-      campaigns = await this.getCampaignHierarchy(storeId, forceRefresh);
-    } catch {
-      // Gracefully handle
+    const inFlight = adsIntelligenceCache.getInFlight<AiStrategicReport>(cacheKey);
+    if (inFlight) {
+      if (staleCached) return staleCached;
+      return inFlight;
     }
 
-    const report = await aiStrategicAnalyst.generateStrategicReport({
-      summary,
-      reconciliation,
-      campaigns,
-      decisionCards,
-      profile,
-      competitorReport,
-      runner,
-      model,
-    });
+    const fetchTask = (async (): Promise<AiStrategicReport> => {
+      const profile = loadStoreAdsProfile(storeId);
+      const [summary, reconciliation, decisionCards, competitorReport] = await Promise.all([
+        this.getStoreSummary(storeId, forceRefresh),
+        this.getReconciliationReport(storeId, forceRefresh).catch(() => null),
+        this.getDecisionCards(storeId, forceRefresh),
+        this.getCompetitorIntelligence(storeId, forceRefresh).catch(() => null),
+      ]);
 
-    adsIntelligenceCache.set(cacheKey, report, 30 * 60 * 1000);
-    return { ...report, fromCache: false };
+      let campaigns: readonly AdsHierarchyCampaign[] = [];
+      try {
+        campaigns = await this.getCampaignHierarchy(storeId, forceRefresh);
+      } catch {
+        // Gracefully handle
+      }
+
+      const report = await aiStrategicAnalyst.generateStrategicReport({
+        summary,
+        reconciliation,
+        campaigns,
+        decisionCards,
+        profile,
+        competitorReport,
+        runner,
+        model,
+      });
+
+      adsIntelligenceCache.set(cacheKey, report, 30 * 60 * 1000);
+      return { ...report, fromCache: false };
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getCompetitorIntelligence(
@@ -708,26 +837,52 @@ export class AdsIntelligenceService {
       await assertAdsStoreDomain(storeId, research.shopDomain);
       return createResearchAdReport({ storeId, observedAt: research.observedAt, verifiedAds: research.verifiedAds ?? [], filters });
     }
+    const applyFilters = (
+      baseReport: CompetitorIntelligenceReport,
+      f?: { pageId?: string; format?: string; hookType?: string }
+    ): CompetitorIntelligenceReport => {
+      let filteredAds = baseReport.ads;
+      if (f?.pageId && f.pageId !== "ALL") {
+        filteredAds = filteredAds.filter(a => a.pageId === f.pageId);
+      }
+      if (f?.format && f.format !== "ALL") {
+        filteredAds = filteredAds.filter(a => a.mediaType === f.format);
+      }
+      if (f?.hookType && f.hookType !== "ALL") {
+        filteredAds = filteredAds.filter(a => a.taxonomy.hookType === f.hookType);
+      }
+      return {
+        ...baseReport,
+        ads: filteredAds,
+      };
+    };
+
     const cacheKey = `${storeId}:competitors`;
+    let staleCached: CompetitorIntelligenceReport | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<CompetitorIntelligenceReport>(cacheKey);
+      const inFlight = adsIntelligenceCache.getInFlight<CompetitorIntelligenceReport>(cacheKey);
+      const cached = adsIntelligenceCache.get<CompetitorIntelligenceReport>(cacheKey, true);
       if (cached) {
-        let filteredAds = cached.data.ads;
-        if (filters?.pageId && filters.pageId !== "ALL") {
-          filteredAds = filteredAds.filter(a => a.pageId === filters.pageId);
+        if (!cached.isStale) {
+          return applyFilters(
+            {
+              ...cached.data,
+              fromCache: true,
+              cachedAt: new Date(cached.cachedAt).toISOString(),
+            },
+            filters
+          );
         }
-        if (filters?.format && filters.format !== "ALL") {
-          filteredAds = filteredAds.filter(a => a.mediaType === filters.format);
-        }
-        if (filters?.hookType && filters.hookType !== "ALL") {
-          filteredAds = filteredAds.filter(a => a.taxonomy.hookType === filters.hookType);
-        }
-        return {
+        staleCached = {
           ...cached.data,
-          ads: filteredAds,
           fromCache: true,
           cachedAt: new Date(cached.cachedAt).toISOString(),
         };
+      }
+      if (inFlight) {
+        if (staleCached) return applyFilters(staleCached, filters);
+        const inflightReport = await inFlight;
+        return applyFilters(inflightReport, filters);
       }
     }
 
@@ -753,86 +908,83 @@ export class AdsIntelligenceService {
       };
     }
 
-    const client = new DefaultCompetitorClient();
-    const pageResults = await Promise.all(
-      watchlist.map(pageId => client.listAds(pageId, { activeStatus: "ACTIVE", country: "ALL", limit: 20 }))
-    );
+    const fetchTask = (async (): Promise<CompetitorIntelligenceReport> => {
+      const client = new DefaultCompetitorClient();
+      const pageResults = await Promise.all(
+        watchlist.map(pageId => client.listAds(pageId, { activeStatus: "ACTIVE", country: "ALL", limit: 20 }))
+      );
 
-    const allAds: CompetitorAd[] = [];
-    const watchlistStats: { pageId: string; pageName: string; adCount: number; activeAdCount: number }[] = [];
-    let totalSyncCostUsd = 0;
-    let providerName = "scrapecreators";
+      const allAds: CompetitorAd[] = [];
+      const watchlistStats: { pageId: string; pageName: string; adCount: number; activeAdCount: number }[] = [];
+      let totalSyncCostUsd = 0;
+      let providerName = "scrapecreators";
 
-    for (const res of pageResults) {
-      providerName = res.provider;
-      totalSyncCostUsd += res.usageCostEstimatedUsd;
-      allAds.push(...res.ads);
-      watchlistStats.push({
-        pageId: res.pageId,
-        pageName: res.pageName,
-        adCount: res.ads.length,
-        activeAdCount: res.ads.filter(a => a.status === "ACTIVE").length,
-      });
-    }
+      for (const res of pageResults) {
+        providerName = res.provider;
+        totalSyncCostUsd += res.usageCostEstimatedUsd;
+        allAds.push(...res.ads);
+        watchlistStats.push({
+          pageId: res.pageId,
+          pageName: res.pageName,
+          adCount: res.ads.length,
+          activeAdCount: res.ads.filter(a => a.status === "ACTIVE").length,
+        });
+      }
 
-    // Retrieve own store ads for gap analysis
-    const ownAds: AdsHierarchyAd[] = [];
-    try {
-      const campaigns = await this.getCampaignHierarchy(storeId, false);
-      for (const camp of campaigns) {
-        for (const adset of camp.adsets) {
-          for (const ad of adset.ads) {
-            ownAds.push(ad);
+      // Retrieve own store ads for gap analysis
+      const ownAds: AdsHierarchyAd[] = [];
+      try {
+        const campaigns = await this.getCampaignHierarchy(storeId, false);
+        for (const camp of campaigns) {
+          for (const adset of camp.adsets) {
+            for (const ad of adset.ads) {
+              ownAds.push(ad);
+            }
           }
         }
+      } catch {
+        // Graceful fallback if hierarchy unavailable
       }
-    } catch {
-      // Graceful fallback if hierarchy unavailable
+
+      const gapResult = analyzeCreativeGaps({
+        competitorAds: allAds,
+        ownAds,
+        storeNiche: profile.business?.costProfileRef ?? "Personalized E-Commerce",
+      });
+
+      const report: CompetitorIntelligenceReport = {
+        storeId,
+        watchlist: watchlistStats,
+        totalAds: allAds.length,
+        activeAds: allAds.filter(a => a.status === "ACTIVE").length,
+        provider: providerName === "calibrated_benchmark"
+          ? "Calibrated Facebook Ad Library Benchmark (210 sample benchmark verified)"
+          : providerName,
+        syncCostEstimatedUsd: Number(totalSyncCostUsd.toFixed(4)),
+        monthlyCostCapUsd: profile.competitors?.monthlyCostCapUsd ?? 65.0,
+        transparencyDisclaimer:
+          "Dữ liệu công khai từ Facebook Ad Library. Doanh thu, chi tiêu thực tế, targeting và ROAS của đối thủ là không thể xác định. Các mẫu quảng cáo chạy lâu ngày chỉ được dùng làm giả thuyết để lên kế hoạch thử nghiệm.",
+        ads: allAds,
+        creativeGaps: gapResult.creativeGaps,
+        topWinningHooks: gapResult.topWinningHooks,
+        formatDistribution: gapResult.formatDistribution,
+        fromCache: false,
+      };
+
+      // Cache for 1 hour
+      adsIntelligenceCache.set(cacheKey, report, 60 * 60 * 1000);
+      return report;
+    })();
+
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return applyFilters(staleCached, filters);
     }
-
-    const gapResult = analyzeCreativeGaps({
-      competitorAds: allAds,
-      ownAds,
-      storeNiche: profile.business?.costProfileRef ?? "Personalized E-Commerce",
-    });
-
-    const report: CompetitorIntelligenceReport = {
-      storeId,
-      watchlist: watchlistStats,
-      totalAds: allAds.length,
-      activeAds: allAds.filter(a => a.status === "ACTIVE").length,
-      provider: providerName === "calibrated_benchmark"
-        ? "Calibrated Facebook Ad Library Benchmark (210 sample benchmark verified)"
-        : providerName,
-      syncCostEstimatedUsd: Number(totalSyncCostUsd.toFixed(4)),
-      monthlyCostCapUsd: profile.competitors?.monthlyCostCapUsd ?? 65.0,
-      transparencyDisclaimer:
-        "Dữ liệu công khai từ Facebook Ad Library. Doanh thu, chi tiêu thực tế, targeting và ROAS của đối thủ là không thể xác định. Các mẫu quảng cáo chạy lâu ngày chỉ được dùng làm giả thuyết để lên kế hoạch thử nghiệm.",
-      ads: allAds,
-      creativeGaps: gapResult.creativeGaps,
-      topWinningHooks: gapResult.topWinningHooks,
-      formatDistribution: gapResult.formatDistribution,
-      fromCache: false,
-    };
-
-    // Cache for 1 hour
-    adsIntelligenceCache.set(cacheKey, report, 60 * 60 * 1000);
-
-    let filteredAds = allAds;
-    if (filters?.pageId && filters.pageId !== "ALL") {
-      filteredAds = filteredAds.filter(a => a.pageId === filters.pageId);
-    }
-    if (filters?.format && filters.format !== "ALL") {
-      filteredAds = filteredAds.filter(a => a.mediaType === filters.format);
-    }
-    if (filters?.hookType && filters.hookType !== "ALL") {
-      filteredAds = filteredAds.filter(a => a.taxonomy.hookType === filters.hookType);
-    }
-
-    return {
-      ...report,
-      ads: filteredAds,
-    };
+    const report = await trackingPromise;
+    return applyFilters(report, filters);
   }
 
   async syncNow(storeId = "chillgen"): Promise<{ success: boolean; refreshedAt: string; message: string }> {

@@ -319,9 +319,37 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
       if (product.action.recommendationId) {
         await client.revise(storeId, product.action.recommendationId);
       } else {
-        await client.start(storeId, "crawl");
+        await client.createAutoSeo(storeId, product.productId);
       }
     }, `Đã tạo yêu cầu Auto-SEO cho "${product.title}". Xem tại tab Đề xuất hoặc SEO Queue.`);
+  };
+
+  // Handle Auto-SEO for baseline product from Table
+  const handleAutoSeoFromTable = async (product: BenchmarkProductItem) => {
+    if (
+      !window.confirm(
+        `Xác nhận tạo Auto-SEO cho sản phẩm "${product.title}"? Yêu cầu sẽ được đưa vào hàng đợi xử lý SEO.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await client.createAutoSeo(storeId, product.productId);
+      const toast = result.message
+        ? `${result.message} (Job: ${result.jobId})`
+        : result.isExisting
+          ? `Sản phẩm "${product.title}" đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi (Job: ${result.jobId}).`
+          : `Đã tạo yêu cầu Auto-SEO thành công cho "${product.title}" (Job: ${result.jobId}).`;
+      setMessage(toast);
+      setRefresh(value => value + 1);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Không thể tạo yêu cầu Auto-SEO.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const selected = tab === "pages" ? pages : tab === "recommendations" ? recommendations : history;
@@ -415,7 +443,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
 
           <BenchmarkTable
             items={benchmarkItems}
-            loading={benchmarkLoading}
+            loading={benchmarkLoading || busy}
             sortBy={benchmarkFilters.sortBy}
             sortDir={benchmarkFilters.sortDir}
             onSort={col => {
@@ -428,6 +456,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             onSelectProduct={product => void handleOpenProductDetail(product)}
             onSelectBatch={batchId => void handleOpenBatchDetail(batchId)}
             onSendToAutoSeo={product => void handleSendToAutoSeoFromTable(product)}
+            onAutoSeo={product => void handleAutoSeoFromTable(product)}
           />
 
           <BenchmarkPagination
@@ -878,11 +907,11 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
         <ProductSeoDetailModal
           data={selectedProductDetail}
           onClose={() => setSelectedProductDetail(null)}
-          onSendToAutoSeo={async (_prodId, recId) => {
+          onSendToAutoSeo={async (prodId, recId) => {
             if (recId) {
               await client.revise(storeId, recId);
             } else {
-              await client.start(storeId, "crawl");
+              await client.createAutoSeo(storeId, prodId);
             }
             setRefresh(v => v + 1);
           }}

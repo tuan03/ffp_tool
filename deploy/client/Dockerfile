@@ -1,37 +1,21 @@
 # ==========================================
 # FFP Tool Client Container (Frontend SPA & Static Server)
-# Runs Nginx Alpine serving React UI and proxying API/WebSocket to Server container
+# Runs Nginx Alpine serving React UI and proxying API/WebSocket to Server container.
+#
+# Production optimization:
+# Client artifacts are pre-built via `npm run build:client` and
+# crawler agent package via `scripts/package-agent-source.mjs` (scripts/package-crawler-agent.mjs).
+# Eliminates Node.js, Python, compilers and npm install from the production container.
 # ==========================================
 
-# Stage 1: Build Frontend SPA
-FROM node:22-bookworm-slim AS builder
-
-WORKDIR /app
-
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-
-# Copy package.json
-COPY package.json ./
-RUN npm install
-
-# Copy source and build
-ARG VITE_AGENT_INSTALL_URL=https://ffp.b6-team.site
-ENV VITE_AGENT_INSTALL_URL=${VITE_AGENT_INSTALL_URL}
-COPY . .
-RUN npm run build && \
-    node scripts/package-agent-source.mjs /tmp/ffp-agent-package && \
-    tar -czf /tmp/ffp-crawler-agent.tar.gz -C /tmp/ffp-agent-package . && \
-    sha256sum /tmp/ffp-crawler-agent.tar.gz > /tmp/ffp-crawler-agent.tar.gz.sha256
-
-# Stage 2: Lightweight Nginx Runtime
 FROM nginx:1.27-alpine AS runner
 
 # Remove default nginx assets
 RUN apk add --no-cache apache2-utils && \
     rm -rf /usr/share/nginx/html/*
 
-# Copy built SPA artifacts
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy built SPA artifacts and distribution packages
+COPY dist /usr/share/nginx/html
 
 # Copy Nginx configuration
 COPY deploy/client/nginx.conf /etc/nginx/conf.d/default.conf
@@ -48,8 +32,9 @@ COPY scripts/install-agent.sh /usr/share/nginx/html/scripts/install-agent.sh
 COPY scripts/update-agent.ps1 /usr/share/nginx/html/scripts/update-agent.ps1
 COPY scripts/uninstall-agent.ps1 /usr/share/nginx/html/scripts/uninstall-agent.ps1
 COPY cai-agent.bat /usr/share/nginx/html/scripts/cai-agent.bat
-COPY --from=builder /tmp/ffp-crawler-agent.tar.gz /usr/share/nginx/html/downloads/ffp-crawler-agent.tar.gz
-COPY --from=builder /tmp/ffp-crawler-agent.tar.gz.sha256 /usr/share/nginx/html/downloads/ffp-crawler-agent.tar.gz.sha256
+
+# Ensure static web root and scripts are readable and executable by unprivileged nginx worker
+RUN chmod -R 755 /usr/share/nginx/html
 
 EXPOSE 80
 

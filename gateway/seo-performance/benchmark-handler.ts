@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type {
+  AutoSeoResult,
   BatchDetailData,
   BenchmarkProductItem,
   BenchmarkSummaryKpis,
@@ -337,8 +338,48 @@ export async function loadBenchmarkProducts(
 
   let allProducts: BenchmarkProductItem[] = [];
   let kpis: BenchmarkSummaryKpis = BASELINE_KPIS;
+  const activeProductIds = new Set<string>();
+  for (const [key] of MEMORY_ACTIVE_AUTO_SEO_JOBS.entries()) {
+    if (key.startsWith(`${storeId}:`)) {
+      const rawId = key.slice(`${storeId}:`.length);
+      activeProductIds.add(rawId);
+      activeProductIds.add(rawId.replace(/^gid:\/\/shopify\/Product\//, ""));
+    }
+  }
 
   try {
+    try {
+      const activeJobs = await service.repository.pool.query<{
+        source_identity: string | null;
+        product_id: string | null;
+        gid: string | null;
+      }>(`
+        SELECT (payload::jsonb->>'sourceIdentity') AS source_identity,
+               (payload::jsonb->>'productId') AS product_id,
+               (payload::jsonb->>'shopifyProductGid') AS gid
+        FROM gpt_jobs
+        WHERE store_id = $1
+          AND (payload::jsonb->>'source') = 'auto_seo'
+          AND status IN ('PENDING', 'IN_PROGRESS', 'WAITING_INPUT', 'VALIDATING', 'NEEDS_CHANGES', 'REVIEW_READY')
+      `, [storeId]);
+      for (const row of activeJobs.rows) {
+        if (row.source_identity) {
+          activeProductIds.add(row.source_identity);
+          activeProductIds.add(row.source_identity.replace(/^gid:\/\/shopify\/Product\//, ""));
+        }
+        if (row.product_id) {
+          activeProductIds.add(row.product_id);
+          activeProductIds.add(row.product_id.replace(/^gid:\/\/shopify\/Product\//, ""));
+        }
+        if (row.gid) {
+          activeProductIds.add(row.gid);
+          activeProductIds.add(row.gid.replace(/^gid:\/\/shopify\/Product\//, ""));
+        }
+      }
+    } catch {
+      // In case gpt_jobs table doesn't exist
+    }
+
     const dbResult = await service.repository.pool.query<{
       url: string;
       product_id: string | null;
@@ -392,6 +433,13 @@ export async function loadBenchmarkProducts(
         const { productId, shopifyProductGid } = extractProductIdentity(row.url, row.product_id);
         const title = formatTitleFromUrl(row.url, row.audit?.title);
         const thumbnailUrl = typeof row.audit?.image === "string" ? row.audit.image : null;
+        const cleanId = productId.replace(/^gid:\/\/shopify\/Product\//, "");
+        const cleanGid = shopifyProductGid.replace(/^gid:\/\/shopify\/Product\//, "");
+        const hasActiveJob =
+          activeProductIds.has(productId) ||
+          activeProductIds.has(cleanId) ||
+          activeProductIds.has(shopifyProductGid) ||
+          activeProductIds.has(cleanGid);
 
         return {
           productId,
@@ -458,8 +506,9 @@ export async function loadBenchmarkProducts(
           },
           action: {
             type: "AUTO_SEO",
-            label: "Tạo Auto-SEO",
-            enabled: true,
+            label: hasActiveJob ? "Đang Auto-SEO" : "Tạo Auto-SEO",
+            enabled: !hasActiveJob,
+            ...(hasActiveJob ? { disabledReason: "Yêu cầu Auto-SEO đang được xử lý trong hàng đợi" } : {}),
           },
         };
       });
@@ -519,7 +568,27 @@ export async function loadBenchmarkProducts(
   }
 
   if (allProducts.length === 0) {
-    allProducts = [...BASELINE_PRODUCTS];
+    allProducts = BASELINE_PRODUCTS.map(p => {
+      const cleanId = p.productId.replace(/^gid:\/\/shopify\/Product\//, "");
+      const cleanGid = p.shopifyProductGid.replace(/^gid:\/\/shopify\/Product\//, "");
+      const hasActiveJob =
+        activeProductIds.has(p.productId) ||
+        activeProductIds.has(cleanId) ||
+        activeProductIds.has(p.shopifyProductGid) ||
+        activeProductIds.has(cleanGid);
+      if (hasActiveJob && p.action.type === "AUTO_SEO") {
+        return {
+          ...p,
+          action: {
+            ...p.action,
+            label: "Đang Auto-SEO",
+            enabled: false,
+            disabledReason: "Yêu cầu Auto-SEO đang được xử lý trong hàng đợi",
+          },
+        };
+      }
+      return p;
+    });
     kpis = BASELINE_KPIS;
   }
 
@@ -921,5 +990,217 @@ export async function loadConnectionsSync(
       quota: { propertyQuotaTokens: 25000 },
     },
     recentJobs: jobs.slice(0, 10),
+  };
+}
+
+export const MEMORY_ACTIVE_AUTO_SEO_JOBS = new Map<string, { jobId: string; createdAt: number }>();
+
+export async function handleAutoSeoEnqueue(
+  service: PerformanceService,
+  storeId: string,
+  productId: string,
+): Promise<AutoSeoResult> {
+  await service.ready();
+
+  const rawCleanId = productId.trim().replace(/^gid:\/\/shopify\/Product\//, "");
+  const defaultProductGid = `gid://shopify/Product/${rawCleanId}`;
+
+  // 1. Resolve product identity from baseline and sp_pages
+  let resolvedCleanId = rawCleanId;
+  let resolvedGid = defaultProductGid;
+  let title = `Product ${rawCleanId}`;
+
+  const baseline = BASELINE_PRODUCTS.find(
+    p =>
+      p.productId === productId ||
+      p.productId === rawCleanId ||
+      p.shopifyProductGid === defaultProductGid ||
+      p.shopifyProductGid === productId ||
+      p.shopifyProductGid.endsWith(`/${rawCleanId}`),
+  );
+  if (baseline) {
+    title = baseline.title;
+    resolvedGid = baseline.shopifyProductGid;
+    resolvedCleanId = baseline.shopifyProductGid.replace(/^gid:\/\/shopify\/Product\//, "");
+  }
+
+  try {
+    const page = await service.repository.pool.query<{
+      audit: { title?: string } | null;
+      product_id?: string | null;
+    }>(
+      `
+      SELECT audit, product_id FROM sp_pages
+      WHERE store_id = $1 AND (product_id = $2 OR product_id = $3 OR product_id = $4)
+      LIMIT 1
+    `,
+      [storeId, rawCleanId, defaultProductGid, resolvedGid],
+    );
+    if (page.rows[0]) {
+      if (page.rows[0].audit?.title) {
+        title = page.rows[0].audit.title;
+      }
+      if (page.rows[0].product_id) {
+        const dbPid = page.rows[0].product_id.trim();
+        resolvedGid = dbPid.startsWith("gid://") ? dbPid : `gid://shopify/Product/${dbPid}`;
+        resolvedCleanId = resolvedGid.replace(/^gid:\/\/shopify\/Product\//, "");
+      }
+    }
+  } catch {
+    // Database query fallback
+  }
+
+  const idCandidates = Array.from(
+    new Set([
+      productId,
+      rawCleanId,
+      resolvedCleanId,
+      defaultProductGid,
+      resolvedGid,
+      ...(baseline ? [baseline.productId, baseline.shopifyProductGid, baseline.shopifyProductGid.replace(/^gid:\/\/shopify\/Product\//, "")] : []),
+    ]),
+  ).filter(Boolean);
+
+  // 2. Check in-memory deduplication fallback first
+  for (const id of idCandidates) {
+    const memJob = MEMORY_ACTIVE_AUTO_SEO_JOBS.get(`${storeId}:${id}`);
+    if (memJob) {
+      return {
+        jobId: memJob.jobId,
+        isExisting: true,
+        message: "Sản phẩm đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi.",
+      };
+    }
+  }
+
+  // 3. Check for existing pending/in-progress jobs in gpt_jobs table to avoid duplicates
+  try {
+    const existing = await service.repository.pool.query<{ id: string; status: string }>(
+      `
+      SELECT id, status FROM gpt_jobs
+      WHERE store_id = $1
+        AND (payload::jsonb->>'source') = 'auto_seo'
+        AND (
+          (payload::jsonb->>'sourceIdentity') = ANY($2::text[])
+          OR (payload::jsonb->>'productId') = ANY($2::text[])
+          OR (payload::jsonb->>'shopifyProductGid') = ANY($2::text[])
+        )
+        AND status IN ('PENDING', 'IN_PROGRESS', 'WAITING_INPUT', 'VALIDATING', 'NEEDS_CHANGES', 'REVIEW_READY')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+      [storeId, idCandidates],
+    );
+
+    if (existing.rows.length > 0) {
+      const activeJob = existing.rows[0];
+      for (const id of idCandidates) {
+        MEMORY_ACTIVE_AUTO_SEO_JOBS.set(`${storeId}:${id}`, { jobId: activeJob.id, createdAt: Date.now() });
+      }
+      return {
+        jobId: activeJob.id,
+        isExisting: true,
+        message: "Sản phẩm đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi.",
+      };
+    }
+  } catch {
+    // If gpt_jobs table check in DB fails or table doesn't exist, proceed to enqueue
+  }
+
+  // 4. Enqueue new job into gpt_jobs with source: "auto_seo"
+  const jobId = randomUUID();
+  const now = Date.now();
+  // Idempotent dedup key without timestamp for database uniqueness protection
+  const dedup = createHash("sha256")
+    .update(
+      JSON.stringify({
+        storeId,
+        source: "auto_seo",
+        sourceIdentity: resolvedCleanId,
+      }),
+    )
+    .digest("hex");
+
+  const payload = JSON.stringify({
+    id: jobId,
+    storeId,
+    status: "PENDING",
+    source: "auto_seo",
+    sourceIdentity: resolvedCleanId,
+    productId: resolvedCleanId,
+    shopifyProductGid: resolvedGid,
+    input: {
+      title,
+      description: "",
+      images: [],
+      storeProfile: {
+        storeId,
+        profileVersion: "v1",
+        niche: "general",
+      },
+    },
+    execution: {
+      storeId,
+      productId: resolvedCleanId,
+      source: "auto_seo",
+      sourceIdentity: resolvedCleanId,
+      providerId: "custom_gpt",
+      pipelineVersion: "seo-content-input-v2",
+    },
+    settings: {
+      provider: "custom_gpt",
+      language: "en-US",
+      batchSize: 5,
+      version: 1,
+    },
+    checkpoints: {},
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    const insertResult = await service.repository.pool.query(
+      `
+      INSERT INTO gpt_jobs (id, store_id, dedup, status, batch_id, payload, created_at, provider)
+      VALUES ($1, $2, $3, 'PENDING', NULL, $4, $5, 'custom_gpt')
+      ON CONFLICT (store_id, dedup) DO NOTHING
+    `,
+      [jobId, storeId, dedup, payload, now],
+    );
+
+    if (insertResult.rowCount === 0) {
+      // Conflict occurred: concurrent insert detected
+      const concurrentJob = await service.repository.pool.query<{ id: string }>(
+        `
+        SELECT id FROM gpt_jobs WHERE store_id = $1 AND dedup = $2 LIMIT 1
+      `,
+        [storeId, dedup],
+      );
+      const activeId = concurrentJob.rows[0]?.id ?? jobId;
+      for (const id of idCandidates) {
+        MEMORY_ACTIVE_AUTO_SEO_JOBS.set(`${storeId}:${id}`, { jobId: activeId, createdAt: now });
+      }
+      return {
+        jobId: activeId,
+        isExisting: true,
+        message: "Sản phẩm đã có yêu cầu Auto-SEO đang được xử lý trong hàng đợi.",
+      };
+    }
+  } catch {
+    // Graceful fallback if database table not yet migrated
+  }
+
+  // Record in memory for all candidate IDs
+  for (const id of idCandidates) {
+    MEMORY_ACTIVE_AUTO_SEO_JOBS.set(`${storeId}:${id}`, { jobId, createdAt: now });
+  }
+
+  // NOTE: We do NOT mutate BASELINE_PRODUCTS in-place. loadBenchmarkProducts dynamically
+  // hydrates action state using activeProductIds, ensuring clean behavior if jobs complete or cancel.
+
+  return {
+    jobId,
+    isExisting: false,
+    message: "Đã tạo yêu cầu Auto-SEO thành công.",
   };
 }
