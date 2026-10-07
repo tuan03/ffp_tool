@@ -72,18 +72,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Server image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/server/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/tuan03/ffp-tool-server:latest
-            ghcr.io/tuan03/ffp-tool-server:${{ github.sha }}
-          cache-from: type=gha,scope=server
-          cache-to: type=gha,mode=max,scope=server
-
       - name: Build and push Client image
         uses: docker/build-push-action@v6
         with:
@@ -96,9 +84,38 @@ jobs:
           cache-from: type=gha,scope=client
           cache-to: type=gha,mode=max,scope=client
 
+  build-server:
+    name: Build server container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/tuan03/ffp-tool-server:latest
+            ghcr.io/tuan03/ffp-tool-server:${{ github.sha }}
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
+
   deploy:
     name: Deploy root Compose to VPS
-    needs: verify
+    needs: [verify, build-server]
     runs-on: ubuntu-latest
 
     steps:
