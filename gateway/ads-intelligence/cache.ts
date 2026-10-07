@@ -1,6 +1,6 @@
 /**
- * FFP Ads Intelligence — Cost Guard & In-Memory TTL Cache
- * Prevents redundant external API calls to Meta Graph API, GA4, and Competitor Spy.
+ * FFP Ads Intelligence — Cost Guard & In-Memory TTL Cache with In-Flight Coalescing
+ * Prevents redundant external API calls and thundering herd / cache stampede on Meta Graph API, GA4, and Competitor Spy.
  */
 
 export interface CacheEntry<T> {
@@ -12,14 +12,20 @@ export interface CacheEntry<T> {
 export interface CacheStats {
   readonly hits: number;
   readonly misses: number;
+  readonly hitRatio: number;
+  readonly coalesced: number;
+  readonly inFlightCount: number;
   readonly keysCount: number;
+  readonly totalKeys: number;
   readonly lastSyncedAt: string | null;
 }
 
 export class AdsIntelligenceCache {
   private readonly store = new Map<string, { value: unknown; expiresAtMs: number; cachedAtIso: string }>();
+  private readonly inFlight = new Map<string, Promise<unknown>>();
   private hits = 0;
   private misses = 0;
+  private coalesced = 0;
   private lastSyncedAt: string | null = null;
 
   // Default TTL: 15 minutes (900_000 ms) for near-term mutable data
@@ -60,10 +66,28 @@ export class AdsIntelligenceCache {
     this.lastSyncedAt = cachedAtIso;
   }
 
+  getInFlight<T>(key: string): Promise<T> | null {
+    const existing = this.inFlight.get(key);
+    if (existing) {
+      this.coalesced++;
+      return existing as Promise<T>;
+    }
+    return null;
+  }
+
+  trackInFlight<T>(key: string, taskPromise: Promise<T>): Promise<T> {
+    const wrapped = taskPromise.finally(() => {
+      this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, wrapped);
+    return wrapped;
+  }
+
   invalidate(prefix?: string): number {
     if (!prefix) {
       const count = this.store.size;
       this.store.clear();
+      this.inFlight.clear();
       return count;
     }
 
@@ -74,14 +98,25 @@ export class AdsIntelligenceCache {
         removed++;
       }
     }
+    for (const key of this.inFlight.keys()) {
+      if (key.startsWith(prefix)) {
+        this.inFlight.delete(key);
+      }
+    }
     return removed;
   }
 
   getStats(): CacheStats {
+    const totalRequests = this.hits + this.misses;
+    const hitRatio = totalRequests > 0 ? Number((this.hits / totalRequests).toFixed(3)) : 0;
     return {
       hits: this.hits,
       misses: this.misses,
+      hitRatio,
+      coalesced: this.coalesced,
+      inFlightCount: this.inFlight.size,
       keysCount: this.store.size,
+      totalKeys: this.store.size,
       lastSyncedAt: this.lastSyncedAt,
     };
   }

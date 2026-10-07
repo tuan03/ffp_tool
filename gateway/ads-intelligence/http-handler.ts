@@ -365,10 +365,31 @@ export async function handleAdsIntelligenceHttpRequest(
       return true;
     }
 
+    if (pathname === "/api/ads-intelligence/overview" && req.method === "GET") {
+      const [summary, health, reconciliation] = await Promise.all([
+        adsIntelligenceService.getStoreSummary(storeId, forceRefresh),
+        adsIntelligenceService.getDataHealth(storeId, forceRefresh),
+        adsIntelligenceService.getReconciliationReport(storeId, forceRefresh),
+      ]);
+      const stats = adsIntelligenceCache.getStats();
+      sendJson(res, 200, {
+        summary,
+        health,
+        reconciliation,
+        cacheStats: stats,
+      }, {
+        "x-ads-cache": summary.fromCache ? "HIT" : "MISS",
+        "x-ads-coalesced": String(stats.coalesced ?? 0),
+      });
+      return true;
+    }
+
     if (pathname === "/api/ads-intelligence/summary" && req.method === "GET") {
       const summary = await adsIntelligenceService.getStoreSummary(storeId, forceRefresh);
+      const stats = adsIntelligenceCache.getStats();
       sendJson(res, 200, summary, {
         "x-ads-cache": summary.fromCache ? "HIT" : "MISS",
+        "x-ads-coalesced": String(stats.coalesced ?? 0),
       });
       return true;
     }
