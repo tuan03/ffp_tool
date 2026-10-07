@@ -1,5 +1,5 @@
 node_modules
-dist
+# dist is included for client container static assets
 .git
 .github
 .runtime
