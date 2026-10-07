@@ -504,6 +504,7 @@ export function createModuleApiRunner(
         headers,
         body: JSON.stringify(requestBody),
         signal: abortController?.signal,
+        credentials: "same-origin",
       });
     } catch (networkError: unknown) {
       if (abortController?.signal.aborted) {

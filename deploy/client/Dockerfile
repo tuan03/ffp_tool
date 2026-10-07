@@ -33,6 +33,9 @@ COPY scripts/update-agent.ps1 /usr/share/nginx/html/scripts/update-agent.ps1
 COPY scripts/uninstall-agent.ps1 /usr/share/nginx/html/scripts/uninstall-agent.ps1
 COPY cai-agent.bat /usr/share/nginx/html/scripts/cai-agent.bat
 
+# Ensure static web root and scripts are readable and executable by unprivileged nginx worker
+RUN chmod -R 755 /usr/share/nginx/html
+
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]

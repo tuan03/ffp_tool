@@ -1,0 +1,41 @@
+# ==============================================================================
+# FFP Tool — E2E Test Compose Override
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f deploy/e2e.compose.override.yml up -d --build
+#
+# Preserves the strict 3-container production topology (database, server, client)
+# while isolating ports, test database, test credentials, and ephemeral volumes.
+# ==============================================================================
+
+services:
+  database:
+    environment:
+      POSTGRES_DB: ffp_tool_e2e
+      POSTGRES_USER: ffp_tool_test
+      POSTGRES_PASSWORD: e2e_test_db_password_123
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  server:
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ffp_tool_test:e2e_test_db_password_123@database:5432/ffp_tool_e2e
+      AUTO_SEO_DATABASE_URL: postgresql://ffp_tool_test:e2e_test_db_password_123@database:5432/ffp_tool_e2e
+      AMAZON_COORDINATOR_DATABASE_URL: postgresql+psycopg://ffp_tool_test:e2e_test_db_password_123@database:5432/ffp_tool_e2e
+      PINTEREST_DATABASE_URL: postgresql+psycopg://ffp_tool_test:e2e_test_db_password_123@database:5432/ffp_tool_e2e
+      FFP_OPERATOR_USERNAME: e2e-operator
+      FFP_OPERATOR_PASSWORD: e2e-operator-password-secure-123
+      GATEWAY_AUTH_TOKEN: e2e-internal-gateway-token-456
+      START_PIPELINE_WORKER: "false"
+      FFP_CRAWLER_OPERATOR_AUTH_ENABLED: "false"
+    tmpfs:
+      - /app/.runtime
+      - /app/.local-data
+
+  client:
+    environment:
+      FFP_OPERATOR_USERNAME: e2e-operator
+      FFP_OPERATOR_PASSWORD: e2e-operator-password-secure-123
+    ports:
+      - "${E2E_CLIENT_PORT:-3180}:80"

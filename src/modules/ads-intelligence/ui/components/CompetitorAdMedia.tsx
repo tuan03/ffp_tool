@@ -27,12 +27,21 @@ function toProxyMediaUrl(url: string | undefined): string | undefined {
 
 function isPlayableVideoUrl(url: string | undefined): boolean {
   if (!url) return false;
-  const clean = url.split("?")[0]?.toLowerCase() ?? "";
+  let targetUrl = url;
+  if (url.includes("media-proxy?url=")) {
+    try {
+      const parsed = new URL(url, "http://localhost");
+      targetUrl = parsed.searchParams.get("url") || url;
+    } catch {
+      targetUrl = url;
+    }
+  }
+  const clean = targetUrl.split("?")[0]?.toLowerCase() ?? "";
   if (/\.(jpe?g|png|webp|gif|svg)$/i.test(clean)) return false;
   if (clean.includes("photo-") || clean.includes("unsplash.com")) return false;
   if (/\.(mp4|webm|mov|m4v)$/i.test(clean)) return true;
-  if (url.includes("video") || url.includes("fbcdn.net/v/") || url.includes("t42.")) return true;
-  return false;
+  if (targetUrl.includes("video") || targetUrl.includes("fbcdn.net/v/") || targetUrl.includes("t42.")) return true;
+  return true;
 }
 
 export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "mediaType" | "mediaUrls" | "thumbnailUrl" | "cards" | "headline" | "pageName" | "archiveAdId"> }): React.JSX.Element {
@@ -47,6 +56,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
   if (canPlayAsVideo) {
     return (
       <video
+        key={source}
         aria-label={`Video quảng cáo ${ad.pageName}`}
         controls
         preload="none"
@@ -57,6 +67,42 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
         onError={() => setHasVideoError(true)}
         className="h-full w-full object-contain"
       />
+    );
+  }
+
+  if (hasVideoError && ad.mediaType === "VIDEO") {
+    return (
+      <div className="relative h-full w-full flex flex-col items-center justify-center bg-slate-900/80 p-4 text-center">
+        {thumbnail && (
+          <img
+            src={thumbnail}
+            alt={label}
+            className="absolute inset-0 h-full w-full object-contain opacity-30"
+          />
+        )}
+        <div className="relative z-10 flex flex-col items-center gap-2">
+          <p className="text-xs text-amber-300">Không tải được video trực tiếp từ nguồn.</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setHasVideoError(false)}
+              className="rounded bg-slate-800 px-2.5 py-1 text-xs text-cyan-300 border border-cyan-500/30 hover:bg-slate-700 transition cursor-pointer"
+            >
+              🔄 Thử tải lại
+            </button>
+            {/^\d+$/.test(ad.archiveAdId) && (
+              <a
+                href={`https://www.facebook.com/ads/library/?id=${ad.archiveAdId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded bg-blue-600/80 px-2.5 py-1 text-xs text-white hover:bg-blue-600 transition"
+              >
+                Xem trên Meta Ad Library
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
     );
   }
 

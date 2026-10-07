@@ -125,6 +125,7 @@ jobs:
             tar -xzf "$ARCHIVE" -C "$DEPLOY_DIR"
             rm -f "$ARCHIVE"
             cd "$DEPLOY_DIR"
+            [ -d "$DEPLOY_DIR/dist" ] && chmod -R a+rX "$DEPLOY_DIR/dist"
 
             # Retire files left by either legacy production topology.
             rm -f compose.prod.yaml deploy/amazon-crawler-coordinator/docker-compose.yml .env.production.example
@@ -323,6 +324,15 @@ jobs:
             if [ "$HEALTHY" = "false" ]; then
               docker compose logs --tail=50
               exit 1
+            fi
+
+            if [ -n "$INCOMING_FFP_OPERATOR_USERNAME" ] && [ -n "$INCOMING_FFP_OPERATOR_PASSWORD" ]; then
+              STATIC_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$INCOMING_FFP_OPERATOR_USERNAME:$INCOMING_FFP_OPERATOR_PASSWORD" "http://127.0.0.1:$CLIENT_PORT/" || echo "000")
+              if [ "$STATIC_CODE" = "403" ]; then
+                echo "Client static web root returned 403 Forbidden! Printing diagnostics:" >&2
+                docker compose logs --tail=100 client >&2
+                exit 1
+              fi
             fi
 
             docker compose ps
