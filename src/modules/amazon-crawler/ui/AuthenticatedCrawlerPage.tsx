@@ -17,8 +17,38 @@ import { AmazonCrawlerPage } from "./AmazonCrawlerPage";
 import { resolveAmbientCrawlerOperatorFetch } from "./ambient-operator-session";
 import type { AmazonCrawlerPageProps } from "./AmazonCrawlerPage";
 
+type AmazonCrawlerOperatorPageProps = Required<Pick<AmazonCrawlerPageProps,
+  | "runAmazonCrawler"
+  | "loadAmazonCrawlerClients"
+  | "amazonCrawlerCommands"
+  | "amazonCrawlerAdmissionGate"
+  | "amazonCrawlerJobs"
+  | "loadAmazonCrawlerJob"
+  | "clearAmazonCrawlerCache"
+  | "retryAmazonCrawlerSyncs"
+  | "imageProcessingProfiles"
+>>;
+
+export function createAmazonCrawlerOperatorPageProps(
+  engineUrl: string,
+  fetchImplementation: typeof fetch,
+): AmazonCrawlerOperatorPageProps {
+  const options = { engineUrl, fetchImplementation };
+  return {
+    runAmazonCrawler: createAmazonCrawlerRunner(options),
+    loadAmazonCrawlerClients: createAmazonCrawlerClientsLoader(options),
+    amazonCrawlerCommands: createAmazonCrawlerCommandController(options),
+    amazonCrawlerAdmissionGate: createAmazonCrawlerAdmissionGateController(options),
+    amazonCrawlerJobs: createAmazonCrawlerJobController(options),
+    loadAmazonCrawlerJob: createAmazonCrawlerJobLoader(options),
+    clearAmazonCrawlerCache: createAmazonCrawlerCacheClearer(options),
+    retryAmazonCrawlerSyncs: createAmazonCrawlerSyncRetrier(options),
+    imageProcessingProfiles: createImageProcessingProfileManager(options),
+  };
+}
+
 export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawlerPageProps & { engineUrl?: string }) {
-  const [mode, setMode] = useState<"checking" | "legacy" | "secure" | "error">(engineUrl === undefined ? "legacy" : "checking");
+  const [mode, setMode] = useState<"checking" | "legacy" | "public" | "secure" | "error">(engineUrl === undefined ? "legacy" : "checking");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -38,7 +68,7 @@ export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawl
           const required = await discoverCrawlerOperatorAuth(engineUrl);
           if (!mounted) return;
           if (!required) {
-            setMode("legacy");
+            setMode("public");
             return;
           }
           const fetchImplementation = await resolveAmbientCrawlerOperatorFetch(engineUrl);
@@ -59,21 +89,12 @@ export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawl
       activeSession.current?.abort();
     };
   }, [engineUrl]);
-  const authenticated = useMemo(() => {
-    if (!session) return null;
-    const options = { engineUrl: engineUrl ?? "", fetchImplementation: session.fetchImplementation };
-    return {
-      runAmazonCrawler: createAmazonCrawlerRunner(options),
-      loadAmazonCrawlerClients: createAmazonCrawlerClientsLoader(options),
-      amazonCrawlerCommands: createAmazonCrawlerCommandController(options),
-      amazonCrawlerAdmissionGate: createAmazonCrawlerAdmissionGateController(options),
-      amazonCrawlerJobs: createAmazonCrawlerJobController(options),
-      loadAmazonCrawlerJob: createAmazonCrawlerJobLoader(options),
-      clearAmazonCrawlerCache: createAmazonCrawlerCacheClearer(options),
-      retryAmazonCrawlerSyncs: createAmazonCrawlerSyncRetrier(options),
-      imageProcessingProfiles: createImageProcessingProfileManager(options),
-    };
-  }, [session, engineUrl]);
+  const operatorPageProps = useMemo(() => {
+    if (engineUrl === undefined) return null;
+    if (session) return createAmazonCrawlerOperatorPageProps(engineUrl, session.fetchImplementation);
+    if (mode === "public") return createAmazonCrawlerOperatorPageProps(engineUrl, fetch);
+    return null;
+  }, [session, engineUrl, mode]);
   function handleLogout(): void {
     activeSession.current?.abort();
     activeSession.current = null;
@@ -105,7 +126,10 @@ export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawl
   if (mode === "legacy") return <AmazonCrawlerPage {...original} />;
   if (mode === "checking") return <p role="status">Đang kiểm tra xác thực Coordinator…</p>;
   if (mode === "error") return <p role="alert">{error}</p>;
-  if (authenticated) return <><div className="flex justify-end p-3"><button type="button" onClick={handleLogout}>Đăng xuất operator</button></div><AmazonCrawlerPage {...original} {...authenticated} /></>;
+  if (operatorPageProps) return <>
+    {mode === "secure" ? <div className="flex justify-end p-3"><button type="button" onClick={handleLogout}>Đăng xuất operator</button></div> : null}
+    <AmazonCrawlerPage {...original} {...operatorPageProps} />
+  </>;
   return <form className="mx-auto flex max-w-md flex-col gap-4 p-6" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
     <h1 className="text-xl font-semibold">Đăng nhập Crawler Operator</h1>
     <p>Credential chỉ giữ trong bộ nhớ trang và chỉ gửi tới API crawler đã cấu hình.</p>

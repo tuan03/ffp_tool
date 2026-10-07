@@ -476,6 +476,9 @@ export function AmazonCrawlerPage({
     if (!amazonCrawlerCommands || commandBusyClientId || isClientSnapshotStale) return;
     if (client.desiredExecutionState === "DRAINING") return;
     const type = client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "RESUME" : "PAUSE";
+    if (type === "PAUSE" && !window.confirm(
+      `Dừng nhận việc trên ${client.displayName}? Task chưa hoàn tất sẽ dừng và được trả về hàng đợi; dữ liệu đã được server xác nhận vẫn được giữ.`,
+    )) return;
     setCommandBusyClientId(client.id);
     setCommandError(null);
     try {
@@ -1604,7 +1607,7 @@ export function AmazonCrawlerPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="font-semibold text-slate-100">Crawler clients</h2>
-            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online. Tạm dừng chỉ chặn job mới, không hủy task đang chạy.</p>
+            <p className="text-xs text-slate-400">Tự cập nhật mỗi 5 giây · job chỉ được tạo khi có ít nhất một client online. Dừng một agent sẽ trả task chưa hoàn tất về hàng đợi và giữ dữ liệu server đã xác nhận.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
@@ -1776,14 +1779,14 @@ export function AmazonCrawlerPage({
                     })()}
                   </details>
                   <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? "tạm dừng"
+                    <span className="text-slate-300">Lệnh: {client.desiredExecutionState === "PAUSED" ? (client.appliedExecutionState === "PAUSED" ? "đã dừng nhận việc" : "đang dừng nhận việc")
                       : client.desiredExecutionState === "DRAINING" ? "đang DRAIN"
-                      : client.desiredExecutionState === "DRAINED" ? "đã DRAINED" : "đang chạy"}
-                      {client.appliedExecutionState !== client.desiredExecutionState ? " · đang đồng bộ" : ""}</span>
+                      : client.desiredExecutionState === "DRAINED" ? "đã DRAINED"
+                        : client.appliedExecutionState === "RUNNING" ? "đang hoạt động" : "đang tiếp tục nhận việc"}</span>
                     <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.desiredExecutionState === "DRAINING"}
                       onClick={() => void handleAgentExecutionCommand(client)}
                       className="rounded border border-cyan-700 px-2 py-1 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50">
-                      {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "Tiếp tục" : "Tạm dừng"}
+                      {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "Tiếp tục nhận việc" : "Dừng nhận việc"}
                     </button>
                   </div>
                   <div className="mt-3 space-y-2 rounded border border-slate-700 p-2">
