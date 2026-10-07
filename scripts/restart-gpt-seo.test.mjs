@@ -40,7 +40,8 @@ test("production deployment writes CLIENT_PORT on a new line", async () => {
   assert.match(workflow, /grep -E "\^APP_PORT="/);
   assert.match(workflow, /sed -i '\/\^\[\[:space:\]\]\*APP_PORT=\/d' \.env/);
   assert.doesNotMatch(workflow, /docker compose -f compose\.prod\.yaml/);
-  assert.match(workflow, /docker compose up -d --build --remove-orphans/);
+  assert.match(workflow, /docker compose pull/);
+  assert.match(workflow, /docker compose up -d --remove-orphans/);
 });
 
 test("production deployment keeps the VPS action-key map authoritative over environment secrets", async () => {

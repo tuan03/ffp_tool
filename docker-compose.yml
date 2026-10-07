@@ -46,6 +46,7 @@ services:
     build:
       context: .
       dockerfile: deploy/server/Dockerfile
+    image: ${SERVER_IMAGE:-ghcr.io/tuan03/ffp-tool-server:latest}
     container_name: ffp-server
     restart: unless-stopped
     depends_on:
@@ -116,6 +117,7 @@ services:
       dockerfile: deploy/client/Dockerfile
       args:
         VITE_AGENT_INSTALL_URL: ${VITE_AGENT_INSTALL_URL:-https://ffp.b6-team.site}
+    image: ${CLIENT_IMAGE:-ghcr.io/tuan03/ffp-tool-client:latest}
     container_name: ffp-client
     restart: unless-stopped
     depends_on:
