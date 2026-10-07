@@ -32,11 +32,41 @@ export class AdsIntelligenceCache {
   private coalesced = 0;
   private lastSyncedAt: string | null = null;
 
-  // Default TTL: 15 minutes (900_000 ms), Default Stale Grace: 60 minutes (3_600_000 ms)
+  private cleanupTimer?: NodeJS.Timeout;
+
+  // Default TTL: 15 minutes (900_000 ms), Default Stale Grace: 60 minutes (3_600_000 ms), Default Max: 1000 entries
   constructor(
     private readonly defaultTtlMs = 15 * 60 * 1000,
-    private readonly defaultStaleGraceMs = 60 * 60 * 1000
-  ) {}
+    private readonly defaultStaleGraceMs = 60 * 60 * 1000,
+    private readonly maxEntries = 1000,
+    cleanupIntervalMs = 10 * 60 * 1000
+  ) {
+    if (cleanupIntervalMs > 0 && typeof setInterval === "function") {
+      this.cleanupTimer = setInterval(() => {
+        this.cleanupExpired();
+      }, cleanupIntervalMs);
+      this.cleanupTimer.unref?.();
+    }
+  }
+
+  cleanupExpired(): number {
+    const now = Date.now();
+    let removed = 0;
+    for (const [key, entry] of this.store.entries()) {
+      if (now > entry.staleExpiresAtMs) {
+        this.store.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
+  }
 
   get<T>(key: string, allowStale = false): CacheEntry<T> | null {
     const entry = this.store.get(key);
@@ -73,6 +103,16 @@ export class AdsIntelligenceCache {
   }
 
   set<T>(key: string, data: T, ttlMs?: number, staleGraceMs?: number): void {
+    if (this.store.size >= this.maxEntries && !this.store.has(key)) {
+      this.cleanupExpired();
+      if (this.store.size >= this.maxEntries) {
+        const oldestKey = this.store.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.store.delete(oldestKey);
+        }
+      }
+    }
+
     const ttl = ttlMs ?? this.defaultTtlMs;
     const staleGrace = staleGraceMs ?? this.defaultStaleGraceMs;
     const now = Date.now();

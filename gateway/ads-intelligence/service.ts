@@ -103,37 +103,47 @@ function ensureEnvLoaded(): void {
 }
 
 export class AdsIntelligenceService {
+  private readonly metaClientCache = new Map<string, MetaClient>();
+  private readonly ga4ClientCache = new Map<string, Ga4Client>();
+  private readonly shopifyClient = new ShopifyOrdersClient();
+
   private getMetaClient(storeId?: string): MetaClient | null {
     ensureEnvLoaded();
     const token = process.env[storeId ? loadStoreAdsProfile(storeId).meta.secretRef || "META_ACCESS_TOKEN" : "META_ACCESS_TOKEN"]?.trim();
     if (!token) return null;
-    const proxyUrl = process.env.META_PROXY_URL?.trim();
-    return new MetaClient({
+    const proxyUrl = process.env.META_PROXY_URL?.trim() || "";
+    const cacheKey = `${token}:${proxyUrl}`;
+    const existing = this.metaClientCache.get(cacheKey);
+    if (existing) return existing;
+
+    const client = new MetaClient({
       accessToken: token,
-      proxyUrl,
+      proxyUrl: proxyUrl || undefined,
       apiVersion: "v26.0",
     });
+    this.metaClientCache.set(cacheKey, client);
+    return client;
   }
 
   private getGa4Client(storeId?: string): Ga4Client {
     ensureEnvLoaded();
-    return new Ga4Client({ credentialsPath: storeId ? loadStoreAdsProfile(storeId).ga4.credentialRef ?? undefined : undefined });
+    const credRef = storeId ? loadStoreAdsProfile(storeId).ga4.credentialRef ?? undefined : undefined;
+    const cacheKey = credRef || "default";
+    const existing = this.ga4ClientCache.get(cacheKey);
+    if (existing) return existing;
+
+    const client = new Ga4Client({ credentialsPath: credRef });
+    this.ga4ClientCache.set(cacheKey, client);
+    return client;
   }
 
   private getShopifyClient(): ShopifyOrdersClient {
-    return new ShopifyOrdersClient();
+    return this.shopifyClient;
   }
 
   async testMetaAccountConnection(accountId: string): Promise<{ success: boolean; account: { id: string; name: string; currency: string; timezone: string; status: number } }> {
-    ensureEnvLoaded();
-    const token = process.env.META_ACCESS_TOKEN?.trim();
-    if (!token) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
-    const proxyUrl = process.env.META_PROXY_URL?.trim();
-    const meta = new MetaClient({
-      accessToken: token,
-      proxyUrl,
-      apiVersion: "v26.0",
-    });
+    const meta = this.getMetaClient();
+    if (!meta) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
     const normalizedId = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
     const account = await meta.getAccount(normalizedId);
     return {
@@ -149,15 +159,8 @@ export class AdsIntelligenceService {
   }
 
   async listMetaAccounts(): Promise<readonly { id: string; name: string; currency: string; timezone: string; status: number }[]> {
-    ensureEnvLoaded();
-    const token = process.env.META_ACCESS_TOKEN?.trim();
-    if (!token) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
-    const proxyUrl = process.env.META_PROXY_URL?.trim();
-    const meta = new MetaClient({
-      accessToken: token,
-      proxyUrl,
-      apiVersion: "v26.0",
-    });
+    const meta = this.getMetaClient();
+    if (!meta) throw new Error("Chưa cấu hình META_ACCESS_TOKEN trong hệ thống.");
     const accounts = await meta.getAdAccounts();
     return accounts.map((acc) => ({
       id: acc.id,

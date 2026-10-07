@@ -200,6 +200,7 @@ async function downloadAndCacheMedia(targetUrl: string, hash: string): Promise<b
         cachedAt: new Date().toISOString(),
       };
       await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf-8");
+      void pruneMediaCache().catch(() => {});
       return true;
     } catch (err) {
       console.warn(`[MediaProxy] Failed to download and cache ${targetUrl}:`, err);
@@ -211,6 +212,73 @@ async function downloadAndCacheMedia(targetUrl: string, hash: string): Promise<b
 
   inFlightDownloads.set(hash, downloadPromise);
   return downloadPromise;
+}
+
+const MAX_CACHE_DISK_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB limit
+const MAX_CACHE_FILES = 300; // max 300 media files
+
+let isPruning = false;
+/**
+ * Automatically purges oldest cached media files when disk usage exceeds quota.
+ */
+export async function pruneMediaCache(
+  maxSizeBytes = MAX_CACHE_DISK_BYTES,
+  maxFiles = MAX_CACHE_FILES
+): Promise<{ deletedFiles: number; freedBytes: number }> {
+  if (isPruning) return { deletedFiles: 0, freedBytes: 0 };
+  isPruning = true;
+  try {
+    ensureCacheDir();
+    const fileNames = await fs.readdir(MEDIA_CACHE_DIR);
+    const mediaFiles: { name: string; fullPath: string; size: number; mtimeMs: number }[] = [];
+    let totalDiskBytes = 0;
+
+    for (const name of fileNames) {
+      if (name.endsWith(".meta.json") || name.includes(".tmp")) continue;
+      const fullPath = join(MEDIA_CACHE_DIR, name);
+      try {
+        const st = await fs.stat(fullPath);
+        mediaFiles.push({ name, fullPath, size: st.size, mtimeMs: st.mtimeMs });
+        totalDiskBytes += st.size;
+      } catch {
+        // ignore unreadable/transient file
+      }
+    }
+
+    if (totalDiskBytes <= maxSizeBytes && mediaFiles.length <= maxFiles) {
+      return { deletedFiles: 0, freedBytes: 0 };
+    }
+
+    // Sort by modification time ascending (oldest first)
+    mediaFiles.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+    let deletedFiles = 0;
+    let freedBytes = 0;
+
+    for (const file of mediaFiles) {
+      if (totalDiskBytes <= maxSizeBytes * 0.8 && mediaFiles.length - deletedFiles <= maxFiles * 0.8) {
+        break;
+      }
+      try {
+        await fs.unlink(file.fullPath);
+        deletedFiles++;
+        freedBytes += file.size;
+        totalDiskBytes -= file.size;
+
+        const baseHash = file.name.split(".")[0];
+        if (baseHash) {
+          const metaPath = join(MEDIA_CACHE_DIR, `${baseHash}.meta.json`);
+          await fs.unlink(metaPath).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return { deletedFiles, freedBytes };
+  } finally {
+    isPruning = false;
+  }
 }
 
 /**
@@ -274,10 +342,29 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
   }
 
   const hash = computeMediaHash(targetUrl);
+  const etag = `"${hash}"`;
 
   // 1. Check if media is already in disk cache
   let cached = await findCachedFile(hash);
   const wasCached = Boolean(cached);
+
+  // Fast-path HTTP 304 Not Modified:
+  // If already cached and client sends matching If-None-Match, return 304 immediately with 0 bytes transferred
+  const ifNoneMatch = req.headers["if-none-match"];
+  if (cached && ifNoneMatch) {
+    const isMatched = ifNoneMatch === etag || ifNoneMatch === hash || ifNoneMatch === `W/${etag}`;
+    if (isMatched) {
+      res.statusCode = 304;
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Range, Authorization");
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      res.setHeader("ETag", etag);
+      res.setHeader("X-Cache", "HIT");
+      res.end();
+      return true;
+    }
+  }
 
   // 2. If not cached, trigger on-demand download & cache
   if (!cached) {
@@ -314,6 +401,7 @@ export async function handleMediaProxy(req: http.IncomingMessage, res: http.Serv
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Range, Authorization");
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.setHeader("ETag", etag);
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("X-Cache", wasCached ? "HIT" : "MISS");
 

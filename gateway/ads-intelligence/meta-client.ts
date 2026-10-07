@@ -78,12 +78,35 @@ export interface MetaClientOptions {
 export class MetaClient {
   private readonly baseUrl: string;
   private readonly dispatcher?: ProxyAgent;
+  private activeRequests = 0;
+  private readonly waitQueue: Array<() => void> = [];
+  private readonly maxConcurrency: number;
 
-  constructor(private readonly options: MetaClientOptions) {
+  constructor(private readonly options: MetaClientOptions, maxConcurrency = 4) {
+    this.maxConcurrency = maxConcurrency;
     const version = options.apiVersion ?? "v26.0";
     this.baseUrl = `https://graph.facebook.com/${version}`;
     if (options.proxyUrl) {
       this.dispatcher = new ProxyAgent(options.proxyUrl);
+    }
+  }
+
+  private async acquireSlot(): Promise<void> {
+    if (this.activeRequests < this.maxConcurrency) {
+      this.activeRequests++;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+    this.activeRequests++;
+  }
+
+  private releaseSlot(): void {
+    this.activeRequests = Math.max(0, this.activeRequests - 1);
+    const next = this.waitQueue.shift();
+    if (next) {
+      next();
     }
   }
 
@@ -102,6 +125,15 @@ export class MetaClient {
   }
 
   private async request<T>(endpoint: string, queryParams: Record<string, string> = {}, maxRetries = 2): Promise<T> {
+    await this.acquireSlot();
+    try {
+      return await this.executeRequest<T>(endpoint, queryParams, maxRetries);
+    } finally {
+      this.releaseSlot();
+    }
+  }
+
+  private async executeRequest<T>(endpoint: string, queryParams: Record<string, string> = {}, maxRetries = 2): Promise<T> {
     const url = new URL(`${this.baseUrl}/${endpoint.replace(/^\//, "")}`);
     url.searchParams.set("access_token", this.options.accessToken);
     for (const [k, v] of Object.entries(queryParams)) {

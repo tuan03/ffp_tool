@@ -184,3 +184,32 @@ test("handleAdsIntelligenceHttpRequest: handles /api/ads-intelligence/overview b
   assert.ok(parsed.cacheStats !== undefined);
 });
 
+test("AdsIntelligenceCache: actively cleans up expired entries", async () => {
+  const cache = new AdsIntelligenceCache(20, 20, 100, 0); // 20ms TTL, 20ms grace, no auto timer
+  cache.set("expire:1", "val1");
+  cache.set("expire:2", "val2");
+  assert.equal(cache.getStats().keysCount, 2);
+
+  await new Promise((r) => setTimeout(r, 50)); // wait past 40ms total stale window
+
+  const removed = cache.cleanupExpired();
+  assert.equal(removed, 2);
+  assert.equal(cache.getStats().keysCount, 0);
+  cache.destroy();
+});
+
+test("AdsIntelligenceCache: enforces maxEntries cap and evicts oldest items", () => {
+  const cache = new AdsIntelligenceCache(60_000, 60_000, 3, 0); // max 3 entries
+  cache.set("k1", 1);
+  cache.set("k2", 2);
+  cache.set("k3", 3);
+  assert.equal(cache.getStats().keysCount, 3);
+
+  // Inserting 4th item should evict k1
+  cache.set("k4", 4);
+  assert.equal(cache.getStats().keysCount, 3);
+  assert.equal(cache.get("k1"), null);
+  assert.equal(cache.get<{ value: number }>("k4")?.data, 4);
+  cache.destroy();
+});
+

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { promises as fs } from "node:fs";
 import { join, resolve } from "node:path";
-import { computeMediaHash, handleMediaProxy } from "../ads-intelligence/media-proxy";
+import { computeMediaHash, handleMediaProxy, pruneMediaCache } from "../ads-intelligence/media-proxy";
 
 const MEDIA_CACHE_DIR = resolve(process.cwd(), ".runtime/ads-intelligence/media-cache");
 
@@ -185,4 +185,93 @@ test("Media Proxy: normalizes &amp; entities and finds cached file", async () =>
     await fs.rm(metaPath, { force: true });
   }
 });
+
+test("Media Proxy: returns ETag header on 200 and responds with HTTP 304 Not Modified when If-None-Match matches", async () => {
+  const fakeUrl = "https://video.xx.fbcdn.net/v/t42.1790-2/fake_etag_test_304.mp4";
+  const hash = computeMediaHash(fakeUrl);
+  const expectedEtag = `"${hash}"`;
+
+  await fs.mkdir(MEDIA_CACHE_DIR, { recursive: true });
+  const fakeContent = Buffer.from("VIDEO_STREAM_FOR_ETAG_TEST");
+  const videoPath = join(MEDIA_CACHE_DIR, `${hash}.mp4`);
+  const metaPath = join(MEDIA_CACHE_DIR, `${hash}.meta.json`);
+
+  await fs.writeFile(videoPath, fakeContent);
+  await fs.writeFile(
+    metaPath,
+    JSON.stringify({
+      originalUrl: fakeUrl,
+      contentType: "video/mp4",
+      size: fakeContent.length,
+      cachedAt: new Date().toISOString(),
+    })
+  );
+
+  const server = http.createServer(async (req, res) => {
+    await handleMediaProxy(req, res);
+  });
+  await new Promise<void>((resolveServer) => server.listen(0, resolveServer));
+  const port = (server.address() as { port: number }).port;
+
+  try {
+    // 1. Initial 200 response should contain ETag header
+    const res200 = await fetch(
+      `http://127.0.0.1:${port}/api/ads-intelligence/media-proxy?url=${encodeURIComponent(fakeUrl)}`
+    );
+    assert.equal(res200.status, 200);
+    assert.equal(res200.headers.get("etag"), expectedEtag);
+    assert.equal(res200.headers.get("x-cache"), "HIT");
+
+    // 2. Conditional request with matching If-None-Match should return 304 Not Modified
+    const res304 = await fetch(
+      `http://127.0.0.1:${port}/api/ads-intelligence/media-proxy?url=${encodeURIComponent(fakeUrl)}`,
+      {
+        headers: { "If-None-Match": expectedEtag },
+      }
+    );
+    assert.equal(res304.status, 304);
+    assert.equal(res304.headers.get("etag"), expectedEtag);
+    assert.equal(res304.headers.get("x-cache"), "HIT");
+    const body304 = await res304.text();
+    assert.equal(body304, ""); // 0 bytes transferred
+  } finally {
+    server.close();
+    await fs.rm(videoPath, { force: true });
+    await fs.rm(metaPath, { force: true });
+  }
+});
+
+test("Media Proxy: pruneMediaCache automatically deletes oldest cached files when exceeding quota", async () => {
+  await fs.mkdir(MEDIA_CACHE_DIR, { recursive: true });
+
+  const fileA = join(MEDIA_CACHE_DIR, "test_file_a.mp4");
+  const fileB = join(MEDIA_CACHE_DIR, "test_file_b.mp4");
+  const metaA = join(MEDIA_CACHE_DIR, "test_file_a.meta.json");
+  const metaB = join(MEDIA_CACHE_DIR, "test_file_b.meta.json");
+
+  // Create file A (older)
+  await fs.writeFile(fileA, Buffer.alloc(100, "a"));
+  await fs.writeFile(metaA, JSON.stringify({ size: 100 }));
+
+  // Wait 15ms so mtime is strictly different
+  await new Promise((r) => setTimeout(r, 15));
+
+  // Create file B (newer)
+  await fs.writeFile(fileB, Buffer.alloc(100, "b"));
+  await fs.writeFile(metaB, JSON.stringify({ size: 100 }));
+
+  // Total size is 200 bytes across 2 files. Set quota to 120 bytes max.
+  const result = await pruneMediaCache(120, 10);
+  assert.equal(result.deletedFiles >= 1, true);
+  assert.equal(result.freedBytes >= 100, true);
+
+  // File A (oldest) should have been pruned
+  const fileAExists = await fs.access(fileA).then(() => true).catch(() => false);
+  assert.equal(fileAExists, false);
+
+  // Cleanup B
+  await fs.rm(fileB, { force: true });
+  await fs.rm(metaB, { force: true });
+});
+
 
