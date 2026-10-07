@@ -369,6 +369,109 @@ export function createAdsMcpServer(options: AdsMcpServerOptions = {}): McpServer
     },
   );
 
+  // 1b. Diagnostic Bundle (All-in-one store diagnosis in 1 LLM turn)
+  registerAdsTool(
+    "ads_get_diagnostic_bundle",
+    "ffp_get_diagnostic_bundle",
+    "All-in-one comprehensive store diagnosis in a single roundtrip. Aggregates Store Economics, Performance Summary, Data Health, 3-Way Triangulation (Shopify/Meta/GA4), Top Decision Engine Recommendations, and Creative Gaps.",
+    {
+      storeId: z.string().default(defaultStore).describe("Store ID, e.g. chillgen, jeminise, wrydeco"),
+      compact: z.boolean().default(true).describe("If true (default), returns concise multi-pillar diagnostic summary optimized for LLM context window"),
+    },
+    READ_ONLY,
+    async ({ storeId, compact }) => {
+      try {
+        const targetStore = storeId || defaultStore;
+        let profile = null;
+        try {
+          profile = loadStoreAdsProfile(targetStore);
+        } catch {
+          // Keep profile null if missing
+        }
+
+        const [summary, health, reconciliation, decisionCards, competitorReport] = await Promise.all([
+          service.getStoreSummary(targetStore).catch(() => null),
+          service.getDataHealth(targetStore).catch(() => null),
+          service.getReconciliationReport(targetStore).catch(() => null),
+          service.getDecisionCards(targetStore).catch(() => []),
+          service.getCompetitorIntelligence(targetStore).catch(() => null),
+        ]);
+
+        if (compact) {
+          return jsonResult({
+            storeId: targetStore,
+            currency: profile?.reportingCurrency ?? "USD",
+            economics: profile?.business ? {
+              targetCpa: profile.business.targetCpa,
+              breakEvenRoas: profile.business.breakEvenRoas,
+              breakEvenCpa: profile.business.breakEvenCpa,
+            } : null,
+            overview: summary ? {
+              period: `${summary.periodStart} to ${summary.periodEnd}`,
+              maturity: summary.maturity,
+              spend: summary.spend,
+              purchases: summary.purchases,
+              cpa: summary.cpa,
+              roas: summary.roas,
+              linkCtr: summary.linkCtr,
+            } : null,
+            dataHealth: health ? {
+              meta: health.metaConnection.status,
+              ga4: health.ga4Connection.status,
+              competitorProvider: health.competitorProvider.status,
+              maturity: health.maturity.status,
+              blockedDecisions: health.maturity.blockedDecisions,
+            } : null,
+            triangulation: reconciliation ? {
+              mer: reconciliation.shopify.mer,
+              blendedCpa: reconciliation.shopify.blendedCpa,
+              metaSpend: reconciliation.meta.spend,
+              metaPurchases: reconciliation.meta.purchases,
+              shopifyNetSales: reconciliation.shopify.netSales,
+              shopifyOrders: reconciliation.shopify.totalOrders,
+              purchaseDiscrepancy: reconciliation.gaps.purchaseDiscrepancy,
+              clickDropPct: reconciliation.gaps.clickDropPct,
+            } : null,
+            topDecisions: (decisionCards || []).slice(0, 5).map(c => ({
+              id: c.id,
+              decision: c.decision,
+              priority: c.priority,
+              confidence: c.confidence,
+              title: c.title,
+              action: c.recommendedNextStep,
+            })),
+            creativeGapsCount: competitorReport?.creativeGaps?.length ?? 0,
+            topCreativeGaps: (competitorReport?.creativeGaps || []).slice(0, 3).map(g => ({
+              id: g.id,
+              patternName: g.patternName,
+              hookType: g.hookType,
+              format: g.format,
+              competitorOccurrences: g.competitorOccurrences,
+            })),
+          });
+        }
+
+        return jsonResult({
+          storeId: targetStore,
+          profile: profile ? {
+            storeId: profile.storeId,
+            mode: profile.mode,
+            currency: profile.reportingCurrency,
+            business: profile.business,
+            rules: profile.rules,
+          } : null,
+          summary,
+          health,
+          reconciliation,
+          decisionCards,
+          competitorReport,
+        });
+      } catch (err) {
+        return errorResult(`Failed to generate diagnostic bundle: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
   // 2. Data Health & Maturity Gate
   registerAdsTool(
     "ads_get_data_health",

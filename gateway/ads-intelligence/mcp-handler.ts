@@ -234,7 +234,7 @@ export function createAdsMcpHandler(options: AdsMcpHandlerOptions = {}) {
           installerScript: "/mcp/ads/install.ps1",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 37,
+        toolsCount: 39,
       });
       return;
     }

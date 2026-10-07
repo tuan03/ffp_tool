@@ -7,6 +7,7 @@ export interface CacheEntry<T> {
   readonly data: T;
   readonly cachedAt: string;
   readonly expiresAt: string;
+  readonly isStale?: boolean;
 }
 
 export interface CacheStats {
@@ -21,25 +22,43 @@ export interface CacheStats {
 }
 
 export class AdsIntelligenceCache {
-  private readonly store = new Map<string, { value: unknown; expiresAtMs: number; cachedAtIso: string }>();
+  private readonly store = new Map<
+    string,
+    { value: unknown; expiresAtMs: number; staleExpiresAtMs: number; cachedAtIso: string }
+  >();
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private hits = 0;
   private misses = 0;
   private coalesced = 0;
   private lastSyncedAt: string | null = null;
 
-  // Default TTL: 15 minutes (900_000 ms) for near-term mutable data
-  constructor(private readonly defaultTtlMs = 15 * 60 * 1000) {}
+  // Default TTL: 15 minutes (900_000 ms), Default Stale Grace: 60 minutes (3_600_000 ms)
+  constructor(
+    private readonly defaultTtlMs = 15 * 60 * 1000,
+    private readonly defaultStaleGraceMs = 60 * 60 * 1000
+  ) {}
 
-  get<T>(key: string): CacheEntry<T> | null {
+  get<T>(key: string, allowStale = false): CacheEntry<T> | null {
     const entry = this.store.get(key);
     if (!entry) {
       this.misses++;
       return null;
     }
 
-    if (Date.now() > entry.expiresAtMs) {
-      this.store.delete(key);
+    const now = Date.now();
+    if (now > entry.expiresAtMs) {
+      if (allowStale && now <= entry.staleExpiresAtMs) {
+        this.hits++;
+        return {
+          data: entry.value as T,
+          cachedAt: entry.cachedAtIso,
+          expiresAt: new Date(entry.expiresAtMs).toISOString(),
+          isStale: true,
+        };
+      }
+      if (now > entry.staleExpiresAtMs) {
+        this.store.delete(key);
+      }
       this.misses++;
       return null;
     }
@@ -49,18 +68,22 @@ export class AdsIntelligenceCache {
       data: entry.value as T,
       cachedAt: entry.cachedAtIso,
       expiresAt: new Date(entry.expiresAtMs).toISOString(),
+      isStale: false,
     };
   }
 
-  set<T>(key: string, data: T, ttlMs?: number): void {
+  set<T>(key: string, data: T, ttlMs?: number, staleGraceMs?: number): void {
     const ttl = ttlMs ?? this.defaultTtlMs;
+    const staleGrace = staleGraceMs ?? this.defaultStaleGraceMs;
     const now = Date.now();
     const expiresAtMs = now + ttl;
+    const staleExpiresAtMs = expiresAtMs + staleGrace;
     const cachedAtIso = new Date(now).toISOString();
 
     this.store.set(key, {
       value: data,
       expiresAtMs,
+      staleExpiresAtMs,
       cachedAtIso,
     });
     this.lastSyncedAt = cachedAtIso;

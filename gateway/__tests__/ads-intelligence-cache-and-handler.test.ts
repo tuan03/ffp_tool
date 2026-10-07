@@ -34,6 +34,26 @@ test("AdsIntelligenceCache: returns null when key does not exist or expired", as
   assert.equal(stats.misses, 1);
 });
 
+test("AdsIntelligenceCache: returns stale data when allowStale=true within grace period", async () => {
+  const cache = new AdsIntelligenceCache(20, 100); // 20ms TTL, 100ms grace
+  cache.set("swr:test", "stale_value");
+
+  await new Promise((r) => setTimeout(r, 35)); // past 20ms TTL, but within 120ms total stale window
+
+  const freshOnly = cache.get<string>("swr:test", false);
+  assert.equal(freshOnly, null);
+
+  const staleEntry = cache.get<string>("swr:test", true);
+  assert.ok(staleEntry !== null);
+  assert.equal(staleEntry.data, "stale_value");
+  assert.equal(staleEntry.isStale, true);
+
+  await new Promise((r) => setTimeout(r, 100)); // past 120ms total stale window
+
+  const expiredEntry = cache.get<string>("swr:test", true);
+  assert.equal(expiredEntry, null);
+});
+
 test("AdsIntelligenceCache: invalidates by prefix or all", () => {
   const cache = new AdsIntelligenceCache(60_000);
   cache.set("store1:summary", "sum1");

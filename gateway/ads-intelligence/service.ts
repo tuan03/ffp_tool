@@ -200,15 +200,20 @@ export class AdsIntelligenceService {
   async getStoreSummary(storeId = "chillgen", forceRefresh = false): Promise<AdsStoreSummary> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:summary`;
+    let staleCached: AdsStoreSummary | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AdsStoreSummary>(cacheKey);
+      const cached = adsIntelligenceCache.get<AdsStoreSummary>(cacheKey, true);
       if (cached) {
-        return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        if (!cached.isStale) {
+          return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        }
+        staleCached = { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
       }
     }
 
     const inFlight = adsIntelligenceCache.getInFlight<AdsStoreSummary>(cacheKey);
     if (inFlight) {
+      if (staleCached) return staleCached;
       return inFlight;
     }
 
@@ -282,21 +287,33 @@ export class AdsIntelligenceService {
       return summary;
     })();
 
-    return adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getCampaignHierarchy(storeId = "chillgen", forceRefresh = false): Promise<readonly AdsHierarchyCampaign[]> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:hierarchy`;
+    let staleCached: readonly AdsHierarchyCampaign[] | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<readonly AdsHierarchyCampaign[]>(cacheKey);
+      const cached = adsIntelligenceCache.get<readonly AdsHierarchyCampaign[]>(cacheKey, true);
       if (cached) {
-        return cached.data;
+        if (!cached.isStale) {
+          return cached.data;
+        }
+        staleCached = cached.data;
       }
     }
 
     const inFlight = adsIntelligenceCache.getInFlight<readonly AdsHierarchyCampaign[]>(cacheKey);
     if (inFlight) {
+      if (staleCached) return staleCached;
       return inFlight;
     }
 
@@ -447,21 +464,33 @@ export class AdsIntelligenceService {
     return result;
     })();
 
-    return adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getDataHealth(storeId = "chillgen", forceRefresh = false): Promise<AdsDataHealth> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:health`;
+    let staleCached: AdsDataHealth | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AdsDataHealth>(cacheKey);
+      const cached = adsIntelligenceCache.get<AdsDataHealth>(cacheKey, true);
       if (cached) {
-        return cached.data;
+        if (!cached.isStale) {
+          return cached.data;
+        }
+        staleCached = cached.data;
       }
     }
 
     const inFlight = adsIntelligenceCache.getInFlight<AdsDataHealth>(cacheKey);
     if (inFlight) {
+      if (staleCached) return staleCached;
       return inFlight;
     }
 
@@ -538,7 +567,14 @@ export class AdsIntelligenceService {
     return health;
     })();
 
-    return adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getCompetitorAds(storeId = "chillgen", forceRefresh = false): Promise<readonly CompetitorAdCard[]> {
@@ -560,15 +596,20 @@ export class AdsIntelligenceService {
   async getReconciliationReport(storeId = "chillgen", forceRefresh = false): Promise<AdsReconciliationReport> {
     await assertAdsStoreDomain(storeId, loadStoreAdsProfile(storeId).shopify.shopDomain);
     const cacheKey = `${storeId}:reconciliation`;
+    let staleCached: AdsReconciliationReport | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AdsReconciliationReport>(cacheKey);
+      const cached = adsIntelligenceCache.get<AdsReconciliationReport>(cacheKey, true);
       if (cached) {
-        return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        if (!cached.isStale) {
+          return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        }
+        staleCached = { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
       }
     }
 
     const inFlight = adsIntelligenceCache.getInFlight<AdsReconciliationReport>(cacheKey);
     if (inFlight) {
+      if (staleCached) return staleCached;
       return inFlight;
     }
 
@@ -653,20 +694,32 @@ export class AdsIntelligenceService {
     return report;
     })();
 
-    return adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getDecisionCards(storeId = "chillgen", forceRefresh = false): Promise<readonly DecisionCard[]> {
     const cacheKey = `${storeId}:decisions`;
+    let staleCached: readonly DecisionCard[] | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<readonly DecisionCard[]>(cacheKey);
+      const cached = adsIntelligenceCache.get<readonly DecisionCard[]>(cacheKey, true);
       if (cached) {
-        return cached.data;
+        if (!cached.isStale) {
+          return cached.data;
+        }
+        staleCached = cached.data;
       }
     }
 
     const inFlight = adsIntelligenceCache.getInFlight<readonly DecisionCard[]>(cacheKey);
     if (inFlight) {
+      if (staleCached) return staleCached;
       return inFlight;
     }
 
@@ -695,7 +748,14 @@ export class AdsIntelligenceService {
       return cards;
     })();
 
-    return adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getAiStrategicReport(
@@ -706,15 +766,20 @@ export class AdsIntelligenceService {
     const runner = options?.runner || "codex";
     const model = options?.model;
     const cacheKey = `${storeId}:ai-report:${runner}:${model || "default"}`;
+    let staleCached: AiStrategicReport | null = null;
     if (!forceRefresh) {
-      const cached = adsIntelligenceCache.get<AiStrategicReport>(cacheKey);
+      const cached = adsIntelligenceCache.get<AiStrategicReport>(cacheKey, true);
       if (cached) {
-        return { ...cached.data, fromCache: true };
+        if (!cached.isStale) {
+          return { ...cached.data, fromCache: true };
+        }
+        staleCached = { ...cached.data, fromCache: true };
       }
     }
 
     const inFlight = adsIntelligenceCache.getInFlight<AiStrategicReport>(cacheKey);
     if (inFlight) {
+      if (staleCached) return staleCached;
       return inFlight;
     }
 
@@ -749,7 +814,14 @@ export class AdsIntelligenceService {
       return { ...report, fromCache: false };
     })();
 
-    return adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return staleCached;
+    }
+    return trackingPromise;
   }
 
   async getCompetitorIntelligence(
@@ -783,22 +855,31 @@ export class AdsIntelligenceService {
     };
 
     const cacheKey = `${storeId}:competitors`;
+    let staleCached: CompetitorIntelligenceReport | null = null;
     if (!forceRefresh) {
       const inFlight = adsIntelligenceCache.getInFlight<CompetitorIntelligenceReport>(cacheKey);
+      const cached = adsIntelligenceCache.get<CompetitorIntelligenceReport>(cacheKey, true);
+      if (cached) {
+        if (!cached.isStale) {
+          return applyFilters(
+            {
+              ...cached.data,
+              fromCache: true,
+              cachedAt: new Date(cached.cachedAt).toISOString(),
+            },
+            filters
+          );
+        }
+        staleCached = {
+          ...cached.data,
+          fromCache: true,
+          cachedAt: new Date(cached.cachedAt).toISOString(),
+        };
+      }
       if (inFlight) {
+        if (staleCached) return applyFilters(staleCached, filters);
         const inflightReport = await inFlight;
         return applyFilters(inflightReport, filters);
-      }
-      const cached = adsIntelligenceCache.get<CompetitorIntelligenceReport>(cacheKey);
-      if (cached) {
-        return applyFilters(
-          {
-            ...cached.data,
-            fromCache: true,
-            cachedAt: new Date(cached.cachedAt).toISOString(),
-          },
-          filters
-        );
       }
     }
 
@@ -892,7 +973,14 @@ export class AdsIntelligenceService {
       return report;
     })();
 
-    const report = await adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    const trackingPromise = adsIntelligenceCache.trackInFlight(cacheKey, fetchTask);
+    if (staleCached) {
+      trackingPromise.catch((err) => {
+        console.warn(`[AdsIntelligence] SWR revalidation failed for ${cacheKey}:`, err);
+      });
+      return applyFilters(staleCached, filters);
+    }
+    const report = await trackingPromise;
     return applyFilters(report, filters);
   }
 

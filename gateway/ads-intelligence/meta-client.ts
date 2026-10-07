@@ -87,27 +87,66 @@ export class MetaClient {
     }
   }
 
-  private async request<T>(endpoint: string, queryParams: Record<string, string> = {}): Promise<T> {
+  private isRetryable(status: number, errorCode?: number): boolean {
+    if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+    // Meta specific rate-limit / transient error codes:
+    // 17: User request limit reached
+    // 32: Page request limit reached
+    // 80004: There have been too many calls to this ad-account
+    // 1: An unknown error occurred (transient internal Meta glitch)
+    // 2: An unexpected error has occurred
+    if (errorCode === 17 || errorCode === 32 || errorCode === 80004 || errorCode === 1 || errorCode === 2) {
+      return true;
+    }
+    return false;
+  }
+
+  private async request<T>(endpoint: string, queryParams: Record<string, string> = {}, maxRetries = 2): Promise<T> {
     const url = new URL(`${this.baseUrl}/${endpoint.replace(/^\//, "")}`);
     url.searchParams.set("access_token", this.options.accessToken);
     for (const [k, v] of Object.entries(queryParams)) {
       url.searchParams.set(k, v);
     }
 
-    const res = await undiciFetch(url.toString(), {
-      dispatcher: this.dispatcher,
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await undiciFetch(url.toString(), {
+          dispatcher: this.dispatcher,
+          headers: {
+            Accept: "application/json",
+          },
+        });
 
-    const json = (await res.json()) as { error?: { message: string; type: string; code: number; error_subcode?: number } };
-    if (!res.ok || json.error) {
-      const err = json.error;
-      throw new Error(`Meta API error (${res.status}): ${err?.message ?? "Unknown error"} [code: ${err?.code ?? res.status}]`);
+        const json = (await res.json()) as { error?: { message: string; type: string; code: number; error_subcode?: number } };
+        if (!res.ok || json.error) {
+          const err = json.error;
+          const status = res.status;
+          const code = err?.code ?? status;
+
+          if (attempt < maxRetries && this.isRetryable(status, err?.code)) {
+            const delayMs = 300 * Math.pow(2, attempt) + Math.floor(Math.random() * 100);
+            await new Promise((r) => setTimeout(r, delayMs));
+            continue;
+          }
+
+          throw new Error(`Meta API error (${res.status}): ${err?.message ?? "Unknown error"} [code: ${code}]`);
+        }
+
+        return json as T;
+      } catch (err: any) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const isNetworkErr = err?.code === "ECONNRESET" || err?.code === "ETIMEDOUT" || err?.message?.includes("fetch failed");
+        if (attempt < maxRetries && isNetworkErr) {
+          const delayMs = 300 * Math.pow(2, attempt) + Math.floor(Math.random() * 100);
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        throw lastError;
+      }
     }
 
-    return json as T;
+    throw lastError ?? new Error("Meta API request failed after retries");
   }
 
   async getAccount(accountId: string): Promise<MetaAccountRaw> {

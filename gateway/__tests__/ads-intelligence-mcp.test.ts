@@ -26,7 +26,7 @@ async function connectInMemoryClient(storeId = "chillgen") {
   return { client, server };
 }
 
-test("Ads MCP Server initializes with instructions and registers all 37 tools including Gateway store discovery", async () => {
+test("Ads MCP Server initializes with instructions and registers all 39 tools including Gateway store discovery", async () => {
   const { client, server } = await connectInMemoryClient();
 
   try {
@@ -40,9 +40,10 @@ test("Ads MCP Server initializes with instructions and registers all 37 tools in
     const toolsResponse = await client.listTools();
     const toolNames = toolsResponse.tools.map(t => t.name);
 
-    // 15 canonical tools
+    // 16 canonical tools
     const canonicalTools = [
       "ads_get_store_overview",
+      "ads_get_diagnostic_bundle",
       "ads_get_data_health",
       "ads_query_performance",
       "ads_get_funnel_evidence",
@@ -63,9 +64,10 @@ test("Ads MCP Server initializes with instructions and registers all 37 tools in
       assert.ok(toolNames.includes(tool), `Expected tool ${tool} to be registered`);
     }
 
-    // 15 README Step 16 aliases
+    // 16 README Step 16 aliases
     const aliasTools = [
       "ffp_get_store_context",
+      "ffp_get_diagnostic_bundle",
       "ffp_get_data_health",
       "ffp_query_performance",
       "ffp_get_funnel_evidence",
@@ -86,7 +88,7 @@ test("Ads MCP Server initializes with instructions and registers all 37 tools in
       assert.ok(toolNames.includes(alias), `Expected alias ${alias} to be registered`);
     }
 
-    assert.equal(toolNames.length, 37);
+    assert.equal(toolNames.length, 39);
     assert.ok(toolNames.includes("ads_publish_competitor_research"));
     assert.ok(toolNames.includes("ads_get_competitor_research"));
     assert.ok(toolNames.includes("ads_list_stores"));
@@ -123,6 +125,20 @@ test("Ads MCP Server tools execute correctly and return structured data", async 
     // Ensure no secrets leaked
     assert.equal(overviewData.profile.metaAccessToken, undefined);
     assert.equal(overviewData.profile.proxyUrl, undefined);
+
+    // 1b. ads_get_diagnostic_bundle
+    const bundleRes = await client.callTool({
+      name: "ads_get_diagnostic_bundle",
+      arguments: { storeId: "chillgen", compact: true },
+    });
+    assert.ok(bundleRes.structuredContent);
+    const bundleData = bundleRes.structuredContent as Record<string, any>;
+    assert.equal(bundleData.storeId, "chillgen");
+    assert.equal(bundleData.currency, "USD");
+    assert.ok(bundleData.overview);
+    assert.ok(bundleData.dataHealth);
+    assert.ok(Array.isArray(bundleData.topDecisions));
+    assert.ok(typeof bundleData.creativeGapsCount === "number");
 
     // 2. ads_get_data_health
     const healthRes = await client.callTool({
@@ -360,7 +376,7 @@ test("Ads MCP HTTP Handler serves GET probe info and handles requests", async ()
   const parsed = JSON.parse(responseBody);
   assert.equal(parsed.status, "ok");
   assert.equal(parsed.server, "ffp-ads-intelligence");
-  assert.equal(parsed.toolsCount, 37);
+  assert.equal(parsed.toolsCount, 39);
 });
 
 test("OpenAPI spec generator produces valid 3.1.0 schema with all endpoints", async () => {
@@ -431,7 +447,7 @@ test("Gateway HTTP handler serves /api/ads-intelligence/openapi.json and /mcp/in
   assert.equal(mcpInfoStatus, 200);
   const parsedMcp = JSON.parse(mcpInfoBody);
   assert.equal(parsedMcp.server, "ffp-ads-intelligence");
-  assert.equal(parsedMcp.toolsCount, 37);
+  assert.equal(parsedMcp.toolsCount, 39);
 });
 
 test("McpUserManager manages users, verifies tokens, and records audit logs", async () => {

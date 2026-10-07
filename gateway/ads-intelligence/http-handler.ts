@@ -18,14 +18,46 @@ import { localAiRunner } from "./local-ai-runner";
 import { loadStoreAdsProfile, saveStoreAdsProfile, validateStoreAdsProfile } from "./store-profile";
 import { mcpUserManager } from "./mcp-users";
 import { handleMediaProxy } from "./media-proxy";
+import zlib from "node:zlib";
 
-function sendJson(res: http.ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
+function sendJson(
+  res: http.ServerResponse,
+  statusCode: number,
+  data: unknown,
+  headers: Record<string, string> = {},
+  req?: http.IncomingMessage
+): void {
   res.statusCode = statusCode;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  for (const [k, v] of Object.entries(headers)) {
-    res.setHeader(k, v);
+  if (typeof res.setHeader === "function") {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    for (const [k, v] of Object.entries(headers)) {
+      res.setHeader(k, v);
+    }
   }
-  res.end(JSON.stringify(data));
+
+  const jsonStr = JSON.stringify(data);
+  const effectiveReq = req ?? (res as any).__req;
+  const acceptEncoding = effectiveReq?.headers?.["accept-encoding"] || "";
+
+  if (
+    jsonStr.length > 1024 &&
+    typeof acceptEncoding === "string" &&
+    acceptEncoding.includes("gzip") &&
+    typeof res.setHeader === "function"
+  ) {
+    try {
+      const gzipped = zlib.gzipSync(Buffer.from(jsonStr, "utf-8"));
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Vary", "Accept-Encoding");
+      res.setHeader("Content-Length", String(gzipped.length));
+      res.end(gzipped);
+      return;
+    } catch {
+      // Fallback to uncompressed string
+    }
+  }
+
+  res.end(jsonStr);
 }
 
 function sendText(res: http.ServerResponse, statusCode: number, text: string, contentType = "text/plain; charset=utf-8"): void {
@@ -73,6 +105,7 @@ export async function handleAdsIntelligenceHttpRequest(
   const pathname = parsedUrl.pathname;
   const storeId = parsedUrl.searchParams.get("storeId") || "chillgen";
   const forceRefresh = parsedUrl.searchParams.get("refresh") === "true";
+  (res as any).__req = req;
 
   try {
     if (pathname === "/api/ads-intelligence/media-proxy") {
@@ -310,7 +343,7 @@ export async function handleAdsIntelligenceHttpRequest(
           installerScriptUnix: "/mcp/ads/install.sh",
           openApiSpec: "/api/ads-intelligence/openapi.json",
         },
-        toolsCount: 37,
+        toolsCount: 39,
       });
       return true;
     }
