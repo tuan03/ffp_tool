@@ -331,7 +331,7 @@ class CoordinatorStore(CoordinatorObservability):
             CrawlProductItem.status != "deleted",
             CrawlProductItem.source_key.like(f"amazon:{identity[0]}:%"),
         )).all():
-            if retained.source_key == _source_key(product) or aliases & cls._product_exact_asins(retained.raw_payload):
+            if retained.source_key == _source_key(product) or aliases & cls._product_exact_asins(retained.raw_payload or retained.normalized_payload or {}):
                 return retained.id
         return None
 
@@ -535,7 +535,7 @@ class CoordinatorStore(CoordinatorObservability):
             product_ids.update(link.shopify_product_id for link in links)
             product_ids.update(str((item.shopify_result or {}).get("productId")) for item in family_items
                                if (item.shopify_result or {}).get("productId"))
-            exact_asins = set().union(*(self._product_exact_asins(item.raw_payload) for item in family_items))
+            exact_asins = set().union(*(self._product_exact_asins(item.raw_payload or item.normalized_payload or {}) for item in family_items))
             exact_asins.update(row.asin for row in rows)
             if verify_shopify is None:
                 if product_ids:
@@ -549,7 +549,7 @@ class CoordinatorStore(CoordinatorObservability):
             existing_asins = verification["existingAsins"]
             recoverable: list[CrawlProductItem] = []
             for item in family_items:
-                aliases = self._product_exact_asins(item.raw_payload)
+                aliases = self._product_exact_asins(item.raw_payload or item.normalized_payload or {})
                 linked_ids = {pid for row in rows if row.asin in aliases for pid in (row.shopify_product_ids or [])}
                 link = links_by_source.get(item.source_key)
                 if link is not None:
@@ -561,7 +561,16 @@ class CoordinatorStore(CoordinatorObservability):
                     continue
                 if self._is_operator_cleared_seo_item(item) or (item.status in {"completed", "deleted"} and was_deleted_on_shopify):
                     review = (item.shopify_result or {}).get("review") or {}
-                    if item.claimed_by or item.claim_expires_at or review.get("syncStatus") in {"queued", "syncing"}:
+                    # Older sync completion cleared the expiry but retained the
+                    # owner. A confirmed synced terminal record with no lease
+                    # cannot be owned by an active pipeline claim.
+                    has_legacy_sync_owner = (
+                        item.status in {"completed", "deleted"}
+                        and review.get("syncStatus") == "synced"
+                        and bool((item.shopify_result or {}).get("productId"))
+                        and item.claim_expires_at is None
+                    )
+                    if (item.claimed_by and not has_legacy_sync_owner) or item.claim_expires_at or review.get("syncStatus") in {"queued", "syncing"}:
                         raise ValueError("A selected product still has a pipeline claim.")
                     operation = session.scalar(select(ShopifyOperationIdempotency).where(
                         ShopifyOperationIdempotency.store_id == normalized_store_id,
@@ -572,7 +581,7 @@ class CoordinatorStore(CoordinatorObservability):
                     recoverable.append(item)
             retained_sources = {item.source_key for item in retained_items
                                 if not (item.shopify_result or {}).get("recrawlReleased")}
-            retained_aliases = set().union(*(self._product_exact_asins(item.raw_payload) for item in retained_items
+            retained_aliases = set().union(*(self._product_exact_asins(item.raw_payload or item.normalized_payload or {}) for item in retained_items
                                             if not (item.shopify_result or {}).get("recrawlReleased")))
             orphan_aliases = {
                 row.asin for row in rows
@@ -598,7 +607,7 @@ class CoordinatorStore(CoordinatorObservability):
             ).with_for_update()).all()
             if newer_items:
                 raise ValueError("A newer pipeline record exists for a selected product; reconcile it first.")
-            released_aliases = set().union(*(self._product_exact_asins(item.raw_payload) for item in recoverable))
+            released_aliases = set().union(*(self._product_exact_asins(item.raw_payload or item.normalized_payload or {}) for item in recoverable))
             released_aliases.update(orphan_aliases)
             obsolete_ids = {pid for row in rows if row.asin in released_aliases
                             for pid in (row.shopify_product_ids or []) if pid in missing_ids}
@@ -3033,6 +3042,7 @@ class CoordinatorStore(CoordinatorObservability):
             item.last_error = None
             item.next_attempt_at = None
             item.claim_expires_at = None
+            item.claimed_by = None
             item.completed_at = utc_now()
             operation = session.scalar(select(ShopifyOperationIdempotency).where(
                 ShopifyOperationIdempotency.store_id == store_id,

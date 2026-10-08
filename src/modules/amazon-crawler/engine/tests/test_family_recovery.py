@@ -136,6 +136,48 @@ class MixedFamilyRecoveryTests(unittest.TestCase):
             session.get(CrawlProductItem, "001").status = "deleted"
         self.assertEqual(self.recover(missing=("gid://shopify/Product/123",), existing=())["releasedAsins"], 3)
 
+    def test_synced_history_without_raw_payload_and_with_legacy_owner_can_recrawl(self):
+        with self.sessions.begin() as session:
+            candidate = session.get(CrawlProductItem, "001")
+            candidate.normalized_payload = candidate.raw_payload
+            candidate.raw_payload = {}
+            candidate.status = "deleted"
+            candidate.claimed_by = "previous-sync-worker"
+            candidate.claim_expires_at = None
+        self.assertEqual(self.recover(missing=("gid://shopify/Product/123",), existing=())["releasedAsins"], 3)
+        with self.sessions() as session:
+            self.assertEqual(session.get(AmazonAsinRegistry, "001").status, "released")
+            self.assertIsNone(session.get(CrawlProductItem, "001").claimed_by)
+
+    def test_completed_sync_clears_worker_owner_and_expiry(self):
+        with self.sessions.begin() as session:
+            candidate = session.get(CrawlProductItem, "003")
+            candidate.status = "shopify_writing"
+            candidate.claimed_by = "sync-worker"
+            candidate.claim_expires_at = utc_now()
+        self.assertTrue(self.store.complete_product_item(
+            "003", worker_id="sync-worker", store_id="store-a", normalized_checksum="checksum",
+            normalized_payload={"asin": "B0CHILD003", "parentAsin": "B0PARENT01"},
+            shopify_result={"productId": "gid://shopify/Product/456"},
+        ))
+        with self.sessions() as session:
+            self.assertIsNone(session.get(CrawlProductItem, "003").claimed_by)
+            self.assertIsNone(session.get(CrawlProductItem, "003").claim_expires_at)
+
+    def test_synced_terminal_record_with_lease_still_blocks_recovery(self):
+        with self.sessions.begin() as session:
+            candidate = session.get(CrawlProductItem, "001")
+            candidate.claimed_by = "sync-worker"
+            candidate.claim_expires_at = utc_now()
+        with self.assertRaisesRegex(ValueError, "pipeline claim"):
+            self.recover(missing=("gid://shopify/Product/123",), existing=())
+
+    def test_unsynced_failed_record_with_owner_but_no_expiry_is_not_ignored(self):
+        with self.sessions.begin() as session:
+            session.get(CrawlProductItem, "003").claimed_by = "unknown-owner"
+        with self.assertRaisesRegex(ValueError, "pipeline claim"):
+            self.recover()
+
     def test_active_crawl_task_blocks_recovery(self):
         with self.sessions.begin() as session:
             session.get(CrawlTask, "old-task").status = "running"
