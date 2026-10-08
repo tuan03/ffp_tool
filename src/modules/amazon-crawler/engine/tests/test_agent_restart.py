@@ -35,19 +35,26 @@ class AgentRestartLauncherTests(unittest.TestCase):
                 self.assertEqual(FakeLock.attempts, 2)
 
     def test_replacement_launch_carries_command_id_and_uses_detached_process(self) -> None:
-        with patch.object(sys, "frozen", False, create=True), patch.object(sys, "argv", ["agent.py", "--no-tray"]), \
-                patch("engine.distributed.client_restart.subprocess.Popen") as popen:
-            self.assertTrue(launch_replacement_agent("restart-123", Path("C:/agent")))
-
-        arguments, options = popen.call_args
-        command = arguments[0]
-        self.assertEqual(command[0], sys.executable)
-        self.assertIn("agent.py", command)
-        self.assertIn("--no-tray", command)
-        self.assertEqual(command[-2:], ["--restart-command-id", "restart-123"])
-        self.assertEqual(options["cwd"], "C:\\agent")
-        self.assertTrue(options["close_fds"])
-        self.assertTrue(options["creationflags"] & getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
+        project_root = Path("C:/agent")
+        for platform in ("nt", "posix"):
+            with self.subTest(platform=platform), patch.object(sys, "frozen", False, create=True), \
+                    patch.object(sys, "argv", ["agent.py", "--no-tray"]), \
+                    patch("engine.distributed.client_restart.os.name", platform), \
+                    patch("engine.distributed.client_restart.subprocess.Popen") as popen:
+                self.assertTrue(launch_replacement_agent("restart-123", project_root))
+            arguments, options = popen.call_args
+            command = arguments[0]
+            self.assertEqual(command[0], sys.executable)
+            self.assertIn("agent.py", command)
+            self.assertIn("--no-tray", command)
+            self.assertEqual(command[-2:], ["--restart-command-id", "restart-123"])
+            self.assertEqual(options["cwd"], str(project_root))
+            self.assertTrue(options["close_fds"])
+            if platform == "nt":
+                self.assertTrue(options["creationflags"] & getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
+            else:
+                self.assertTrue(options["start_new_session"])
+                self.assertNotIn("creationflags", options)
 
     def test_invalid_command_id_is_not_launched(self) -> None:
         with patch("engine.distributed.client_restart.subprocess.Popen") as popen:
