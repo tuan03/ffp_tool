@@ -1052,6 +1052,9 @@ export function createAmazonCrawlerJobController({
       }
       return readJobSnapshot(payload.replacementJob);
     },
+    async archive(jobId) {
+      await readJson(await fetchImplementation(`${jobUrl(jobId)}/archive`, { method: "POST" }));
+    },
     async delete(jobId) {
       await readJson(await fetchImplementation(jobUrl(jobId), { method: "DELETE" }));
     },

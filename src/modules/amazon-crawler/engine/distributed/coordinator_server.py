@@ -26,7 +26,7 @@ from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .release_catalog import cached_release_version
 from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
-from .coordinator_store import ActiveJobExistsError, CoordinatorStore
+from .coordinator_store import ActiveJobExistsError, CoordinatorStore, ProductPipelineActiveError
 from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
 from .operator_authorization import OperatorAudit, OperatorCredentials, install_operator_authorization
@@ -776,17 +776,36 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.delete("/api/v1/crawl-jobs/{job_id}")
     async def delete_job(job_id: str) -> Response:
-        snapshot = store.cancel_job(job_id)
-        if snapshot is not None:
-            await manager.broadcast({
-                "type": "cancel",
-                "jobId": job_id,
-                "cancellationId": (snapshot.get("cancellation") or {}).get("id"),
-                "discard": True,
-            })
-        if not store.delete_job(job_id):
+        try:
+            if not store.assert_job_deletable(job_id):
+                raise HTTPException(status_code=404, detail="Crawl job was not found.")
+            snapshot = store.cancel_job(job_id)
+            if snapshot is not None:
+                await manager.broadcast({
+                    "type": "cancel",
+                    "jobId": job_id,
+                    "cancellationId": (snapshot.get("cancellation") or {}).get("id"),
+                    "discard": True,
+                })
+            deleted = store.delete_job(job_id)
+        except ProductPipelineActiveError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="Job còn sản phẩm đang xử lý sau khi bàn giao SEO. Hãy ẩn job thay vì xóa dữ liệu pipeline.",
+            ) from error
+        if not deleted:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         return Response(status_code=204)
+
+    @app.post("/api/v1/crawl-jobs/{job_id}/archive")
+    async def archive_job(job_id: str) -> dict[str, str]:
+        try:
+            archived = store.archive_job(job_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if not archived:
+            raise HTTPException(status_code=404, detail="Crawl job was not found.")
+        return {"status": "archived"}
 
     @app.post("/api/v1/crawl-jobs/{job_id}/retry-failed")
     async def retry_failed(job_id: str) -> dict[str, Any]:

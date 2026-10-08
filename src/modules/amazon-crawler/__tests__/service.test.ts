@@ -661,7 +661,7 @@ test("cache clearer sends DELETE and validates the engine response", async () =>
   assert.deepEqual(requests, [{ url: "http://engine.test/api/v1/clients/cache", method: "DELETE" }]);
 });
 
-test("job controller lists, cancels, replaces and deletes coordinator jobs", async () => {
+test("job controller lists, cancels, replaces, archives and deletes coordinator jobs", async () => {
   const requests: Array<{ url: string; method: string }> = [];
   const snapshot = (jobId: string, status = "running") => ({
     id: jobId,
@@ -689,6 +689,7 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
       const method = init?.method ?? "GET";
       requests.push({ url, method });
       if (method === "DELETE") return new Response(null, { status: 204 });
+      if (url.endsWith("/archive")) return jsonResponse({ status: "archived" });
       if (url.endsWith("/replace")) {
         return jsonResponse({ replacementJob: snapshot("job-2") }, 202);
       }
@@ -704,6 +705,9 @@ test("job controller lists, cancels, replaces and deletes coordinator jobs", asy
   assert.equal(requests.at(-1)?.url, "http://coordinator.test/api/v1/crawl-tasks/task%2F1/cancel");
   assert.equal(requests.at(-1)?.method, "POST");
   assert.equal((await jobs.replace("job-1", input)).jobId, "job-2");
+  await jobs.archive("job-1");
+  assert.equal(requests.at(-1)?.url, "http://coordinator.test/api/v1/crawl-jobs/job-1/archive");
+  assert.equal(requests.at(-1)?.method, "POST");
   await jobs.delete("job-1");
   assert.equal(requests.at(-1)?.method, "DELETE");
 });

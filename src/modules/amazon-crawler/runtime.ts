@@ -39,6 +39,7 @@ export function getAmazonCrawlerJobController(environment: AppEnvironment, engin
     invalidateProductCache: async () => ({ removedFiles: 0, removedBytes: 0 }),
     clearTemporaryData: async () => ({ removedFiles: 0, removedBytes: 0, discardedJobs: 0 }),
     replace: async () => { throw new Error("Mock job was not found."); },
+    archive: async () => undefined,
     delete: async () => undefined,
   };
 }

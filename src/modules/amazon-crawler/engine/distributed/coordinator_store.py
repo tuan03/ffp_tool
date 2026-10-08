@@ -150,6 +150,14 @@ class ActiveJobExistsError(RuntimeError):
         self.job_id = job_id
 
 
+class ProductPipelineActiveError(RuntimeError):
+    def __init__(self, job_id: str, statuses: set[str]) -> None:
+        ordered_statuses = ", ".join(sorted(statuses))
+        super().__init__(f"Crawl job {job_id} still owns nonterminal product pipeline work: {ordered_statuses}.")
+        self.job_id = job_id
+        self.statuses = statuses
+
+
 def _id() -> str:
     return uuid.uuid4().hex
 
@@ -3629,12 +3637,26 @@ class CoordinatorStore(CoordinatorObservability):
                 self._purge_job_rows(session, job_id)
             return len(job_ids)
 
-    def delete_job(self, job_id: str) -> bool:
+    def assert_job_deletable(self, job_id: str) -> bool:
         with self.sessions.begin() as session:
             existing_tombstone = session.get(DeletedCrawlJob, job_id)
             job = session.get(CrawlJob, job_id)
             if job is None:
                 return existing_tombstone is not None
+            statuses = set(session.scalars(select(CrawlProductItem.status).where(
+                CrawlProductItem.job_id == job_id,
+                CrawlProductItem.status.not_in(TERMINAL_PRODUCT_STATUSES),
+            )).all())
+            if statuses:
+                raise ProductPipelineActiveError(job_id, statuses)
+            return True
+
+    def delete_job(self, job_id: str) -> bool:
+        if not self.assert_job_deletable(job_id):
+            return False
+        with self.sessions() as session:
+            if session.get(CrawlJob, job_id) is None:
+                return session.get(DeletedCrawlJob, job_id) is not None
         snapshot = self.cancel_job(job_id)
         if snapshot is None:
             return False
@@ -3651,6 +3673,19 @@ class CoordinatorStore(CoordinatorObservability):
                 expires_at=utc_now() + timedelta(days=TOMBSTONE_RETENTION_DAYS),
             ))
             self._purge_job_rows(session, job_id)
+            return True
+
+    def archive_job(self, job_id: str) -> bool:
+        """Hide terminal crawler history without deleting downstream pipeline state."""
+        with self.sessions.begin() as session:
+            job = session.scalar(select(CrawlJob).where(CrawlJob.id == job_id).with_for_update())
+            if job is None:
+                return False
+            if job.status in ACTIVE_JOB_STATUSES:
+                raise ValueError("An active crawl job cannot be archived.")
+            if job.archived_at is None:
+                job.archived_at = utc_now()
+                self._event(session, job_id, "job_archived", {"reason": "hidden_from_crawler_history"})
             return True
 
     def list_dead_letter_tasks(
@@ -3948,7 +3983,9 @@ class CoordinatorStore(CoordinatorObservability):
 
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.sessions.begin() as session:
-            jobs = session.scalars(select(CrawlJob).order_by(CrawlJob.created_at.desc()).limit(max(1, min(limit, 500)))).all()
+            jobs = session.scalars(select(CrawlJob).where(
+                CrawlJob.archived_at.is_(None),
+            ).order_by(CrawlJob.created_at.desc()).limit(max(1, min(limit, 500)))).all()
             snapshots = []
             for job in jobs:
                 if job.status in {"running", "review_pending"}:

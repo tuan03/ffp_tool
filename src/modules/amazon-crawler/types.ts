@@ -526,6 +526,7 @@ export interface AmazonCrawlerJobController {
   invalidateProductCache(asin: string, amazonZip: string): Promise<AmazonCrawlerCacheClearResult>;
   clearTemporaryData(): Promise<AmazonCrawlerCacheClearResult>;
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
+  archive(jobId: string): Promise<void>;
   delete(jobId: string): Promise<void>;
   listDeadLetterTasks?(options?: { jobId?: string; errorCode?: string; limit?: number; offset?: number }): Promise<AmazonCrawlerDeadLetterPage>;
   listTaskAttempts?(taskId: string): Promise<readonly AmazonCrawlerTaskAttempt[]>;

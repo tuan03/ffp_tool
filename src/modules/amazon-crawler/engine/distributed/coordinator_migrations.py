@@ -4,7 +4,7 @@ import json
 
 from sqlalchemy import Column, Index, Integer, MetaData, Table, inspect, select, text
 
-from .coordinator_models import AmazonAsinRegistry, ArchivedTaskAttempt, Base, ClientRecord, CoordinatorState, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
+from .coordinator_models import AmazonAsinRegistry, ArchivedTaskAttempt, Base, ClientRecord, CoordinatorState, CrawlJob, CrawlTask, CrawlerDlqAction, TaskAttempt, UploadReceipt
 from .operator_authorization import OperatorAudit
 from .agent_keys import AgentKey
 from .agent_identity import AgentEnrollment
@@ -14,7 +14,7 @@ from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent
 from . import image_profile_repository  # Register profile tables before creating metadata.
 from .fleet_circuit_breaker import STATE_KEY as FLEET_BREAKER_STATE_KEY, _default_state as default_fleet_breaker_state
 
-MIGRATION_VERSION = 15
+MIGRATION_VERSION = 16
 MIGRATIONS = Table("crawler_schema_migrations", MetaData(), Column("version", Integer, primary_key=True))
 
 
@@ -168,3 +168,12 @@ def migrate_coordinator(engine) -> None:
         if 15 not in versions:
             AmazonAsinRegistry.__table__.create(connection, checkfirst=True)
             connection.execute(MIGRATIONS.insert().values(version=15))
+            versions.add(15)
+        if 16 not in versions:
+            columns = {column["name"] for column in inspect(connection).get_columns("crawl_jobs")}
+            if "archived_at" not in columns:
+                connection.execute(text("ALTER TABLE crawl_jobs ADD COLUMN archived_at TIMESTAMP WITH TIME ZONE"))
+            existing_indexes = {index["name"] for index in inspect(connection).get_indexes("crawl_jobs")}
+            if "ix_crawl_jobs_archived_at" not in existing_indexes:
+                Index("ix_crawl_jobs_archived_at", CrawlJob.archived_at).create(connection)
+            connection.execute(MIGRATIONS.insert().values(version=16))

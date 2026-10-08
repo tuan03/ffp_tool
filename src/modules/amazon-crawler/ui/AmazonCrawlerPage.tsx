@@ -1377,14 +1377,14 @@ export function AmazonCrawlerPage({
   }
 
   async function handleDeleteJob(jobId: string): Promise<void> {
-    if (!amazonCrawlerJobs || !window.confirm("Hủy và xóa vĩnh viễn job này khỏi coordinator? Sản phẩm đã ghi lên Shopify sẽ được giữ nguyên.")) return;
+    if (!amazonCrawlerJobs || !window.confirm("Ẩn job này khỏi lịch sử Crawler? SEO Queue, xử lý ảnh và SEO Review vẫn tiếp tục chạy nền.")) return;
     setControlledJobId(jobId);
     try {
-      await amazonCrawlerJobs.delete(jobId);
+      await amazonCrawlerJobs.archive(jobId);
       setJobs((current) => current.filter((job) => job.jobId !== jobId));
       if (cancellationJobId === jobId) setCancellationJobId(null);
       setJobControlTone("success");
-      setJobControlMessage("Đã hủy và xóa job. Tombstone sẽ chặn mọi agent cũ upload lại.");
+      setJobControlMessage("Đã ẩn job khỏi Crawler. Pipeline SEO và xử lý ảnh vẫn được giữ nguyên.");
       if (activeJobId === jobId) {
         abortCrawlerJob();
         updateCrawlerSession({ activeJobId: null, isRunning: false });
@@ -2743,7 +2743,7 @@ export function AmazonCrawlerPage({
                       {["completed", "partial", "cancelled", "review_pending"].includes(job.status) ? (
                         <>
                           <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
-                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Delete</button>
+                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Ẩn khỏi Crawler</button>
                         </>
                       ) : null}
                     </div>

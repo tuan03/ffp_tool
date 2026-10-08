@@ -52,7 +52,7 @@ from engine.distributed.coordinator_models import (
     create_session_factory,
 )
 from engine.distributed.coordinator_server import ConnectionManager, create_coordinator_app, decompress_gzip_limited, read_request_body_limited
-from engine.distributed.coordinator_store import ActiveJobExistsError, CoordinatorStore
+from engine.distributed.coordinator_store import ActiveJobExistsError, CoordinatorStore, ProductPipelineActiveError
 from engine.distributed.protocol import AgentLimits, hello_message, payload_checksum, settings_fingerprint, utc_iso, utc_now
 from engine.proxy_profiles import resolve_proxy_assignments
 from engine.tests.test_core import cache_family, cache_partial
@@ -1753,6 +1753,48 @@ class CoordinatorStoreTests(unittest.TestCase):
 
         self.assertEqual(len(claimed), 2)
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
+
+    def test_archiving_handed_off_job_hides_history_without_deleting_pipeline_items(self) -> None:
+        job = self.store.create_job({"urls": ["B0ARCHIVE1"], "storeId": "preaureum_dev"})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            task.status = "completed"
+            session.add(CrawlProductItem(
+                id="archive-item", job_id=job["id"], task_id=task.id,
+                source_key="archive-source", product_id="archive-product",
+                client_id="client-a", lease_id="lease-a", checksum="archive-checksum",
+                raw_payload={}, normalized_payload={"media": []}, status="retry_wait",
+                shopify_result={"externalSeo": {"jobId": "seo-job", "provider": "codex_mcp"}},
+                next_attempt_at=utc_now() - timedelta(seconds=1),
+            ))
+            session.flush()
+            self.store._refresh_job(session, str(job["id"]))
+
+        self.assertTrue(self.store.archive_job(str(job["id"])))
+        self.assertEqual(self.store.list_jobs(), [])
+        self.assertIsNotNone(self.store.get_job(str(job["id"])))
+        claimed = self.store.claim_product_items(
+            worker_id="pipeline-worker", store_id="preaureum_dev", limit=1,
+        )
+        self.assertEqual([item["id"] for item in claimed], ["archive-item"])
+
+    def test_hard_delete_rejects_handed_off_nonterminal_pipeline_item(self) -> None:
+        job = self.store.create_job({"urls": ["B0SAFEDEL1"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            task.status = "completed"
+            session.add(CrawlProductItem(
+                id="protected-item", job_id=job["id"], task_id=task.id,
+                source_key="protected-source", product_id="protected-product",
+                client_id="client-a", lease_id="lease-a", checksum="protected-checksum",
+                raw_payload={}, normalized_payload={"media": []}, status="retry_wait",
+                shopify_result={"externalSeo": {"jobId": "seo-job", "provider": "codex_mcp"}},
+                next_attempt_at=utc_now() - timedelta(seconds=1),
+            ))
+
+        with self.assertRaises(ProductPipelineActiveError):
+            self.store.delete_job(str(job["id"]))
+        self.assertIsNotNone(self.store.get_job(str(job["id"])))
 
     def test_delete_all_reviews_hides_ready_items_but_skips_active_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
@@ -3724,6 +3766,38 @@ class CoordinatorDatabaseTests(unittest.TestCase):
 
 
 class CoordinatorApiTests(unittest.TestCase):
+    def test_archive_route_hides_handed_off_job_while_delete_route_protects_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "archive.sqlite3"
+            app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
+            with TestClient(app) as client:
+                job = app.state.store.create_job({"urls": ["B0ARCHIVE2"], "storeId": "preaureum_dev"})
+                with app.state.store.sessions.begin() as session:
+                    task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+                    task.status = "completed"
+                    session.add(CrawlProductItem(
+                        id="route-archive-item", job_id=job["id"], task_id=task.id,
+                        source_key="route-archive-source", product_id="route-archive-product",
+                        client_id="client-a", lease_id="lease-a", checksum="route-archive-checksum",
+                        raw_payload={}, normalized_payload={"media": []}, status="retry_wait",
+                        shopify_result={"externalSeo": {"jobId": "seo-job", "provider": "codex_mcp"}},
+                        next_attempt_at=utc_now() - timedelta(seconds=1),
+                    ))
+                    session.flush()
+                    app.state.store._refresh_job(session, str(job["id"]))
+
+                blocked = client.delete(f"/api/v1/crawl-jobs/{job['id']}")
+                self.assertEqual(blocked.status_code, 409)
+                self.assertIn("ẩn job", blocked.json()["detail"])
+                archived = client.post(f"/api/v1/crawl-jobs/{job['id']}/archive")
+                self.assertEqual(archived.status_code, 200)
+                self.assertEqual(archived.json(), {"status": "archived"})
+                self.assertEqual(client.get("/api/v1/crawl-jobs").json(), [])
+                claimed = app.state.store.claim_product_items(
+                    worker_id="pipeline-worker", store_id="preaureum_dev", limit=1,
+                )
+                self.assertEqual([item["id"] for item in claimed], ["route-archive-item"])
+
     def setUp(self) -> None:
         image_cache = tempfile.TemporaryDirectory()
         self.addCleanup(image_cache.cleanup)
