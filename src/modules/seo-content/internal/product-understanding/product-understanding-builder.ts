@@ -1,3 +1,5 @@
+import { normalizeExcludedLiterals, redactExcludedLiterals } from "../literal-text-guard";
+
 import type { ProductUnderstanding } from "../domain-types";
 import type { ProductImageAnalysis } from "./product-image-analyzer";
 
@@ -21,17 +23,30 @@ export function buildProductUnderstanding(
     });
   }
 
-  const visibleTexts = Array.from(new Set(
+  const excludedLiteralTexts = normalizeExcludedLiterals(
     imageAnalysis.typography.visibleTexts.map((text) => clean(text, "")).filter(Boolean),
-  ));
+  );
 
   return Object.freeze({
     typography: Object.freeze({
-      visibleTexts: Object.freeze(visibleTexts),
-      styleSummary: clean(imageAnalysis.typography.styleSummary, "unknown"),
+      visibleTexts: Object.freeze([]),
+      excludedLiteralTexts: Object.freeze(excludedLiteralTexts),
+      styleSummary: redactExcludedLiterals(
+        clean(imageAnalysis.typography.styleSummary, "unknown"),
+        excludedLiteralTexts,
+        "unknown",
+      ),
     }),
-    visualEntities: clean(imageAnalysis.visualEntities, "unknown"),
-    sceneContext: clean(imageAnalysis.sceneContext, "unknown"),
+    visualEntities: redactExcludedLiterals(
+      clean(imageAnalysis.visualEntities, "unknown"),
+      excludedLiteralTexts,
+      "unknown",
+    ),
+    sceneContext: redactExcludedLiterals(
+      clean(imageAnalysis.sceneContext, "unknown"),
+      excludedLiteralTexts,
+      "unknown",
+    ),
     physicalProductIdentity: clean(imageAnalysis.physicalProductIdentity, "unknown"),
     identityCandidates: Object.freeze([...(imageAnalysis.identityCandidates ?? [])]),
     excludedSceneEntities: Object.freeze([...(imageAnalysis.excludedSceneEntities ?? [])]),

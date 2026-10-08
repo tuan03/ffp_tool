@@ -1,3 +1,12 @@
+import { findExcludedLiteral } from "../literal-text-guard";
+import { checkClaimGrounding } from "./claim-guard";
+import {
+  ContentGenerationSchemaError,
+  ContentGroundingViolationError,
+  ContentHtmlSafetyError,
+  ContentLengthViolationError,
+} from "./content-generation-types";
+
 import type {
   ContentConstraints,
   ContentFactSheet,
@@ -7,13 +16,6 @@ import type {
   GeneratedStyleOption,
   KeywordAllocation,
 } from "./content-generation-types";
-import {
-  ContentGenerationSchemaError,
-  ContentGroundingViolationError,
-  ContentHtmlSafetyError,
-  ContentLengthViolationError,
-} from "./content-generation-types";
-import { checkClaimGrounding } from "./claim-guard";
 
 const FORBIDDEN_HTML_PATTERNS: readonly RegExp[] = [
   /<script\b/i,
@@ -175,6 +177,17 @@ export function validateFinalContent(
   keywords: KeywordAllocation,
   constraints: ContentConstraints,
 ): void {
+  const literalViolation = findExcludedLiteral(
+    { result, draft, keywords },
+    facts.excludedLiteralTexts ?? [],
+  );
+  if (literalViolation) {
+    throw new ContentGroundingViolationError(
+      `Generated SEO content quotes literal artwork text in ${literalViolation.path}`,
+      ["Literal artwork text must remain a generic customization reference"],
+    );
+  }
+
   // 1. Length constraints
   if (result.productSeoTitle.length > constraints.maxSeoTitleLength) {
     throw new ContentLengthViolationError(

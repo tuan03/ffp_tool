@@ -23,7 +23,7 @@ test("B1 sends every image plus niche, and accepts one confident grounded identi
       received = value;
       return {
         typography: { visibleTexts: ["VALHALLA"], styleSummary: "bold serif" },
-        visualEntities: "Viking shield artwork",
+        visualEntities: "Viking shield artwork with VALHALLA lettering",
         sceneContext: "living room",
         physicalProductIdentity: "area rug",
         identityCandidates: ["area rug"],
@@ -37,6 +37,9 @@ test("B1 sends every image plus niche, and accepts one confident grounded identi
   assert.deepEqual(Object.keys(received as object).sort(), ["images", "niche"]);
   assert.equal((received as { readonly images: readonly unknown[] }).images.length, 2);
   assert.equal(result.productUnderstanding?.physicalProductIdentity, "area rug");
+  assert.deepEqual(result.productUnderstanding?.typography.visibleTexts, []);
+  assert.deepEqual(result.productUnderstanding?.typography.excludedLiteralTexts, ["VALHALLA"]);
+  assert.doesNotMatch(result.productUnderstanding?.visualEntities ?? "", /VALHALLA/i);
 });
 
 test("B1 fails closed when pixels are unavailable", async () => {

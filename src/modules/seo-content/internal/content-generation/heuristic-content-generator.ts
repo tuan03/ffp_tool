@@ -50,10 +50,7 @@ export function buildHeuristicAiQuickSummary(
   const entityText = isMeaningfulText(facts.visualEntities)
     ? `featuring ${facts.visualEntities.trim()}`
     : "";
-  const typographyText = facts.typographyVisibleTexts.filter((t) => isMeaningfulText(t)).length > 0
-    ? `with printed '${facts.typographyVisibleTexts.filter((t) => isMeaningfulText(t))[0]}' lettering`
-    : "";
-  const stylePart = [entityText, typographyText].filter(Boolean).join(" ");
+  const stylePart = entityText;
   const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "home and lifestyle enthusiasts";
   const useCase = facts.useCases.length > 0 ? facts.useCases[0] : "daily decorative and functional use";
   const occasion = facts.occasions.length > 0 ? ` or special ${facts.occasions[0]} gifting` : "";

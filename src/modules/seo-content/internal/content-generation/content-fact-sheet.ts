@@ -1,7 +1,9 @@
+import { normalizeExcludedLiterals, redactExcludedLiterals } from "../literal-text-guard";
+import { projectStoreContentProfile } from "../store-profiles/types";
+
 import type { SeoContentInput } from "../../types";
 import type { ProductUnderstanding, SeoPipelineContext } from "../domain-types";
 import type { ContentFactSheet } from "./content-generation-types";
-import { projectStoreContentProfile } from "../store-profiles/types";
 
 const PERSONALIZATION_PATTERN =
   /\b(personalized|personalised|personalization|personalisation|custom\s+name|your\s+name|custom\s+text|custom\s+photo|upload\s+photo|custom\s+image|monogram|initials|customizable|customisable|engraved|engraving|custom\s+song|custom\s+spotify)\b/i;
@@ -61,22 +63,30 @@ export function buildContentFactSheet(
     sanitizeFactText(productUnderstanding?.physicalProductIdentity) ||
     sanitizedNiche ||
     "product";
+  const excludedLiteralTexts = normalizeExcludedLiterals([
+    ...(productUnderstanding?.typography.visibleTexts ?? []),
+    ...(productUnderstanding?.typography.excludedLiteralTexts ?? []),
+  ]);
+  const visualEntities = productUnderstanding?.visualEntities
+    ? redactExcludedLiterals(productUnderstanding.visualEntities, excludedLiteralTexts, "unknown")
+    : undefined;
+  const typographyStyleSummary = productUnderstanding?.typography.styleSummary
+    ? redactExcludedLiterals(productUnderstanding.typography.styleSummary, excludedLiteralTexts, "unknown")
+    : undefined;
 
   return {
-    originalTitle: [sanitizedProductIdentity, sanitizeFactText(productUnderstanding?.visualEntities)]
+    originalTitle: [sanitizedProductIdentity, sanitizeFactText(visualEntities)]
       .filter(Boolean).join(" - "),
     originalDescription: [
-      sanitizeFactText(productUnderstanding?.visualEntities),
-      sanitizeFactText(productUnderstanding?.typography.styleSummary),
-      ...(productUnderstanding?.typography.visibleTexts ?? []),
+      sanitizeFactText(visualEntities),
+      sanitizeFactText(typographyStyleSummary),
     ].filter(Boolean).join(". "),
     niche: sanitizedNiche,
     physicalProductIdentity: sanitizedProductIdentity,
-    typographyVisibleTexts: (productUnderstanding?.typography.visibleTexts ?? [])
-      .map((t) => sanitizeFactText(t))
-      .filter((t): t is string => Boolean(t)),
-    typographyStyleSummary: sanitizeFactText(productUnderstanding?.typography.styleSummary),
-    visualEntities: sanitizeFactText(productUnderstanding?.visualEntities),
+    typographyVisibleTexts: [],
+    excludedLiteralTexts,
+    typographyStyleSummary: sanitizeFactText(typographyStyleSummary),
+    visualEntities: sanitizeFactText(visualEntities),
     targetAudience: shoppingContext?.targetAudience ?? [],
     occasions: shoppingContext?.suitableOccasions ?? [],
     useCases: shoppingContext?.useCases ?? [],

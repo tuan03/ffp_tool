@@ -30,6 +30,11 @@ Rules:
    - Never infer OCR text from niche, URL, filename or alt text.
    - Never correct spelling found in the image.
    - Preserve visible wording, casing and punctuation where possible.
+   - Treat every visible word, phrase and number as reference-only. Never repeat it
+     in visualEntities, sceneContext, physicalProductIdentity or styleSummary.
+   - Names, initials, dates, jersey/player numbers and sentences may be buyer-editable
+     examples. Record their literal value only in visibleTexts; describe their role,
+     placement and visual treatment generically elsewhere.
    - Exclude website UI, watermarks, image-editor overlays and unrelated background text unless they are part of the sold product/design.
    - If no reliable visible text exists, return [].
 

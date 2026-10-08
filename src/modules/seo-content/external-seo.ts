@@ -4,6 +4,7 @@ import { validateDraft } from "./internal/content-generation/content-result-vali
 import { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
 import { isSameProduct } from "./internal/conflict-control/seo-conflict-corpus";
 import { UnofficialGoogleSuggestClient } from "./internal/search-suggestions/google-suggest-client";
+import { findExcludedLiteral } from "./internal/literal-text-guard";
 import type { ProductUnderstanding, ShoppingContext } from "./internal/domain-types";
 import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
 import type { SeoContentDetailedOutput, SeoContentInput, SeoExecutionEnvelope } from "./types";
@@ -24,22 +25,6 @@ function text(value: unknown, field: string): string {
 function strings(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error(`Invalid ${field}`);
   return value.map(entry => text(entry, field));
-}
-function containsExcludedLiteral(value: string, literal: string): boolean {
-  const escaped = literal.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  if (!escaped) return false;
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(value);
-}
-function collectStrings(value: unknown, path = "content"): readonly { readonly path: string; readonly value: string }[] {
-  if (typeof value === "string") return [{ path, value }];
-  if (Array.isArray(value)) return value.flatMap((entry, index) => collectStrings(entry, `${path}[${index}]`));
-  if (!value || typeof value !== "object") return [];
-  return Object.entries(value as Record<string, unknown>)
-    .flatMap(([key, entry]) => collectStrings(entry, `${path}.${key}`));
-}
-function assertNoVisibleTextLiterals(value: unknown, literals: readonly string[]): void {
-  const violation = collectStrings(value).find(entry => literals.some(literal => containsExcludedLiteral(entry.value, literal)));
-  if (violation) throw new Error(`Generated SEO content quotes literal artwork text in ${violation.path}`);
 }
 function wordCount(value: string): number {
   return value.trim().split(/\s+/).filter(Boolean).length;
@@ -134,8 +119,10 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   if (check.conflicts.some(conflict => conflict.matches.length)) throw new Error("Keyword conflict: check keywords again and choose non-conflicting targets");
   const raw = object(submission);
   const excludedLiteralTexts = analysis.understanding.typography.excludedLiteralTexts ?? [];
-  assertNoVisibleTextLiterals(raw, excludedLiteralTexts);
-  assertNoVisibleTextLiterals(keywords, excludedLiteralTexts);
+  const submissionViolation = findExcludedLiteral(raw, excludedLiteralTexts);
+  if (submissionViolation) throw new Error(`Generated SEO content quotes literal artwork text in ${submissionViolation.path}`);
+  const keywordViolation = findExcludedLiteral(keywords, excludedLiteralTexts, "keywords");
+  if (keywordViolation) throw new Error(`Generated SEO content quotes literal artwork text in ${keywordViolation.path}`);
   const draft = validateDraft(raw.draft);
   // Arbitrary JSON-LD from an external model must not bypass fact validation.
   if (draft.aeo_json_ld) throw new Error("Submit structured FAQ fields, not arbitrary JSON-LD");
