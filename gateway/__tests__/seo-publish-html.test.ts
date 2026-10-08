@@ -18,3 +18,10 @@ test("does not ignore changed text, links, attributes or whitespace in preformat
     ['<pre>\n<p>A</p>\n<p>B</p>\n</pre>', '<pre><p>A</p><p>B</p></pre>'],
   ]) assert.notEqual(normalizePublishedDescriptionHtml(left), normalizePublishedDescriptionHtml(right));
 });
+
+test("ignores formatting newlines at block edges around inline elements", () => {
+  assert.equal(normalizePublishedDescriptionHtml('<ul>\n<li>\n<strong>Color:</strong> Red\n</li>\n</ul>'),
+    normalizePublishedDescriptionHtml('<ul><li><strong>Color:</strong> Red\n</li></ul>'));
+  assert.notEqual(normalizePublishedDescriptionHtml('<p><strong>Red</strong>\n<span>Bag</span></p>'),
+    normalizePublishedDescriptionHtml('<p><strong>Red</strong><span>Bag</span></p>'));
+});
