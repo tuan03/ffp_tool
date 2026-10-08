@@ -43,6 +43,8 @@ test("registry resolves the Preaureum handbag profile by store ID and Shopify do
     PREAUREUM_HANDBAG_PROFILE,
   );
   assert.equal(PREAUREUM_HANDBAG_PROFILE.niche, "Personalized Handbags & Wallets");
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.profileVersion, "2.1.0");
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.productDescriptionPolicy?.mode, "visual-design-only");
   assert.equal(PREAUREUM_HANDBAG_PROFILE.catalogPolicies, undefined);
 });
 

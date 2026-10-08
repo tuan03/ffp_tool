@@ -29,12 +29,12 @@ const VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS: readonly {
   readonly pattern: RegExp;
   readonly topic: string;
 }[] = [
-  { pattern: /\b(?:comforter|quilt|duvet(?:\s+cover)?|blanket|throw)\b/i, topic: "product format" },
-  { pattern: /\b(?:material|fabric|microfiber|polyester|cotton|wool|silk)\b/i, topic: "material" },
-  { pattern: /\b(?:size|sizing|dimension|measurement)\b/i, topic: "size" },
+  { pattern: /\b(?:comforter|quilt|duvet(?:\s+cover)?|blanket|throw|handbag|purse|wallet|tote|crossbody|shoulder\s+bag|satchel)\b/i, topic: "product format" },
+  { pattern: /\b(?:material|fabric|microfiber|polyester|cotton|wool|silk|leather|canvas|nylon)\b/i, topic: "material" },
+  { pattern: /\b(?:size|sizing|dimension|measurement|capacity)\b/i, topic: "size or capacity" },
   { pattern: /\b\d+(?:\.\d+)?\s*(?:mm|cm|m|inches?|in|feet|foot|ft)\b/i, topic: "dimension" },
-  { pattern: /\b(?:wash|care|tumble\s+dry|zipper|corner\s+ties|batting)\b/i, topic: "care or construction" },
-  { pattern: /\b(?:all-season|hypoallergenic|breathable|lightweight|plush|warmth)\b/i, topic: "performance or feel" },
+  { pattern: /\b(?:wash|care|tumble\s+dry|zipper|corner\s+ties|batting|compartment|pocket|closure|strap|handle)\b/i, topic: "care or construction" },
+  { pattern: /\b(?:all-season|hypoallergenic|breathable|lightweight|plush|warmth|durable|waterproof|water-resistant)\b/i, topic: "performance or feel" },
 ];
 
 /**
@@ -206,7 +206,7 @@ export function validateFinalContent(
   if (facts.storeProfile?.productDescriptionPolicy?.mode === "visual-design-only") {
     const violations = VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS
       .filter(({ pattern }) => pattern.test(result.productDescription))
-      .map(({ topic }) => `Jeminise product description must not mention ${topic}`);
+      .map(({ topic }) => `${facts.storeProfile?.storeName ?? "Store"} product description must not mention ${topic}`);
     if (violations.length > 0) {
       throw new ContentGroundingViolationError(
         `Product description violates visual-design-only policy: ${violations.join("; ")}`,

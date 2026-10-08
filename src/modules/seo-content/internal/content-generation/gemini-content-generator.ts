@@ -36,14 +36,15 @@ CRITICAL INVARIANTS:
      * Q2 (Practical Usability / Durability): Category-adapted question (e.g. all-season comfort for bedding, high-traffic durability for rugs, everyday capacity for bags).
      * Q3 (Conditional Customization OR Care): If personalizationSupported is true, explain custom options. If personalizationSupported is false, explain care/cleaning or package inclusions. NEVER mention personalization if personalizationSupported is false.
      * Q4 (USP Differentiation): Explain what makes this design/variant unique from generic alternatives using visualEntities and variant details.
-7. STORE-SPECIFIC OFFERINGS (when <STORE_PRODUCT_OFFERING> is provided):
+7. PRODUCT DESCRIPTION POLICY (when <PRODUCT_DESCRIPTION_POLICY> is provided):
+   - Follow the policy for intro, bullets, guidance, closing and styleOptions. When its mode is "visual-design-only", write only about visible artwork, distinctive visual details, aesthetic appeal, and grounded reasons the design may interest a shopper. Return no styleOptions or guidance and do not mention materials, dimensions, care, construction, capacity or product formats in those description fields.
+8. STORE-SPECIFIC OFFERINGS (when <STORE_PRODUCT_OFFERING> is provided):
    - Product Title & SEO Title: DO NOT force "Comforter, Quilt, Duvet Cover" into product title or SEO title. Title must naturally focus on artwork/design and variant.
-   - Product Description: Follow <PRODUCT_DESCRIPTION_POLICY>. When its mode is "visual-design-only", write intro, bullets, and closing only about visible artwork, distinctive visual details, aesthetic appeal, and grounded reasons the design may interest a shopper. Return no styleOptions or guidance and do not mention materials, dimensions, care, construction, product formats, Comforter, Quilt, Duvet Cover, or Blanket in those description fields.
    - Product Description / Style Options: When no visual-design-only policy is present, include the available styles in styleOptions with their distinctive characteristics and highlight verified fabric, print technology, and care instructions in bullets and guidance.
    - Product SEO Description: MUST naturally mention all 3 styles ("Comforter", "Quilt", "Duvet Cover") alongside the product design, strictly within 155-160 characters.
    - AEO Quick Summary: Highlight that the design is available across the 3 styles (Comforter, Quilt, Duvet Cover).
    - AEO FAQ: Include a dedicated question (e.g. Q1 or Q2) explaining the difference between Comforter, Quilt, and Duvet Cover so buyers can choose the right option.
-8. FORMAT: Output strictly valid JSON matching the specified schema. Do not wrap output in markdown codeblocks.`;
+9. FORMAT: Output strictly valid JSON matching the specified schema. Do not wrap output in markdown codeblocks.`;
 
 export class GeminiSeoContentGenerator implements ContentGenerator {
   private readonly maxOutputTokens: number;
