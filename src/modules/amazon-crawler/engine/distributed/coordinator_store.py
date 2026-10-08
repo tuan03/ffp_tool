@@ -1829,8 +1829,16 @@ class CoordinatorStore(CoordinatorObservability):
             existing = session.scalar(select(CrawlProductItem).where(
                 CrawlProductItem.job_id == task.job_id, CrawlProductItem.source_key == source_key,
             ))
-            if existing is not None and payload_checksum(existing.raw_payload) != payload_checksum(product):
-                return {"status": "conflict", "reason": "product_content_mismatch"}
+            if existing is not None:
+                # sourceKey is the stable product identity within a crawl job.
+                # Retries may legitimately change volatile diagnostics and
+                # timestamps, so preserve the first accepted payload and ACK
+                # the later lease without enqueueing duplicate pipeline work.
+                return self._save_receipt(session, receipt_id, task_id, payload, {
+                    "status": "duplicate",
+                    "productItemId": existing.id,
+                    "sourceKey": existing.source_key,
+                })
             item, created = self._upsert_product_item(
                 session,
                 task=task,

@@ -907,6 +907,17 @@ class ClientStore:
             ).fetchone()
         return row is not None
 
+    def has_uploadable_products(self, task_id: str, lease_id: str | None = None) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM pending_products
+                   WHERE task_id=?"""
+                + (" AND lease_id=?" if lease_id is not None else "")
+                + " AND result_id NOT IN (SELECT result_id FROM outbox_quarantine) LIMIT 1",
+                (task_id, lease_id) if lease_id is not None else (task_id,),
+            ).fetchone()
+        return row is not None
+
     def product_failed(self, result_id: str, error: str) -> None:
         with self._connection() as connection:
             connection.execute(

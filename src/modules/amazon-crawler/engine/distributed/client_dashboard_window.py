@@ -17,7 +17,7 @@ STATE_LABELS = {
 }
 DELIVERY_LABELS = {
     "none": "—", "pending": "Chờ gửi", "uploading": "Đang gửi", "sent": "Đã gửi",
-    "retry": "Chờ thử lại", "cancelled": "Đã hủy",
+    "retry": "Chờ thử lại", "quarantined": "Đã cách ly", "cancelled": "Đã hủy",
 }
 PHASE_LABELS = {
     "queued": "Đang chờ", "recovering": "Đang đối chiếu", "starting": "Khởi tạo",

@@ -2201,6 +2201,15 @@ class DistributedCrawlerAgent:
             completion = await self.completion_queue.get()
             task_id = str(completion["taskId"])
             lease_id = str(completion.get("leaseId") or "")
+            if (
+                completion["type"] == "failed"
+                and self.store.has_uploadable_products(task_id, lease_id)
+            ):
+                # A streamed product belongs to the current lease. Closing the
+                # lease first turns an otherwise valid upload into HTTP 409.
+                await asyncio.sleep(0.1)
+                await self.completion_queue.put(completion)
+                continue
             with self._pause_release_lock:
                 pause_release = self._pause_releases.get((task_id, lease_id))
             assignment = self.active.pop(task_id, None)
@@ -2240,8 +2249,13 @@ class DistributedCrawlerAgent:
                     self._validate_upload_receipt(product, response)
                     self.store.acknowledge_product(product["resultId"])
                 except Exception as error:
-                    self._quarantine_rejected_upload(product, error)
-                    self._dashboard_update("delivery", task_id, str(product["leaseId"]), "retry")
+                    was_quarantined = self._quarantine_rejected_upload(product, error)
+                    self._dashboard_update(
+                        "delivery",
+                        task_id,
+                        str(product["leaseId"]),
+                        "quarantined" if was_quarantined else "retry",
+                    )
                     self.store.product_failed(product["resultId"], redact(error))
                     upload_failed = True
                     retry_delay = max(retry_delay, min(30, 2 ** min(int(product.get("attempts", 0)), 5)))
@@ -2293,15 +2307,25 @@ class DistributedCrawlerAgent:
                                 self.active.pop(result["taskId"], None)
                             await self.outbound_queue.put({"type": "ready", "availableSlots": self._available_slots()})
                         except Exception as error:
-                            self._quarantine_rejected_upload(result, error)
-                            self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
+                            was_quarantined = self._quarantine_rejected_upload(result, error)
+                            self._dashboard_update(
+                                "delivery",
+                                str(result["taskId"]),
+                                str(result["leaseId"]),
+                                "quarantined" if was_quarantined else "retry",
+                            )
                             self.store.result_failed(result["resultId"], redact(error))
                             upload_failed = True
                             retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
                 except Exception as error:
                     for result in batch:
-                        self._quarantine_rejected_upload(result, error)
-                        self._dashboard_update("delivery", str(result["taskId"]), str(result["leaseId"]), "retry")
+                        was_quarantined = self._quarantine_rejected_upload(result, error)
+                        self._dashboard_update(
+                            "delivery",
+                            str(result["taskId"]),
+                            str(result["leaseId"]),
+                            "quarantined" if was_quarantined else "retry",
+                        )
                         self.store.result_failed(result["resultId"], redact(error))
                         upload_failed = True
                         retry_delay = max(retry_delay, min(30, 2 ** min(int(result.get("attempts", 0)), 5)))
@@ -2309,11 +2333,13 @@ class DistributedCrawlerAgent:
             self._uploads_checked.set()
             await asyncio.sleep(retry_delay if upload_failed else 1)
 
-    def _quarantine_rejected_upload(self, upload: dict[str, Any], error: Exception) -> None:
+    def _quarantine_rejected_upload(self, upload: dict[str, Any], error: Exception) -> bool:
         if isinstance(error, urllib.error.HTTPError) and error.code in {404, 409}:
             # These are not successful receipts. Keep data for an operator;
             # never repeatedly publish it or infer deletion permission.
             self.store.quarantine_attempt(upload["taskId"], upload["leaseId"], f"upload_http_{error.code}")
+            return True
+        return False
 
     def _validate_upload_receipt(self, upload: dict[str, Any], response: dict[str, Any]) -> None:
         if response.get("status") in {"cancelled", "stale", "conflict", "invalid", "missing"}:

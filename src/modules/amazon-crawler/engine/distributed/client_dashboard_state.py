@@ -20,7 +20,8 @@ TERMINAL_STATES = {"completed", "failed", "cancelled", "interrupted"}
 EVENT_MESSAGES = {
     "received": "Đã nhận công việc", "running": "Bắt đầu xử lý", "completed": "Đã xử lý xong",
     "failed": "Xử lý gặp lỗi", "cancelled": "Đã hủy công việc", "sent": "Server đã nhận kết quả",
-    "retry": "Gửi kết quả gặp lỗi; sẽ tự thử lại", "connected": "Đã kết nối server",
+    "retry": "Gửi kết quả gặp lỗi; sẽ tự thử lại", "quarantined": "Kết quả bị cách ly; cần kiểm tra thủ công",
+    "connected": "Đã kết nối server",
     "offline": "Mất kết nối server; đang thử kết nối lại",
     "paused": "Tạm ngưng và trả việc chưa hoàn tất về hàng đợi",
     "resumed": "Tiếp tục nhận việc mới", "captcha": "Cần giải CAPTCHA trong trình duyệt",
@@ -137,7 +138,7 @@ class DashboardState:
                 task.message = EVENT_MESSAGES["pending" if task.delivery == "pending" else "recovering"]
                 task.active_variants = ()
                 self._save(task)
-            elif task.state not in TERMINAL_STATES or task.delivery in {"pending", "uploading", "retry"}:
+            elif task.state not in TERMINAL_STATES or task.delivery in {"pending", "uploading", "retry", "quarantined"}:
                 task.state = "interrupted"
                 task.delivery = "none"
                 task.message = EVENT_MESSAGES["interrupted"]
@@ -268,7 +269,11 @@ class DashboardState:
                     "Không xử lý được công việc. Xem log trong thư mục dữ liệu hoặc thử lại trên web.")
             task.finished_at = self._timestamp()
             task.active_variants = ()
-            task.delivery = task.delivery if task.delivery == "sent" else ("pending" if state == "completed" else "none")
+            task.delivery = (
+                task.delivery
+                if task.delivery in {"sent", "quarantined"}
+                else ("pending" if state == "completed" else "none")
+            )
             self._save(task, task.state)
             if len(self._tasks) > TASK_LIMIT:
                 self.prune()
@@ -328,7 +333,7 @@ class DashboardState:
             return {
                 "hasUnattributedCaptcha": self.has_unattributed_captcha,
                 "tasks": [task for task in tasks if task["state"] not in TERMINAL_STATES or
-                          task["delivery"] in {"pending", "uploading", "retry"}],
+                          task["delivery"] in {"pending", "uploading", "retry", "quarantined"}],
                 "history": list(reversed(tasks)),
                 "events": [{"id": row["id"], "timestamp": row["timestamp"], "event": row["event"],
                             "message": EVENT_MESSAGES.get(row["event"], ""), "taskId": row["task_id"],

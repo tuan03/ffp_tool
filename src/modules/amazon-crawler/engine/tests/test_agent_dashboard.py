@@ -113,6 +113,18 @@ class DashboardStateTests(unittest.TestCase):
         self.assertEqual(row["state"], "completed")
         self.assertEqual(self.dashboard.snapshot()["tasks"], [])
 
+    def test_quarantined_delivery_is_not_presented_as_retrying(self) -> None:
+        task = assignment()
+        self.dashboard.receive(task)
+        self.dashboard.start(task)
+        self.dashboard.delivery("task-a", "lease-a", "quarantined")
+        self.dashboard.finish(task, "failed")
+
+        row = self.dashboard.snapshot()["tasks"][0]
+
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(row["delivery"], "quarantined")
+
     def test_errors_are_explained_without_raw_internal_exceptions(self) -> None:
         task = assignment()
         self.dashboard.receive(task)

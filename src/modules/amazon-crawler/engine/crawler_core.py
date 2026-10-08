@@ -2028,6 +2028,29 @@ class AmazonCrawler:
             "nonRetryableAsins": sorted(set(non_retryable_asins)),
         }
 
+    def _family_requires_partial_failure(
+        self,
+        family: dict[str, Any],
+        products: list[dict[str, Any]],
+    ) -> bool:
+        source_variants = family.get("sourceVariants", [])
+        if any(
+            not self._variant_cache_complete(variant)
+            for variant in source_variants
+            if isinstance(variant, dict)
+        ):
+            return True
+        matrix = family.get("variantMatrix", {})
+        if matrix.get("complete") is True:
+            return False
+        asin_status = self._family_asin_status(family)
+        if asin_status["failedAsins"] or not products:
+            return True
+        # Amazon variation families are frequently sparse rather than a full
+        # Cartesian product. Once every discovered child produces a complete
+        # split product, missing combinations are not missing ASINs.
+        return any(self._product_publish_blockers(product) for product in products)
+
     @staticmethod
     def _infer_consensus_prices(variants: list[dict[str, Any]]) -> None:
         for variant in variants:
@@ -2289,9 +2312,9 @@ class AmazonCrawler:
                     if product_id in emitted_product_ids or self._product_publish_blockers(product):
                         continue
                     product_completed(product)
-            if family.get("customizationChecked") is not None and (
-                family.get("variantMatrix", {}).get("complete") is not True
-                or any(not self._variant_cache_complete(variant) for variant in family.get("sourceVariants", []))
+            if (
+                family.get("customizationChecked") is not None
+                and self._family_requires_partial_failure(family, family_products)
             ):
                 asin_status = self._family_asin_status(family)
                 failures = [

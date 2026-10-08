@@ -1851,6 +1851,56 @@ class CoreTests(unittest.TestCase):
             ["variant_matrix_incomplete", "price_missing"],
         )
 
+    def test_sparse_family_is_complete_when_every_discovered_split_is_publishable(self) -> None:
+        variants = [
+            {
+                **source_variant(f"B01234567{index}", f"Design {index}", "One"),
+                "customizationComplete": True,
+                "diagnostics": {"fetchMode": "http"},
+            }
+            for index in range(1, 4)
+        ]
+        family = {
+            "parentAsin": "B0PARENT00",
+            "sourceVariants": variants,
+            "variantMatrix": {
+                "dimensions": {
+                    "Design": ["Design 1", "Design 2", "Design 3"],
+                    "Number of Items": ["One", "Two", "Three"],
+                },
+                "expectedCount": 9,
+                "discoveredCount": 3,
+                "complete": False,
+                "safetyCap": 500,
+            },
+        }
+        products = [
+            {
+                "variantMatrix": {"complete": True},
+                "sourceVariants": [variant],
+                "warnings": [],
+            }
+            for variant in variants
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(
+                root=Path(directory),
+                settings=CrawlSettings(),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+
+            self.assertFalse(crawler._family_requires_partial_failure(family, products))
+
+        products[0]["sourceVariants"][0]["price"] = None
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(
+                root=Path(directory),
+                settings=CrawlSettings(),
+                browser_pool=FakeBrowser(PRODUCT_HTML),
+            )
+
+            self.assertTrue(crawler._family_requires_partial_failure(family, products))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -863,6 +863,61 @@ class ClientStoreTests(unittest.TestCase):
 
 
 class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_completion_waits_for_streamed_product_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = AgentConfig(
+                server_url="http://127.0.0.1:9999",
+                display_name="test-agent",
+                max_concurrent_inputs=1,
+                limits=AgentLimits(),
+                data_directory=Path(directory),
+            )
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=config)
+            assignment = {
+                "taskId": "task-1",
+                "jobId": "job-1",
+                "leaseId": "lease-1",
+                "settingsFingerprint": "settings-1",
+            }
+            agent.store.save_assignment(assignment)
+            agent.active["task-1"] = assignment
+            agent.store.spool_product(
+                task_id="task-1",
+                product_key="amazon:B012345678:design:ocean",
+                lease_id="lease-1",
+                checksum="product-checksum",
+                payload={"product": {"id": "ocean"}},
+            )
+            completion_task = asyncio.create_task(agent._completion_loop())
+            try:
+                await agent.completion_queue.put({
+                    "type": "failed",
+                    "taskId": "task-1",
+                    "leaseId": "lease-1",
+                    "error": {"message": "partial", "retryable": True},
+                })
+                await asyncio.sleep(0.05)
+
+                self.assertIn("task-1", agent.active)
+                outbound = []
+                while not agent.outbound_queue.empty():
+                    outbound.append(agent.outbound_queue.get_nowait())
+                self.assertNotIn("task_failed", {message["type"] for message in outbound})
+
+                pending = agent.store.pending_products()
+                agent.store.acknowledge_product(pending[0]["resultId"])
+                await asyncio.sleep(0.2)
+
+                outbound = []
+                while not agent.outbound_queue.empty():
+                    outbound.append(agent.outbound_queue.get_nowait())
+                self.assertIn("task_failed", {message["type"] for message in outbound})
+                self.assertNotIn("task-1", agent.active)
+            finally:
+                completion_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await completion_task
+
     async def test_product_upload_not_found_is_not_an_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = AgentConfig(
@@ -2953,6 +3008,46 @@ class CoordinatorStoreTests(unittest.TestCase):
         with self.sessions() as session:
             items = session.scalars(select(CrawlProductItem)).all()
             self.assertEqual(len(items), 1)
+
+    def test_product_retry_with_same_source_key_preserves_first_accepted_payload(self) -> None:
+        job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        first = self.store.lease_tasks("client-a", 1)[0]
+        source_key = "amazon:B0FR4MSS2H:design:ocean"
+        first_product = {
+            "id": "product-ocean",
+            "sourceKey": source_key,
+            "parentAsin": "B0FR4MSS2H",
+            "title": "Ocean",
+            "diagnostics": {"completedAt": "2026-10-08T10:00:00Z"},
+        }
+        first_payload = {"jobId": job["id"], "product": first_product}
+        accepted = self.store.accept_product(
+            first["taskId"], "client-a", first["leaseId"], source_key, "checksum-1", first_payload,
+        )
+        self.assertEqual(accepted["status"], "accepted")
+
+        with patch("engine.distributed.coordinator_store.retry_delay", return_value=0):
+            self.store.fail_task("client-a", {
+                "taskId": first["taskId"],
+                "leaseId": first["leaseId"],
+                "error": {"message": "partial", "retryable": True},
+            })
+        second = self.store.lease_tasks("client-a", 1)[0]
+        changed_product = {
+            **first_product,
+            "diagnostics": {"completedAt": "2026-10-08T10:01:00Z"},
+        }
+        duplicate = self.store.accept_product(
+            second["taskId"], "client-a", second["leaseId"], source_key, "checksum-2",
+            {"jobId": job["id"], "product": changed_product},
+        )
+
+        self.assertEqual(duplicate["status"], "duplicate")
+        with self.sessions() as session:
+            items = session.scalars(select(CrawlProductItem)).all()
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].raw_payload, first_product)
 
     def test_family_registry_resolves_sibling_asins_per_store_and_tracks_shopify_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0CHILD001"], "storeId": "capozen"})
