@@ -58,4 +58,26 @@ describe("Customizer bulk editing", () => {
     assert.equal(updated.textInputs?.length, 2);
     assert.deepEqual(updated.optionGroups, []);
   });
+
+  it("groups legacy fields whose labels are not strings without crashing", () => {
+    const malformedCustomization = {
+      optionGroups: [
+        {
+          id: "legacy-size",
+          label: { text: "Choose Size" },
+          type: "select",
+          options: [{ id: "queen", label: 42 }],
+        },
+      ],
+    } as unknown as typeof customization;
+
+    const fields = listBulkCustomizationFields(malformedCustomization);
+    const groups = groupBulkCustomizations([
+      { product: { id: "legacy" }, customization: malformedCustomization },
+    ]);
+
+    assert.equal(fields[0]?.label, "Choose Size");
+    assert.equal(fields[0]?.detail, "1 lựa chọn");
+    assert.equal(groups.length, 1);
+  });
 });

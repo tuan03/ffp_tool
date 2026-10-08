@@ -1,8 +1,4 @@
-import type {
-  CustomizationOptionGroup,
-  CustomizationTextInput,
-  ProductCustomization,
-} from "../customization-normalizer";
+import type { ProductCustomization } from "../customization-normalizer";
 
 export interface BulkCustomizationField {
   readonly key: string;
@@ -29,7 +25,23 @@ function normalizeIdentity(value: unknown): string {
     .replace(/\s+/g, " ");
 }
 
-function textFieldKey(field: CustomizationTextInput): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function displayLabel(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value.trim() || fallback;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (!isRecord(value)) return fallback;
+
+  for (const key of ["text", "name", "value", "default", "en", "en_US"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return fallback;
+}
+
+function textFieldKey(field: Record<string, unknown>): string {
   return [
     "text",
     normalizeIdentity(field.label),
@@ -41,8 +53,11 @@ function textFieldKey(field: CustomizationTextInput): string {
   ].join(":");
 }
 
-function optionFieldKey(field: CustomizationOptionGroup): string {
-  const optionLabels = field.options.map((option) => normalizeIdentity(option.label)).sort();
+function optionFieldKey(field: Record<string, unknown>): string {
+  const options: readonly unknown[] = Array.isArray(field.options) ? field.options : [];
+  const optionLabels = options
+    .map((option) => normalizeIdentity(isRecord(option) ? option.label : option))
+    .sort();
   return [
     "option",
     normalizeIdentity(field.label),
@@ -55,18 +70,25 @@ function optionFieldKey(field: CustomizationOptionGroup): string {
 export function listBulkCustomizationFields(
   customization: ProductCustomization,
 ): readonly BulkCustomizationField[] {
-  const textFields = (customization.textInputs ?? []).map((field) => ({
-    key: textFieldKey(field),
-    kind: "text" as const,
-    label: field.label?.trim() || "Trường chữ",
-    detail: `Tối đa ${field.maxLength ?? 50} ký tự`,
-  }));
-  const optionFields = (customization.optionGroups ?? []).map((field) => ({
-    key: optionFieldKey(field),
-    kind: "option" as const,
-    label: field.label.trim() || "Nhóm lựa chọn",
-    detail: `${field.options.length} lựa chọn`,
-  }));
+  const textFields = (customization.textInputs ?? []).flatMap((field) => {
+    if (!isRecord(field)) return [];
+    return [{
+      key: textFieldKey(field),
+      kind: "text" as const,
+      label: displayLabel(field.label, "Trường chữ"),
+      detail: `Tối đa ${typeof field.maxLength === "number" ? field.maxLength : 50} ký tự`,
+    }];
+  });
+  const optionFields = (customization.optionGroups ?? []).flatMap((field) => {
+    if (!isRecord(field)) return [];
+    const optionCount = Array.isArray(field.options) ? field.options.length : 0;
+    return [{
+      key: optionFieldKey(field),
+      kind: "option" as const,
+      label: displayLabel(field.label, "Nhóm lựa chọn"),
+      detail: `${optionCount} lựa chọn`,
+    }];
+  });
 
   return [...textFields, ...optionFields];
 }
@@ -102,10 +124,10 @@ export function removeBulkCustomizationFields(
   return {
     ...customization,
     textInputs: (customization.textInputs ?? []).filter(
-      (field) => !fieldKeys.has(textFieldKey(field)),
+      (field) => !isRecord(field) || !fieldKeys.has(textFieldKey(field)),
     ),
     optionGroups: (customization.optionGroups ?? []).filter(
-      (field) => !fieldKeys.has(optionFieldKey(field)),
+      (field) => !isRecord(field) || !fieldKeys.has(optionFieldKey(field)),
     ),
   };
 }
