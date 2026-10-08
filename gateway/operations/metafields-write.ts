@@ -199,6 +199,21 @@ export interface MetafieldSummary {
   readonly ownerType?: string;
 }
 
+/** Shared by metafields.set and productUpdate; definitions remain scoped to the target store. */
+export async function ensureManagedProductMetafieldDefinitions(input: {
+  readonly store: StoreConfig;
+  readonly client: ShopifyGraphqlClient;
+  readonly metafields: readonly { readonly ownerId: string; readonly namespace?: string; readonly key?: string }[];
+  readonly requestId?: string;
+}): Promise<void> {
+  const requiredDefinitions = MANAGED_PRODUCT_METAFIELD_DEFINITIONS.filter(definition =>
+    input.metafields.some(field => field.ownerId.startsWith("gid://shopify/Product/") &&
+      field.namespace === definition.namespace && field.key === definition.key));
+  for (const definition of requiredDefinitions) {
+    await ensureMetafieldDefinition(input.store, input.client, definition, input.requestId);
+  }
+}
+
 export interface MetafieldsSetResult {
   readonly success: boolean;
   readonly metafieldId?: string;
@@ -343,16 +358,7 @@ export async function executeMetafieldsSet(
     };
   }
 
-  const requiredDefinitions = MANAGED_PRODUCT_METAFIELD_DEFINITIONS.filter((definition) =>
-    normalized.some((item) =>
-      item.ownerId.startsWith("gid://shopify/Product/") &&
-      item.namespace === definition.namespace &&
-      item.key === definition.key,
-    ),
-  );
-  for (const definition of requiredDefinitions) {
-    await ensureMetafieldDefinition(store, client, definition, requestId);
-  }
+  await ensureManagedProductMetafieldDefinitions({ store, client, metafields: normalized, requestId });
 
   const chunkedResult = await executeChunkedWrite<NormalizedMetafieldItem, MetafieldSummary[]>({
     items: normalized,

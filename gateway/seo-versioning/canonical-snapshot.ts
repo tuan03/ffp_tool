@@ -60,7 +60,10 @@ function normalizeMetafields(metafields: readonly SeoSnapshotMetafield[]): reado
       value: normalizeNullable(metafield.value),
     };
   });
-  return normalized.sort((left, right) => compareText(`${left.namespace}.${left.key}`, `${right.namespace}.${right.key}`));
+  // The newly tracked HTML field is absent from historical snapshots. An absent
+  // Shopify value must not invalidate their hashes; a present value is versioned.
+  return normalized.filter(field => !(field.namespace === "custom" && field.key === "aeo_suite_html" && field.type === null && field.value === null))
+    .sort((left, right) => compareText(`${left.namespace}.${left.key}`, `${right.namespace}.${right.key}`));
 }
 
 export function buildCanonicalSeoContent(input: SeoSnapshotInput): CanonicalSeoContent {

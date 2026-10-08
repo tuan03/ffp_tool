@@ -53,6 +53,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
           STALE_SOURCE: "Nguồn Shopify đã thay đổi. Cần tạo revision mới để đánh giá lại.",
           OPERATOR_REQUIRED: "Đăng nhập bằng tài khoản quản trị để Sync Shopify.",
           APPROVED_REVIEW_REQUIRED: "Cần lưu và duyệt bản Review hợp lệ trước khi Sync.",
+          INVALID_AEO_FIELDS: "AEO chưa đủ summary, FAQ hoặc Schema.org Product và FAQPage hợp lệ. Kiểm tra bản Review trước khi Sync.",
           REVIEW_IMAGE_MAPPING_REQUIRED: "Chưa xác định được ID ảnh Shopify trong Review. Tải lại Review để đối chiếu ảnh; không cần chạy lại SEO.",
           PUBLISH_INPUT_REJECTED: "Gateway đã từ chối lệnh trước khi ghi Shopify. Sau khi sửa lỗi, bấm Sync để thử lại bản đã duyệt.",
           SOURCE_IMAGE_MISSING: "Ảnh trong bản Review không còn trên sản phẩm Shopify. Cần đối chiếu lại ảnh trước khi Sync.",

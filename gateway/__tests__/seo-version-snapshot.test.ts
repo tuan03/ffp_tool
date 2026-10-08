@@ -129,6 +129,7 @@ function createDispatcher(options: {
   readonly hasMoreImages?: boolean;
   readonly productResponse?: GatewayResponse;
   readonly calls?: GatewayRequest[];
+  readonly aeoSuiteHtml?: string;
 } = {}): Pick<GatewayDispatcher, "dispatch"> {
   return {
     async dispatch(request: GatewayRequest): Promise<GatewayResponse> {
@@ -146,7 +147,9 @@ function createDispatcher(options: {
         storeId: "jeminise",
         operation: request.operation,
         success: true,
-        data: key === "aeo_quick_summary"
+        data: key === "aeo_suite_html" && options.aeoSuiteHtml !== undefined
+          ? { value: options.aeoSuiteHtml, type: "multi_line_text_field" }
+          : key === "aeo_quick_summary"
           ? { value: "A quilt summary", type: "multi_line_text_field" }
           : key === "aeo_faq"
           ? { value: "[]", type: "json" }
@@ -170,8 +173,23 @@ test("Shopify snapshot reader captures the complete product and published AEO me
   assert.equal(snapshot.images.length, 1);
   assert.equal(snapshot.aeoMetafields.length, 3);
   assert.equal(snapshot.aeoMetafields.find((field) => field.key === "aeo_json_ld")?.value, null);
-  assert.deepEqual(calls.map((call) => call.operation), ["products.get", "metafields.get", "metafields.get", "metafields.get"]);
+  assert.deepEqual(calls.map((call) => call.operation), ["products.get", "metafields.get", "metafields.get", "metafields.get", "metafields.get"]);
   assert.ok(snapshot.canonicalContentJson.includes("aeo_quick_summary"));
+});
+
+test("snapshot reads AEO HTML and detects external edits while absent HTML preserves legacy hashes", async () => {
+  const absent = await createShopifySeoSnapshotReader(createDispatcher()).readSnapshot(readRequest);
+  const html = "<section><p>Approved summary</p></section>";
+  const present = await createShopifySeoSnapshotReader(createDispatcher({ aeoSuiteHtml: html })).readSnapshot(readRequest);
+  assert.equal(present.aeoMetafields.find(field => field.key === "aeo_suite_html")?.value, html);
+  assert.notEqual(present.contentHash, absent.contentHash);
+  const legacy = createCanonicalSeoSnapshot({ ...absent, aeoMetafields: absent.aeoMetafields.filter(field => field.key !== "aeo_suite_html") });
+  assert.equal(absent.contentHash, legacy.contentHash);
+  const nullHtml = createCanonicalSeoSnapshot({ ...legacy, aeoMetafields: [...legacy.aeoMetafields,
+    { namespace: "custom", key: "aeo_suite_html", type: null, value: null }] });
+  assert.equal(nullHtml.contentHash, legacy.contentHash);
+  const changed = createCanonicalSeoSnapshot({ ...present, aeoMetafields: present.aeoMetafields.map(field => field.key === "aeo_suite_html" ? { ...field, value: "Changed" } : field) });
+  assert.notEqual(changed.contentHash, present.contentHash);
 });
 
 test("Shopify snapshot reader replaces a truncated initial image list with all paginated media", async () => {

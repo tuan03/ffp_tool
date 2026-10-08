@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
+import { buildAeoMetafieldValues } from "../../src/modules/shopify-sync";
+
 import { canonicalizeJson } from "../canonical-json";
 import type { SeoContentSnapshot } from "../seo-versioning/snapshot-types";
 
@@ -20,6 +22,22 @@ const reviewSchema = z.object({ reviewDecision: z.literal("approved"), updatedAt
   productTitle: field, productDescription: field, seoTitle: field, seoDescription: field,
   images: z.array(z.object({ id: z.string().regex(/^gid:\/\/shopify\/MediaImage\/\d+$/), alt: field })).optional(),
   aeoQuickSummary: field.optional(), aeoFaq: z.object({ value: z.array(z.object({ question: z.string(), answer: z.string() })) }).optional(), aeoJsonLd: jsonField.optional() });
+
+function buildApprovedAeoMetafields(review: z.infer<typeof reviewSchema>): PublishFields["metafields"] {
+  const { aeoQuickSummary, aeoFaq, aeoJsonLd } = review;
+  // Older reviews without any AEO remain publishable; partial AEO must never be silently dropped.
+  if (!aeoQuickSummary && !aeoFaq && !aeoJsonLd) return undefined;
+  if (!aeoQuickSummary || !aeoFaq || !aeoJsonLd) throw new SeoWorkerError("INVALID_AEO_FIELDS");
+  try {
+    return [
+      { namespace: "custom", key: "aeo_quick_summary", type: "multi_line_text_field", value: aeoQuickSummary.value },
+      { namespace: "custom", key: "aeo_faq", type: "json", value: JSON.stringify(aeoFaq.value) },
+      ...buildAeoMetafieldValues({ quickSummary: aeoQuickSummary.value, faq: aeoFaq.value, jsonLd: aeoJsonLd.value }),
+    ];
+  } catch {
+    throw new SeoWorkerError("INVALID_AEO_FIELDS");
+  }
+}
 export interface PublishFields {
   readonly title: string;
   readonly descriptionHtml: string;
@@ -138,14 +156,11 @@ export class SeoPublishRepository {
         `gid://shopify/Product/${productId}`) : null;
       const active = (await sql.query("SELECT id FROM seo_publish_operations WHERE store_id=$1 AND product_id=$2 AND state!='SUCCEEDED' AND superseded_by IS NULL", [input.storeId, productId])).rows[0];
       if (active) throw new SeoWorkerError("PRODUCT_PUBLISH_ACTIVE");
+      const aeoMetafields = buildApprovedAeoMetafields(review.data);
       const fields: PublishFields = { title: review.data.productTitle.value, descriptionHtml: review.data.productDescription.value,
         seo: { title: review.data.seoTitle.value, description: review.data.seoDescription.value },
         ...(review.data.images ? { images: review.data.images.map(image => ({ id: image.id, altText: image.alt.value })) } : {}),
-        ...((review.data.aeoQuickSummary || review.data.aeoFaq || review.data.aeoJsonLd) ? { metafields: [
-          ...(review.data.aeoQuickSummary ? [{ namespace: "custom", key: "aeo_quick_summary", type: "multi_line_text_field", value: review.data.aeoQuickSummary.value }] : []),
-          ...(review.data.aeoFaq ? [{ namespace: "custom", key: "aeo_faq", type: "json", value: JSON.stringify(review.data.aeoFaq.value) }] : []),
-          ...(review.data.aeoJsonLd ? [{ namespace: "custom", key: "aeo_json_ld", type: "json", value: review.data.aeoJsonLd.value }] : []),
-        ] } : {}) };
+        ...(aeoMetafields ? { metafields: aeoMetafields } : {}) };
       const id = randomUUID();
       const created = (await sql.query(`INSERT INTO seo_publish_operations(id,job_id,store_id,product_id,request_id,review_revision,operator,fields,source_version,baseline_version,state,created_at,updated_at,review_fingerprint,
         based_on_version_id,based_on_snapshot_id,based_on_content_hash,based_on_version_number,version_source,restored_from_version_id)

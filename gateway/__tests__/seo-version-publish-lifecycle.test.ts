@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 
+import { buildAeoMetafieldValues } from "../../src/modules/shopify-sync";
+
 import { getQueueSchemaSql } from "../custom-gpt-seo/postgres-database";
 import { createCanonicalSeoSnapshot } from "../seo-versioning/canonical-snapshot";
 import { SeoPublishVersioningIntegration } from "../seo-versioning/publish-integration";
@@ -59,6 +61,10 @@ function persistenceSnapshot(value: SeoContentSnapshot) {
 }
 
 function applyFields(current: SeoContentSnapshot, fields: PublishFields): SeoContentSnapshot {
+  const metafields = new Map(current.aeoMetafields.map(field => [`${field.namespace}.${field.key}`, field]));
+  for (const field of fields.metafields ?? []) {
+    if (field.key !== "seo_version") metafields.set(`${field.namespace}.${field.key}`, field);
+  }
   return createCanonicalSeoSnapshot({
     ...current,
     source: "POST_PUBLISH",
@@ -66,10 +72,18 @@ function applyFields(current: SeoContentSnapshot, fields: PublishFields): SeoCon
     descriptionHtml: fields.descriptionHtml,
     seoTitle: fields.seo.title,
     seoDescription: fields.seo.description,
+    aeoMetafields: [...metafields.values()],
   });
 }
 
-async function fixture(noChange = false) {
+const oldAeo = { quickSummary: "Old approved summary", faq: [{ question: "Old question?", answer: "Old answer." }],
+  jsonLd: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Product", name: "Old" }, { "@type": "FAQPage" }] }) };
+const newAeoReview = {
+  aeoQuickSummary: { value: "New approved summary" }, aeoFaq: { value: [{ question: "New question?", answer: "New answer." }] },
+  aeoJsonLd: { value: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Product", name: "New" }, { "@type": "FAQPage" }] }) },
+};
+
+async function fixture(noChange = false, withAeo = false) {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
   const database: WorkerDatabase = { transaction: operation => pg.transaction(tx => operation({
@@ -79,7 +93,11 @@ async function fixture(noChange = false) {
   await applySeoVersionMigrations(database, "public", () => now);
   const versions = new SeoVersionRepository(database, "public");
   await versions.setStoreFlags({ storeId: "demo", readEnabled: true, writeEnabled: true }, now);
-  const original = snapshot();
+  const original = snapshot(withAeo ? { aeoMetafields: [
+    { namespace: "custom", key: "aeo_quick_summary", type: "multi_line_text_field", value: oldAeo.quickSummary },
+    { namespace: "custom", key: "aeo_faq", type: "json", value: JSON.stringify(oldAeo.faq) },
+    ...buildAeoMetafieldValues(oldAeo),
+  ] } : {});
   const baseline = await versions.ensureBaseline({
     storeId: "demo", shopifyProductGid: original.shopifyProductGid, snapshot: persistenceSnapshot(original), observedAt: now,
   });
@@ -87,6 +105,7 @@ async function fixture(noChange = false) {
     reviewDecision: "approved", updatedAt: 7,
     productTitle: { value: noChange ? "Old" : "New" }, productDescription: { value: "Description" },
     seoTitle: { value: "Title" }, seoDescription: { value: "Meta" },
+    ...(withAeo ? newAeoReview : {}),
   };
   const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", sourceRevision: "v1", original: { updatedAt: "v1", seoVersion: 0 } });
   await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('job','demo','d','REVIEW_READY',$1,1,'codex_mcp')",
@@ -208,7 +227,7 @@ test("partial read-back mismatch never commits an authoritative version", async 
 });
 
 test("rollback publishes forward and records the restored historical version", async () => {
-  const f = await fixture();
+  const f = await fixture(false, true);
   let live = f.original;
   let liveFields: PublishFields = { ...f.operation.fields, title: "Old" };
   try {
@@ -220,12 +239,19 @@ test("rollback publishes forward and records the restored historical version", a
       },
     }, f.integration);
 
+    const appliedSnapshot = (await f.pg.query<{ aeo_metafields: Record<string, string> }>(
+      "SELECT s.aeo_metafields FROM seo_content_snapshots s JOIN seo_versions v ON v.snapshot_id=s.id WHERE v.publish_operation_id=$1", [f.operation.id],
+    )).rows[0];
+    assert.match(appliedSnapshot?.aeo_metafields["custom.aeo_suite_html"] ?? "", /New approved summary/);
+    assert.match(appliedSnapshot?.aeo_metafields["custom.aeo_json_ld"] ?? "", /FAQPage/);
+
     const rollbackEnqueue = createTestEnqueue({ storeId: "demo", productId: "123", sourceRevision: "v2",
       original: { updatedAt: "v2", seoVersion: 1 } });
     const rollbackReview = {
       reviewDecision: "approved", updatedAt: 8,
       productTitle: { value: "Old" }, productDescription: { value: "Description" },
       seoTitle: { value: "Title" }, seoDescription: { value: "Meta" },
+      aeoQuickSummary: { value: oldAeo.quickSummary }, aeoFaq: { value: oldAeo.faq }, aeoJsonLd: { value: oldAeo.jsonLd },
     };
     await f.pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('rollback-job','demo','rollback','REVIEW_READY',$1,2,'codex_mcp')",
       [JSON.stringify({ input: rollbackEnqueue.input, execution: rollbackEnqueue.execution, original: rollbackEnqueue.execution.originalSnapshot })]);
@@ -250,5 +276,8 @@ test("rollback publishes forward and records the restored historical version", a
       "SELECT version_number,source,restored_from_version_id FROM seo_versions ORDER BY version_number DESC LIMIT 1",
     )).rows[0];
     assert.deepEqual(restored, { version_number: 2, source: "ROLLBACK", restored_from_version_id: f.baseline.version.id });
+    assert.equal(live.aeoMetafields.find(field => field.key === "aeo_suite_html")?.value,
+      f.original.aeoMetafields.find(field => field.key === "aeo_suite_html")?.value);
+    assert.equal(live.aeoMetafields.find(field => field.key === "aeo_json_ld")?.value, oldAeo.jsonLd);
   } finally { await f.pg.close(); }
 });

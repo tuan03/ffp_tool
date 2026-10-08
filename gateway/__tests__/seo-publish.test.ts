@@ -11,12 +11,12 @@ import { SeoWorkerError } from "../seo-worker/protocol";
 
 import { createTestEnqueue } from "./seo-v2-fixtures";
 
-async function fixture(descriptionHtml = "Description") {
+async function fixture(descriptionHtml = "Description", reviewFields: Record<string, unknown> = {}) {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
   let now = 1000;
   const repository = new SeoPublishRepository({ transaction: operation => pg.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) }, () => now);
-  const review = { reviewDecision: "approved", updatedAt: 7, productTitle: { value: "New" }, productDescription: { value: descriptionHtml }, seoTitle: { value: "Title" }, seoDescription: { value: "Meta" } };
+  const review = { reviewDecision: "approved", updatedAt: 7, productTitle: { value: "New" }, productDescription: { value: descriptionHtml }, seoTitle: { value: "Title" }, seoDescription: { value: "Meta" }, ...reviewFields };
   const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", sourceRevision: "v1", original: { updatedAt: "v1" } });
   await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('job','demo','d','REVIEW_READY',$1,1,'codex_mcp')", [JSON.stringify({ input: enqueue.input, execution: enqueue.execution, original: enqueue.execution.originalSnapshot })]);
   await pg.query("INSERT INTO gpt_review_state(job_id,payload) VALUES ('job',$1)", [JSON.stringify(review)]);
@@ -24,6 +24,65 @@ async function fixture(descriptionHtml = "Description") {
   const operation = await repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "sync", operator: "operator" });
   return { pg, repository, operation, review, advance: () => { now += 120_001; } };
 }
+
+const approvedAeo = {
+  aeoQuickSummary: { value: "Red bag & floral artwork" },
+  aeoFaq: { value: [{ question: "What <design> is shown?", answer: "A floral motif & portrait." }] },
+  aeoJsonLd: { value: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Product", name: "Red bag" }, { "@type": "FAQPage" }] }) },
+};
+
+test("publish freezes approved AEO HTML and JSON-LD and retries without another write", async () => {
+  const f = await fixture("Description", approvedAeo);
+  try {
+    const html = f.operation.fields.metafields?.find(field => field.key === "aeo_suite_html");
+    assert.equal(html?.type, "multi_line_text_field");
+    assert.match(html?.value ?? "", /Red bag &amp; floral artwork/);
+    assert.match(html?.value ?? "", /What &lt;design&gt; is shown\?/);
+    assert.equal(f.operation.fields.metafields?.find(field => field.key === "aeo_json_ld")?.type, "json");
+    assert.equal(f.operation.fields.metafields?.length, 4);
+    let writes = 0;
+    let live: PublishFields = f.operation.fields;
+    const transport = { read: async () => ({ version: writes ? "v2" : "v1", fields: live }),
+      write: async (op: PublishOperation) => { writes++; live = op.fields; throw new Error("response lost"); } };
+    await processSeoPublish(f.repository, transport);
+    f.advance();
+    await processSeoPublish(f.repository, transport);
+    assert.equal((await f.repository.get("demo", f.operation.id)).state, "SUCCEEDED");
+    assert.equal(writes, 1);
+  } finally { await f.pg.close(); }
+});
+
+test("publish refuses incomplete AEO or JSON-LD without Product and FAQPage before queuing", async () => {
+  const f = await fixture();
+  try {
+    await f.pg.query("DELETE FROM seo_publish_operations WHERE job_id='job'");
+    await f.pg.query("DELETE FROM gpt_sync WHERE job_id='job'");
+    for (const fields of [
+      { aeoQuickSummary: approvedAeo.aeoQuickSummary },
+      { ...approvedAeo, aeoJsonLd: { value: '{"@context":"https://schema.org","@graph":[{"@type":"Product"}]}' } },
+      { ...approvedAeo, aeoFaq: { value: [] } },
+    ]) {
+      await f.pg.query("UPDATE gpt_review_state SET payload=$1 WHERE job_id='job'", [JSON.stringify({ ...f.review, ...fields })]);
+      await assert.rejects(f.repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "aeo-invalid", operator: "operator" }), /INVALID_AEO_FIELDS/);
+    }
+    assert.equal((await f.pg.query("SELECT id FROM seo_publish_operations WHERE job_id='job'")).rows.length, 0);
+    assert.equal((await f.pg.query("SELECT job_id FROM gpt_sync WHERE job_id='job'")).rows.length, 0);
+  } finally { await f.pg.close(); }
+});
+
+test("publish blocks missing AEO HTML on read-back instead of claiming sync success", async () => {
+  const f = await fixture("Description", approvedAeo);
+  try {
+    let writes = 0;
+    await processSeoPublish(f.repository, {
+      read: async () => ({ version: writes ? "v2" : "v1", fields: { ...f.operation.fields,
+        metafields: f.operation.fields.metafields?.map(field => writes && field.key === "aeo_suite_html" ? { ...field, value: "" } : field) } }),
+      write: async () => { writes++; },
+    });
+    assert.equal((await f.repository.get("demo", f.operation.id)).errorCode, "RECONCILIATION_REQUIRED");
+    assert.equal((await f.pg.query<{ status: string }>("SELECT status FROM gpt_sync WHERE job_id='job'")).rows[0]?.status, "SYNCING");
+  } finally { await f.pg.close(); }
+});
 
 test("read-back confirms block formatting without a second write but blocks actual content changes", async () => {
   for (const changed of [false, true]) {

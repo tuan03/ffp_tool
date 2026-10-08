@@ -3,6 +3,7 @@ import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem }
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
 import { executeProductsGet, mapProductNode, type RawProductNode } from "./products";
+import { ensureManagedProductMetafieldDefinitions } from "./metafields-write";
 import { ensureMediaPubliclyAccessible } from "./staged-uploads";
 import { ensureUrlRedirect } from "./url-redirects";
 
@@ -1310,6 +1311,11 @@ export async function executeProductsUpdate(
       readonly product: RawProductNode | null;
       readonly userErrors: readonly MutationUserErrorItem[];
     };
+  }
+
+  if (Array.isArray(input.metafields)) {
+    await ensureManagedProductMetafieldDefinitions({ store, client, requestId,
+      metafields: input.metafields.map((field: { readonly namespace?: string; readonly key?: string }) => ({ ...field, ownerId: id })) });
   }
 
   const { mediaList: finalMediaList } = mode === "apply"

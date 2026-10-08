@@ -12,6 +12,7 @@ export const PUBLISHED_AEO_METAFIELDS = [
   { namespace: "custom", key: "aeo_quick_summary" },
   { namespace: "custom", key: "aeo_faq" },
   { namespace: "custom", key: "aeo_json_ld" },
+  { namespace: "custom", key: "aeo_suite_html" },
 ] as const;
 
 export type SeoSnapshotSource = "BASELINE" | "PRE_PUBLISH" | "POST_PUBLISH" | "EXTERNAL_OBSERVATION";

@@ -3,6 +3,11 @@ import { test } from "node:test";
 import { createCustomGptClient } from "../service";
 import { createMockCustomGptClient } from "../mocks/runner";
 
+test("publish explains invalid AEO without exposing an internal error", async () => {
+  const client = createCustomGptClient(async () => Response.json({ error: { code: "INVALID_AEO_FIELDS" } }, { status: 400 }));
+  await assert.rejects(client.publishReview("demo", "job", 7, "sync"), /AEO chưa đủ summary, FAQ/);
+});
+
 test("worker metrics preserve store scope and window with independent mock snapshots", async () => {
   const client = createCustomGptClient(async (url, init) => {
     assert.equal(String(url), "/api/seo-agent/metrics?hours=168&storeId=store%20one");
