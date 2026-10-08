@@ -54,6 +54,43 @@ describe("Customization Manager: Service & Helpers", () => {
     assert.equal(readRes.customization.surfaces?.length, 2);
   });
 
+  it("updateCustomization removes deleted option groups from legacy pricing storage", async () => {
+    const gateway = createDryRunCustomizationGateway();
+    const productId = "gid://shopify/Product/legacy-paid-groups";
+    const paidOptionGroup = {
+      id: "size-group",
+      label: "Choose Product Type + Size",
+      options: [{ id: "queen", label: "Queen" }],
+    };
+
+    await createCustomization(gateway, {
+      productId,
+      customization: {
+        optionGroups: [],
+        textInputs: [{ id: "name", label: "Customize Your Name" }],
+        pricing: { paidOptionGroups: [paidOptionGroup] },
+      },
+    });
+
+    const beforeUpdate = await readCustomization(gateway, { productId });
+    assert.deepEqual(beforeUpdate.customization?.optionGroups?.map((group) => group.id), [
+      "size-group",
+    ]);
+
+    await updateCustomization(gateway, {
+      productId,
+      customization: {
+        ...beforeUpdate.customization,
+        optionGroups: [],
+      },
+    });
+
+    const afterUpdate = await readCustomization(gateway, { productId });
+    assert.deepEqual(afterUpdate.customization?.optionGroups, []);
+    assert.deepEqual(afterUpdate.customization?.pricing?.paidOptionGroups, []);
+    assert.equal(afterUpdate.customization?.textInputs?.length, 1);
+  });
+
   it("createCustomization rejects overwrite when allowOverwrite is false", async () => {
     const gateway = createDryRunCustomizationGateway();
     const productId = "gid://shopify/Product/prod-2";

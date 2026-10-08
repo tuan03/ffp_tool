@@ -1,4 +1,5 @@
 import type {
+  CustomizationOptionGroup,
   ProductCustomization,
 } from "../customization-normalizer";
 import type {
@@ -363,10 +364,8 @@ export async function updateCustomization(
     }
   }
 
-  const { serialized, byteSize, wasOptimized } = prepareAndOptimizePayload(
-    input.customization,
-    config,
-  );
+  const customization = synchronizeLegacyOptionGroups(input.customization);
+  const { serialized, byteSize, wasOptimized } = prepareAndOptimizePayload(customization, config);
 
   if (wasOptimized) {
     warnings.push("Payload size exceeded safe threshold; automatic asset deduplication was applied.");
@@ -394,6 +393,42 @@ export async function updateCustomization(
     assetDiff,
     deletedFileIds,
     warnings,
+  };
+}
+
+function synchronizeLegacyOptionGroups(
+  customization: ProductCustomization,
+): ProductCustomization {
+  if (!Array.isArray(customization.optionGroups)) return customization;
+
+  const retainedGroupIds = new Set(customization.optionGroups.map((group) => group.id));
+  const filterGroups = <Group>(
+    groups: readonly Group[] | undefined,
+    fallbackId: string,
+  ): Group[] | undefined => {
+    if (!Array.isArray(groups)) return undefined;
+
+    return groups.filter((group) => {
+      if (!group || typeof group !== "object") return false;
+      const groupId = String((group as Record<string, unknown>).id || fallbackId);
+      return retainedGroupIds.has(groupId);
+    });
+  };
+
+  const colorGroups = filterGroups(customization.colorGroups, "group_color");
+  const fontGroups = filterGroups(customization.fontGroups, "group_font");
+  const paidOptionGroups = filterGroups(
+    customization.pricing?.paidOptionGroups,
+    "group_paid",
+  ) as CustomizationOptionGroup[] | undefined;
+
+  return {
+    ...customization,
+    colorGroups,
+    fontGroups,
+    pricing: customization.pricing
+      ? { ...customization.pricing, paidOptionGroups }
+      : customization.pricing,
   };
 }
 
