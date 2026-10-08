@@ -38,11 +38,13 @@ export interface SeoContentResult {
   readonly jobIds?: readonly string[];
 }
 
-import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput } from "../../src/modules/seo-content";
+import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput, SeoStoreProfile } from "../../src/modules/seo-content";
 import type { GptSeoSettings } from "../../src/modules/custom-gpt-seo";
 
 export interface GatewaySeoContentOptions {
   readonly providerSettings?: GptSeoSettings;
+  /** Server-resolved policy snapshot, never populated from the HTTP request. */
+  readonly storeProfile?: SeoStoreProfile;
   readonly runner?: (input: CoreSeoContentInput) => Promise<SeoContentOutput>;
 }
 

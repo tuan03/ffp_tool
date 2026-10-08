@@ -23,6 +23,7 @@ import {
 import { calculateAutoSeoInputHash } from "./auto-seo-input-hash";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
+import { AutoSeoStoreProfileError, requireAutoSeoStoreProfile } from "./seo-content/store-profile";
 import { executeSeoReviewSaveLifecycle, validateGeneratedSeoFields } from "./seo-review-lifecycle";
 import type {
   AutoSeoProductPayload,
@@ -86,6 +87,7 @@ export interface AutoSeoHandlerOptions {
   readonly db?: DatabaseSync;
   readonly queue?: SeoQueue;
   readonly seoContentRunner?: SeoContentRunner;
+  readonly storeProfileResolver?: typeof requireAutoSeoStoreProfile;
   readonly onConflict?: "error" | "update";
 }
 
@@ -267,6 +269,11 @@ export async function handleAutoSeoRun(
   options?: AutoSeoHandlerOptions,
 ): Promise<AutoSeoRunResult> {
   const request = validateAutoSeoRunInput(body);
+  // Fail before creating a durable backup/outbox entry. Custom test adapters
+  // can supply their own resolver or generation runner explicitly.
+  const storeProfile = !options?.seoContentRunner || options.storeProfileResolver
+    ? (options?.storeProfileResolver ?? requireAutoSeoStoreProfile)(request)
+    : undefined;
   const db = options?.db;
   const repository = options?.backupRepository ?? (db ? undefined : getAutoSeoBackupRepository());
   const runner = options?.seoContentRunner ?? runSeoContent;
@@ -377,7 +384,7 @@ export async function handleAutoSeoRun(
       storeId: request.storeId,
       shopDomain: request.shopDomain,
       products: dispatchedProducts,
-    }, { providerSettings: selectedSettings });
+    }, { providerSettings: selectedSettings, storeProfile });
 
     seoProvider = seoResult.provider;
     if (seoResult && seoResult.success === true) {
@@ -632,6 +639,12 @@ export async function handleAutoSeoHttpRequest(
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ success: true, data: result }));
   } catch (err: unknown) {
+    if (err instanceof AutoSeoStoreProfileError) {
+      res.statusCode = 409;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ success: false, error: { code: err.code, message: err.message } }));
+      return;
+    }
     if (err instanceof AutoSeoValidationError) {
       res.statusCode = 400;
       res.setHeader("Content-Type", "application/json");

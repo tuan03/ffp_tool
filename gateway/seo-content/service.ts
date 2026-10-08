@@ -1,12 +1,12 @@
 import {
   fromAutoSeoProduct,
-  resolveStoreProfile,
   runAutoSeoPipeline,
   runMockSeoContent,
 } from "../../src/modules/seo-content";
 import { runSeoContent as runServerSeoContent } from "../../src/modules/seo-content/server";
 import { getCustomGptRuntime } from "../custom-gpt-seo/runtime";
 import type { GatewaySeoContentOptions, GatewaySeoContentRequest, SeoContentResult } from "./types";
+import { requireAutoSeoStoreProfile } from "./store-profile";
 
 /**
  * Executes the real SEO Content Pipeline (B1 -> B6) for products handed off by Auto SEO.
@@ -21,11 +21,8 @@ export async function runSeoContent(
     process.env.VITE_APP_ENV === "mock";
   const defaultRunner = isTestOrMock ? runMockSeoContent : undefined;
   const runner = options?.runner ?? defaultRunner;
-  const storeProfile = resolveStoreProfile({ storeId: input.storeId, siteDomain: input.shopDomain });
-
-  if (!storeProfile) {
-    throw new Error("STORE_PROFILE_REQUIRED");
-  }
+  const storeProfile = options?.storeProfile ?? requireAutoSeoStoreProfile(input);
+  if (storeProfile.storeId !== input.storeId) throw new Error("Store profile does not match execution store");
 
   if (!runner) {
     const queue = getCustomGptRuntime().queue;
