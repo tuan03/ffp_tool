@@ -1050,6 +1050,17 @@ export function CustomizationManagerPage({
                 text: `Đã cập nhật Customizer cho ${updatedCount} sản phẩm.`,
               });
             }}
+            onDeleteComplete={(deletedProductIds) => {
+              setConfiguredProductIds((current) => {
+                const next = new Set(current);
+                deletedProductIds.forEach((productId) => next.delete(productId));
+                return next;
+              });
+              setStatusMessage({
+                type: "success",
+                text: `Đã xóa toàn bộ Customizer khỏi ${deletedProductIds.length} sản phẩm.`,
+              });
+            }}
           />
         )}
       </div>

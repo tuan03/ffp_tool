@@ -5,7 +5,11 @@ import {
   groupBulkCustomizations,
   removeBulkCustomizationFields,
 } from "../../bulk-edit";
-import { readCustomization, updateCustomization } from "../../service";
+import {
+  deleteCustomization,
+  readCustomization,
+  updateCustomization,
+} from "../../service";
 import type { CustomizationGateway } from "../../types";
 
 import type { BulkCustomizationEntry } from "../../bulk-edit";
@@ -15,6 +19,7 @@ export interface BulkCustomizerEditorProps {
   readonly gateway: CustomizationGateway;
   readonly onClose: () => void;
   readonly onComplete: (updatedCount: number) => void;
+  readonly onDeleteComplete: (deletedProductIds: readonly string[]) => void;
 }
 
 const READ_CONCURRENCY = 6;
@@ -35,10 +40,12 @@ export function BulkCustomizerEditor({
   gateway,
   onClose,
   onComplete,
+  onDeleteComplete,
 }: BulkCustomizerEditorProps): React.JSX.Element {
   const [entries, setEntries] = useState<readonly BulkCustomizationEntry<ShopifyProduct>[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<"items" | "group" | null>(null);
   const [failedReads, setFailedReads] = useState(0);
   const [selectedSchemaKey, setSelectedSchemaKey] = useState<string | null>(null);
   const [selectedItemKeys, setSelectedItemKeys] = useState<ReadonlySet<string>>(new Set());
@@ -108,6 +115,7 @@ export function BulkCustomizerEditor({
     if (!shouldApply) return;
 
     setIsSaving(true);
+    setSavingAction("items");
     setMessage(null);
     setProgress({ completed: 0, total: productCount });
     const successfulUpdates = new Map<string, BulkCustomizationEntry<ShopifyProduct>>();
@@ -139,6 +147,7 @@ export function BulkCustomizerEditor({
     );
     setSelectedItemKeys(new Set());
     setIsSaving(false);
+    setSavingAction(null);
     const successCount = successfulUpdates.size;
     setMessage(
       failureCount > 0
@@ -146,6 +155,54 @@ export function BulkCustomizerEditor({
         : `Đã xóa cấu hình đã chọn khỏi ${successCount} sản phẩm.`,
     );
     if (successCount > 0) onComplete(successCount);
+  };
+
+  const handleDeleteGroup = async (): Promise<void> => {
+    if (!selectedGroup || isSaving) return;
+    const productCount = selectedGroup.entries.length;
+    const shouldDelete = window.confirm(
+      `Xóa toàn bộ Customizer khỏi ${productCount} sản phẩm trong nhóm này? Tất cả mặt in và trường tùy chọn của nhóm sẽ bị xóa.`,
+    );
+    if (!shouldDelete) return;
+
+    setIsSaving(true);
+    setSavingAction("group");
+    setMessage(null);
+    setProgress({ completed: 0, total: productCount });
+    const deletedProductIds = new Set<string>();
+    let failureCount = 0;
+
+    await processChunks(selectedGroup.entries, WRITE_CONCURRENCY, async (entry) => {
+      try {
+        const result = await deleteCustomization(gateway, {
+          productId: entry.product.id,
+          cascadeDeleteFiles: false,
+        });
+        if (result.success) {
+          deletedProductIds.add(entry.product.id);
+        } else {
+          failureCount += 1;
+        }
+      } catch {
+        failureCount += 1;
+      } finally {
+        setProgress((current) => ({ ...current, completed: current.completed + 1 }));
+      }
+    });
+
+    setEntries((current) =>
+      current.filter((entry) => !deletedProductIds.has(entry.product.id)),
+    );
+    setSelectedItemKeys(new Set());
+    setIsSaving(false);
+    setSavingAction(null);
+    const successCount = deletedProductIds.size;
+    setMessage(
+      failureCount > 0
+        ? `Đã xóa toàn bộ Customizer của ${successCount}/${productCount} sản phẩm; ${failureCount} sản phẩm lỗi được giữ nguyên.`
+        : `Đã xóa toàn bộ Customizer khỏi ${successCount} sản phẩm.`,
+    );
+    if (successCount > 0) onDeleteComplete([...deletedProductIds]);
   };
 
   return (
@@ -237,16 +294,28 @@ export function BulkCustomizerEditor({
                         Đánh dấu mặt in hoặc trường cần xóa khỏi toàn bộ nhóm.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleApply()}
-                      disabled={selectedItemKeys.size === 0 || isSaving}
-                      className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {isSaving
-                        ? `Đang lưu ${progress.completed}/${progress.total}`
-                        : `Xóa ${selectedItemKeys.size} mục khỏi ${selectedGroup.entries.length} sản phẩm`}
-                    </button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteGroup()}
+                        disabled={isSaving}
+                        className="rounded-xl border border-rose-700 px-4 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {savingAction === "group"
+                          ? `Đang xóa ${progress.completed}/${progress.total}`
+                          : "Xóa toàn bộ Customizer của nhóm"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleApply()}
+                        disabled={selectedItemKeys.size === 0 || isSaving}
+                        className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {savingAction === "items"
+                          ? `Đang xử lý ${progress.completed}/${progress.total}`
+                          : `Xóa ${selectedItemKeys.size} mục khỏi ${selectedGroup.entries.length} sản phẩm`}
+                      </button>
+                    </div>
                   </div>
 
                   <section>
