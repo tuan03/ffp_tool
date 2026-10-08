@@ -37,7 +37,7 @@ export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "d
         source: phase === "AFTER" ? "POST_PUBLISH" : "PRE_PUBLISH",
       });
       return { version: product.updatedAt, seoVersion, ...(snapshot ? { snapshot } : {}), fields: { title: product.title, descriptionHtml: product.descriptionHtml ?? "",
-        seo: { title: product.seo?.title ?? "", description: product.seo?.description ?? "" },
+        seo: { title: product.seo?.title ?? (op.fields.seo.title === product.title ? product.title : ""), description: product.seo?.description ?? "" },
         ...(op.fields.images ? { images: op.fields.images.map(expected => {
           const image = product.images?.find(image => image.id === expected.id);
           if (!image) throw new SeoWorkerError("SOURCE_IMAGE_MISSING");

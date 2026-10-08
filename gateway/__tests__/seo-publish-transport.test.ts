@@ -102,3 +102,13 @@ test("publish read-back uses the actual metafield type rather than assuming the 
   const actual = await transport.read({ id: "receipt", jobId: "job", storeId: "demo", productId: "123", sourceVersion: "v1", state: "UNCERTAIN", leaseId: "lease", seoVersion: null, errorCode: null, fields });
   assert.equal(actual.fields.metafields?.[0].type, "multi_line_text_field");
 });
+
+test("accepts Shopify's default SEO title only when the approved title equals the live product title", async () => {
+  const transport = createSeoPublishTransport({ dispatch: async request => ({ success: true, storeId: "demo", operation: request.operation,
+    data: request.operation === "metafields.get" ? { value: null } : { product: { title: "Bag", descriptionHtml: "", updatedAt: "v2", seo: { description: "Meta" } } } }) });
+  for (const title of ["Bag", "Different SEO title", ""]) {
+    const result = await transport.read({ id: "receipt", jobId: "job", storeId: "demo", productId: "123", sourceVersion: "v1", state: "UNCERTAIN", leaseId: "lease", seoVersion: null, errorCode: null,
+      fields: { title: "Bag", descriptionHtml: "", seo: { title, description: "Meta" } } });
+    assert.equal(result.fields.seo.title, title === "Bag" ? "Bag" : "");
+  }
+});

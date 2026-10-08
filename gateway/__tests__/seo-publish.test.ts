@@ -11,12 +11,12 @@ import { SeoWorkerError } from "../seo-worker/protocol";
 
 import { createTestEnqueue } from "./seo-v2-fixtures";
 
-async function fixture() {
+async function fixture(descriptionHtml = "Description") {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
   let now = 1000;
   const repository = new SeoPublishRepository({ transaction: operation => pg.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) }, () => now);
-  const review = { reviewDecision: "approved", updatedAt: 7, productTitle: { value: "New" }, productDescription: { value: "Description" }, seoTitle: { value: "Title" }, seoDescription: { value: "Meta" } };
+  const review = { reviewDecision: "approved", updatedAt: 7, productTitle: { value: "New" }, productDescription: { value: descriptionHtml }, seoTitle: { value: "Title" }, seoDescription: { value: "Meta" } };
   const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", sourceRevision: "v1", original: { updatedAt: "v1" } });
   await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('job','demo','d','REVIEW_READY',$1,1,'codex_mcp')", [JSON.stringify({ input: enqueue.input, execution: enqueue.execution, original: enqueue.execution.originalSnapshot })]);
   await pg.query("INSERT INTO gpt_review_state(job_id,payload) VALUES ('job',$1)", [JSON.stringify(review)]);
@@ -24,6 +24,25 @@ async function fixture() {
   const operation = await repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "sync", operator: "operator" });
   return { pg, repository, operation, review, advance: () => { now += 120_001; } };
 }
+
+test("read-back confirms block formatting without a second write but blocks actual content changes", async () => {
+  for (const changed of [false, true]) {
+    const f = await fixture("<p>Bag</p><ul><li>Red</li></ul>");
+    try {
+      let writes = 0;
+      const transport = {
+        read: async () => ({ version: writes ? "v2" : "v1", fields: { ...f.operation.fields,
+          descriptionHtml: writes ? `<p>Bag</p>\n<ul>\n<li>${changed ? "Blue" : "Red"}</li>\n</ul>` : f.operation.fields.descriptionHtml } }),
+        write: async () => { writes++; throw new Error("response lost"); },
+      };
+      await processSeoPublish(f.repository, transport);
+      f.advance();
+      await processSeoPublish(f.repository, transport);
+      assert.equal((await f.repository.get("demo", f.operation.id)).state, changed ? "BLOCKED" : "SUCCEEDED");
+      assert.equal(writes, 1);
+    } finally { await f.pg.close(); }
+  }
+});
 
 test("publish reports invalid image identity separately from approval and never queues a write", async () => {
   const f = await fixture();

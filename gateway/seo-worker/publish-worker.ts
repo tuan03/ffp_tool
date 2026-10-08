@@ -3,6 +3,7 @@ import type { SeoPublishVersioningIntegration } from "../seo-versioning/publish-
 import type { SeoContentSnapshot } from "../seo-versioning/snapshot-types";
 
 import { SeoWorkerError } from "./protocol";
+import { normalizePublishedDescriptionHtml } from "./publish-html";
 import type { PublishFields, PublishOperation, SeoPublishRepository } from "./publish-repository";
 
 export interface SeoPublishTransport {
@@ -12,7 +13,7 @@ export interface SeoPublishTransport {
 }
 
 function comparableFields(fields: PublishFields): string {
-  return canonicalizeJson({ ...fields, ...(fields.metafields ? { metafields: fields.metafields.map(field => {
+  return canonicalizeJson({ ...fields, descriptionHtml: normalizePublishedDescriptionHtml(fields.descriptionHtml), ...(fields.metafields ? { metafields: fields.metafields.map(field => {
     if (field.type !== "json") return field;
     try { return { ...field, value: JSON.parse(field.value) as unknown }; }
     catch { return field; }
