@@ -5,6 +5,7 @@ import { buildContentFactSheet } from "../internal/content-generation/content-fa
 import { HeuristicContentGenerator } from "../internal/content-generation/heuristic-content-generator";
 import { extractVisionDesignConcept } from "../internal/content-generation/heuristic-title-builder";
 import { createInitialContext } from "../internal/pipeline-context";
+import { executeB5ContentGeneration } from "../internal/stages/b5-content-generation";
 import { TEST_STORE_PROFILE } from "./test-profile";
 
 test("B5 fact sheet excludes scene context and only supplies product-safe B1 evidence", async () => {
@@ -57,7 +58,7 @@ test("B5 HeuristicContentGenerator excludes legacy variantLabel from facts and c
   assert.ok(draft.bullets.every((b) => !b.text.includes("Pink Faith")));
 });
 
-test("B5 HeuristicContentGenerator enriches title and SEO title using visualEntities and typographyVisibleTexts", async () => {
+test("B5 HeuristicContentGenerator enriches titles from visual motifs without quoting artwork text", async () => {
   const facts1 = buildContentFactSheet({
     ...createInitialContext({
       niche: "bedding",
@@ -102,7 +103,7 @@ test("B5 HeuristicContentGenerator enriches title and SEO title using visualEnti
   });
 
   // Verify Product Titles are enriched and distinct
-  assert.match(draft1.productTitle, /Valhalla/i);
+  assert.doesNotMatch(draft1.productTitle, /Valhalla/i);
   assert.match(draft1.productTitle, /Shield/i);
   // Verify theme word is not awkwardly repeated like "Viking Valhalla Viking"
   assert.doesNotMatch(draft1.productTitle, /Viking\s+Valhalla\s+Viking/i);
@@ -111,7 +112,7 @@ test("B5 HeuristicContentGenerator enriches title and SEO title using visualEnti
   assert.notEqual(draft1.productTitle, draft2.productTitle);
 
   // Verify SEO Titles are vision-driven and distinct
-  assert.match(draft1.productSeoTitle, /Valhalla/i);
+  assert.doesNotMatch(draft1.productSeoTitle, /Valhalla/i);
   assert.match(draft2.productSeoTitle, /Thor/i);
   assert.doesNotMatch(draft1.productSeoTitle, /Viking.*Viking/i);
   assert.notEqual(draft1.productSeoTitle, draft2.productSeoTitle);
@@ -122,7 +123,6 @@ test("B5 HeuristicContentGenerator enriches title and SEO title using visualEnti
 test("B5 extractVisionDesignConcept safely rejects placeholder values like 'unknown.', 'None.', 'N/A'", () => {
   assert.equal(
     extractVisionDesignConcept({
-      typographyVisibleTexts: [],
       visualEntities: "unknown.",
     }),
     undefined,
@@ -130,7 +130,6 @@ test("B5 extractVisionDesignConcept safely rejects placeholder values like 'unkn
 
   assert.equal(
     extractVisionDesignConcept({
-      typographyVisibleTexts: ["unknown."],
       visualEntities: "none",
     }),
     undefined,
@@ -138,7 +137,6 @@ test("B5 extractVisionDesignConcept safely rejects placeholder values like 'unkn
 
   assert.equal(
     extractVisionDesignConcept({
-      typographyVisibleTexts: ["N/A"],
       visualEntities: "Not Applicable",
     }),
     undefined,
@@ -322,7 +320,8 @@ test("B5: placeholder defense filters 'unknown' and rebuilds title for 'Design #
   const facts = buildContentFactSheet(rawContext);
   assert.equal(facts.visualEntities, undefined);
   assert.equal(facts.typographyStyleSummary, undefined);
-  assert.deepEqual(facts.typographyVisibleTexts, ["VALHALLA"]);
+  assert.deepEqual(facts.typographyVisibleTexts, []);
+  assert.deepEqual(facts.excludedLiteralTexts, ["unknown", "VALHALLA"]);
 
   const generator = new HeuristicContentGenerator();
   const draft = await generator.generate({
@@ -339,6 +338,48 @@ test("B5: placeholder defense filters 'unknown' and rebuilds title for 'Design #
     assert.doesNotMatch(b.text, /featuring unknown/i);
   }
   assert.doesNotMatch(draft.closing, /unknown/i);
+});
+
+test("B5 rejects names and numbers copied from product artwork", async () => {
+  const context = {
+    ...createInitialContext({
+      niche: "baseball bedding",
+      images: [],
+      storeProfile: TEST_STORE_PROFILE,
+    }),
+    productUnderstanding: {
+      physicalProductIdentity: "bedding set",
+      typography: {
+        visibleTexts: [],
+        excludedLiteralTexts: ["WILLIAM", "64"],
+        styleSummary: "bold varsity lettering",
+      },
+      visualEntities: "baseball batter in a dark pinstripe composition",
+      sceneContext: "bedroom",
+    },
+  };
+
+  await assert.rejects(
+    executeB5ContentGeneration(context, {
+      generator: {
+        async generate() {
+          return {
+            productTitle: "Baseball Bedding with William 64 Pinstripe Design",
+            intro: "A dark baseball batter composition anchors the design.",
+            bullets: [
+              { label: "Artwork", text: "A batter stands at the center." },
+              { label: "Palette", text: "Navy and black create contrast." },
+            ],
+            guidance: [],
+            closing: "Create a bold baseball-themed room.",
+            productSeoTitle: "William 64 Baseball Bedding",
+            productSeoDescription: "Shop a dark baseball design with bold athletic typography.",
+          };
+        },
+      },
+    }),
+    /quotes literal artwork text/i,
+  );
 });
 
 

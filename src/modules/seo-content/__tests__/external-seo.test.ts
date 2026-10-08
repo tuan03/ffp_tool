@@ -14,6 +14,25 @@ test("external analysis requires evidence for every supplied image", () => {
   assert.throws(() => validateExternalSeoAnalysis(input, { physicalProductIdentity: "rug", evidence: [] }), /image|evidence/i);
 });
 
+test("external analysis excludes every literal artwork text from SEO facts", () => {
+  const analysis = validateExternalSeoAnalysis(input, {
+    physicalProductIdentity: "bedding",
+    visualEntities: "dark baseball batter artwork",
+    sceneContext: "bedroom mockup",
+    typography: {
+      visibleTexts: ["WILLIAM", "33", "BASEBALL"],
+      customizationSampleTexts: ["WILLIAM", "33"],
+      styleSummary: "outlined varsity lettering",
+    },
+    shoppingContext: { targetAudience: ["baseball fans"], suitableOccasions: [], useCases: ["bedroom decor"], buyerIntentKeywords: [] },
+    evidence: [{ imageId: "front", observation: "The mockup shows WILLIAM and 33 as editable name and player-number examples." }],
+  });
+
+  assert.deepEqual(analysis.understanding.typography.visibleTexts, []);
+  assert.deepEqual(analysis.understanding.typography.excludedLiteralTexts, ["WILLIAM", "33", "BASEBALL"]);
+  assert.deepEqual(analysis.understanding.typography.customizationSampleTexts, ["WILLIAM", "33"]);
+});
+
 test("external SEO finalizes without any network and preserves old product keywords", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "external-seo-"));
   const corpus = new FileSeoConflictCorpus({ filePath: path.join(directory, "corpus.json"), maxRegisteredKeywordsPerProduct: 1024 });
@@ -30,6 +49,17 @@ test("external SEO finalizes without any network and preserves old product keywo
     assert.ok((await corpus.getSnapshot()).products[0]?.keywords.some(keyword => keyword.keyword === "cotton floor rug"));
     await assert.rejects(finalizeExternalSeo(input, analysis, { keywords: ["geometric cotton rug"], reason: "same" }, submission, { execution: { ...execution, productId: "2", sourceIdentity: "product-2" }, corpus }), /conflict/i);
     await assert.rejects(finalizeExternalSeo(input, analysis, { keywords: ["geometric cotton rug"], reason: "same" }, { ...submission, draft: { ...submission.draft, intro: "Guaranteed waterproof rug" } }, { execution, corpus }), /grounding|claim/i);
+    const personalizationAnalysis = {
+      ...analysis,
+      typography: { visibleTexts: ["WILLIAM", "33", "BASEBALL"], customizationSampleTexts: ["WILLIAM", "33"], styleSummary: "outlined varsity lettering" },
+    };
+    await assert.rejects(
+      finalizeExternalSeo(input, personalizationAnalysis, { keywords: ["geometric cotton rug"], reason: "same" }, {
+        ...submission,
+        draft: { ...submission.draft, productTitle: "Baseball geometric rug" },
+      }, { execution, corpus }),
+      /literal artwork text/i,
+    );
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

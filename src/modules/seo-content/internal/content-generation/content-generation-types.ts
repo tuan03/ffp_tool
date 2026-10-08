@@ -11,6 +11,7 @@ export interface ContentFactSheet {
   readonly niche?: string;
   readonly physicalProductIdentity?: string;
   readonly typographyVisibleTexts: readonly string[];
+  readonly excludedLiteralTexts?: readonly string[];
   readonly typographyStyleSummary?: string;
   readonly visualEntities?: string;
   readonly targetAudience: readonly string[];

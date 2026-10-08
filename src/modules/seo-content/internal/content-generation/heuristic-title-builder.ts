@@ -55,7 +55,6 @@ export function isKeywordGroundedForPrimarySurface(
     facts.typographyStyleSummary ?? "",
     facts.niche ?? "",
     facts.visualEntities ?? "",
-    ...facts.typographyVisibleTexts,
   ]
     .join(" ")
     .toLowerCase();
@@ -126,25 +125,15 @@ export interface TitleBuilderInput {
 const PLACEHOLDER_PATTERN = /^(unknown|none|n\/a|not applicable|unspecified|sample|test|sku.*)[\s.]*$/i;
 
 export function extractVisionDesignConcept(facts: {
-  readonly typographyVisibleTexts?: readonly string[];
   readonly visualEntities?: string;
 }): string | undefined {
-  const rawTexts = Array.isArray(facts.typographyVisibleTexts) ? facts.typographyVisibleTexts : [];
-  const visibleTexts = rawTexts.filter(
-    (t) =>
-      typeof t === "string" &&
-      t.trim().length >= 2 &&
-      !PLACEHOLDER_PATTERN.test(t.trim()),
-  );
-  const prominentText = visibleTexts.length > 0 ? visibleTexts[0].trim().replace(/[.]+$/, "") : undefined;
-
   const rawEntities = typeof facts.visualEntities === "string" ? facts.visualEntities.trim() : undefined;
   const hasSpecificEntities =
     Boolean(rawEntities) &&
     !PLACEHOLDER_PATTERN.test(rawEntities ?? "") &&
     (rawEntities?.length ?? 0) >= 3;
 
-  if (!prominentText && !hasSpecificEntities) {
+  if (!hasSpecificEntities) {
     return undefined;
   }
 
@@ -157,20 +146,8 @@ export function extractVisionDesignConcept(facts: {
     }
   }
 
-  if (prominentText && entityPhrase) {
-    if (!entityPhrase.toLowerCase().includes(prominentText.toLowerCase())) {
-      const cleanProminent = toTitleCase(prominentText);
-      return `${cleanProminent} ${entityPhrase}`;
-    }
-    return entityPhrase;
-  }
-
   if (entityPhrase) {
     return entityPhrase;
-  }
-
-  if (prominentText) {
-    return toTitleCase(prominentText);
   }
 
   return undefined;

@@ -5,7 +5,11 @@ import {
   groupBulkCustomizations,
   removeBulkCustomizationFields,
 } from "../../bulk-edit";
-import { readCustomization, updateCustomization } from "../../service";
+import {
+  deleteCustomization,
+  readCustomization,
+  updateCustomization,
+} from "../../service";
 import type { CustomizationGateway } from "../../types";
 
 import type { BulkCustomizationEntry } from "../../bulk-edit";
@@ -15,6 +19,7 @@ export interface BulkCustomizerEditorProps {
   readonly gateway: CustomizationGateway;
   readonly onClose: () => void;
   readonly onComplete: (updatedCount: number) => void;
+  readonly onDeleteComplete: (deletedProductIds: readonly string[]) => void;
 }
 
 const READ_CONCURRENCY = 6;
@@ -35,13 +40,15 @@ export function BulkCustomizerEditor({
   gateway,
   onClose,
   onComplete,
+  onDeleteComplete,
 }: BulkCustomizerEditorProps): React.JSX.Element {
   const [entries, setEntries] = useState<readonly BulkCustomizationEntry<ShopifyProduct>[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<"items" | "group" | null>(null);
   const [failedReads, setFailedReads] = useState(0);
   const [selectedSchemaKey, setSelectedSchemaKey] = useState<string | null>(null);
-  const [selectedFieldKeys, setSelectedFieldKeys] = useState<ReadonlySet<string>>(new Set());
+  const [selectedItemKeys, setSelectedItemKeys] = useState<ReadonlySet<string>>(new Set());
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [message, setMessage] = useState<string | null>(null);
 
@@ -85,29 +92,30 @@ export function BulkCustomizerEditor({
     }
     if (selectedSchemaKey !== selectedGroup.schemaKey) {
       setSelectedSchemaKey(selectedGroup.schemaKey);
-      setSelectedFieldKeys(new Set());
+      setSelectedItemKeys(new Set());
     }
   }, [selectedGroup, selectedSchemaKey]);
 
-  const handleToggleField = (fieldKey: string): void => {
-    setSelectedFieldKeys((current) => {
+  const handleToggleItem = (itemKey: string): void => {
+    setSelectedItemKeys((current) => {
       const next = new Set(current);
-      if (next.has(fieldKey)) next.delete(fieldKey);
-      else next.add(fieldKey);
+      if (next.has(itemKey)) next.delete(itemKey);
+      else next.add(itemKey);
       return next;
     });
   };
 
   const handleApply = async (): Promise<void> => {
-    if (!selectedGroup || selectedFieldKeys.size === 0 || isSaving) return;
+    if (!selectedGroup || selectedItemKeys.size === 0 || isSaving) return;
     const productCount = selectedGroup.entries.length;
-    const fieldCount = selectedFieldKeys.size;
+    const itemCount = selectedItemKeys.size;
     const shouldApply = window.confirm(
-      `Xóa ${fieldCount} trường khỏi ${productCount} sản phẩm trong nhóm này?`,
+      `Xóa ${itemCount} mặt in/trường khỏi ${productCount} sản phẩm trong nhóm này?`,
     );
     if (!shouldApply) return;
 
     setIsSaving(true);
+    setSavingAction("items");
     setMessage(null);
     setProgress({ completed: 0, total: productCount });
     const successfulUpdates = new Map<string, BulkCustomizationEntry<ShopifyProduct>>();
@@ -116,7 +124,7 @@ export function BulkCustomizerEditor({
     await processChunks(selectedGroup.entries, WRITE_CONCURRENCY, async (entry) => {
       const updatedCustomization = removeBulkCustomizationFields(
         entry.customization,
-        selectedFieldKeys,
+        selectedItemKeys,
       );
       try {
         await updateCustomization(gateway, {
@@ -137,15 +145,64 @@ export function BulkCustomizerEditor({
     setEntries((current) =>
       current.map((entry) => successfulUpdates.get(entry.product.id) ?? entry),
     );
-    setSelectedFieldKeys(new Set());
+    setSelectedItemKeys(new Set());
     setIsSaving(false);
+    setSavingAction(null);
     const successCount = successfulUpdates.size;
     setMessage(
       failureCount > 0
         ? `Đã cập nhật ${successCount}/${productCount} sản phẩm; ${failureCount} sản phẩm lỗi chưa bị thay đổi.`
-        : `Đã xóa trường khỏi ${successCount} sản phẩm.`,
+        : `Đã xóa cấu hình đã chọn khỏi ${successCount} sản phẩm.`,
     );
     if (successCount > 0) onComplete(successCount);
+  };
+
+  const handleDeleteGroup = async (): Promise<void> => {
+    if (!selectedGroup || isSaving) return;
+    const productCount = selectedGroup.entries.length;
+    const shouldDelete = window.confirm(
+      `Xóa toàn bộ Customizer khỏi ${productCount} sản phẩm trong nhóm này? Tất cả mặt in và trường tùy chọn của nhóm sẽ bị xóa.`,
+    );
+    if (!shouldDelete) return;
+
+    setIsSaving(true);
+    setSavingAction("group");
+    setMessage(null);
+    setProgress({ completed: 0, total: productCount });
+    const deletedProductIds = new Set<string>();
+    let failureCount = 0;
+
+    await processChunks(selectedGroup.entries, WRITE_CONCURRENCY, async (entry) => {
+      try {
+        const result = await deleteCustomization(gateway, {
+          productId: entry.product.id,
+          cascadeDeleteFiles: false,
+        });
+        if (result.success) {
+          deletedProductIds.add(entry.product.id);
+        } else {
+          failureCount += 1;
+        }
+      } catch {
+        failureCount += 1;
+      } finally {
+        setProgress((current) => ({ ...current, completed: current.completed + 1 }));
+      }
+    });
+
+    setEntries((current) =>
+      current.filter((entry) => !deletedProductIds.has(entry.product.id)),
+    );
+    setSelectedItemKeys(new Set());
+    setIsSaving(false);
+    setSavingAction(null);
+    const successCount = deletedProductIds.size;
+    setMessage(
+      failureCount > 0
+        ? `Đã xóa toàn bộ Customizer của ${successCount}/${productCount} sản phẩm; ${failureCount} sản phẩm lỗi được giữ nguyên.`
+        : `Đã xóa toàn bộ Customizer khỏi ${successCount} sản phẩm.`,
+    );
+    if (successCount > 0) onDeleteComplete([...deletedProductIds]);
   };
 
   return (
@@ -153,9 +210,9 @@ export function BulkCustomizerEditor({
       <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-700 bg-slate-950 shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
           <div>
-            <h2 className="text-lg font-bold text-slate-100">Xóa trường hàng loạt</h2>
+            <h2 className="text-lg font-bold text-slate-100">Sửa Customizer hàng loạt</h2>
             <p className="mt-1 text-xs text-slate-400">
-              Chọn một nhóm sản phẩm giống nhau, sau đó chọn các trường cần xóa.
+              Chọn một nhóm sản phẩm giống nhau, sau đó chọn mặt in hoặc trường cần xóa.
             </p>
           </div>
           <button
@@ -189,7 +246,7 @@ export function BulkCustomizerEditor({
                     type="button"
                     onClick={() => {
                       setSelectedSchemaKey(group.schemaKey);
-                      setSelectedFieldKeys(new Set());
+                      setSelectedItemKeys(new Set());
                       setMessage(null);
                     }}
                     className={`w-full rounded-2xl border p-3 text-left transition ${
@@ -200,10 +257,10 @@ export function BulkCustomizerEditor({
                   >
                     <div className="font-bold text-slate-100">Nhóm {index + 1}</div>
                     <div className="mt-1 text-xs text-cyan-300">
-                      {group.entries.length} sản phẩm · {group.fields.length} trường
+                      {group.entries.length} sản phẩm · {group.fields.filter((field) => field.kind === "surface").length} mặt in · {group.fields.filter((field) => field.kind !== "surface").length} trường
                     </div>
                     <div className="mt-2 line-clamp-2 text-[11px] text-slate-400">
-                      {group.fields.map((field) => field.label).join(" · ") || "Không còn trường"}
+                      {group.fields.map((field) => field.label).join(" · ") || "Không còn cấu hình"}
                     </div>
                   </button>
                 ))}
@@ -234,47 +291,112 @@ export function BulkCustomizerEditor({
                         {selectedGroup.entries.length} sản phẩm cùng cấu hình
                       </h3>
                       <p className="mt-1 text-xs text-slate-400">
-                        Đánh dấu trường cần xóa khỏi toàn bộ nhóm.
+                        Đánh dấu mặt in hoặc trường cần xóa khỏi toàn bộ nhóm.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleApply()}
-                      disabled={selectedFieldKeys.size === 0 || isSaving}
-                      className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {isSaving
-                        ? `Đang lưu ${progress.completed}/${progress.total}`
-                        : `Xóa ${selectedFieldKeys.size} trường khỏi ${selectedGroup.entries.length} sản phẩm`}
-                    </button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteGroup()}
+                        disabled={isSaving}
+                        className="rounded-xl border border-rose-700 px-4 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {savingAction === "group"
+                          ? `Đang xóa ${progress.completed}/${progress.total}`
+                          : "Xóa toàn bộ Customizer của nhóm"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleApply()}
+                        disabled={selectedItemKeys.size === 0 || isSaving}
+                        className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {savingAction === "items"
+                          ? `Đang xử lý ${progress.completed}/${progress.total}`
+                          : `Xóa ${selectedItemKeys.size} mục khỏi ${selectedGroup.entries.length} sản phẩm`}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {selectedGroup.fields.map((field) => (
-                      <label
-                        key={field.key}
-                        className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-4 ${
-                          selectedFieldKeys.has(field.key)
-                            ? "border-rose-600 bg-rose-950/30"
-                            : "border-slate-800 bg-slate-900/60"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedFieldKeys.has(field.key)}
-                          onChange={() => handleToggleField(field.key)}
-                          disabled={isSaving}
-                          className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-rose-500"
-                        />
-                        <span className="min-w-0">
-                          <span className="block font-semibold text-slate-100">{field.label}</span>
-                          <span className="mt-0.5 block text-xs text-slate-400">
-                            {field.kind === "text" ? "Trường nhập chữ" : "Nhóm lựa chọn"} · {field.detail}
+                  <section>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wide text-cyan-300">
+                        Mặt in ({selectedGroup.fields.filter((field) => field.kind === "surface").length})
+                      </h4>
+                      <span className="text-[11px] text-slate-500">
+                        Ảnh đại diện từ một sản phẩm trong nhóm
+                      </span>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {selectedGroup.fields.filter((field) => field.kind === "surface").map((field) => (
+                        <label
+                          key={field.key}
+                          className={`cursor-pointer overflow-hidden rounded-2xl border ${
+                            selectedItemKeys.has(field.key)
+                              ? "border-rose-600 bg-rose-950/30"
+                              : "border-slate-800 bg-slate-900/60"
+                          }`}
+                        >
+                          <div className="flex h-36 items-center justify-center bg-slate-900">
+                            {field.imageUrl ? (
+                              <img
+                                src={field.imageUrl}
+                                alt={field.label}
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <span className="text-3xl text-slate-600">🖼️</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 p-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedItemKeys.has(field.key)}
+                              onChange={() => handleToggleItem(field.key)}
+                              disabled={isSaving}
+                              className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-rose-500"
+                            />
+                            <span>
+                              <span className="block font-semibold text-slate-100">{field.label}</span>
+                              <span className="text-xs text-slate-400">{field.detail}</span>
+                            </span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="mt-6">
+                    <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-cyan-300">
+                      Trường tùy chọn ({selectedGroup.fields.filter((field) => field.kind !== "surface").length})
+                    </h4>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {selectedGroup.fields.filter((field) => field.kind !== "surface").map((field) => (
+                        <label
+                          key={field.key}
+                          className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-4 ${
+                            selectedItemKeys.has(field.key)
+                              ? "border-rose-600 bg-rose-950/30"
+                              : "border-slate-800 bg-slate-900/60"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedItemKeys.has(field.key)}
+                            onChange={() => handleToggleItem(field.key)}
+                            disabled={isSaving}
+                            className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-rose-500"
+                          />
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-slate-100">{field.label}</span>
+                            <span className="mt-0.5 block text-xs text-slate-400">
+                              {field.kind === "text" ? "Trường nhập chữ" : "Nhóm lựa chọn"} · {field.detail}
+                            </span>
                           </span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
 
                   <details className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
                     <summary className="cursor-pointer text-xs font-semibold text-cyan-300">

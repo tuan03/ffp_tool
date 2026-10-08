@@ -8,6 +8,10 @@ export type SeoStageName = "b1" | "b2" | "b3" | "b4" | "b5" | "b6";
 export interface ProductUnderstanding {
   readonly typography: {
     readonly visibleTexts: readonly string[];
+    /** Literal artwork text retained only so validators can prevent its reuse. */
+    readonly excludedLiteralTexts?: readonly string[];
+    /** Buyer-editable values shown only as personalization examples, never SEO facts. */
+    readonly customizationSampleTexts?: readonly string[];
     readonly styleSummary: string;
   };
   readonly visualEntities: string;
