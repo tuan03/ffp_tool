@@ -33,7 +33,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install JavaScript dependencies
-        run: npm ci
+        # The Agent release only needs TypeScript/Vite tooling. Gateway native
+        # install hooks (notably better-sqlite3) are unrelated to this artifact
+        # and make the Windows release runner depend on a C++ toolchain.
+        run: npm ci --ignore-scripts
 
       - name: Install Python dependencies
         run: python -m pip install -r src/modules/amazon-crawler/engine/requirements.txt
