@@ -3123,6 +3123,75 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertTrue(resolved["recoveredStaleRegistry"])
         self.assertTrue(resolved["hasSyncedFamilyMembers"])
 
+    def test_cleared_seo_queue_can_retry_retained_crawl_or_release_family(self) -> None:
+        job = self.store.create_job({"urls": ["B0CHILD001"], "storeId": "capozen"})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        product = {
+            "id": "product-ocean", "sourceKey": "amazon:B0PARENT01:design:ocean",
+            "asin": "B0CHILD001", "parentAsin": "B0PARENT01", "title": "Ocean",
+        }
+        self.store.accept_product(
+            lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum-1",
+            {"jobId": job["id"], "product": product, "productChecksum": "checksum-1"},
+        )
+        self.store.accept_result(
+            lease["taskId"], "client-a", lease["leaseId"], "result-checksum",
+            {"jobId": job["id"], "products": [], "errors": [], "warnings": []},
+        )
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="capozen", limit=1)[0]
+        with self.sessions.begin() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            item.shopify_result = {"externalSeo": {"jobId": "cancelled-seo-job", "provider": "codex_mcp"}}
+        self.store.fail_product_item(
+            claim["id"], worker_id="worker-1", store_id="capozen",
+            error={"phase": "seo", "message": "GPT SEO job cancelled: Removed from Queue by operator"},
+            retryable=False, reconciliation_required=False,
+        )
+        self.assertTrue(self.store.archive_job(str(job["id"])))
+        family = self.store.resolve_asin_families("capozen", ["B0CHILD001"])["families"][0]
+        self.assertEqual(family["databaseStatus"], "queue_cleared")
+
+        retried = self.store.recover_cleared_family(
+            "capozen", "B0PARENT01", "retry", actor="test", reason="Retry cancelled SEO",
+        )
+        self.assertEqual(retried["recovered"], 1)
+        with self.sessions() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            self.assertEqual(item.status, "received")
+            self.assertNotIn("externalSeo", item.shopify_result or {})
+
+        with self.assertRaises(ValueError):
+            self.store.recover_cleared_family(
+                "capozen", "B0PARENT01", "recrawl", actor="test", reason="Not safe while SEO is active",
+            )
+
+        claim = self.store.claim_product_items(worker_id="worker-2", store_id="capozen", limit=1)[0]
+        self.store.fail_product_item(
+            claim["id"], worker_id="worker-2", store_id="capozen",
+            error={"phase": "seo", "message": "GPT SEO job cancelled: Removed from Queue by operator"},
+            retryable=False, reconciliation_required=False,
+        )
+        with self.sessions.begin() as session:
+            row = session.scalar(select(AmazonAsinRegistry).where(AmazonAsinRegistry.asin == "B0CHILD001"))
+            row.shopify_product_ids = ["gid://shopify/Product/123"]
+        with self.assertRaises(ValueError):
+            self.store.recover_cleared_family(
+                "capozen", "B0PARENT01", "recrawl", actor="test", reason="Do not duplicate Shopify product",
+            )
+        with self.sessions.begin() as session:
+            row = session.scalar(select(AmazonAsinRegistry).where(AmazonAsinRegistry.asin == "B0CHILD001"))
+            row.shopify_product_ids = []
+        released = self.store.recover_cleared_family(
+            "capozen", "B0PARENT01", "recrawl", actor="test", reason="Refresh Amazon data",
+        )
+        self.assertEqual(released["releasedAsins"], 2)
+        self.assertEqual(self.store.resolve_asin_families("capozen", ["B0CHILD001"])["families"][0]["databaseStatus"], "released")
+        with self.assertRaises(ValueError):
+            self.store.recover_cleared_family(
+                "capozen", "B0PARENT01", "retry", actor="test", reason="Do not revive discarded crawl",
+            )
+
     def test_product_upload_skips_an_exact_asin_already_synced_to_shopify(self) -> None:
         job = self.store.create_job({"urls": ["B0CHILD002"], "storeId": "capozen"})
         self.store.register_client(client_hello(slots=1))

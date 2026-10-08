@@ -188,7 +188,7 @@ export class AmazonCrawlerServiceError extends Error {
 }
 
 const AMAZON_ASIN_FAMILY_STATUSES = new Set([
-  "available", "existing", "processing", "crawled_pending_sync", "reconciliation_required",
+  "available", "existing", "processing", "queue_cleared", "crawled_pending_sync", "reconciliation_required",
 ]);
 
 function isAsinList(value: unknown): value is string[] {
@@ -1057,6 +1057,17 @@ export function createAmazonCrawlerJobController({
     },
     async delete(jobId) {
       await readJson(await fetchImplementation(jobUrl(jobId), { method: "DELETE" }));
+    },
+    async recoverClearedFamily(input) {
+      const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/asin-families/recover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }));
+      if (!isRecord(payload) || typeof payload.recovered !== "number" || typeof payload.releasedAsins !== "number") {
+        throw new AmazonCrawlerServiceError("Coordinator returned an invalid family recovery result.", "INVALID_ENGINE_RESPONSE");
+      }
+      return { recovered: payload.recovered, releasedAsins: payload.releasedAsins };
     },
   };
 }

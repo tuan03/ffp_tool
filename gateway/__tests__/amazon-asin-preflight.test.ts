@@ -183,6 +183,44 @@ test("preflight keeps available families while blocking a crawled family pending
   assert.deepEqual(result.allowedAsins, ["B0NEW00001"]);
 });
 
+test("preflight identifies a family cleared from SEO Queue without automatically recrawling it", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      return { products: { nodes: [] } } as T;
+    },
+  };
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"],
+      isResolved: true, databaseStatus: "queue_cleared", jobId: "job-hidden",
+    }],
+  }, "apply");
+
+  assert.equal(result.families[0]?.status, "queue_cleared");
+  assert.deepEqual(result.allowedAsins, []);
+});
+
+test("preflight allows a deliberately released family to be crawled again", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      return { products: { nodes: [] } } as T;
+    },
+  };
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"],
+    families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"],
+      isResolved: true, databaseStatus: "released", jobId: "job-hidden",
+    }],
+  }, "apply");
+
+  assert.equal(result.families[0]?.status, "available");
+  assert.deepEqual(result.allowedAsins, ["B0CHILD001"]);
+});
+
 test("preflight does not start incremental discovery while the family is pending sync", async () => {
   const client = {
     async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {

@@ -712,6 +712,30 @@ test("job controller lists, cancels, replaces, archives and deletes coordinator 
   assert.equal(requests.at(-1)?.method, "DELETE");
 });
 
+test("job controller sends an audited recovery request for a cleared SEO family", async () => {
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  const jobs = createAmazonCrawlerJobController({
+    engineUrl: "http://coordinator.test",
+    fetchImplementation: async (request, init) => {
+      requests.push({
+        url: String(request), method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? JSON.parse(init.body) as unknown : null,
+      });
+      return jsonResponse({ recovered: 7, releasedAsins: 0 });
+    },
+  });
+
+  const recovery = await jobs.recoverClearedFamily?.({
+    storeId: "jeminise", parentAsin: "B0HFMRTWXW", action: "retry",
+    reason: "Retry cancelled SEO",
+  });
+  assert.deepEqual(recovery, { recovered: 7, releasedAsins: 0 });
+  assert.deepEqual(requests, [{
+    url: "http://coordinator.test/api/v1/asin-families/recover", method: "POST",
+    body: { storeId: "jeminise", parentAsin: "B0HFMRTWXW", action: "retry", reason: "Retry cancelled SEO" },
+  }]);
+});
+
 test("job controller pauses and resumes the selected coordinator job", async () => {
   const requests: Array<{ url: string; method: string }> = [];
   const jobs = createAmazonCrawlerJobController({

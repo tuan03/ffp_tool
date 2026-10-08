@@ -78,6 +78,7 @@ export type AmazonAsinFamilyStatus =
   | "available"
   | "existing"
   | "processing"
+  | "queue_cleared"
   | "crawled_pending_sync"
   | "reconciliation_required";
 
@@ -296,6 +297,8 @@ export async function executeAmazonAsinPreflight(
       let status: AmazonAsinFamilyStatus = "available";
       if (["queued", "leased", "running", "cancelling"].includes(family.databaseStatus ?? "")) {
         status = "processing";
+      } else if (family.databaseStatus === "queue_cleared") {
+        status = "queue_cleared";
       } else if (family.databaseStatus === "crawled") {
         status = "crawled_pending_sync";
       } else if (family.databaseStatus === "synced" && !exactProduct && !hasExistingFamilyProducts) {

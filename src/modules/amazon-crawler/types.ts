@@ -69,6 +69,7 @@ export type AmazonAsinFamilyStatus =
   | "available"
   | "existing"
   | "processing"
+  | "queue_cleared"
   | "crawled_pending_sync"
   | "reconciliation_required";
 
@@ -528,6 +529,12 @@ export interface AmazonCrawlerJobController {
   replace(jobId: string, input: AmazonCrawlerInput): Promise<AmazonCrawlerJobSnapshot>;
   archive(jobId: string): Promise<void>;
   delete(jobId: string): Promise<void>;
+  recoverClearedFamily?(input: {
+    storeId: string;
+    parentAsin: string;
+    action: "retry" | "recrawl";
+    reason: string;
+  }): Promise<{ recovered: number; releasedAsins: number }>;
   listDeadLetterTasks?(options?: { jobId?: string; errorCode?: string; limit?: number; offset?: number }): Promise<AmazonCrawlerDeadLetterPage>;
   listTaskAttempts?(taskId: string): Promise<readonly AmazonCrawlerTaskAttempt[]>;
   applyDeadLetterAction?(input: AmazonCrawlerDeadLetterActionInput): Promise<AmazonCrawlerDeadLetterActionResult>;

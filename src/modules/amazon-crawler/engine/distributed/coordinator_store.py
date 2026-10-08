@@ -367,6 +367,7 @@ class CoordinatorStore(CoordinatorObservability):
                 if row.last_job_id
             }
             retained_asins_by_job: dict[str, set[str]] = {}
+            retained_items_by_family: dict[str, list[CrawlProductItem]] = {}
             existing_job_ids: set[str] = set()
             if candidate_job_ids:
                 existing_job_ids = set(session.scalars(select(CrawlJob.id).where(
@@ -382,6 +383,7 @@ class CoordinatorStore(CoordinatorObservability):
                     identity = self._product_family_identity(product)
                     if identity is not None:
                         retained_asins_by_job.setdefault(item.job_id, set()).update(identity[1])
+                        retained_items_by_family.setdefault(identity[0], []).append(item)
             grouped: dict[str, dict[str, Any]] = {}
             for asin in normalized_asins:
                 row = by_asin.get(asin)
@@ -403,11 +405,20 @@ class CoordinatorStore(CoordinatorObservability):
                     for candidate in family_rows.get(parent_asin, [])
                     if candidate.status == "crawled" and not is_stale_crawled(candidate)
                 ]
-                family_database_status = (
-                    "crawled"
-                    if pending_family_rows
-                    else None if recovered_stale_registry else (row.status if row is not None else None)
-                )
+                pending_job_ids = {candidate.last_job_id for candidate in pending_family_rows}
+                pending_items = [
+                    item for item in retained_items_by_family.get(parent_asin, [])
+                    if item.job_id in pending_job_ids
+                ]
+                is_queue_cleared = bool(pending_items) and all(
+                    self._is_operator_cleared_seo_item(item) for item in pending_items
+                ) and not any(candidate.shopify_product_ids for candidate in family_rows.get(parent_asin, []))
+                if pending_family_rows:
+                    family_database_status = "queue_cleared" if is_queue_cleared else "crawled"
+                elif recovered_stale_registry:
+                    family_database_status = None
+                else:
+                    family_database_status = row.status if row is not None else None
                 family_job_id = (
                     pending_family_rows[0].last_job_id
                     if pending_family_rows
@@ -438,6 +449,98 @@ class CoordinatorStore(CoordinatorObservability):
                     family["jobId"] = job.id
                     family["recoveredStaleRegistry"] = False
             return {"families": list(grouped.values())}
+
+    @staticmethod
+    def _is_operator_cleared_seo_item(item: CrawlProductItem) -> bool:
+        error = item.last_error if isinstance(item.last_error, dict) else {}
+        return (
+            item.status == "failed"
+            and error.get("phase") == "seo"
+            and error.get("message") == "GPT SEO job cancelled: Removed from Queue by operator"
+        )
+
+    def recover_cleared_family(
+        self, store_id: str, parent_asin: str, action: str, *, actor: str, reason: str,
+    ) -> dict[str, int]:
+        normalized_store_id = store_id.strip()
+        normalized_parent = parent_asin.strip().upper()
+        if not normalized_store_id or re.fullmatch(r"[A-Z0-9]{10}", normalized_parent) is None:
+            raise ValueError("A valid store and parent ASIN are required.")
+        if action not in {"retry", "recrawl"} or len(reason.strip()) < 10:
+            raise ValueError("A supported recovery action and audit reason of at least 10 characters are required.")
+        with self.sessions.begin() as session:
+            rows = session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == normalized_store_id,
+                AmazonAsinRegistry.marketplace == "amazon-us",
+                AmazonAsinRegistry.parent_asin == normalized_parent,
+            ).with_for_update()).all()
+            if not rows:
+                raise ValueError("Amazon family was not found.")
+            if not any(row.status == "crawled" for row in rows) or any(row.status == "released" for row in rows):
+                raise ValueError("Family is no longer blocked by a retained crawl.")
+            if any(row.status == "synced" or row.shopify_product_ids for row in rows):
+                raise ValueError("Family has Shopify-linked members; recovery requires reconciliation.")
+            member_asins = {row.asin for row in rows}
+            active_task = session.scalar(select(CrawlTask.id).join(CrawlJob).where(
+                CrawlTask.asin.in_(member_asins),
+                CrawlTask.status.in_(["queued", "leased", "running", "cancelling"]),
+                CrawlJob.settings["storeId"].as_string() == normalized_store_id,
+            ).limit(1))
+            if active_task is not None:
+                raise ValueError("Family still has an active crawl task.")
+            job_ids = {row.last_job_id for row in rows if row.last_job_id}
+            if not job_ids:
+                raise ValueError("Family has no retained crawl job.")
+            items = session.scalars(select(CrawlProductItem).where(
+                CrawlProductItem.job_id.in_(job_ids),
+                CrawlProductItem.status != "deleted",
+            ).with_for_update()).all()
+            family_items = [
+                item for item in items
+                if (identity := self._product_family_identity(
+                    item.normalized_payload if isinstance(item.normalized_payload, dict) else item.raw_payload
+                )) is not None and identity[0] == normalized_parent
+            ]
+            if not family_items:
+                raise ValueError("Family has no retained crawl products.")
+            if any(not self._is_operator_cleared_seo_item(item) for item in family_items):
+                raise ValueError("Only products cancelled by clearing SEO Queue can be recovered here.")
+            source_keys = {item.source_key for item in family_items}
+            linked = session.scalar(select(ShopifyProductLink.id).where(
+                ShopifyProductLink.store_id == normalized_store_id,
+                ShopifyProductLink.source_key.in_(source_keys),
+            ).limit(1))
+            if linked is not None:
+                raise ValueError("Family has Shopify product links; recovery requires reconciliation.")
+            if action == "retry":
+                for item in family_items:
+                    pipeline_result = dict(item.shopify_result or {})
+                    pipeline_result.pop("externalSeo", None)
+                    pipeline_result.pop("seo", None)
+                    item.shopify_result = pipeline_result
+                    item.status = "received"
+                    item.attempt_count = 0
+                    item.next_attempt_at = None
+                    item.claimed_by = None
+                    item.claim_expires_at = None
+                    item.last_error = None
+                    item.completed_at = None
+                for job_id in {item.job_id for item in family_items}:
+                    self._event(session, job_id, "cleared_seo_family_retried", {
+                        "parentAsin": normalized_parent, "actor": actor, "reason": reason.strip(),
+                        "count": len([item for item in family_items if item.job_id == job_id]),
+                    })
+                    self._refresh_job(session, job_id)
+                return {"recovered": len(family_items), "releasedAsins": 0}
+            for row in rows:
+                if row.status == "crawled":
+                    row.status = "released"
+                    row.updated_at = utc_now()
+            for job_id in {item.job_id for item in family_items}:
+                self._event(session, job_id, "cleared_seo_family_released", {
+                    "parentAsin": normalized_parent, "actor": actor, "reason": reason.strip(),
+                })
+            return {"recovered": 0, "releasedAsins": len(rows)}
 
     def backfill_asin_registry(self) -> dict[str, int]:
         """Rebuild the durable alias ledger from retained pipeline data and Shopify links."""

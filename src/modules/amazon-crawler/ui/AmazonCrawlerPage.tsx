@@ -236,6 +236,8 @@ export function AmazonCrawlerPage({
   const [asinPreflightError, setAsinPreflightError] = useState<string | null>(null);
   const [asinPreflightMatches, setAsinPreflightMatches] = useState<readonly AmazonAsinPreflightMatch[]>([]);
   const [asinPreflightFamilies, setAsinPreflightFamilies] = useState<readonly AmazonAsinFamilyPreflight[]>([]);
+  const [asinPreflightStoreId, setAsinPreflightStoreId] = useState<string | null>(null);
+  const [recoveringFamilyAsin, setRecoveringFamilyAsin] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
@@ -1293,6 +1295,7 @@ export function AmazonCrawlerPage({
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
     setAsinPreflightFamilies([]);
+    setAsinPreflightStoreId(storeId);
     const checkedUrlText = urlText;
     try {
       const checked = await runAfterAmazonAsinPreflight(
@@ -1394,6 +1397,53 @@ export function AmazonCrawlerPage({
       setJobControlMessage(caught instanceof Error ? caught.message : "Không xóa được job.");
     } finally {
       setControlledJobId(null);
+    }
+  }
+
+  async function handleRecoverClearedFamily(
+    family: AmazonAsinFamilyPreflight, action: "retry" | "recrawl",
+  ): Promise<void> {
+    if (!amazonCrawlerJobs?.recoverClearedFamily || !checkAmazonAsins || recoveringFamilyAsin) return;
+    const storeId = settings.storeId || "capozen";
+    if (storeId !== asinPreflightStoreId) {
+      setAsinPreflightError("Store đã thay đổi. Bấm Start để kiểm tra lại family trước khi phục hồi.");
+      return;
+    }
+    const reason = window.prompt(
+      action === "retry" ? "Lý do xử lý lại SEO từ dữ liệu đã cào:" : "Lý do cho phép cào lại family:",
+      action === "retry" ? "Xử lý lại sau khi dọn SEO Queue" : "Cào lại sau khi dọn SEO Queue",
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 10) {
+      setAsinPreflightError("Lý do cần ít nhất 10 ký tự để lưu lịch sử thao tác.");
+      return;
+    }
+    if (action === "recrawl" && !window.confirm(
+      "Cho phép cào lại toàn bộ family này? Dữ liệu crawl cũ vẫn được giữ để đối chiếu.",
+    )) return;
+    setRecoveringFamilyAsin(family.parentAsin);
+    setAsinPreflightError(null);
+    try {
+      const fresh = await checkAmazonAsins(storeId, family.inputAsins);
+      const currentFamily = fresh.families.find((candidate) => candidate.parentAsin === family.parentAsin);
+      if (!fresh.ready || !currentFamily || currentFamily.status !== "queue_cleared" ||
+        currentFamily.hasExistingFamilyProducts || fresh.matches.length > 0) {
+        throw new Error("Family đã thay đổi hoặc đã có sản phẩm trên Shopify. Hãy kiểm tra lại trước khi phục hồi.");
+      }
+      const recovered = await amazonCrawlerJobs.recoverClearedFamily({
+        storeId, parentAsin: family.parentAsin, action, reason: reason.trim(),
+      });
+      const refreshed = await checkAmazonAsins(storeId, family.inputAsins);
+      setAsinPreflightFamilies(refreshed.families);
+      setAsinPreflightMatches(refreshed.matches);
+      setJobControlTone("success");
+      setJobControlMessage(action === "retry"
+        ? `Đã xếp lại ${recovered.recovered} sản phẩm từ dữ liệu crawl đã lưu; Pipeline Worker sẽ bàn giao vào SEO Queue.`
+        : `Đã mở cào lại ${recovered.releasedAsins} ASIN. Bấm Start để tạo job mới.`);
+    } catch (caught: unknown) {
+      setAsinPreflightError(caught instanceof Error ? caught.message : "Không thể phục hồi family.");
+    } finally {
+      setRecoveringFamilyAsin(null);
     }
   }
 
@@ -2877,9 +2927,21 @@ export function AmazonCrawlerPage({
               <li key={family.parentAsin}>
                 {family.inputAsins.join(", ")} · family {family.parentAsin} — {family.status === "processing"
                   ? "đang được xử lý"
+                  : family.status === "queue_cleared"
+                    ? "đã xóa khỏi SEO Queue; dữ liệu crawl vẫn còn"
                   : family.status === "crawled_pending_sync"
-                    ? "đã cào, đang chờ đồng bộ Shopify"
+                    ? "đã cào; SEO hoặc đồng bộ Shopify chưa hoàn tất"
                     : "database báo đã sync nhưng Shopify không còn sản phẩm"}
+                {family.status === "queue_cleared" && amazonCrawlerJobs?.recoverClearedFamily ? (
+                  <span className="ml-2 inline-flex gap-2">
+                    <button type="button" className="rounded border border-emerald-600 px-2 py-1 text-emerald-200 disabled:opacity-50"
+                      disabled={recoveringFamilyAsin !== null || family.hasExistingFamilyProducts}
+                      onClick={() => void handleRecoverClearedFamily(family, "retry")}>Xử lý lại từ dữ liệu đã cào</button>
+                    <button type="button" className="rounded border border-amber-600 px-2 py-1 text-amber-200 disabled:opacity-50"
+                      disabled={recoveringFamilyAsin !== null || family.hasExistingFamilyProducts}
+                      onClick={() => void handleRecoverClearedFamily(family, "recrawl")}>Cho phép cào lại family</button>
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>

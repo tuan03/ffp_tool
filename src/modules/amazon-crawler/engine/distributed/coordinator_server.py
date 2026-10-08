@@ -823,6 +823,21 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     def require_dlq_operator(request: Request) -> str:
         return require_operator_actor(request)
 
+    @app.post("/api/v1/asin-families/recover")
+    async def recover_cleared_family(request: Request, payload: dict[str, Any]) -> dict[str, int]:
+        actor = require_operator_actor(request)
+        try:
+            return await asyncio.to_thread(
+                store.recover_cleared_family,
+                str(payload.get("storeId") or ""),
+                str(payload.get("parentAsin") or ""),
+                str(payload.get("action") or ""),
+                actor=actor,
+                reason=str(payload.get("reason") or ""),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @app.get("/api/v1/dead-letter")
     async def list_dead_letter_tasks(
         request: Request, job_id: str | None = None, error_code: str | None = None,
