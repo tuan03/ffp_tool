@@ -1,5 +1,10 @@
 import type { GeneratedBullet, GeneratedContentDraft } from "./content-generation-types";
 
+export interface ProductDescriptionFormatOptions {
+  readonly includeStyleOptions?: boolean;
+  readonly includeGuidance?: boolean;
+}
+
 /**
  * Escapes characters with special meaning in HTML to prevent XSS and tag injection.
  */
@@ -62,8 +67,13 @@ function normalizeGuidanceText(rawGuidance: string): string {
  * Formats a GeneratedContentDraft into semantic, sanitized HTML rich text for Shopify.
  * Guaranteed to use only semantic tags: <p>, <ul>, <li>, <strong>.
  */
-export function formatProductDescriptionHtml(draft: GeneratedContentDraft): string {
+export function formatProductDescriptionHtml(
+  draft: GeneratedContentDraft,
+  options: ProductDescriptionFormatOptions = {},
+): string {
   const sections: string[] = [];
+  const includeStyleOptions = options.includeStyleOptions ?? true;
+  const includeGuidance = options.includeGuidance ?? true;
 
   // 1. Hook / Intro Paragraph
   if (draft.intro && draft.intro.trim().length > 0) {
@@ -71,7 +81,7 @@ export function formatProductDescriptionHtml(draft: GeneratedContentDraft): stri
   }
 
   // 2. Style Options (e.g. Comforter, Quilt, Duvet Cover for Bedding stores)
-  if (draft.styleOptions && draft.styleOptions.length > 0) {
+  if (includeStyleOptions && draft.styleOptions && draft.styleOptions.length > 0) {
     const optionItems = draft.styleOptions
       .map((opt) => `  <li><strong>${escapeHtml(opt.name)}:</strong> ${escapeHtml(opt.description.trim())}</li>`)
       .join("\n");
@@ -93,7 +103,7 @@ export function formatProductDescriptionHtml(draft: GeneratedContentDraft): stri
   }
 
   // 3. Guidance / Care Details (if present)
-  if (draft.guidance && draft.guidance.length > 0) {
+  if (includeGuidance && draft.guidance && draft.guidance.length > 0) {
     const guidanceText = draft.guidance
       .map(normalizeGuidanceText)
       .filter(Boolean)

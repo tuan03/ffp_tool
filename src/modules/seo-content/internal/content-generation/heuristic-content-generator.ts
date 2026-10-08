@@ -356,14 +356,19 @@ export class HeuristicContentGenerator implements ContentGenerator {
     const styleClause = isMeaningfulText(facts.typographyStyleSummary)
       ? ` with ${facts.typographyStyleSummary.trim()}`
       : "";
+    const isVisualDesignOnlyDescription =
+      facts.storeProfile?.productDescriptionPolicy?.mode === "visual-design-only";
 
-    const intro = `Elevate your collection with this distinctive ${category}${entityClause}${styleClause}. Carefully designed to combine character, visual appeal, and everyday functionality.`;
+    const intro = isVisualDesignOnlyDescription
+      ? `Create a distinctive focal point with artwork${entityClause}${styleClause}, bringing character and visual interest to the room.`
+      : `Elevate your collection with this distinctive ${category}${entityClause}${styleClause}. Carefully designed to combine character, visual appeal, and everyday functionality.`;
 
     // 3. Build Bullets
     const bullets: GeneratedBullet[] = [];
 
     // Optional style options for bedding profile
-    const styleOptions: readonly GeneratedStyleOption[] | undefined = facts.storeProfile?.bedding
+    const styleOptions: readonly GeneratedStyleOption[] | undefined =
+      facts.storeProfile?.bedding && !isVisualDesignOnlyDescription
       ? facts.storeProfile.bedding.options.map((opt) => ({
           name: opt.name,
           description: `${opt.shortDescription} - ${opt.detailedFeatures}`,
@@ -371,7 +376,7 @@ export class HeuristicContentGenerator implements ContentGenerator {
       : undefined;
 
     // Dedicated material and print specifications for bedding profile
-    if (facts.storeProfile?.bedding) {
+    if (facts.storeProfile?.bedding && !isVisualDesignOnlyDescription) {
       bullets.push({
         label: "Materials",
         text: facts.storeProfile.bedding.fabricMaterial,
@@ -401,7 +406,14 @@ export class HeuristicContentGenerator implements ContentGenerator {
     }
 
     // Bullet: Style & Fit
-    if (bullets.length < constraints.maxBullets) {
+    if (isVisualDesignOnlyDescription && bullets.length < constraints.maxBullets) {
+      bullets.push({
+        label: "Why It Stands Out",
+        text: hasMeaningfulStyle
+          ? `The ${facts.typographyStyleSummary?.trim()} treatment gives the artwork a recognizable visual identity.`
+          : "The focused composition gives the artwork a recognizable visual identity without distracting detail.",
+      });
+    } else if (bullets.length < constraints.maxBullets) {
       const secondaryClause =
         groundedKeywords.secondary.length > 0
           ? `Ideal choice for ${groundedKeywords.secondary[0]}.`
@@ -418,7 +430,7 @@ export class HeuristicContentGenerator implements ContentGenerator {
     }
 
     // Bullet: Personalization (if explicitly supported)
-    if (facts.personalizationSupported && bullets.length < constraints.maxBullets) {
+    if (!isVisualDesignOnlyDescription && facts.personalizationSupported && bullets.length < constraints.maxBullets) {
       bullets.push({
         label: "Personalization",
         text: "Customizable with custom details, making it truly unique for yourself or a loved one.",
@@ -428,7 +440,7 @@ export class HeuristicContentGenerator implements ContentGenerator {
     // Bullet: Made for / Audience & Occasions
     const audience = facts.targetAudience.length > 0 ? facts.targetAudience[0] : "enthusiasts";
     const occasion = facts.occasions.length > 0 ? ` during ${facts.occasions[0]}` : "";
-    if (bullets.length < constraints.maxBullets) {
+    if (!isVisualDesignOnlyDescription && bullets.length < constraints.maxBullets) {
       bullets.push({
         label: "Made for",
         text: `A memorable gift or personal accent for ${audience}${occasion}.`,
@@ -436,7 +448,7 @@ export class HeuristicContentGenerator implements ContentGenerator {
     }
 
     // Bullet: Use Case (if space permits)
-    if (facts.useCases.length > 0 && bullets.length < constraints.maxBullets) {
+    if (!isVisualDesignOnlyDescription && facts.useCases.length > 0 && bullets.length < constraints.maxBullets) {
       bullets.push({
         label: "Use",
         text: `Perfect for ${facts.useCases.slice(0, 2).join(" as well as ")}.`,
@@ -445,17 +457,19 @@ export class HeuristicContentGenerator implements ContentGenerator {
 
     // 4. Build Guidance (only if grounded in source description or store profile)
     const guidance: string[] = [];
-    if (facts.storeProfile?.bedding?.careGuidance) {
+    if (!isVisualDesignOnlyDescription && facts.storeProfile?.bedding?.careGuidance) {
       guidance.push(facts.storeProfile.bedding.careGuidance);
     }
-    if (/wash|clean|wipe|hand wash/i.test(facts.originalDescription)) {
+    if (!isVisualDesignOnlyDescription && /wash|clean|wipe|hand wash/i.test(facts.originalDescription)) {
       if (!guidance.some((g) => /wash|clean/i.test(g))) {
         guidance.push("Wipe clean or follow specific garment care guidelines.");
       }
     }
 
     // 5. Build Closing
-    const closing = facts.storeProfile?.bedding
+    const closing = isVisualDesignOnlyDescription
+      ? "Choose this design for its expressive artwork and the distinctive atmosphere it brings to the room."
+      : facts.storeProfile?.bedding
       ? "Whether choosing the plush warmth of a Comforter, the classic stitched style of a Quilt, or the versatile casing of a Duvet Cover, this bedding set offers the ideal balance of comfort, quality, and distinctive style."
       : `Whether buying for yourself or searching for a memorable gift, this ${category} offers the perfect blend of distinctive styling and reliable everyday enjoyment.`;
 

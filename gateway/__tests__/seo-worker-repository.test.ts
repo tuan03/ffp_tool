@@ -56,7 +56,7 @@ test("cutover rehydrates eligible V1 jobs, clears checkpoints and preserves comp
     assert.deepEqual(Object.keys(migrated.input as Record<string, unknown>).sort(), ["images", "niche", "storeProfile"]);
     assert.deepEqual(migrated.checkpoints, {});
     assert.equal((migrated.execution as Record<string, unknown>).productId, "123");
-    assert.equal((migrated.execution as Record<string, unknown>).pipelineVersion, "seo-content-input-v2:2.0.0");
+    assert.equal((migrated.execution as Record<string, unknown>).pipelineVersion, "seo-content-input-v2:2.1.0");
     assert.deepEqual(JSON.parse(String((await f.pg.query<{ payload: string }>("SELECT payload FROM gpt_jobs WHERE id='legacy-review'")).rows[0].payload)), review);
     assert.deepEqual(await f.repository.enableStore("jeminise"), { imported: 0 });
     const lateLegacy = { ...legacy, id: "late-legacy", sourceIdentity: "789", status: "PENDING", input: { ...legacy.input, productId: "789" } };

@@ -39,6 +39,10 @@ const storeProfileSchema = z.object({
   brandVoice: z.array(z.string()),
   contentRules: z.array(z.string()),
   prohibitedClaims: z.array(z.string()),
+  productDescriptionPolicy: z.object({
+    mode: z.literal("visual-design-only"),
+    excludedTopics: z.array(z.string().min(1)),
+  }).strict().optional(),
   seoConstraints: z.object({
     maxTitleCharacters: z.number().int().positive(),
     maxDescriptionCharacters: z.number().int().positive(),

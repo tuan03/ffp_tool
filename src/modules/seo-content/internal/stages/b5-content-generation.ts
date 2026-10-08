@@ -146,7 +146,13 @@ export async function executeB5ContentGeneration(
   }
 
   // 5. Finalize, fit, and format content fields
-  if (facts.storeProfile?.bedding && (!draft.styleOptions || draft.styleOptions.length < 3)) {
+  const isVisualDesignOnlyDescription =
+    facts.storeProfile?.productDescriptionPolicy?.mode === "visual-design-only";
+  if (
+    facts.storeProfile?.bedding
+    && !isVisualDesignOnlyDescription
+    && (!draft.styleOptions || draft.styleOptions.length < 3)
+  ) {
     draft = {
       ...draft,
       styleOptions: facts.storeProfile.bedding.options.map((opt) => ({
@@ -191,7 +197,10 @@ export async function executeB5ContentGeneration(
     );
   }
 
-  const productDescription = formatProductDescriptionHtml(draft);
+  const productDescription = formatProductDescriptionHtml(draft, {
+    includeStyleOptions: !isVisualDesignOnlyDescription,
+    includeGuidance: !isVisualDesignOnlyDescription,
+  });
   const contentResult: ContentResult = {
     productTitle,
     productDescription,

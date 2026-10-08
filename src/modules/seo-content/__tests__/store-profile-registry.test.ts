@@ -43,6 +43,8 @@ test("registry resolves the Preaureum handbag profile by store ID and Shopify do
     PREAUREUM_HANDBAG_PROFILE,
   );
   assert.equal(PREAUREUM_HANDBAG_PROFILE.niche, "Personalized Handbags & Wallets");
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.profileVersion, "2.1.0");
+  assert.equal(PREAUREUM_HANDBAG_PROFILE.productDescriptionPolicy?.mode, "visual-design-only");
   assert.equal(PREAUREUM_HANDBAG_PROFILE.catalogPolicies, undefined);
 });
 
@@ -58,7 +60,7 @@ test("registry exposes safe profile choices and scopes an explicit profile to an
 });
 
 test("Jeminise V2 profile is versioned and declares three structured offerings", () => {
-  assert.equal(JEMINISE_BEDDING_PROFILE.profileVersion, "2.0.0");
+  assert.equal(JEMINISE_BEDDING_PROFILE.profileVersion, "2.1.0");
   assert.deepEqual(
     JEMINISE_BEDDING_PROFILE.catalogPolicies?.[0]?.offerings.map((offering) => offering.name),
     ["Comforter", "Quilt", "Duvet Cover"],

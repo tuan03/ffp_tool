@@ -50,6 +50,10 @@ For each claim:
    catalog policy only when its identity and confidence applicability rules pass.
    A scene object is not a product fact, and niche alone cannot authorize a claim.
    Do not invent materials, certifications, safety or performance claims.
+   Apply `storeProfile.productDescriptionPolicy` only to Shopify description fields
+   (`intro`, `bullets`, `guidance`, `closing`). A `visual-design-only` policy permits
+   visible artwork, distinctive visual details and grounded aesthetic appeal; it
+   excludes materials, dimensions, care, construction and product formats.
 5. Include title <=70 characters, meta description <=160 characters, a grounded
    AEO quick summary of 40–70 words, 3–5 FAQs, and image alts. Server generates JSON-LD.
 6. Submit with a unique requestId, reused unchanged only on retry. Submission
