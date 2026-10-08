@@ -528,6 +528,34 @@ export class SeoWorkerRepository {
     });
   }
 
+  async retryTerminalJob(storeId: string, jobId: string): Promise<{ handled: boolean; retried: boolean }> {
+    requireLabel(storeId);
+    requireLabel(jobId);
+    return this.database.transaction(async sql => {
+      const row = (await sql.query(`SELECT w.*,j.status AS job_status FROM seo_worker_jobs w
+        JOIN gpt_jobs j ON j.id=w.job_id WHERE w.store_id=$1 AND w.job_id=$2 FOR UPDATE OF w,j`, [storeId, jobId])).rows[0];
+      if (!row) return { handled: false, retried: false };
+      if (row.state === "READY" && row.job_status === "PENDING") return { handled: true, retried: false };
+      if (!["BLOCKED", "FAILED_FINAL", "RETRY_WAIT"].includes(String(row.state))) return { handled: false, retried: false };
+      if (row.lease_id !== null) throw new SeoWorkerError("LEASE_ALREADY_ACTIVE");
+
+      // Preserve lease_version and attempt rows so stale workers remain fenced and
+      // the operator can still audit why the previous attempt stopped.
+      await sql.query(`UPDATE seo_worker_jobs SET state='READY',pipeline_active=true,
+        attempt_count=0,repair_count=0,lease_id=NULL,worker_id=NULL,session_id=NULL,run_id=NULL,token_id=NULL,
+        expires_at=NULL,last_progress_at=NULL,retry_at=NULL,last_error_code=NULL,updated_at=$3
+        WHERE store_id=$1 AND job_id=$2`, [storeId, jobId, this.now()]);
+      await sql.query(`UPDATE gpt_jobs SET status='PENDING',batch_id=NULL,payload=(
+        payload::jsonb - 'error' - 'result' - 'finalizerToken' - 'finalizerUntil' - 'nextAttemptAt'
+        || jsonb_build_object(
+          'status','PENDING',
+          'updatedAt',$3::bigint,
+          'checkpoints',COALESCE(payload::jsonb->'checkpoints','{}'::jsonb)-'keywords'-'submission'
+        ))::text WHERE store_id=$1 AND id=$2`, [storeId, jobId, this.now()]);
+      return { handled: true, retried: true };
+    });
+  }
+
   async revoke(storeId: string, tokenId: string): Promise<void> {
     await this.database.transaction(async sql => {
       const token = (await sql.query("UPDATE seo_worker_tokens SET revoked_at=$3 WHERE id=$1 AND (store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id", [tokenId, storeId, this.now()])).rows[0];

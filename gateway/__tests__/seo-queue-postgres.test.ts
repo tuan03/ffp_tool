@@ -115,6 +115,44 @@ integrationTest("worker finalization commits a Review receipt and completes its 
   }
 });
 
+integrationTest("blocked worker jobs are projected for operators and retry returns them to the queue", async () => {
+  assert.ok(databaseUrl);
+  const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;
+  const queue = new PostgresCustomGptQueue({ databaseUrl, schema }, () => 10_000);
+  const pool = new Pool({ connectionString: databaseUrl });
+  try {
+    await queue.initialize();
+    await queue.configure("test-store", { provider: "codex_mcp", batchSize: 1 });
+    const job = await queue.enqueue(createTestEnqueue({ storeId: "test-store", productId: "704" }));
+    await queue.workers.enableStore("test-store");
+    const { token } = await queue.workers.issueToken({ storeId: "test-store", workerId: "test-worker", createdBy: "test" });
+    const { sessionId } = await queue.workers.register(token, "register");
+    const run = await queue.workers.startRun(token, sessionId, 1, "start");
+    const { lease } = await queue.workers.claim(token, sessionId, run.id, "claim");
+    assert.ok(lease);
+    await queue.workers.release(token, lease, { code: "VALIDATION_NEEDS_OPERATOR_REVIEW", retryable: false, requestId: "block" });
+    await pool.query(`UPDATE "${schema}".gpt_jobs SET status='PENDING',
+      payload=(payload::jsonb || '{"status":"PENDING"}'::jsonb)::text WHERE id=$1`, [job.id]);
+
+    const visible = await queue.listFiltered("test-store", { statuses: ["WAITING_INPUT"] });
+    assert.equal(visible.length, 1);
+    assert.equal(visible[0]?.status, "WAITING_INPUT");
+    assert.equal(await queue.countFiltered("test-store", { statuses: ["WAITING_INPUT"] }), 1);
+    assert.equal((await queue.visibleCounts("test-store")).WAITING_INPUT, 1);
+
+    await queue.retry("test-store", job.id);
+    assert.equal((await queue.get("test-store", job.id)).status, "PENDING");
+    const worker = (await pool.query(`SELECT state,lease_version,last_error_code FROM "${schema}".seo_worker_jobs WHERE job_id=$1`, [job.id])).rows[0];
+    assert.equal(worker.state, "READY");
+    assert.equal(worker.lease_version, 1);
+    assert.equal(worker.last_error_code, null);
+  } finally {
+    await queue.close();
+    await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await pool.end();
+  }
+});
+
 integrationTest("offline import preserves all queue tables, AEO, leases and sync fencing across restart", async () => {
   assert.ok(databaseUrl);
   const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;
