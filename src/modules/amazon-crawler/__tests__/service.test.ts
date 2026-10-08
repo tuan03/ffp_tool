@@ -562,6 +562,24 @@ test("module exports route and stable input serialization", () => {
   assert.deepEqual(JSON.parse(serializeAmazonCrawlerInput(input)), input);
 });
 
+test("agent release loader reads the Coordinator verified ZIP catalog", async () => {
+  const loadRelease = createAmazonCrawlerAgentReleaseLoader({
+    releaseApiUrl: "/api/v1/agent-release",
+    fetchImplementation: async () => jsonResponse({
+      release: { keyId: "test", payload: "signed-by-coordinator", signature: "verified-by-coordinator" },
+      manifest: {
+        version: "5.3.0", url: "https://downloads.example.com/agent-v5.3.0/agent.zip",
+        size: 123456, sha256: "a".repeat(64), publishedAt: "2026-10-08T00:00:00Z",
+      },
+    }),
+  });
+  const release = await loadRelease();
+  assert.equal(release.version, "5.3.0");
+  assert.equal(release.fileName, "agent.zip");
+  assert.equal(release.downloadUrl, "https://downloads.example.com/agent-v5.3.0/agent.zip");
+  assert.equal(release.sizeBytes, 123456);
+});
+
 test("agent release loader returns the stable Windows installer and checksum", async () => {
   const loadRelease = createAmazonCrawlerAgentReleaseLoader({
     releaseApiUrl: "https://api.github.com/repos/tuan03/ffp_tool/releases/latest",

@@ -62,12 +62,27 @@ class TrayApplication:
         self._pinterest_action_running = False
         self._lifecycle_action_running = False
         self._latest_agent_version: str | None = None
+        self._latest_release_payload: dict | None = None
+        self._update_message = ""
+        self._update_receipt = self.data_directory / "last-zip-update.json"
+        if self._update_receipt.is_file():
+            try:
+                receipt = json.loads(self._update_receipt.read_text(encoding="utf-8"))
+                stage = receipt.get("stage")
+                if stage == "INSTALLED_AWAITING_CONNECTION":
+                    self._update_message = f"Đã cài {AGENT_VERSION}; đang chờ kết nối server, agent vẫn tạm ngưng."
+                elif stage == "FAILED_OR_ROLLED_BACK":
+                    self._update_message = "Cập nhật lỗi; đã khởi động lại bản trước. Xem nhật ký cập nhật."
+            except (OSError, ValueError):
+                self._update_message = "Không đọc được kết quả cập nhật trước."
 
     def _status_snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return self.status
+            return {**self.status, "updateMessage": self._update_message}
 
     def handle_status(self, status: dict[str, Any]) -> None:
+        if status.get("isConnected") and "đang chờ kết nối server" in self._update_message:
+            self._update_message = f"Đã cập nhật {AGENT_VERSION} và kết nối server. Bấm tiếp tục khi sẵn sàng."
         notify = False
         with self._lock:
             notify = should_notify_captcha(self._was_waiting_captcha, status)
@@ -118,10 +133,14 @@ class TrayApplication:
         return f"{label}: {active} job đang chạy" if active else f"{label}: Sẵn sàng"
 
     def _update_status_text(self, _item: Any) -> str:
+        if self._update_message and self._lifecycle_action_running:
+            return self._update_message
         latest = self._latest_agent_version
         if latest and self._version_parts(latest) > self._version_parts(AGENT_VERSION):
             return f"Có bản cập nhật {latest} (đang dùng {AGENT_VERSION})"
-        return f"Phiên bản {AGENT_VERSION} — mới nhất" if latest else f"Phiên bản {AGENT_VERSION}"
+        if self._update_message:
+            return self._update_message
+        return f"Phiên bản {AGENT_VERSION} — mới nhất" if latest else f"Phiên bản {AGENT_VERSION} — chưa kiểm tra được cập nhật"
 
     def _check_for_update(self, *, notify: bool) -> str | None:
         try:
@@ -130,11 +149,14 @@ class TrayApplication:
                 headers={"Accept": "application/json"},
             )
             with urllib.request.urlopen(request, timeout=15) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            latest = str(payload.get("version") or "").strip()
+                payload = json.loads(response.read(65537).decode("utf-8"))
+            from .zip_release import verify_release
+            manifest = verify_release(payload.get("release"))
+            latest = manifest["version"]
             if not latest:
                 raise ValueError("Máy chủ không trả về phiên bản Agent.")
             self._latest_agent_version = latest
+            self._latest_release_payload = payload
             if self._icon is not None:
                 self._icon.update_menu()
             if notify:
@@ -146,6 +168,8 @@ class TrayApplication:
                 self._notify(message)
             return latest
         except Exception as error:
+            self._latest_agent_version = None
+            self._latest_release_payload = None
             if notify:
                 self._notify(f"Không thể kiểm tra cập nhật: {error}")
             return None
@@ -157,6 +181,15 @@ class TrayApplication:
             name="ffp-agent-update-check",
             daemon=True,
         ).start()
+
+    def _periodic_update_check(self) -> None:
+        while not self.agent.stop_event.is_set():
+            self._check_for_update(notify=False)
+            # A short sleep keeps shutdown prompt; checks run every 30 minutes.
+            for _ in range(1800):
+                if self.agent.stop_event.is_set():
+                    return
+                time.sleep(1)
 
     def _lifecycle_is_safe(self) -> bool:
         if self._has_active_tasks():
@@ -223,7 +256,34 @@ class TrayApplication:
         if self._version_parts(latest) <= self._version_parts(AGENT_VERSION):
             self._notify(f"Agent {AGENT_VERSION} hiện là phiên bản mới nhất. Không cần cập nhật.")
             return
-        self._notify("Để cập nhật an toàn, hãy mở Crawler dashboard, DRAIN agent và chạy UPDATE_AGENT sau khi trạng thái đã DRAINED.")
+        if self._lifecycle_action_running:
+            return
+        if not self._confirm(f"Cập nhật Agent lên {latest}? Tool sẽ chờ task và kết quả gửi xong, rồi tự khởi động lại ở trạng thái tạm ngưng."):
+            return
+        self._lifecycle_action_running = True
+        def report(message: str) -> None:
+            self._update_message = message
+            if self._icon:
+                self._icon.update_menu()
+        try:
+            from .zip_release import verify_release, require_compatible, download_zip
+            payload = self._latest_release_payload
+            if payload is None or self._loop is None or not self._loop.is_running():
+                raise ValueError("Không có thông tin phát hành hoặc agent chưa chạy.")
+            manifest = verify_release(payload["release"])
+            require_compatible(manifest, AGENT_VERSION, payload["serverVersion"], payload["protocolVersion"])
+            with tempfile.TemporaryDirectory(prefix="ffp-release-download-") as temporary:
+                archive = Path(temporary) / "release.zip"
+                download_zip(manifest, archive, lambda count, total: report(f"Đang tải bản {latest}: {count * 100 // total}%"))
+                future = asyncio.run_coroutine_threadsafe(
+                    self.agent.install_zip_release(payload["release"], archive, report), self._loop)
+                future.result()
+            self._actions.put("exit")
+        except Exception:
+            report("Cập nhật chưa hoàn tất — kiểm tra kênh phát hành, dung lượng và trạng thái agent.")
+            self._notify(self._update_message)
+        finally:
+            self._lifecycle_action_running = False
 
     def _update_agent(self, _icon: Any, _item: Any) -> None:
         self._defer_menu_action(self._run_update_agent, name="ffp-agent-update-confirm")
@@ -337,6 +397,11 @@ class TrayApplication:
             with self._lock:
                 self.status = {**self.status, "isConnected": False, "agentStopped": True}
         finally:
+            if self.agent._update_exit_requested:
+                if self._window is not None:
+                    self._actions.put("exit")
+                elif self._icon is not None:
+                    self._icon.stop()
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
 
@@ -509,8 +574,7 @@ class TrayApplication:
         self._thread = threading.Thread(target=self._run_agent, name="ffp-amazon-agent", daemon=True)
         self._thread.start()
         threading.Thread(
-            target=self._check_for_update,
-            kwargs={"notify": False},
+            target=self._periodic_update_check,
             name="ffp-agent-update-check",
             daemon=True,
         ).start()

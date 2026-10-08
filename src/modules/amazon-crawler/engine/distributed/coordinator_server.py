@@ -24,6 +24,7 @@ from sqlalchemy import select, text
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
 from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
+from .release_catalog import cached_release_version
 from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore
 from .image_profile_repository import ImageProfileRepository
@@ -937,7 +938,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             {
                 **client,
                 "isConnected": client["id"] in connected_ids,
-                "latestAgentVersion": AGENT_VERSION,
+                "latestAgentVersion": cached_release_version(),
                 "leasedTasks": client["activeTasks"],
                 "activeTasks": runtime.get(client["id"], {}).get("activeTasks", 0),
                 "availableSlots": runtime.get(client["id"], {}).get("availableSlots", 0),
@@ -1182,13 +1183,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             "appliedExecutionState": rows[3], "serverLastProcessedCommandSequence": rows[4]})
 
     @app.get("/api/v1/agent-release")
-    async def agent_release() -> dict[str, str]:
-        return {
-            "version": AGENT_VERSION,
-            "installerUrl": "/install-agent.ps1",
-            "packageUrl": "/ffp-crawler-agent.tar.gz",
-            "checksumUrl": "/ffp-crawler-agent.tar.gz.sha256",
-        }
+    async def agent_release() -> dict:
+        from .release_catalog import load_release_catalog
+        try:
+            release = await asyncio.to_thread(load_release_catalog)
+        except ValueError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+        return {**release, "serverVersion": AGENT_VERSION, "protocolVersion": PROTOCOL_VERSION}
 
     @app.delete("/api/v1/clients/cache")
     async def clear_client_caches() -> dict[str, Any]:

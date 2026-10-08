@@ -69,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--update-command-id", help=argparse.SUPPRESS)
     parser.add_argument("--database-backup-path", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--database-backup-sha256", help=argparse.SUPPRESS)
+    parser.add_argument("--apply-zip-update", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--zip-update-probe", type=Path, help=argparse.SUPPRESS)
     return parser
 
 
@@ -78,6 +80,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     from .client_agent import DistributedCrawlerAgent
     from .client_config import AgentConfig
     arguments = build_parser().parse_args(argv)
+    if arguments.apply_zip_update:
+        from .zip_updater import apply_update
+        return apply_update(arguments.apply_zip_update)
     if arguments.restart_command_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arguments.restart_command_id):
         print("FFP Amazon Crawler restart command ID is invalid.", file=sys.stderr)
         return 2
@@ -86,6 +91,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         default_project_root = (Path(sys.executable).parent if bool(getattr(sys, "frozen", False))
                                 else config.data_directory)
         project_root = (arguments.project_root or default_project_root).resolve()
+        if arguments.zip_update_probe:
+            from . import AGENT_VERSION
+            from .client_store import ClientStore
+            store = ClientStore(config.data_directory / "agent.sqlite3")
+            healthy = store.self_test_database_integrity() and store.drain_outbox_count() == 0 and store.is_paused()
+            arguments.zip_update_probe.write_text(json.dumps({
+                "status": "PASS" if healthy else "FAIL", "version": AGENT_VERSION,
+                "clientId": store.client_id(),
+            }), encoding="utf-8")
+            return 0 if healthy else 1
         if arguments.restore_update_database:
             if (not arguments.update_command_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", arguments.update_command_id)
                     or arguments.database_backup_path is None

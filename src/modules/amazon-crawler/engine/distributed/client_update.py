@@ -89,6 +89,30 @@ def launch_agent_update(command_id: str, target_version: str, project_root: Path
             or not re.fullmatch(r"[a-f0-9]{64}", manifest_sha256)
             or not re.fullmatch(r"[a-f0-9]{64}", database_backup_sha256)):
         return False
+    from .release_trust import TRUSTED_RELEASE_KEYS
+    if TRUSTED_RELEASE_KEYS:
+        import tempfile
+        import urllib.request
+        from .client_config import AgentConfig
+        from . import AGENT_VERSION
+        from .zip_release import verify_release, require_compatible, download_zip
+        from .zip_updater import prepare_update, launch_prepared_update
+        try:
+            config = AgentConfig.load(config_path)
+            with urllib.request.urlopen(config.server_url + "/api/v1/agent-release", timeout=30) as response:
+                payload = json.loads(response.read(65537))
+            manifest = verify_release(payload["release"])
+            require_compatible(manifest, AGENT_VERSION, payload["serverVersion"], payload["protocolVersion"])
+            if manifest["version"] != target_version:
+                return False
+            with tempfile.TemporaryDirectory(prefix="ffp-release-download-") as temporary:
+                archive = Path(temporary) / "release.zip"
+                download_zip(manifest, archive)
+                work = prepare_update(project_root, config_path, config.data_directory, payload["release"], archive)
+                launch_prepared_update(work)
+            return True
+        except Exception:
+            return False
     script = project_root / "scripts" / "update-agent.ps1"
     if not script.is_file():
         return False

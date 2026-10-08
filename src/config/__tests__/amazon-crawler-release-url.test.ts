@@ -3,10 +3,10 @@ import test from "node:test";
 
 import { resolveAmazonCrawlerReleaseApiUrl } from "../amazon-crawler-release-url";
 
-test("agent release URL defaults to the public FFP Tool GitHub repository", () => {
+test("agent release URL defaults to the same-origin verified Coordinator catalog", () => {
   assert.equal(
     resolveAmazonCrawlerReleaseApiUrl(undefined),
-    "https://api.github.com/repos/tuan03/ffp_tool/releases/latest",
+    "/api/v1/agent-release",
   );
 });
 

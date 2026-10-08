@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build and publish Windows installer
+    name: Build and publish signed Windows ZIP
     runs-on: windows-latest
 
     steps:
@@ -55,26 +55,30 @@ jobs:
         shell: pwsh
         run: |
           npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed.' }
           npm run test:engine
+          if ($LASTEXITCODE -ne 0) { throw 'Agent tests failed.' }
           ./scripts/build-amazon-crawler-client.ps1 -SmokeTest
+          if ($LASTEXITCODE -ne 0) { throw 'Agent configuration smoke test failed.' }
 
-      - name: Install Inno Setup
+      - name: Build Windows portable Agent
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: ./scripts/build-amazon-crawler-client.ps1 -SkipInstaller
 
-      - name: Build Windows installer
+      - name: Verify packaged Agent startup without production connections
         shell: pwsh
-        run: ./scripts/build-amazon-crawler-client.ps1
+        run: |
+          python scripts/smoke-agent-zip.py artifacts/windows/FFPAmazonCrawlerAgent/FFPAmazonCrawlerAgent.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Agent smoke test failed.' }
 
-      # Provision an approved Authenticode signer before this gate. An unsigned
-      # local build is useful for testing but must never become a public release.
-      - name: Verify trusted signature and generate release manifest
+      - name: Sign and verify ZIP manifest
         shell: pwsh
         env:
-          AGENT_TRUSTED_SIGNERS: ${{ vars.AGENT_TRUSTED_SIGNERS }}
+          FFP_AGENT_RELEASE_PRIVATE_KEY: ${{ secrets.FFP_AGENT_RELEASE_PRIVATE_KEY }}
+          FFP_AGENT_RELEASE_KEY_ID: ${{ vars.FFP_AGENT_RELEASE_KEY_ID }}
         run: |
-          $agentVersion = "${{ github.ref_name }}" -replace '^agent-v', ''
-          ./scripts/create-agent-release.ps1 -Version $agentVersion -TrustedSignerThumbprints ($env:AGENT_TRUSTED_SIGNERS -split ',')
+          python scripts/publish-agent-zip.py --key-id "$env:FFP_AGENT_RELEASE_KEY_ID"
+          if ($LASTEXITCODE -ne 0) { throw 'Signed ZIP preparation failed.' }
 
       - name: Publish GitHub Release
         shell: pwsh
@@ -83,9 +87,13 @@ jobs:
         run: |
           $agentVersion = "${{ github.ref_name }}" -replace '^agent-v', ''
           gh release create "${{ github.ref_name }}" `
-            "installer-output/FFP-Amazon-Crawler-Setup-$agentVersion.exe" `
-            "installer-output/FFP-Amazon-Crawler-Setup-$agentVersion.exe.sha256" `
-            "installer-output/latest.json" `
+            "installer-output/FFP-Amazon-Crawler-$agentVersion-windows-x64.zip" `
+            "installer-output/FFP-Amazon-Crawler-$agentVersion-windows-x64.zip.sha256" `
+            "installer-output/latest-zip.json" `
             --title "FFP Amazon Crawler ${{ github.ref_name }}" `
             --generate-notes `
+            --draft `
             --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed.' }
+          gh release edit "${{ github.ref_name }}" --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }

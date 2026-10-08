@@ -247,7 +247,10 @@ class ClientTrayTests(unittest.TestCase):
         tray.agent = Mock()
         tray.agent.config.server_url = "http://coordinator.test"
         tray.agent.project_root = Path("C:/FFP/CrawlerAgent")
-        tray._check_for_update = Mock(return_value="5.3.0")
+        tray._check_for_update = Mock(return_value="99.0.0")
+        tray._lifecycle_action_running = False
+        tray._latest_release_payload = None
+        tray._loop = None
         tray._lifecycle_is_safe = Mock(return_value=True)
         tray._confirm = Mock(return_value=True)
         tray._launch_lifecycle_script = Mock()
@@ -256,8 +259,9 @@ class ClientTrayTests(unittest.TestCase):
 
         tray._run_update_agent()
 
-        tray._notify.assert_called_once_with("Để cập nhật an toàn, hãy mở Crawler dashboard, DRAIN agent và chạy UPDATE_AGENT sau khi trạng thái đã DRAINED.")
-        tray._confirm.assert_not_called()
+        tray._notify.assert_called_once()
+        self.assertIn("chưa hoàn tất", tray._notify.call_args.args[0])
+        tray._confirm.assert_called_once()
         tray._launch_lifecycle_script.assert_not_called()
 
 
@@ -4128,8 +4132,8 @@ class CoordinatorApiTests(unittest.TestCase):
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
                 release = client.get("/api/v1/agent-release")
-                self.assertEqual(release.status_code, 200)
-                self.assertRegex(release.json()["version"], r"^\d+\.\d+\.\d+$")
+                self.assertEqual(release.status_code, 503)
+                self.assertNotIn("version", release.json())
 
                 app.state.store.register_client(client_hello())
                 app.state.store.mark_client_disconnected("client-a")

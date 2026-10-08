@@ -165,6 +165,8 @@ class DistributedCrawlerAgent:
         self._pause_releases: dict[tuple[str, str], dict[str, Any]] = {}
         self.executing_task_ids: set[str] = set()
         self.stop_event = asyncio.Event()
+        self._zip_update_draining = False
+        self._update_exit_requested = False
         self.connection_status = "offline"
         self._locally_paused = self.store.is_paused()
         self._remote_execution_state = self.store.remote_execution_state()
@@ -399,6 +401,37 @@ class DistributedCrawlerAgent:
         self._refresh_pause_state()
         if is_paused:
             self._queue_pause_releases()
+
+    async def install_zip_release(self, envelope: dict, archive: Path, notify) -> None:
+        """Drain admission without interrupting active tasks; persist pause before exiting."""
+        from .zip_updater import prepare_update, launch_prepared_update
+        if self._zip_update_draining:
+            raise ValueError("An Agent update is already in progress.")
+        if self.config.config_file_path is None:
+            raise ValueError("Persistent Agent configuration is required.")
+        self._zip_update_draining = True
+        try:
+            await self.outbound_queue.put({"type": "ready", "availableSlots": 0})
+            notify("Đang chờ task hoàn tất và toàn bộ kết quả được server ACK.")
+            while (self.active or self.executing_task_ids or not self.assignment_queue.empty()
+                   or self._pause_release_count() or self.store.drain_outbox_count() or not self._is_connected):
+                if self.stop_event.is_set():
+                    raise ValueError("Agent stopped before update drain completed.")
+                await asyncio.sleep(1)
+            notify("Đang chuẩn bị bản cập nhật và bản phục hồi.")
+            work = await asyncio.to_thread(prepare_update, self.project_root,
+                self.config.config_file_path, self.config.data_directory, envelope, archive)
+            # Recheck after disk preparation; admission stayed closed throughout.
+            if (self.active or self.executing_task_ids or not self.assignment_queue.empty()
+                    or self._pause_release_count() or self.store.drain_outbox_count() or not self._is_connected):
+                raise ValueError("Agent is no longer drained; update cancelled.")
+            self.set_paused(True)
+            await asyncio.to_thread(launch_prepared_update, work)
+            notify(f"Đang cài và khởi động lại. Nhật ký: {work}")
+            self._update_exit_requested = True
+            self.stop_event.set()
+        finally:
+            self._zip_update_draining = False
 
     def _pause_release_count(self) -> int:
         with self._pause_release_lock:
@@ -744,7 +777,7 @@ class DistributedCrawlerAgent:
                     if (self._remote_execution_state != "DRAINED" or drain is None or drain.get("state") != "DRAINED"
                             or self.executing_task_ids or self.active
                             or not self.assignment_queue.empty() or self.store.drain_outbox_count() != 0
-                            or not self.config.trusted_signer_thumbprints):
+                            or not self._has_update_trust()):
                         error = "UPDATE_AGENT requires DRAINED, no active work, zero unacknowledged outbox, and a local signer pin."
                     elif (expected_previous_version != AGENT_VERSION
                           or not re.fullmatch(r"\d+\.\d+\.\d+", target_version)
@@ -767,7 +800,7 @@ class DistributedCrawlerAgent:
                                 except OSError:
                                     pass
                             error = f"Could not prepare a verified Agent rollback snapshot: {redact(failure)}"
-                        if not error and journal is not None and not self.update_launcher(command_id, target_version, self.project_root,
+                        if not error and journal is not None and not await asyncio.to_thread(self.update_launcher, command_id, target_version, self.project_root,
                                                     self.config.config_file_path, os.getpid(),
                                                     journal["backupDirectory"], journal["installManifestSha256"],
                                                     journal["databaseBackupSha256"]):
@@ -775,6 +808,7 @@ class DistributedCrawlerAgent:
                             await asyncio.to_thread(self.store.save_agent_update_journal,
                                 {**journal, "stage": "FAILED", "selfTestStatus": "PENDING"})
                         elif not error:
+                            self._update_exit_requested = True
                             self.stop_event.set()
                             return
                 await asyncio.to_thread(self.store.complete_server_command, command_id, sequence, "FAILED", None, error)
@@ -1158,7 +1192,7 @@ class DistributedCrawlerAgent:
                         "appliedExecutionState": self._remote_execution_state})
             elif message_type == "assignment":
                 if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
-                        or self._paused or self._storage_pressure()["blocked"]):
+                        or self._zip_update_draining or self._paused or self._storage_pressure()["blocked"]):
                     # A lease sent before the last capacity update is not
                     # accepted locally. The coordinator can expire/reassign it.
                     await self.outbound_queue.put({"type": "ready", "availableSlots": 0})
@@ -1473,6 +1507,10 @@ class DistributedCrawlerAgent:
     def _storage_pressure(self) -> dict[str, Any]:
         return storage_pressure(self.store, self.config.outbox, self.project_root)
 
+    def _has_update_trust(self) -> bool:
+        from .release_trust import TRUSTED_RELEASE_KEYS
+        return bool(TRUSTED_RELEASE_KEYS or self.config.trusted_signer_thumbprints)
+
     def _run_self_test(self) -> dict[str, Any]:
         try:
             database_integrity = self.store.self_test_database_integrity()
@@ -1494,6 +1532,7 @@ class DistributedCrawlerAgent:
 
     def _available_slots(self) -> int:
         if (not self._is_connected or not self._recovery_complete or not self._command_recovery_complete
+                or self._zip_update_draining
                 or self._remote_execution_state in {"DRAINING", "DRAINED"}
                 or self._paused or self._pending_stop_cleanups or self._storage_pressure()["blocked"]):
             return 0

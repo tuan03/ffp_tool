@@ -725,6 +725,23 @@ export function createAmazonCrawlerAdmissionGateController({
 }
 
 function readAgentRelease(value: unknown): AmazonCrawlerAgentRelease {
+  if (isRecord(value) && isRecord(value.manifest) && isRecord(value.release)) {
+    const manifest = value.manifest;
+    if (typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+$/.test(manifest.version) ||
+        typeof manifest.url !== "string" || typeof manifest.size !== "number" || manifest.size <= 0 ||
+        typeof manifest.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.sha256)) {
+      throw new AmazonCrawlerServiceError("Invalid verified ZIP release.", "INVALID_AGENT_RELEASE_RESPONSE");
+    }
+    const url = new URL(manifest.url);
+    if (url.protocol !== "https:" || url.username || url.password || !url.pathname.endsWith(".zip")) {
+      throw new AmazonCrawlerServiceError("Unsafe ZIP release URL.", "UNSAFE_AGENT_RELEASE_URL");
+    }
+    return {
+      version: manifest.version, downloadUrl: url.toString(), checksumUrl: url.toString() + ".sha256",
+      releasePageUrl: new URL(".", url).toString(), fileName: url.pathname.split("/").pop() ?? "agent.zip",
+      sizeBytes: manifest.size, publishedAt: typeof manifest.publishedAt === "string" ? manifest.publishedAt : "",
+    };
+  }
   if (!isRecord(value) || typeof value.tag_name !== "string" ||
     typeof value.html_url !== "string" || typeof value.published_at !== "string" ||
     !Array.isArray(value.assets)) {

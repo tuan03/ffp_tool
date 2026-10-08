@@ -1,6 +1,7 @@
 param(
     [switch]$SkipInstaller,
-    [switch]$SmokeTest
+    [switch]$SmokeTest,
+    [string]$OutputDirectory
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,16 @@ $virtualEnvironment = Join-Path $buildRoot "venv"
 $browserDirectory = Join-Path $buildRoot "ms-playwright"
 $pythonExecutable = Join-Path $virtualEnvironment "Scripts/python.exe"
 $portableOutput = Join-Path $repositoryRoot "artifacts/windows"
+if ($OutputDirectory) {
+    if (-not $SkipInstaller) { throw 'Custom output requires -SkipInstaller.' }
+    $portableOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
+}
+$portableExecutable = Join-Path $portableOutput 'FFPAmazonCrawlerAgent/FFPAmazonCrawlerAgent.exe'
+$runningPackage = Get-CimInstance Win32_Process -Filter "Name = 'FFPAmazonCrawlerAgent.exe'" |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath -eq $portableExecutable }
+if ($runningPackage) {
+    throw 'An Agent is running from the build output. Use -SkipInstaller -OutputDirectory with a separate directory; do not overwrite a running Agent.'
+}
 
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
 if (-not (Test-Path -LiteralPath $pythonExecutable)) {

@@ -77,9 +77,10 @@ test("agent release pipeline uses one version and stable asset names", async () 
   assert.match(buildScript, /\$env:FFP_AGENT_VERSION = \$agentVersion/);
   assert.match(workflow, /tags:\s*\n\s*- "agent-v\*\.\*\.\*"/);
   assert.match(installer, /OutputBaseFilename=FFP-Amazon-Crawler-Setup-\{#AppVersion\}/);
-  assert.match(workflow, /FFP-Amazon-Crawler-Setup-\$agentVersion\.exe\.sha256/);
-  assert.match(workflow, /create-agent-release\.ps1/);
-  assert.match(workflow, /installer-output\/latest\.json/);
+  assert.match(workflow, /FFP-Amazon-Crawler-\$agentVersion-windows-x64\.zip\.sha256/);
+  assert.match(workflow, /publish-agent-zip\.py/);
+  assert.match(workflow, /installer-output\/latest-zip\.json/);
+  assert.match(workflow, /--draft=false --latest/);
   const [bootstrap, policy, legacyUpdater] = await Promise.all([
     readFile(new URL("./install-agent.ps1", import.meta.url), "utf8"),
     readFile(new URL("./agent-release-policy.ps1", import.meta.url), "utf8"),
