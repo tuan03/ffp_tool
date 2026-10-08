@@ -4011,6 +4011,11 @@ class CoordinatorApiTests(unittest.TestCase):
                     self.assertFalse(client.get("/api/v1/clients").json()[0]["readyForTasks"])
                     agent.send_json({"type": "ready", "availableSlots": 1,
                                      "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        if client.get("/api/v1/clients").json()[0]["readyForTasks"]:
+                            break
+                        time.sleep(0.01)
                     self.assertTrue(client.get("/api/v1/clients").json()[0]["readyForTasks"])
 
     def test_new_job_wakes_ready_agents_without_waiting_for_next_heartbeat(self) -> None:

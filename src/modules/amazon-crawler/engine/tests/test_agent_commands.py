@@ -150,7 +150,8 @@ class AgentCommandLedgerTests(unittest.TestCase):
         safe = {**unsafe, "pendingOutboxCount": 0}
         self.ledger.update("agent-1", {"commandId": command["commandId"], "sequence": 1,
             "status": "SUCCESS", "result": safe})
-        event = self.ledger.history("agent-1")[0]["events"][-1]["detail"]["result"]
+        events = self.ledger.history("agent-1")[0]["events"]
+        event = next(entry["detail"]["result"] for entry in events if entry["status"] == "SUCCESS")
         self.assertEqual(event["selfTestStatus"], "PASS")
         self.assertNotIn("checks", event)
 

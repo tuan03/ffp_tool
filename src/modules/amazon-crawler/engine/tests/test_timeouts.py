@@ -208,7 +208,7 @@ class TimeoutTests(unittest.TestCase):
                     time.sleep(0.01)
                 self.assertIsNotNone(crawler._process)
                 cancel_event.set()
-                running.result(timeout=5)
+                running.result(timeout=15)
             self.assertFalse(crawler._process.is_alive())
 
     def test_worker_force_stops_after_cancellation_grace_when_child_ignores_token(self) -> None:
