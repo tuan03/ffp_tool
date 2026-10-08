@@ -107,3 +107,14 @@ test("agent release pipeline uses one version and stable asset names", async () 
   assert.match(clientNginx, /location = \/agent-release-policy\.ps1/);
   assert.match(sourcePackager, /"scripts\/agent-release-policy\.ps1"/);
 });
+
+test("agent release verifies source alongside Windows packaging and gates publication on both", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  assert.match(workflow, /checks:\s*\n\s*name: Verify Agent source\s*\n\s*runs-on: ubuntu-latest/);
+  assert.match(workflow, /build:\s*\n\s*name: Build and sign Windows ZIP\s*\n\s*runs-on: windows-latest/);
+  assert.match(workflow, /release:\s*\n\s*name: Publish verified Windows ZIP\s*\n\s*needs: \[checks, build\]/);
+  assert.match(workflow, /npm run test:engine/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /actions\/download-artifact@v4/);
+  assert.match(workflow, /GH_REPO: \$\{\{ github\.repository \}\}/);
+});

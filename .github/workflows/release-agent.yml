@@ -6,16 +6,16 @@ on:
       - "agent-v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-agent-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish signed Windows ZIP
-    runs-on: windows-latest
+  checks:
+    name: Verify Agent source
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout tagged source
@@ -31,15 +31,32 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: src/modules/amazon-crawler/engine/requirements.txt
 
-      - name: Install JavaScript dependencies
-        # The Agent release only needs TypeScript/Vite tooling. Gateway native
-        # install hooks (notably better-sqlite3) are unrelated to this artifact
-        # and make the Windows release runner depend on a C++ toolchain.
-        run: npm ci --ignore-scripts
+      - name: Install check dependencies
+        run: |
+          npm ci --ignore-scripts
+          python -m pip install -r src/modules/amazon-crawler/engine/requirements.txt
 
-      - name: Install Python dependencies
-        run: python -m pip install -r src/modules/amazon-crawler/engine/requirements.txt
+      - name: Run Agent checks
+        run: |
+          npm run typecheck
+          npm run test:engine
+          pwsh -NoProfile -File ./scripts/build-amazon-crawler-client.ps1 -SmokeTest
+
+  build:
+    name: Build and sign Windows ZIP
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Validate release tag and agent version
         shell: pwsh
@@ -54,16 +71,6 @@ jobs:
             throw "Tag version $tagVersion does not match AGENT_VERSION $agentVersion."
           }
 
-      - name: Run agent checks
-        shell: pwsh
-        run: |
-          npm run typecheck
-          if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed.' }
-          npm run test:engine
-          if ($LASTEXITCODE -ne 0) { throw 'Agent tests failed.' }
-          ./scripts/build-amazon-crawler-client.ps1 -SmokeTest
-          if ($LASTEXITCODE -ne 0) { throw 'Agent configuration smoke test failed.' }
-
       - name: Build Windows portable Agent
         shell: pwsh
         run: ./scripts/build-amazon-crawler-client.ps1 -SkipInstaller
@@ -71,7 +78,7 @@ jobs:
       - name: Verify packaged Agent startup without production connections
         shell: pwsh
         run: |
-          python scripts/smoke-agent-zip.py artifacts/windows/FFPAmazonCrawlerAgent/FFPAmazonCrawlerAgent.exe
+          & .runtime/agent-build/venv/Scripts/python.exe scripts/smoke-agent-zip.py artifacts/windows/FFPAmazonCrawlerAgent/FFPAmazonCrawlerAgent.exe
           if ($LASTEXITCODE -ne 0) { throw 'Packaged Agent smoke test failed.' }
 
       - name: Sign and verify ZIP manifest
@@ -80,13 +87,40 @@ jobs:
           FFP_AGENT_RELEASE_PRIVATE_KEY: ${{ secrets.FFP_AGENT_RELEASE_PRIVATE_KEY }}
           FFP_AGENT_RELEASE_KEY_ID: ${{ vars.FFP_AGENT_RELEASE_KEY_ID }}
         run: |
-          python scripts/publish-agent-zip.py --key-id "$env:FFP_AGENT_RELEASE_KEY_ID"
+          & .runtime/agent-build/venv/Scripts/python.exe scripts/publish-agent-zip.py --key-id "$env:FFP_AGENT_RELEASE_KEY_ID"
           if ($LASTEXITCODE -ne 0) { throw 'Signed ZIP preparation failed.' }
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-agent-zip
+          path: |
+            installer-output/FFP-Amazon-Crawler-*-windows-x64.zip
+            installer-output/FFP-Amazon-Crawler-*-windows-x64.zip.sha256
+            installer-output/latest-zip.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    name: Publish verified Windows ZIP
+    needs: [checks, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-agent-zip
+          path: installer-output
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $agentVersion = "${{ github.ref_name }}" -replace '^agent-v', ''
           gh release create "${{ github.ref_name }}" `
