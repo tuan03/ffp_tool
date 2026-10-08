@@ -67,6 +67,7 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     assert.match(JSON.stringify(forbiddenStore), /STORE_NOT_AUTHORIZED/);
     const contracts = await client.readResource({ uri: "ffp://seo-worker/contracts" });
     assert.match(JSON.stringify(contracts), /productSeoTitle/);
+    assert.match(JSON.stringify(contracts), /customizationSampleTexts/);
     const status = await client.callTool({ name: "worker_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.match(JSON.stringify(status), /demo/);

@@ -25,6 +25,22 @@ function strings(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error(`Invalid ${field}`);
   return value.map(entry => text(entry, field));
 }
+function containsCustomizationSample(value: string, sample: string): boolean {
+  const escaped = sample.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  if (!escaped) return false;
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(value);
+}
+function collectStrings(value: unknown, path = "content"): readonly { readonly path: string; readonly value: string }[] {
+  if (typeof value === "string") return [{ path, value }];
+  if (Array.isArray(value)) return value.flatMap((entry, index) => collectStrings(entry, `${path}[${index}]`));
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([key, entry]) => collectStrings(entry, `${path}.${key}`));
+}
+function assertNoCustomizationSamples(value: unknown, samples: readonly string[]): void {
+  const violation = collectStrings(value).find(entry => samples.some(sample => containsCustomizationSample(entry.value, sample)));
+  if (violation) throw new Error(`Generated SEO content contains a buyer customization sample value in ${violation.path}`);
+}
 function wordCount(value: string): number {
   return value.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -58,6 +74,14 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
   const imageIds = input.images.map((image, index) => image.id || `image-${index + 1}`);
   if (imageIds.length === 0 || imageIds.some(id => !evidence.some(entry => entry.imageId === id)) || evidence.some(entry => !imageIds.includes(entry.imageId))) throw new Error("Image evidence must cover exactly the supplied product images; attach missing images before continuing");
   const typography = object(analysis.typography);
+  const visibleTexts = strings(typography.visibleTexts, "visibleTexts");
+  const customizationSampleTexts = typography.customizationSampleTexts === undefined
+    ? []
+    : strings(typography.customizationSampleTexts, "customizationSampleTexts");
+  const fixedVisibleTexts = visibleTexts.filter(visibleText =>
+    !customizationSampleTexts.some(sample => containsCustomizationSample(visibleText, sample)
+      || containsCustomizationSample(sample, visibleText)),
+  );
   const shopping = object(analysis.shoppingContext);
   return {
     evidence,
@@ -65,7 +89,11 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
       physicalProductIdentity: text(analysis.physicalProductIdentity, "physicalProductIdentity"),
       visualEntities: text(analysis.visualEntities, "visualEntities"),
       sceneContext: text(analysis.sceneContext, "sceneContext"),
-      typography: { visibleTexts: strings(typography.visibleTexts, "visibleTexts"), styleSummary: text(typography.styleSummary, "styleSummary") },
+      typography: {
+        visibleTexts: fixedVisibleTexts,
+        customizationSampleTexts,
+        styleSummary: text(typography.styleSummary, "styleSummary"),
+      },
     },
     shopping: {
       targetAudience: strings(shopping.targetAudience, "targetAudience"),
@@ -108,6 +136,9 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   const check = await checkExternalSeoKeywords(keywords, options);
   if (check.conflicts.some(conflict => conflict.matches.length)) throw new Error("Keyword conflict: check keywords again and choose non-conflicting targets");
   const raw = object(submission);
+  const customizationSampleTexts = analysis.understanding.typography.customizationSampleTexts ?? [];
+  assertNoCustomizationSamples(raw, customizationSampleTexts);
+  assertNoCustomizationSamples(keywords, customizationSampleTexts);
   const draft = validateDraft(raw.draft);
   // Arbitrary JSON-LD from an external model must not bypass fact validation.
   if (draft.aeo_json_ld) throw new Error("Submit structured FAQ fields, not arbitrary JSON-LD");

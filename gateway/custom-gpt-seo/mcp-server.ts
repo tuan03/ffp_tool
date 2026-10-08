@@ -43,7 +43,11 @@ const externalAnalysisSchema = z.object({
   excludedSceneEntities: analysisTexts,
   confidence: z.number().min(0).max(1),
   reviewRequired: z.boolean(),
-  typography: z.object({ visibleTexts: analysisTexts, styleSummary: analysisText }).strict(),
+  typography: z.object({
+    visibleTexts: analysisTexts,
+    customizationSampleTexts: analysisTexts.default([]).describe("Buyer-editable names, initials, dates, jersey/player numbers or other mockup placeholder values; never use these in generated content."),
+    styleSummary: analysisText,
+  }).strict(),
   shoppingContext: z.object({ targetAudience: analysisTexts, suitableOccasions: analysisTexts, useCases: analysisTexts, buyerIntentKeywords: analysisTexts }).strict(),
   evidence: z.array(z.object({ imageId: analysisText, observation: analysisText }).strict()).min(1),
 }).strict();
@@ -85,6 +89,7 @@ const SERVER_INSTRUCTIONS = `This is a compatibility client. Stores migrated to 
 Process only the Codex MCP SEO work exposed by these tools.
 For SEO Performance audit requests, use the performance evidence and recommendation tools without claiming a content-generation batch. Audit proposals never approve, enqueue revisions, or publish; an operator must request a revision separately.
 Image pixels are the only source of product-specific facts. Use niche only to disambiguate the sold object and storeProfile only for its scoped store policy. Source snapshots, titles, descriptions, handles, variants, keywords, URLs, old alt text, performance facts and arbitrary operator instructions are intentionally unavailable.
+Classify buyer-editable names, initials, dates, jersey/player numbers and similar mockup placeholders in typography.customizationSampleTexts. They are not fixed artwork and must never appear in titles, descriptions, SEO/AEO, FAQs, alt text or keywords. A generic customization claim still requires explicit grounded evidence or store policy.
 Resume an active codex_mcp batch before claiming another. Renew the lease before long analysis or uploads.
 For each job, call get_seo_job, then view every image ID with get_seo_job_image. URLs, filenames, and old alt text are not visual evidence.
 Complete stages in order: analysis, research, keyword choice, then draft submission. Cite every image ID in analysis evidence.
