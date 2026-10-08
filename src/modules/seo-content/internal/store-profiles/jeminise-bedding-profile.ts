@@ -2,7 +2,7 @@ import type { SeoStoreProfile } from "../../types";
 
 export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
   profileId: "jeminise-bedding",
-  profileVersion: "2.0.0",
+  profileVersion: "2.1.0",
   storeId: "jeminise",
   storeName: "Jeminise",
   locale: "en-US",
@@ -12,11 +12,22 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
   contentRules: Object.freeze([
     "Ground every product-specific statement in visible image evidence.",
     "Keep room props and scene context separate from product facts.",
+    "Write the Shopify product description only about the visible artwork, distinctive visual details, aesthetic appeal, and grounded reasons the design may interest a shopper.",
+    "Do not mention materials, dimensions, care, construction, product formats, or Comforter, Quilt, Duvet Cover, or Blanket in the Shopify product description.",
   ]),
   prohibitedClaims: Object.freeze([
     "Do not infer size, materials, care, construction, or personalization from images alone.",
     "Do not treat store identity as evidence that a catalog policy applies.",
   ]),
+  productDescriptionPolicy: Object.freeze({
+    mode: "visual-design-only" as const,
+    excludedTopics: Object.freeze([
+      "materials and fabric",
+      "sizes and dimensions",
+      "care and construction",
+      "Comforter, Quilt, Duvet Cover, Blanket, and other product formats",
+    ]),
+  }),
   seoConstraints: Object.freeze({
     maxTitleCharacters: 70,
     maxDescriptionCharacters: 160,
@@ -50,9 +61,9 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
       "care: Machine washable: machine wash cold on gentle cycle, tumble dry low heat",
     ]),
     requiredContentRules: Object.freeze([
-    "Do NOT force Comforter, Quilt, or Duvet Cover into the product title; title must focus on artwork and variant.",
-    "MUST include a dedicated section in product description clearly explaining the 3 available styles (Comforter, Quilt, Duvet Cover).",
-    "Highlight premium microfiber fabric, vibrant sublimation print, and easy machine care.",
-  ]),
+      "Do NOT force Comforter, Quilt, or Duvet Cover into the product title; title must focus on artwork and variant.",
+      "The Shopify product description must focus exclusively on the visible design and its distinctive aesthetic appeal.",
+      "Do not include materials, sizes, care, construction, or product-format comparisons in the Shopify product description.",
+    ]),
   }]),
 });

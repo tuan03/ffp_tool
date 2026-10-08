@@ -22,6 +22,11 @@ export interface SeoCatalogPolicy {
   readonly requiredContentRules: readonly string[];
 }
 
+export interface SeoProductDescriptionPolicy {
+  readonly mode: "visual-design-only";
+  readonly excludedTopics: readonly string[];
+}
+
 export interface SeoStoreProfile {
   readonly profileId: string;
   readonly profileVersion: string;
@@ -33,6 +38,7 @@ export interface SeoStoreProfile {
   readonly brandVoice: readonly string[];
   readonly contentRules: readonly string[];
   readonly prohibitedClaims: readonly string[];
+  readonly productDescriptionPolicy?: SeoProductDescriptionPolicy;
   readonly seoConstraints: {
     readonly maxTitleCharacters: number;
     readonly maxDescriptionCharacters: number;

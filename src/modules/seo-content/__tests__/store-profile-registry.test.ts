@@ -58,7 +58,7 @@ test("registry exposes safe profile choices and scopes an explicit profile to an
 });
 
 test("Jeminise V2 profile is versioned and declares three structured offerings", () => {
-  assert.equal(JEMINISE_BEDDING_PROFILE.profileVersion, "2.0.0");
+  assert.equal(JEMINISE_BEDDING_PROFILE.profileVersion, "2.1.0");
   assert.deepEqual(
     JEMINISE_BEDDING_PROFILE.catalogPolicies?.[0]?.offerings.map((offering) => offering.name),
     ["Comforter", "Quilt", "Duvet Cover"],

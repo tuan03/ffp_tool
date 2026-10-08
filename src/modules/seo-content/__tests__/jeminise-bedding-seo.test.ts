@@ -9,6 +9,7 @@ import {
   buildBeddingSeoDescription,
 } from "../internal/content-generation/heuristic-content-generator";
 import { formatProductDescriptionHtml } from "../internal/content-generation/html-description-formatter";
+import { validateFinalContent } from "../internal/content-generation/content-result-validator";
 import { JEMINISE_BEDDING_PROFILE, sanitizeBeddingTitle } from "../internal/store-profiles";
 import { projectStoreContentProfile } from "../internal/store-profiles/types";
 
@@ -70,24 +71,28 @@ test("Jeminise bedding policy activates all three offerings only for grounded hi
   assert.equal(wrongIdentity.bedding, undefined);
 });
 
-test("Jeminise heuristic output includes policy offerings without using variant input", async () => {
+test("Jeminise heuristic description stays focused on visible design", async () => {
   const generator = new HeuristicContentGenerator();
   const draft = await generator.generate({ facts: createFacts(0.92), keywords: KEYWORDS, constraints: CONSTRAINTS });
 
   assert.equal(draft.productTitle.includes("Comforter, Quilt, Duvet Cover"), false);
-  assert.deepEqual(draft.styleOptions?.map((option) => option.name), ["Comforter", "Quilt", "Duvet Cover"]);
+  assert.equal(draft.styleOptions, undefined);
   assert.match(draft.productSeoDescription, /Comforter/);
   assert.match(draft.productSeoDescription, /Quilt/);
   assert.match(draft.productSeoDescription, /Duvet Cover/);
   assert.ok(draft.productSeoDescription.length >= 155 && draft.productSeoDescription.length <= 160);
 
-  const html = formatProductDescriptionHtml(draft);
-  assert.match(html, /Available Styles/i);
-  assert.match(html, /microfiber/i);
-  assert.match(html, /machine wash/i);
+  const html = formatProductDescriptionHtml(draft, {
+    includeStyleOptions: false,
+    includeGuidance: false,
+  });
+  assert.doesNotMatch(html, /Comforter|Quilt|Duvet Cover|Blanket/i);
+  assert.doesNotMatch(html, /microfiber|machine wash|size|dimension/i);
+  assert.match(html, /Design/i);
+  assert.match(html, /Why It Stands Out/i);
 });
 
-test("Gemini receives the applicable Jeminise policy but no variant fields", async () => {
+test("Gemini receives the Jeminise visual-design-only description policy", async () => {
   let capturedPrompt = "";
   const generator = new GeminiSeoContentGenerator({
     async generateStructuredText(options) {
@@ -122,8 +127,36 @@ test("Gemini receives the applicable Jeminise policy but no variant fields", asy
   const draft = await generator.generate({ facts: createFacts(0.92), keywords: KEYWORDS, constraints: CONSTRAINTS });
   assert.match(capturedPrompt, /<STORE_PRODUCT_OFFERING>/);
   assert.match(capturedPrompt, /Comforter: Plush all-season warmth/);
+  assert.match(capturedPrompt, /<PRODUCT_DESCRIPTION_POLICY>/);
+  assert.match(capturedPrompt, /visual-design-only/);
   assert.doesNotMatch(capturedPrompt, /variantLabel|variantSummary|Variant \/ Style/);
-  assert.deepEqual(draft.styleOptions?.map((option) => option.name), ["Comforter", "Quilt", "Duvet Cover"]);
+  assert.equal(draft.styleOptions, undefined);
+});
+
+test("Jeminise rejects material or product-format text in Shopify description", () => {
+  const facts = createFacts(0.92);
+  const draft = {
+    productTitle: "Viking Warrior Bedding Set",
+    intro: "Viking warrior artwork with a raven shield.",
+    bullets: [
+      { label: "Design", text: "Bold runic lettering frames the central figure." },
+      { label: "Materials", text: "Brushed microfiber fabric." },
+    ],
+    guidance: [],
+    closing: "A distinctive focal point for the room.",
+    productSeoTitle: "Viking Warrior Bedding Set",
+    productSeoDescription: "Viking artwork offered as a Comforter, Quilt, or Duvet Cover for a bold bedroom focal point.",
+  };
+
+  assert.throws(
+    () => validateFinalContent({
+      productTitle: draft.productTitle,
+      productDescription: "<p>Viking artwork.</p><ul><li><strong>Materials:</strong> Brushed microfiber fabric.</li></ul>",
+      productSeoTitle: draft.productSeoTitle,
+      productSeoDescription: draft.productSeoDescription,
+    }, draft, facts, KEYWORDS, CONSTRAINTS),
+    /visual-design-only policy/i,
+  );
 });
 
 test("bedding SEO description and title sanitation preserve policy constraints", () => {

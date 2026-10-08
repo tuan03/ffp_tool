@@ -1,4 +1,8 @@
-import type { SeoCatalogPolicy, SeoStoreProfile } from "../../types";
+import type {
+  SeoCatalogPolicy,
+  SeoProductDescriptionPolicy,
+  SeoStoreProfile,
+} from "../../types";
 
 export interface StoreVariantOptionSpec {
   readonly name: string;
@@ -21,6 +25,7 @@ export interface StoreContentProfile {
   readonly storeName: string;
   readonly domainAliases: readonly string[];
   readonly niche: string;
+  readonly productDescriptionPolicy?: SeoProductDescriptionPolicy;
   readonly bedding?: StoreBeddingProfileConfig;
   readonly descriptionGuidelines?: readonly string[];
   readonly seoDescriptionGuidelines?: {
@@ -74,6 +79,9 @@ export function projectStoreContentProfile(
     storeName: profile.storeName,
     domainAliases: [],
     niche: profile.niche,
+    ...(profile.productDescriptionPolicy
+      ? { productDescriptionPolicy: profile.productDescriptionPolicy }
+      : {}),
     ...(policy && fabricMaterial && printTechnology && careGuidance ? {
       bedding: {
         options: policy.offerings,
