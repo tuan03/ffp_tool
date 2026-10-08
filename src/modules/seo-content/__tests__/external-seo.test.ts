@@ -14,7 +14,7 @@ test("external analysis requires evidence for every supplied image", () => {
   assert.throws(() => validateExternalSeoAnalysis(input, { physicalProductIdentity: "rug", evidence: [] }), /image|evidence/i);
 });
 
-test("external analysis separates buyer customization samples from fixed design text", () => {
+test("external analysis excludes every literal artwork text from SEO facts", () => {
   const analysis = validateExternalSeoAnalysis(input, {
     physicalProductIdentity: "bedding",
     visualEntities: "dark baseball batter artwork",
@@ -28,7 +28,8 @@ test("external analysis separates buyer customization samples from fixed design 
     evidence: [{ imageId: "front", observation: "The mockup shows WILLIAM and 33 as editable name and player-number examples." }],
   });
 
-  assert.deepEqual(analysis.understanding.typography.visibleTexts, ["BASEBALL"]);
+  assert.deepEqual(analysis.understanding.typography.visibleTexts, []);
+  assert.deepEqual(analysis.understanding.typography.excludedLiteralTexts, ["WILLIAM", "33", "BASEBALL"]);
   assert.deepEqual(analysis.understanding.typography.customizationSampleTexts, ["WILLIAM", "33"]);
 });
 
@@ -50,14 +51,14 @@ test("external SEO finalizes without any network and preserves old product keywo
     await assert.rejects(finalizeExternalSeo(input, analysis, { keywords: ["geometric cotton rug"], reason: "same" }, { ...submission, draft: { ...submission.draft, intro: "Guaranteed waterproof rug" } }, { execution, corpus }), /grounding|claim/i);
     const personalizationAnalysis = {
       ...analysis,
-      typography: { visibleTexts: ["WILLIAM", "33"], customizationSampleTexts: ["WILLIAM", "33"], styleSummary: "outlined varsity lettering" },
+      typography: { visibleTexts: ["WILLIAM", "33", "BASEBALL"], customizationSampleTexts: ["WILLIAM", "33"], styleSummary: "outlined varsity lettering" },
     };
     await assert.rejects(
       finalizeExternalSeo(input, personalizationAnalysis, { keywords: ["geometric cotton rug"], reason: "same" }, {
         ...submission,
-        draft: { ...submission.draft, productTitle: "William 33 geometric rug" },
+        draft: { ...submission.draft, productTitle: "Baseball geometric rug" },
       }, { execution, corpus }),
-      /customization sample/i,
+      /literal artwork text/i,
     );
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

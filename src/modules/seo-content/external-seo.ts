@@ -25,8 +25,8 @@ function strings(value: unknown, field: string): readonly string[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error(`Invalid ${field}`);
   return value.map(entry => text(entry, field));
 }
-function containsCustomizationSample(value: string, sample: string): boolean {
-  const escaped = sample.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+function containsExcludedLiteral(value: string, literal: string): boolean {
+  const escaped = literal.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   if (!escaped) return false;
   return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(value);
 }
@@ -37,9 +37,9 @@ function collectStrings(value: unknown, path = "content"): readonly { readonly p
   return Object.entries(value as Record<string, unknown>)
     .flatMap(([key, entry]) => collectStrings(entry, `${path}.${key}`));
 }
-function assertNoCustomizationSamples(value: unknown, samples: readonly string[]): void {
-  const violation = collectStrings(value).find(entry => samples.some(sample => containsCustomizationSample(entry.value, sample)));
-  if (violation) throw new Error(`Generated SEO content contains a buyer customization sample value in ${violation.path}`);
+function assertNoVisibleTextLiterals(value: unknown, literals: readonly string[]): void {
+  const violation = collectStrings(value).find(entry => literals.some(literal => containsExcludedLiteral(entry.value, literal)));
+  if (violation) throw new Error(`Generated SEO content quotes literal artwork text in ${violation.path}`);
 }
 function wordCount(value: string): number {
   return value.trim().split(/\s+/).filter(Boolean).length;
@@ -78,10 +78,6 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
   const customizationSampleTexts = typography.customizationSampleTexts === undefined
     ? []
     : strings(typography.customizationSampleTexts, "customizationSampleTexts");
-  const fixedVisibleTexts = visibleTexts.filter(visibleText =>
-    !customizationSampleTexts.some(sample => containsCustomizationSample(visibleText, sample)
-      || containsCustomizationSample(sample, visibleText)),
-  );
   const shopping = object(analysis.shoppingContext);
   return {
     evidence,
@@ -90,7 +86,8 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
       visualEntities: text(analysis.visualEntities, "visualEntities"),
       sceneContext: text(analysis.sceneContext, "sceneContext"),
       typography: {
-        visibleTexts: fixedVisibleTexts,
+        visibleTexts: [],
+        excludedLiteralTexts: visibleTexts,
         customizationSampleTexts,
         styleSummary: text(typography.styleSummary, "styleSummary"),
       },
@@ -136,9 +133,9 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   const check = await checkExternalSeoKeywords(keywords, options);
   if (check.conflicts.some(conflict => conflict.matches.length)) throw new Error("Keyword conflict: check keywords again and choose non-conflicting targets");
   const raw = object(submission);
-  const customizationSampleTexts = analysis.understanding.typography.customizationSampleTexts ?? [];
-  assertNoCustomizationSamples(raw, customizationSampleTexts);
-  assertNoCustomizationSamples(keywords, customizationSampleTexts);
+  const excludedLiteralTexts = analysis.understanding.typography.excludedLiteralTexts ?? [];
+  assertNoVisibleTextLiterals(raw, excludedLiteralTexts);
+  assertNoVisibleTextLiterals(keywords, excludedLiteralTexts);
   const draft = validateDraft(raw.draft);
   // Arbitrary JSON-LD from an external model must not bypass fact validation.
   if (draft.aeo_json_ld) throw new Error("Submit structured FAQ fields, not arbitrary JSON-LD");

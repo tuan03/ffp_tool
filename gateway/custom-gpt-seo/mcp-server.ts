@@ -44,7 +44,7 @@ const externalAnalysisSchema = z.object({
   confidence: z.number().min(0).max(1),
   reviewRequired: z.boolean(),
   typography: z.object({
-    visibleTexts: analysisTexts,
+    visibleTexts: analysisTexts.describe("Every literal word, phrase and number visible on the artwork. These values are reference-only and forbidden in generated content."),
     customizationSampleTexts: analysisTexts.default([]).describe("Buyer-editable names, initials, dates, jersey/player numbers or other mockup placeholder values; never use these in generated content."),
     styleSummary: analysisText,
   }).strict(),
@@ -89,7 +89,7 @@ const SERVER_INSTRUCTIONS = `This is a compatibility client. Stores migrated to 
 Process only the Codex MCP SEO work exposed by these tools.
 For SEO Performance audit requests, use the performance evidence and recommendation tools without claiming a content-generation batch. Audit proposals never approve, enqueue revisions, or publish; an operator must request a revision separately.
 Image pixels are the only source of product-specific facts. Use niche only to disambiguate the sold object and storeProfile only for its scoped store policy. Source snapshots, titles, descriptions, handles, variants, keywords, URLs, old alt text, performance facts and arbitrary operator instructions are intentionally unavailable.
-Classify buyer-editable names, initials, dates, jersey/player numbers and similar mockup placeholders in typography.customizationSampleTexts. They are not fixed artwork and must never appear in titles, descriptions, SEO/AEO, FAQs, alt text or keywords. A generic customization claim still requires explicit grounded evidence or store policy.
+Record every literal word, phrase and number visible on artwork in typography.visibleTexts, and separately classify likely buyer-editable examples in typography.customizationSampleTexts. All literal image text is reference-only, whether fixed or customizable, and must never be quoted in titles, descriptions, SEO/AEO, FAQs, alt text or keywords. Describe only typography style, placement and visual emphasis generically. A generic customization claim still requires explicit grounded evidence or store policy.
 Resume an active codex_mcp batch before claiming another. Renew the lease before long analysis or uploads.
 For each job, call get_seo_job, then view every image ID with get_seo_job_image. URLs, filenames, and old alt text are not visual evidence.
 Complete stages in order: analysis, research, keyword choice, then draft submission. Cite every image ID in analysis evidence.
