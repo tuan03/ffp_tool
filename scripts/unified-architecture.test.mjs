@@ -226,6 +226,10 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(compose, /PINTEREST_POD_PORT:\s*8768/);
   assert.match(compose, /PINTEREST_COORDINATOR_URL:\s*http:\/\/127\.0\.0\.1:8766/);
   assert.match(compose, /START_PIPELINE_WORKER:\s*"true"/);
+  assert.match(
+    compose,
+    /FFP_AGENT_RELEASE_MANIFEST_URL:\s*\$\{FFP_AGENT_RELEASE_MANIFEST_URL:-https:\/\/github\.com\/tuan03\/ffp_tool\/releases\/latest\/download\/latest-zip\.json\}/,
+  );
   assert.match(compose, /PINTEREST_RUNTIME_ROOT:\s*\/app\/\.runtime\/pinterest-pod/);
   assert.match(compose, /PINTEREST_APP_ID:\s*\$\{PINTEREST_APP_ID:-\}/);
   assert.match(compose, /PINTEREST_APP_SECRET:\s*\$\{PINTEREST_APP_SECRET:-\}/);
