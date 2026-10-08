@@ -87,7 +87,7 @@ test("presents provider and status values with operator-friendly Vietnamese labe
   });
   assert.equal(getProviderPresentation("custom_gpt").label, "GPT Custom");
   assert.equal(getStatusPresentation("REVIEW_READY").label, "Sẵn sàng duyệt");
-  assert.equal(getStatusPresentation("WAITING_INPUT").label, "Cần bổ sung");
+  assert.equal(getStatusPresentation("WAITING_INPUT").label, "Cần xử lý");
 });
 
 test("presents safe batch owner labels without credentials", () => {

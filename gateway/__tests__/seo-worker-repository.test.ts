@@ -316,6 +316,52 @@ test("retry exhaustion is terminal and a partial run resumes only the remaining 
   } finally { await f.pg.close(); }
 });
 
+test("operator retry returns a blocked worker job to READY without weakening stale-lease fencing", async () => {
+  const f = await fixture();
+  try {
+    const jobId = "704";
+    await f.enqueue(jobId);
+    await f.repository.enableStore("store-a");
+    const worker = await f.worker("blocked-worker", 1);
+    const claimed = await f.repository.claim(worker.token, worker.sessionId, worker.run.id, "claim-blocked");
+    assert.ok(claimed.lease);
+    await f.pg.query(`UPDATE gpt_jobs SET payload=(payload::jsonb || $2::jsonb)::text WHERE id=$1`, [jobId, JSON.stringify({
+      checkpoints: { analysis: { design: "verified" }, research: { query: "verified" }, keywords: { primary: "old" }, submission: { title: "invalid" } },
+      error: "old validation error",
+      result: { output: { title: "invalid" } },
+    })]);
+    await f.repository.release(worker.token, claimed.lease, {
+      code: "VALIDATION_NEEDS_OPERATOR_REVIEW",
+      retryable: false,
+      requestId: "block-job",
+    });
+    // Reproduce the production drift: the legacy projection says pending while
+    // the durable worker row remains blocked.
+    await f.pg.query("UPDATE gpt_jobs SET status='PENDING',payload=(payload::jsonb || '{\"status\":\"PENDING\"}'::jsonb)::text WHERE id=$1", [jobId]);
+
+    assert.deepEqual(await f.repository.retryTerminalJob("store-a", jobId), { handled: true, retried: true });
+    const workerRow = (await f.pg.query<Record<string, unknown>>("SELECT * FROM seo_worker_jobs WHERE job_id=$1", [jobId])).rows[0];
+    assert.equal(workerRow.state, "READY");
+    assert.equal(workerRow.lease_version, 1);
+    assert.equal(workerRow.attempt_count, 0);
+    assert.equal(workerRow.repair_count, 0);
+    assert.equal(workerRow.lease_id, null);
+    assert.equal(workerRow.run_id, null);
+    assert.equal(workerRow.last_error_code, null);
+    const jobRow = (await f.pg.query<{ status: string; payload: string }>("SELECT status,payload FROM gpt_jobs WHERE id=$1", [jobId])).rows[0];
+    const payload = JSON.parse(jobRow.payload) as Record<string, unknown>;
+    const checkpoints = payload.checkpoints as Record<string, unknown>;
+    assert.equal(jobRow.status, "PENDING");
+    assert.deepEqual(checkpoints.analysis, { design: "verified" });
+    assert.deepEqual(checkpoints.research, { query: "verified" });
+    assert.equal(checkpoints.keywords, undefined);
+    assert.equal(checkpoints.submission, undefined);
+    assert.equal(payload.error, undefined);
+    assert.equal(payload.result, undefined);
+    assert.deepEqual(await f.repository.retryTerminalJob("store-a", jobId), { handled: true, retried: false });
+  } finally { await f.pg.close(); }
+});
+
 test("heartbeat cannot keep a silent worker alive forever and expiry blocks new claims", async () => {
   const f = await fixture();
   try {

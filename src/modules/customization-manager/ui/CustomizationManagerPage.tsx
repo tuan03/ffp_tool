@@ -27,6 +27,7 @@ import { shopifyMockProducts } from "../../module-api/mocks/data";
 import { SurfaceManager } from "./components/SurfaceManager";
 import { OptionGroupEditor } from "./components/OptionGroupEditor";
 import { TextInputEditor } from "./components/TextInputEditor";
+import { BulkCustomizerEditor } from "./components/BulkCustomizerEditor";
 import {
   ProductCatalogTable,
   filterCatalogProducts,
@@ -65,6 +66,7 @@ export function CustomizationManagerPage({
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(
     new Set<string>(),
   );
+  const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
 
   // Catalog Filter State (scoped navigation in editor)
   const [filterMode, setFilterMode] = useState<"all" | "collection" | "asin">("all");
@@ -74,6 +76,15 @@ export function CustomizationManagerPage({
   const filteredProducts = useMemo(() => {
     return filterCatalogProducts(products, collections, filterMode, selectedCollectionId, searchQuery);
   }, [products, collections, filterMode, selectedCollectionId, searchQuery]);
+  const configuredFilteredProducts = useMemo(
+    () =>
+      filteredProducts.filter(
+        (product) =>
+          configuredProductIds.has(product.id) ||
+          configuredProductIds.has(product.id.replace("gid://shopify/Product/", "")),
+      ),
+    [configuredProductIds, filteredProducts],
+  );
 
   // Active View Mode: 'catalog' or 'editor'
   const [viewMode, setViewMode] = useState<"catalog" | "editor">(
@@ -571,6 +582,7 @@ export function CustomizationManagerPage({
                   value={selectedStoreId}
                   onChange={(e) => {
                     setSelectedStoreId(e.target.value);
+                    setIsBulkEditorOpen(false);
                     setFilterMode("all");
                     setSelectedCollectionId("");
                     setSearchQuery("");
@@ -609,6 +621,23 @@ export function CustomizationManagerPage({
                 </button>
               </div>
             )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+              <div>
+                <div className="text-sm font-bold text-slate-100">Sửa trường cho nhiều sản phẩm</div>
+                <div className="mt-1 text-xs text-slate-400">
+                  Nhóm các sản phẩm có cùng bộ trường rồi xóa một lần cho cả nhóm.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBulkEditorOpen(true)}
+                disabled={configuredFilteredProducts.length === 0}
+                className="rounded-xl bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Nhóm {configuredFilteredProducts.length} sản phẩm
+              </button>
+            </div>
 
             {/* Product Catalog Table */}
             <ProductCatalogTable
@@ -1008,6 +1037,20 @@ export function CustomizationManagerPage({
               </div>
             )}
           </div>
+        )}
+
+        {isBulkEditorOpen && (
+          <BulkCustomizerEditor
+            products={configuredFilteredProducts}
+            gateway={gateway}
+            onClose={() => setIsBulkEditorOpen(false)}
+            onComplete={(updatedCount) => {
+              setStatusMessage({
+                type: "success",
+                text: `Đã cập nhật trường tùy biến cho ${updatedCount} sản phẩm.`,
+              });
+            }}
+          />
         )}
       </div>
     </div>

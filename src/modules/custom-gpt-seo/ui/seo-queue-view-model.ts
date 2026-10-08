@@ -46,7 +46,7 @@ const STATUS_PRESENTATIONS: Record<GptJobStatus, StatusPresentation> = {
     dotClassName: "bg-cyan-400",
   },
   WAITING_INPUT: {
-    label: "Cần bổ sung",
+    label: "Cần xử lý",
     badgeClassName: "border-amber-800 bg-amber-950/70 text-amber-200",
     dotClassName: "bg-amber-400",
   },

@@ -24,6 +24,23 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 function json(value: unknown): unknown { return JSON.parse(String(value)); }
+function projectWorkerStatus(row: Record<string, unknown>): GptSeoJob {
+  const job = json(row.payload) as GptSeoJob;
+  const workerState = typeof row.worker_state === "string" ? row.worker_state : null;
+  const status = workerState === "BLOCKED"
+    ? "WAITING_INPUT"
+    : workerState === "FAILED_FINAL" || workerState === "RETRY_WAIT"
+      ? "FAILED"
+      : job.status;
+  if (status === job.status) return job;
+  const errorCode = typeof row.worker_error_code === "string" ? row.worker_error_code : undefined;
+  return { ...job, status, error: job.error ?? errorCode };
+}
+
+const EFFECTIVE_STATUS_SQL = `CASE
+  WHEN w.state='BLOCKED' THEN 'WAITING_INPUT'
+  WHEN w.state IN ('FAILED_FINAL','RETRY_WAIT') THEN 'FAILED'
+  ELSE j.status END`;
 
 /** PostgreSQL transactions fence claims; the supplied clock makes lease tests deterministic. */
 export class PostgresCustomGptQueue implements SeoQueue {
@@ -113,9 +130,10 @@ export class PostgresCustomGptQueue implements SeoQueue {
     }));
   }
   async get(storeId: string, jobId: string): Promise<GptSeoJob> {
-    const row = (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND id=?").get(storeId, jobId));
+    const row = (await this.db.prepare(`SELECT j.payload,w.state AS worker_state,w.last_error_code AS worker_error_code
+      FROM gpt_jobs j LEFT JOIN seo_worker_jobs w ON w.job_id=j.id WHERE j.store_id=? AND j.id=?`).get(storeId, jobId));
     if (!row) throw new Error("Job not found");
-    return json(row.payload) as GptSeoJob;
+    return projectWorkerStatus(row);
   }
   async findLatestSourceJobs(storeId: string, source: string, productIds: readonly string[]): Promise<ReadonlyMap<string, GptSeoJob>> {
     const rows = await this.db.prepare(`SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) gpt_jobs.payload,
@@ -179,33 +197,36 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async listFiltered(storeId: string, filters: QueueListFilters, offset = 0): Promise<readonly GptSeoJob[]> {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?", "status!='CANCELLED'", "COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''"];
+    const conditions = ["j.store_id=?", "j.status!='CANCELLED'", "COALESCE(j.payload::jsonb->>'queueArchivedAt','')=''"];
     const parameters: Array<string | number> = [storeId];
     if (filters.provider) {
-      conditions.push("provider=?");
+      conditions.push("j.provider=?");
       parameters.push(filters.provider);
     }
     if (statuses.length > 0) {
-      conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      conditions.push(`${EFFECTIVE_STATUS_SQL} IN (${statuses.map(() => "?").join(",")})`);
       parameters.push(...statuses);
     }
     parameters.push(offset);
-    const rows = await this.db.prepare(`SELECT payload FROM gpt_jobs WHERE ${conditions.join(" AND ")} ORDER BY created_at,id LIMIT 50 OFFSET ?`).all(...parameters);
-    return rows.map(row => json(row.payload) as GptSeoJob);
+    const rows = await this.db.prepare(`SELECT j.payload,w.state AS worker_state,w.last_error_code AS worker_error_code
+      FROM gpt_jobs j LEFT JOIN seo_worker_jobs w ON w.job_id=j.id
+      WHERE ${conditions.join(" AND ")} ORDER BY j.created_at,j.id LIMIT 50 OFFSET ?`).all(...parameters);
+    return rows.map(projectWorkerStatus);
   }
   async countFiltered(storeId: string, filters: QueueListFilters): Promise<number> {
     const statuses = [...new Set(filters.statuses ?? [])];
-    const conditions = ["store_id=?", "status!='CANCELLED'", "COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''"];
+    const conditions = ["j.store_id=?", "j.status!='CANCELLED'", "COALESCE(j.payload::jsonb->>'queueArchivedAt','')=''"];
     const parameters: string[] = [storeId];
     if (filters.provider) {
-      conditions.push("provider=?");
+      conditions.push("j.provider=?");
       parameters.push(filters.provider);
     }
     if (statuses.length > 0) {
-      conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      conditions.push(`${EFFECTIVE_STATUS_SQL} IN (${statuses.map(() => "?").join(",")})`);
       parameters.push(...statuses);
     }
-    const row = await this.db.prepare(`SELECT COUNT(*) AS count FROM gpt_jobs WHERE ${conditions.join(" AND ")}`).get(...parameters);
+    const row = await this.db.prepare(`SELECT COUNT(*) AS count FROM gpt_jobs j
+      LEFT JOIN seo_worker_jobs w ON w.job_id=j.id WHERE ${conditions.join(" AND ")}`).get(...parameters);
     return Number(row?.count ?? 0);
   }
   async counts(storeId: string, provider?: ExternalSeoProvider): Promise<Readonly<Record<string, number>>> {
@@ -216,8 +237,12 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async visibleCounts(storeId: string, provider?: ExternalSeoProvider): Promise<Readonly<Record<string, number>>> {
     const rows = provider
-      ? (await this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND provider=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' GROUP BY status").all(storeId, provider))
-      : (await this.db.prepare("SELECT status,COUNT(*) AS count FROM gpt_jobs WHERE store_id=? AND status!='CANCELLED' AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')='' GROUP BY status").all(storeId));
+      ? (await this.db.prepare(`SELECT ${EFFECTIVE_STATUS_SQL} AS status,COUNT(*) AS count FROM gpt_jobs j
+          LEFT JOIN seo_worker_jobs w ON w.job_id=j.id WHERE j.store_id=? AND j.provider=? AND j.status!='CANCELLED'
+          AND COALESCE(j.payload::jsonb->>'queueArchivedAt','')='' GROUP BY 1`).all(storeId, provider))
+      : (await this.db.prepare(`SELECT ${EFFECTIVE_STATUS_SQL} AS status,COUNT(*) AS count FROM gpt_jobs j
+          LEFT JOIN seo_worker_jobs w ON w.job_id=j.id WHERE j.store_id=? AND j.status!='CANCELLED'
+          AND COALESCE(j.payload::jsonb->>'queueArchivedAt','')='' GROUP BY 1`).all(storeId));
     return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
   }
   private async write(job: GptSeoJob): Promise<void> {
@@ -347,6 +372,11 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async retry(storeId: string, jobId: string): Promise<void> {
     (await this.transaction(async () => {
+      const workerRetry = await this.workers.retryTerminalJob(storeId, jobId);
+      if (workerRetry.handled) {
+        if (workerRetry.retried) await this.audit(storeId, jobId, "WORKER_JOB_RETRIED");
+        return;
+      }
       const job = (await this.get(storeId, jobId));
       if (!["WAITING_INPUT", "FAILED", "NEEDS_CHANGES"].includes(job.status)) throw new Error("Job cannot be retried in this state");
       (await this.write({ ...job, status: "PENDING", error: undefined, finalizeAttempts: 0, nextAttemptAt: undefined }));
