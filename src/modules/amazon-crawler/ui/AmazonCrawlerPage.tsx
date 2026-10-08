@@ -1119,29 +1119,35 @@ export function AmazonCrawlerPage({
   }, [availableCollections, activeCollectionIds]);
 
   function toggleCollection(colId: string): void {
-    const current = new Set(activeCollectionIds);
-    if (current.has(colId)) {
-      current.delete(colId);
-    } else {
-      current.add(colId);
-    }
-    const nextList = Array.from(current);
-    updateCrawlerSession({
-      settings: { ...settings, collectionIds: nextList, collectionId: nextList[0] || "" },
+    updateCrawlerSession((currentSession) => {
+      const currentIds = Array.isArray(currentSession.settings.collectionIds) && currentSession.settings.collectionIds.length > 0
+        ? currentSession.settings.collectionIds
+        : (currentSession.settings.collectionId ? [currentSession.settings.collectionId] : []);
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(colId)) nextIds.delete(colId);
+      else nextIds.add(colId);
+      const collectionIds = Array.from(nextIds);
+      return {
+        settings: {
+          ...currentSession.settings,
+          collectionIds,
+          collectionId: collectionIds[0] ?? "",
+        },
+      };
     });
   }
 
   function handleSelectAllCollections(): void {
     const allIds = availableCollections.map((c) => c.id);
-    updateCrawlerSession({
-      settings: { ...settings, collectionIds: allIds, collectionId: allIds[0] || "" },
-    });
+    updateCrawlerSession((currentSession) => ({
+      settings: { ...currentSession.settings, collectionIds: allIds, collectionId: allIds[0] ?? "" },
+    }));
   }
 
   function handleClearCollections(): void {
-    updateCrawlerSession({
-      settings: { ...settings, collectionIds: [], collectionId: "" },
-    });
+    updateCrawlerSession((currentSession) => ({
+      settings: { ...currentSession.settings, collectionIds: [], collectionId: "" },
+    }));
   }
 
   const currentStoreId = (settings.storeId || "capozen").trim().toLowerCase();

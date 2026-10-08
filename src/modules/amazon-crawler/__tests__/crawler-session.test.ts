@@ -202,6 +202,43 @@ test("hydrateCrawlerSessionFromJob restores products, lastJobId, and resolves se
   assert.equal(state.selectedProductId, amazonCrawlerMockOutput.products[0]?.id);
 });
 
+test("hydrateCrawlerSessionFromJob preserves the editable crawler settings draft", () => {
+  clearCrawlerSession();
+  updateCrawlerSetting("storeId", "chillgen-real");
+  updateCrawlerSetting("collectionId", "gid://shopify/Collection/new");
+  updateCrawlerSetting("collectionIds", ["gid://shopify/Collection/new"]);
+  updateCrawlerSetting("priceAddition", 6.95);
+  updateCrawlerSetting("discountPercent", 25);
+  updateCrawlerSetting("profileSlug", "default");
+  updateCrawlerSetting("imageProfileSlug", "chillgen_new");
+
+  hydrateCrawlerSessionFromJob({
+    jobId: "job-with-stale-settings",
+    status: "running",
+    products: [],
+    output: null,
+    settings: {
+      ...amazonCrawlerMockOutput.settings,
+      storeId: "stale-store",
+      collectionId: "gid://shopify/Collection/old",
+      collectionIds: ["gid://shopify/Collection/old"],
+      priceAddition: 99,
+      discountPercent: 5,
+      profileSlug: "jeminise",
+      imageProfileSlug: "stale-image-profile",
+    },
+  });
+
+  const settings = getCrawlerSessionState().settings;
+  assert.equal(settings.storeId, "chillgen-real");
+  assert.equal(settings.collectionId, "gid://shopify/Collection/new");
+  assert.deepEqual(settings.collectionIds, ["gid://shopify/Collection/new"]);
+  assert.equal(settings.priceAddition, 6.95);
+  assert.equal(settings.discountPercent, 25);
+  assert.equal(settings.profileSlug, "default");
+  assert.equal(settings.imageProfileSlug, "chillgen_new");
+});
+
 test("hydrateCrawlerSessionFromJob keeps the latest SEO status when a results snapshot is stale", () => {
   clearCrawlerSession();
   const sourceProduct = amazonCrawlerMockOutput.products[0];

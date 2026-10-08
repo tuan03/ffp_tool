@@ -528,7 +528,6 @@ export function hydrateCrawlerSessionFromJob(hydrated: AmazonCrawlerHydratedJob)
     selectedProductId: hasSelected ? sessionState.selectedProductId : firstProduct?.id ?? null,
     selectedMediaUrl: hasSelected ? sessionState.selectedMediaUrl : firstProductMediaUrl(firstProduct),
     error: null,
-    settings: hydrated.settings ? { ...sessionState.settings, ...hydrated.settings } : sessionState.settings,
   };
   persistSession(sessionState);
   notifyListeners();
