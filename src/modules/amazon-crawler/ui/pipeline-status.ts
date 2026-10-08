@@ -62,7 +62,8 @@ export function resolveCrawlerSeoHandoffSummary(
   products: readonly AmazonCrawlerProduct[],
   durableSummary: AmazonCrawlerSeoQueueHandoffSummary | undefined,
 ): AmazonCrawlerSeoQueueHandoffSummary {
-  if (durableSummary && (durableSummary.totalProducts > 0 || (durableSummary.skippedExistingShopify ?? 0) > 0)) return durableSummary;
+  if (durableSummary && (durableSummary.totalProducts > 0 || (durableSummary.skippedExistingShopify ?? 0) > 0
+    || (durableSummary.skippedExistingPipeline ?? 0) > 0)) return durableSummary;
   const localSummary = summarizeCrawlerSeoHandoffs(products);
   return { totalProducts: products.length, ...localSummary };
 }

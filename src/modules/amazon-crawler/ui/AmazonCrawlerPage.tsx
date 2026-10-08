@@ -1410,7 +1410,7 @@ export function AmazonCrawlerPage({
       return;
     }
     const reason = window.prompt(
-      action === "retry" ? "Lý do xử lý lại SEO từ dữ liệu đã cào:" : "Lý do cho phép cào lại family:",
+      action === "retry" ? "Lý do xử lý lại các sản phẩm đủ điều kiện:" : "Lý do mở cào lại các ASIN đủ điều kiện:",
       action === "retry" ? "Xử lý lại sau khi dọn SEO Queue" : "Cào lại sau khi dọn SEO Queue",
     );
     if (reason === null) return;
@@ -1419,16 +1419,15 @@ export function AmazonCrawlerPage({
       return;
     }
     if (action === "recrawl" && !window.confirm(
-      "Cho phép cào lại toàn bộ family này? Dữ liệu crawl cũ vẫn được giữ để đối chiếu.",
+      "Kiểm tra Shopify và mở lại ASIN đã dọn Queue hoặc đã xóa trên Shopify? Sản phẩm còn tồn tại và đang xử lý được giữ nguyên; lịch sử crawl không bị xóa.",
     )) return;
     setRecoveringFamilyAsin(family.parentAsin);
     setAsinPreflightError(null);
     try {
       const fresh = await checkAmazonAsins(storeId, family.inputAsins);
       const currentFamily = fresh.families.find((candidate) => candidate.parentAsin === family.parentAsin);
-      if (!fresh.ready || !currentFamily || currentFamily.status !== "queue_cleared" ||
-        currentFamily.hasExistingFamilyProducts || fresh.matches.length > 0) {
-        throw new Error("Family đã thay đổi hoặc đã có sản phẩm trên Shopify. Hãy kiểm tra lại trước khi phục hồi.");
+      if (!fresh.ready || !currentFamily || !["queue_cleared", "crawled_pending_sync", "reconciliation_required", "available"].includes(currentFamily.status)) {
+        throw new Error("Family đang có task chạy hoặc chưa xác minh được. Hãy kiểm tra lại trước khi phục hồi.");
       }
       const recovered = await amazonCrawlerJobs.recoverClearedFamily({
         storeId, parentAsin: family.parentAsin, action, reason: reason.trim(),
@@ -1439,7 +1438,7 @@ export function AmazonCrawlerPage({
       setJobControlTone("success");
       setJobControlMessage(action === "retry"
         ? `Đã xếp lại ${recovered.recovered} sản phẩm từ dữ liệu crawl đã lưu; Pipeline Worker sẽ bàn giao vào SEO Queue.`
-        : `Đã mở cào lại ${recovered.releasedAsins} ASIN. Bấm Start để tạo job mới.`);
+        : `Đã mở cào lại ${recovered.releasedAsins} ASIN đủ điều kiện. Sản phẩm còn trên Shopify và đang ở Queue/Review được giữ nguyên. Bấm Start để tạo job mới.`);
     } catch (caught: unknown) {
       setAsinPreflightError(caught instanceof Error ? caught.message : "Không thể phục hồi family.");
     } finally {
@@ -2919,6 +2918,14 @@ export function AmazonCrawlerPage({
           </ul>
         </div>
       ) : null}
+      {asinPreflightFamilies.filter((family) => family.status === "available" && family.hasSyncedFamilyMembers).map((family) => (
+        <div key={`reconcile-${family.parentAsin}`} className="rounded-lg border border-cyan-700 bg-cyan-950/30 p-3 text-sm text-cyan-100">
+          <p>Family {family.parentAsin} có liên kết Shopify trong DB. Nếu đã xóa sản phẩm trên Shopify, kiểm tra và mở lại riêng ASIN đó trước khi cào lại.</p>
+          <button type="button" className="mt-2 rounded border border-cyan-600 px-2 py-1 disabled:opacity-50"
+            disabled={recoveringFamilyAsin !== null || !amazonCrawlerJobs?.recoverClearedFamily}
+            onClick={() => void handleRecoverClearedFamily(family, "recrawl")}>Kiểm tra Shopify / mở cào lại ASIN</button>
+        </div>
+      ))}
       {asinPreflightFamilies.some((family) => family.status !== "existing" && family.status !== "available") ? (
         <div role="status" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
           <p className="font-semibold">Một số family chưa thể tạo job mới:</p>
@@ -2928,18 +2935,18 @@ export function AmazonCrawlerPage({
                 {family.inputAsins.join(", ")} · family {family.parentAsin} — {family.status === "processing"
                   ? "đang được xử lý"
                   : family.status === "queue_cleared"
-                    ? "đã xóa khỏi SEO Queue; dữ liệu crawl vẫn còn"
+                    ? "có sản phẩm đã dọn khỏi SEO Queue; có thể phục hồi riêng phần đủ điều kiện"
                   : family.status === "crawled_pending_sync"
                     ? "đã cào; SEO hoặc đồng bộ Shopify chưa hoàn tất"
-                    : "database báo đã sync nhưng Shopify không còn sản phẩm"}
-                {family.status === "queue_cleared" && amazonCrawlerJobs?.recoverClearedFamily ? (
+                    : "ASIN có liên kết cũ nhưng chưa tìm thấy trên Shopify; cần kiểm tra trước khi mở cào lại"}
+                {family.status !== "processing" && amazonCrawlerJobs?.recoverClearedFamily ? (
                   <span className="ml-2 inline-flex gap-2">
                     <button type="button" className="rounded border border-emerald-600 px-2 py-1 text-emerald-200 disabled:opacity-50"
-                      disabled={recoveringFamilyAsin !== null || family.hasExistingFamilyProducts}
+                      disabled={recoveringFamilyAsin !== null}
                       onClick={() => void handleRecoverClearedFamily(family, "retry")}>Xử lý lại từ dữ liệu đã cào</button>
                     <button type="button" className="rounded border border-amber-600 px-2 py-1 text-amber-200 disabled:opacity-50"
-                      disabled={recoveringFamilyAsin !== null || family.hasExistingFamilyProducts}
-                      onClick={() => void handleRecoverClearedFamily(family, "recrawl")}>Cho phép cào lại family</button>
+                      disabled={recoveringFamilyAsin !== null}
+                      onClick={() => void handleRecoverClearedFamily(family, "recrawl")}>Kiểm tra / mở cào lại ASIN</button>
                   </span>
                 ) : null}
               </li>
@@ -3053,9 +3060,9 @@ export function AmazonCrawlerPage({
                 <p><span className="block text-xs text-slate-400">Final variants</span>{resultProducts.length > 0 ? output.statistics.finalVariants : "—"}</p>
                 <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
               </div>
-              {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 ? (
+              {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 || (seoHandoffSummary.skippedExistingPipeline ?? 0) > 0 ? (
                 <p className="text-sm text-amber-200">
-                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify} đã có trên Shopify, không bàn giao lại · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
+                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify ?? 0} đã có trên Shopify · {seoHandoffSummary.skippedExistingPipeline ?? 0} đang có trong SEO Queue/Review, không bàn giao lại · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">

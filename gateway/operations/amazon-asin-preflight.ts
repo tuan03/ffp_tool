@@ -93,6 +93,7 @@ export interface AmazonAsinFamilyPreflight {
   readonly hasExistingFamilyProducts: boolean;
   readonly recoveredStaleRegistry: boolean;
   readonly hasSyncedFamilyMembers: boolean;
+  readonly inputSyncedAsins?: readonly string[];
 }
 
 export interface AmazonAsinPreflightResult {
@@ -111,6 +112,7 @@ interface FamilyInput {
   readonly jobId: string | null;
   readonly recoveredStaleRegistry: boolean;
   readonly hasSyncedFamilyMembers: boolean;
+  readonly inputSyncedAsins: readonly string[];
 }
 
 function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly string[]): FamilyInput[] {
@@ -124,6 +126,7 @@ function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly
       jobId: null,
       recoveredStaleRegistry: false,
       hasSyncedFamilyMembers: false,
+      inputSyncedAsins: [],
     }));
   }
   if (!Array.isArray(payload.families) || payload.families.length === 0 || payload.families.length > 200) {
@@ -154,6 +157,9 @@ function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly
       jobId: typeof family.jobId === "string" ? family.jobId : null,
       recoveredStaleRegistry: family.recoveredStaleRegistry === true,
       hasSyncedFamilyMembers: family.hasSyncedFamilyMembers === true,
+      inputSyncedAsins: Array.isArray(family.inputSyncedAsins)
+        ? (family.inputSyncedAsins as unknown[]).filter((asin): asin is string => typeof asin === "string" && inputAsins.includes(asin))
+        : [],
     };
   });
   if (asins.some((asin) => !coveredAsins.has(asin))) {
@@ -270,12 +276,15 @@ export async function executeAmazonAsinPreflight(
       const family = families[index];
       let exactProduct: ProductNode | undefined;
       let exactAsin: string | undefined;
+      const matchedInputAsins = new Set<string>();
       for (const asin of family.inputAsins) {
         const asinNodes = await queryProducts(`metafields.custom.amazon_asin:"${asin}"`);
-        exactProduct = asinNodes.find((candidate) => candidate.metafield?.value === asin);
-        if (exactProduct) {
-          exactAsin = asin;
-          break;
+        const matchingProduct = asinNodes.find((candidate) => candidate.metafield?.value === asin);
+        if (matchingProduct) {
+          matchedInputAsins.add(asin);
+          exactProduct ??= matchingProduct;
+          exactAsin ??= asin;
+          if (family.inputSyncedAsins.length === 0) break;
         }
       }
       const shopifyParentAsin = exactProduct?.parentMetafield?.value;
@@ -283,7 +292,7 @@ export async function executeAmazonAsinPreflight(
         ? shopifyParentAsin
         : family.parentAsin;
       const parentNodes = await queryProducts(`metafields.custom.amazon_parent_asin:"${effectiveParentAsin}"`);
-      const hasExistingFamilyProducts = family.hasSyncedFamilyMembers || parentNodes.some(
+      const hasExistingFamilyProducts = parentNodes.some(
         (candidate) => candidate.parentMetafield?.value === effectiveParentAsin,
       );
 
@@ -301,7 +310,8 @@ export async function executeAmazonAsinPreflight(
         status = "queue_cleared";
       } else if (family.databaseStatus === "crawled") {
         status = "crawled_pending_sync";
-      } else if (family.databaseStatus === "synced" && !exactProduct && !hasExistingFamilyProducts) {
+      } else if (family.inputSyncedAsins.some((asin) => !matchedInputAsins.has(asin)) ||
+        (family.databaseStatus === "synced" && !exactProduct && !hasExistingFamilyProducts)) {
         status = "reconciliation_required";
       }
       familyResults[index] = {

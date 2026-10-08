@@ -252,7 +252,8 @@ export function createAmazonAsinChecker(
       !Array.isArray(preflight.families) || preflight.families.some((family) => !isAmazonAsinFamilyPreflight(family) ||
         (family.hasExistingFamilyProducts !== undefined && typeof family.hasExistingFamilyProducts !== "boolean") ||
         (family.recoveredStaleRegistry !== undefined && typeof family.recoveredStaleRegistry !== "boolean") ||
-        (family.hasSyncedFamilyMembers !== undefined && typeof family.hasSyncedFamilyMembers !== "boolean")) ||
+        (family.hasSyncedFamilyMembers !== undefined && typeof family.hasSyncedFamilyMembers !== "boolean") ||
+        (family.inputSyncedAsins !== undefined && !isAsinList(family.inputSyncedAsins))) ||
       !isAsinList(preflight.allowedAsins) ||
       preflight.matches.some((match: unknown) => !isRecord(match) || typeof match.asin !== "string" ||
         typeof match.parentAsin !== "string" || typeof match.productId !== "string" ||
@@ -390,6 +391,7 @@ function readSeoQueueHandoff(value: unknown): AmazonCrawlerSeoQueueHandoffSummar
   return {
     totalProducts, handedOver, pending, notHandedOver,
     ...(typeof value.skippedExistingShopify === "number" ? { skippedExistingShopify: value.skippedExistingShopify } : {}),
+    ...(typeof value.skippedExistingPipeline === "number" ? { skippedExistingPipeline: value.skippedExistingPipeline } : {}),
     ...(typeof value.totalDetected === "number" ? { totalDetected: value.totalDetected } : {}),
   };
 }

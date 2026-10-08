@@ -46,6 +46,7 @@ interface PipelineClaim {
   readonly sourceKey: string;
   readonly productId: string;
   readonly checksum: string;
+  readonly seoSourceRevision?: string;
   readonly attempt: number;
   readonly stage?: "prepare" | "sync";
   readonly externalSeo?: { readonly jobId: string; readonly provider?: "custom_gpt" | "codex_mcp" } | null;
@@ -526,7 +527,7 @@ async function processClaim(
             provider: "codex_mcp",
             source: "amazon",
             sourceIdentity: claim.sourceKey,
-            sourceRevision: claim.checksum,
+            sourceRevision: claim.seoSourceRevision ?? claim.checksum,
             ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
             input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
             original: baseNormalizedProduct,

@@ -10,7 +10,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
@@ -316,6 +316,25 @@ class CoordinatorStore(CoordinatorObservability):
                 product_ids.add(shopify_product_id)
                 row.shopify_product_ids = sorted(product_ids)
 
+    @classmethod
+    def _retained_pipeline_product(cls, session, job: CrawlJob | None, product: dict[str, Any]) -> str | None:
+        if job is None:
+            return None
+        store_id = str((job.settings or {}).get("storeId") or "").strip()
+        identity = cls._product_family_identity(product)
+        if not store_id or identity is None:
+            return None
+        aliases = cls._product_exact_asins(product)
+        for retained in session.scalars(select(CrawlProductItem).join(CrawlJob).where(
+            CrawlJob.settings["storeId"].as_string() == store_id,
+            CrawlProductItem.job_id != job.id,
+            CrawlProductItem.status != "deleted",
+            CrawlProductItem.source_key.like(f"amazon:{identity[0]}:%"),
+        )).all():
+            if retained.source_key == _source_key(product) or aliases & cls._product_exact_asins(retained.raw_payload):
+                return retained.id
+        return None
+
     def resolve_asin_families(self, store_id: str, asins: list[str]) -> dict[str, Any]:
         normalized_store_id = store_id.strip()
         normalized_asins = list(dict.fromkeys(str(asin).strip().upper() for asin in asins))
@@ -410,10 +429,14 @@ class CoordinatorStore(CoordinatorObservability):
                     item for item in retained_items_by_family.get(parent_asin, [])
                     if item.job_id in pending_job_ids
                 ]
-                is_queue_cleared = bool(pending_items) and all(
+                is_queue_cleared = any(
                     self._is_operator_cleared_seo_item(item) for item in pending_items
-                ) and not any(candidate.shopify_product_ids for candidate in family_rows.get(parent_asin, []))
-                if pending_family_rows:
+                )
+                # A deliberate partial release opens traversal, not downstream
+                # duplicates: uploads still preserve live sibling pipeline items.
+                if any(candidate.status == "released" for candidate in family_rows.get(parent_asin, [])):
+                    family_database_status = "released"
+                elif pending_family_rows:
                     family_database_status = "queue_cleared" if is_queue_cleared else "crawled"
                 elif recovered_stale_registry:
                     family_database_status = None
@@ -433,8 +456,11 @@ class CoordinatorStore(CoordinatorObservability):
                     "jobId": family_job_id,
                     "recoveredStaleRegistry": recovered_stale_registry,
                     "hasSyncedFamilyMembers": family_has_synced_members.get(parent_asin, False),
+                    "inputSyncedAsins": [],
                 })
                 family["inputAsins"].append(asin)
+                if row is not None and asin != parent_asin and row.status == "synced" and row.shopify_product_ids:
+                    family["inputSyncedAsins"].append(asin)
                 active = next(
                     (
                         active_by_asin[member_asin]
@@ -461,6 +487,7 @@ class CoordinatorStore(CoordinatorObservability):
 
     def recover_cleared_family(
         self, store_id: str, parent_asin: str, action: str, *, actor: str, reason: str,
+        verify_shopify: Callable[[str, str, set[str], set[str]], dict[str, set[str]]] | None = None,
     ) -> dict[str, int]:
         normalized_store_id = store_id.strip()
         normalized_parent = parent_asin.strip().upper()
@@ -468,7 +495,7 @@ class CoordinatorStore(CoordinatorObservability):
             raise ValueError("A valid store and parent ASIN are required.")
         if action not in {"retry", "recrawl"} or len(reason.strip()) < 10:
             raise ValueError("A supported recovery action and audit reason of at least 10 characters are required.")
-        with self.sessions.begin() as session:
+        with self._job_creation_lock, self.sessions.begin() as session:
             rows = session.scalars(select(AmazonAsinRegistry).where(
                 AmazonAsinRegistry.store_id == normalized_store_id,
                 AmazonAsinRegistry.marketplace == "amazon-us",
@@ -476,10 +503,6 @@ class CoordinatorStore(CoordinatorObservability):
             ).with_for_update()).all()
             if not rows:
                 raise ValueError("Amazon family was not found.")
-            if not any(row.status == "crawled" for row in rows) or any(row.status == "released" for row in rows):
-                raise ValueError("Family is no longer blocked by a retained crawl.")
-            if any(row.status == "synced" or row.shopify_product_ids for row in rows):
-                raise ValueError("Family has Shopify-linked members; recovery requires reconciliation.")
             member_asins = {row.asin for row in rows}
             active_task = session.scalar(select(CrawlTask.id).join(CrawlJob).where(
                 CrawlTask.asin.in_(member_asins),
@@ -489,34 +512,147 @@ class CoordinatorStore(CoordinatorObservability):
             if active_task is not None:
                 raise ValueError("Family still has an active crawl task.")
             job_ids = {row.last_job_id for row in rows if row.last_job_id}
-            if not job_ids:
-                raise ValueError("Family has no retained crawl job.")
-            items = session.scalars(select(CrawlProductItem).where(
-                CrawlProductItem.job_id.in_(job_ids),
-                CrawlProductItem.status != "deleted",
+            retained_items = session.scalars(select(CrawlProductItem).join(CrawlJob).where(
+                CrawlProductItem.source_key.like(f"amazon:{normalized_parent}:%"),
+                CrawlJob.settings["storeId"].as_string() == normalized_store_id,
             ).with_for_update()).all()
             family_items = [
-                item for item in items
+                item for item in retained_items
                 if (identity := self._product_family_identity(
                     item.normalized_payload if isinstance(item.normalized_payload, dict) else item.raw_payload
                 )) is not None and identity[0] == normalized_parent
+                and item.job_id in job_ids
+                and not (item.shopify_result or {}).get("recrawlReleased")
             ]
-            if not family_items:
-                raise ValueError("Family has no retained crawl products.")
-            if any(not self._is_operator_cleared_seo_item(item) for item in family_items):
-                raise ValueError("Only products cancelled by clearing SEO Queue can be recovered here.")
             source_keys = {item.source_key for item in family_items}
-            linked = session.scalar(select(ShopifyProductLink.id).where(
+            links = session.scalars(select(ShopifyProductLink).where(
                 ShopifyProductLink.store_id == normalized_store_id,
-                ShopifyProductLink.source_key.in_(source_keys),
-            ).limit(1))
-            if linked is not None:
-                raise ValueError("Family has Shopify product links; recovery requires reconciliation.")
+                or_(ShopifyProductLink.source_key.in_(source_keys),
+                    ShopifyProductLink.source_key.like(f"amazon:{normalized_parent}:%")),
+            ).with_for_update()).all()
+            links_by_source = {link.source_key: link for link in links}
+            product_ids = {pid for row in rows for pid in (row.shopify_product_ids or [])}
+            product_ids.update(link.shopify_product_id for link in links)
+            product_ids.update(str((item.shopify_result or {}).get("productId")) for item in family_items
+                               if (item.shopify_result or {}).get("productId"))
+            exact_asins = set().union(*(self._product_exact_asins(item.raw_payload) for item in family_items))
+            exact_asins.update(row.asin for row in rows)
+            if verify_shopify is None:
+                if product_ids:
+                    raise ValueError("Live Shopify verification is required before recovering linked products.")
+                verification = {"missingProductIds": set(), "existingAsins": set()}
+            else:
+                # This callback is server-owned, never populated from browser
+                # claims. Any unavailable read rolls the entire transaction back.
+                verification = verify_shopify(normalized_store_id, normalized_parent, exact_asins, product_ids)
+            missing_ids = verification["missingProductIds"] & product_ids
+            existing_asins = verification["existingAsins"]
+            recoverable: list[CrawlProductItem] = []
+            for item in family_items:
+                aliases = self._product_exact_asins(item.raw_payload)
+                linked_ids = {pid for row in rows if row.asin in aliases for pid in (row.shopify_product_ids or [])}
+                link = links_by_source.get(item.source_key)
+                if link is not None:
+                    linked_ids.add(link.shopify_product_id)
+                if (item.shopify_result or {}).get("productId"):
+                    linked_ids.add(str(item.shopify_result["productId"]))
+                was_deleted_on_shopify = bool(linked_ids) and linked_ids <= missing_ids
+                if aliases & existing_asins or (linked_ids and not was_deleted_on_shopify):
+                    continue
+                if self._is_operator_cleared_seo_item(item) or (item.status in {"completed", "deleted"} and was_deleted_on_shopify):
+                    review = (item.shopify_result or {}).get("review") or {}
+                    if item.claimed_by or item.claim_expires_at or review.get("syncStatus") in {"queued", "syncing"}:
+                        raise ValueError("A selected product still has a pipeline claim.")
+                    operation = session.scalar(select(ShopifyOperationIdempotency).where(
+                        ShopifyOperationIdempotency.store_id == normalized_store_id,
+                        ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(item.source_key),
+                    ).with_for_update())
+                    if operation is not None and operation.state in {"pending", "reconciliation_required"}:
+                        raise ValueError("A selected product has an unresolved Shopify write; reconcile it before recovery.")
+                    recoverable.append(item)
+            retained_sources = {item.source_key for item in retained_items
+                                if not (item.shopify_result or {}).get("recrawlReleased")}
+            retained_aliases = set().union(*(self._product_exact_asins(item.raw_payload) for item in retained_items
+                                            if not (item.shopify_result or {}).get("recrawlReleased")))
+            orphan_aliases = {
+                row.asin for row in rows
+                if action == "recrawl"
+                and row.shopify_product_ids and set(row.shopify_product_ids) <= missing_ids
+                and row.asin not in retained_aliases and row.asin not in existing_asins
+            }
+            orphan_ids = {pid for row in rows if row.asin in orphan_aliases for pid in row.shopify_product_ids}
+            orphan_ids -= {link.shopify_product_id for link in links if link.source_key in retained_sources}
+            orphan_ids -= {pid for row in rows if row.asin != normalized_parent and row.asin not in orphan_aliases
+                           for pid in (row.shopify_product_ids or [])}
+            orphan_aliases = {row.asin for row in rows if row.asin in orphan_aliases
+                              and set(row.shopify_product_ids) <= orphan_ids}
+            if not recoverable and not orphan_aliases:
+                raise ValueError("No eligible products: Shopify products and active SEO/Review records are preserved.")
+            # Never supersede a source while a newer run owns it.
+            recoverable_keys = {item.source_key for item in recoverable}
+            newer_items = session.scalars(select(CrawlProductItem).join(CrawlJob).where(
+                CrawlJob.settings["storeId"].as_string() == normalized_store_id,
+                CrawlProductItem.source_key.in_(recoverable_keys),
+                CrawlProductItem.id.not_in([item.id for item in recoverable]),
+                CrawlProductItem.status != "deleted",
+            ).with_for_update()).all()
+            if newer_items:
+                raise ValueError("A newer pipeline record exists for a selected product; reconcile it first.")
+            released_aliases = set().union(*(self._product_exact_asins(item.raw_payload) for item in recoverable))
+            released_aliases.update(orphan_aliases)
+            obsolete_ids = {pid for row in rows if row.asin in released_aliases
+                            for pid in (row.shopify_product_ids or []) if pid in missing_ids}
+            obsolete_ids.update(link.shopify_product_id for link in links
+                                if link.source_key in recoverable_keys and link.shopify_product_id in missing_ids)
+            obsolete_ids.update(str((item.shopify_result or {}).get("productId")) for item in recoverable
+                                if str((item.shopify_result or {}).get("productId")) in missing_ids)
+            obsolete_ids.update(orphan_ids)
+            # Remove only verified obsolete pointers; preserve their full history
+            # in the product payload and audit event rather than deleting products.
+            for link in links:
+                if link.source_key in recoverable_keys or (link.shopify_product_id in orphan_ids and link.source_key not in retained_sources):
+                    operation = session.scalar(select(ShopifyOperationIdempotency).where(
+                        ShopifyOperationIdempotency.store_id == normalized_store_id,
+                        ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(link.source_key),
+                    ).with_for_update())
+                    if operation is not None and operation.state in {"pending", "reconciliation_required"}:
+                        raise ValueError("An obsolete mapping still has an unresolved Shopify write; reconcile it first.")
+                    session.delete(link)
+            released_count = 0
+            for row in rows:
+                remaining_ids = [pid for pid in (row.shopify_product_ids or []) if pid not in obsolete_ids]
+                had_removed_ids = remaining_ids != (row.shopify_product_ids or [])
+                row.shopify_product_ids = remaining_ids
+                if not remaining_ids and (row.asin in released_aliases or had_removed_ids):
+                    row.synced_at = None
+                    row.status = "released" if action == "recrawl" else "crawled"
+                    row.updated_at = utc_now()
+                    released_count += 1
+            # Job retention can remove JobEvent rows. This independent audit
+            # preserves the reconciliation evidence after old history expires.
+            session.add(CoordinatorState(key=f"family_recovery_audit:{_id()}", value=json.dumps({
+                "storeId": normalized_store_id, "parentAsin": normalized_parent,
+                "actor": actor, "reason": reason.strip(), "action": action,
+                "timestamp": utc_iso(utc_now()), "releasedAsins": sorted(released_aliases),
+                "sourceKeys": sorted(recoverable_keys), "confirmedMissingProductIds": sorted(obsolete_ids),
+                "previousLinks": [{"sourceKey": link.source_key, "productId": link.shopify_product_id}
+                                  for link in links if link.shopify_product_id in obsolete_ids],
+            }, ensure_ascii=False)))
+            for item in recoverable:
+                self._event(session, item.job_id, "family_product_recovery", {
+                    "parentAsin": normalized_parent, "sourceKey": item.source_key,
+                    "actor": actor, "reason": reason.strip(), "action": action,
+                    "previousShopifyResult": item.shopify_result or {},
+                    "confirmedMissingProductIds": sorted(obsolete_ids),
+                })
             if action == "retry":
-                for item in family_items:
+                for item in recoverable:
                     pipeline_result = dict(item.shopify_result or {})
-                    pipeline_result.pop("externalSeo", None)
-                    pipeline_result.pop("seo", None)
+                    generation = max(int((pipeline_result.get("review") or {}).get("syncGeneration") or 0),
+                                     int(pipeline_result.get("recoverySyncGeneration") or 0)) + 1
+                    for key in ("externalSeo", "seo", "review", "productId", "productHandle", "managedResources"):
+                        pipeline_result.pop(key, None)
+                    pipeline_result["recoverySyncGeneration"] = generation
                     item.shopify_result = pipeline_result
                     item.status = "received"
                     item.attempt_count = 0
@@ -525,22 +661,31 @@ class CoordinatorStore(CoordinatorObservability):
                     item.claim_expires_at = None
                     item.last_error = None
                     item.completed_at = None
-                for job_id in {item.job_id for item in family_items}:
+                for job_id in {item.job_id for item in recoverable}:
                     self._event(session, job_id, "cleared_seo_family_retried", {
                         "parentAsin": normalized_parent, "actor": actor, "reason": reason.strip(),
-                        "count": len([item for item in family_items if item.job_id == job_id]),
+                        "count": len([item for item in recoverable if item.job_id == job_id]),
                     })
                     self._refresh_job(session, job_id)
-                return {"recovered": len(family_items), "releasedAsins": 0}
-            for row in rows:
-                if row.status == "crawled":
-                    row.status = "released"
-                    row.updated_at = utc_now()
-            for job_id in {item.job_id for item in family_items}:
+                return {"recovered": len(recoverable), "releasedAsins": 0}
+            for item in recoverable:
+                item.status = "deleted"
+                item.claimed_by = None
+                item.claim_expires_at = None
+                item.shopify_result = {**(item.shopify_result or {}), "recrawlReleased": True}
+            # Also release the unsynced parent alias when the entire family was
+            # cleared, retaining compatibility with the original recovery flow.
+            if family_items and len(recoverable) == len(family_items):
+                for row in rows:
+                    if row.status == "crawled" and not row.shopify_product_ids:
+                        row.status = "released"
+                        released_count += 1
+            for job_id in {item.job_id for item in recoverable}:
                 self._event(session, job_id, "cleared_seo_family_released", {
                     "parentAsin": normalized_parent, "actor": actor, "reason": reason.strip(),
                 })
-            return {"recovered": 0, "releasedAsins": len(rows)}
+                self._refresh_job(session, job_id)
+            return {"recovered": 0, "releasedAsins": released_count}
 
     def backfill_asin_registry(self) -> dict[str, int]:
         """Rebuild the durable alias ledger from retained pipeline data and Shopify links."""
@@ -550,6 +695,8 @@ class CoordinatorStore(CoordinatorObservability):
             for item, job in session.execute(
                 select(CrawlProductItem, CrawlJob).join(CrawlJob, CrawlProductItem.job_id == CrawlJob.id)
             ).all():
+                if (item.shopify_result or {}).get("recrawlReleased"):
+                    continue
                 store_id = str((job.settings or {}).get("storeId") or "").strip()
                 product = item.normalized_payload if isinstance(item.normalized_payload, dict) else item.raw_payload
                 if not store_id or not isinstance(product, dict) or self._product_family_identity(product) is None:
@@ -643,8 +790,13 @@ class CoordinatorStore(CoordinatorObservability):
             CrawlProductItem.job_id == job_id,
         )).all())
         skipped_count = len(skipped_sources - accepted_sources)
-        if skipped_count:
-            summary.update({"skippedExistingShopify": skipped_count, "totalDetected": len(rows) + skipped_count})
+        protected_sources = set(session.scalars(select(JobEvent.payload["sourceKey"].as_string()).where(
+            JobEvent.job_id == job_id, JobEvent.event_type == "product_skipped_existing_pipeline",
+        )).all()) - {None, ""} - accepted_sources - skipped_sources
+        if skipped_count or protected_sources:
+            summary.update({"skippedExistingShopify": skipped_count,
+                            "skippedExistingPipeline": len(protected_sources),
+                            "totalDetected": len(rows) + skipped_count + len(protected_sources)})
         return summary
 
     @staticmethod
@@ -806,6 +958,22 @@ class CoordinatorStore(CoordinatorObservability):
                 existing = session.scalar(select(CrawlJob).where(CrawlJob.external_request_id == external_request_id))
                 if existing is not None:
                     return self._job_snapshot(session, existing)
+            input_asins = []
+            for source in raw_urls:
+                try:
+                    input_asins.append(normalize_amazon_input(source).asin)
+                except ValueError:
+                    continue
+            # Serialize creation with audited family recovery across Coordinator
+            # processes, not only the in-process creation lock.
+            family_parents = select(AmazonAsinRegistry.parent_asin).where(
+                AmazonAsinRegistry.store_id == str(settings.get("storeId") or "").strip(),
+                AmazonAsinRegistry.asin.in_(input_asins),
+            )
+            session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == str(settings.get("storeId") or "").strip(),
+                AmazonAsinRegistry.parent_asin.in_(family_parents),
+            ).order_by(AmazonAsinRegistry.asin).with_for_update()).all()
             active_job_id = session.scalar(
                 select(CrawlJob.id)
                 .where(CrawlJob.status.in_(ACTIVE_JOB_STATUSES))
@@ -1802,6 +1970,12 @@ class CoordinatorStore(CoordinatorObservability):
                             "transport": "final_result",
                         })
                         continue
+                    retained_id = self._retained_pipeline_product(session, job, product)
+                    if retained_id is not None:
+                        self._event(session, task.job_id, "product_skipped_existing_pipeline", {
+                            "sourceKey": _source_key(product), "productItemId": retained_id,
+                        })
+                        continue
                     item, _created = self._upsert_product_item(
                         session,
                         task=task,
@@ -1877,6 +2051,14 @@ class CoordinatorStore(CoordinatorObservability):
             raw_payload=product,
             status="received",
         )
+        job = session.get(CrawlJob, task.job_id)
+        released_alias = session.scalar(select(AmazonAsinRegistry.id).where(
+            AmazonAsinRegistry.store_id == str((job.settings if job else {}).get("storeId") or "").strip(),
+            AmazonAsinRegistry.asin.in_(CoordinatorStore._product_exact_asins(product)),
+            AmazonAsinRegistry.status == "released",
+        ).limit(1))
+        if released_alias is not None:
+            item.shopify_result = {"recoverySyncGeneration": 1}
         session.add(item)
         session.flush()
         return item, True
@@ -1944,6 +2126,15 @@ class CoordinatorStore(CoordinatorObservability):
             existing = session.scalar(select(CrawlProductItem).where(
                 CrawlProductItem.job_id == task.job_id, CrawlProductItem.source_key == source_key,
             ))
+            retained_id = self._retained_pipeline_product(session, job, product)
+            if retained_id is not None:
+                self._event(session, task.job_id, "product_skipped_existing_pipeline", {
+                    "sourceKey": source_key, "productItemId": retained_id,
+                })
+                return self._save_receipt(session, receipt_id, task_id, payload, {
+                    "status": "duplicate", "reason": "existing_pipeline_product",
+                    "sourceKey": source_key, "productItemId": retained_id,
+                })
             if existing is not None:
                 # sourceKey is the stable product identity within a crawl job.
                 # Retries may legitimately change volatile diagnostics and
@@ -2086,6 +2277,10 @@ class CoordinatorStore(CoordinatorObservability):
                     "sourceKey": item.source_key,
                     "productId": item.product_id,
                     "checksum": item.checksum,
+                    "seoSourceRevision": (
+                        f"{item.checksum}:recovery:{item.id}:{pipeline_result['recoverySyncGeneration']}"
+                        if pipeline_result.get("recoverySyncGeneration") else item.checksum
+                    ),
                     "attempt": item.attempt_count,
                     "stage": "sync" if is_sync_claim else "prepare",
                     "externalSeo": pipeline_result.get("externalSeo"),
@@ -2161,6 +2356,7 @@ class CoordinatorStore(CoordinatorObservability):
             current["imageProcessing"] = image_summary
             current["review"] = {
                 **review_summary,
+                "syncGeneration": int(current.get("recoverySyncGeneration") or 0),
                 "decision": "pending",
                 "syncStatus": "idle",
                 "version": 1,

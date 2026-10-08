@@ -27,6 +27,7 @@ from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .release_catalog import cached_release_version
 from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore, ProductPipelineActiveError
+from .shopify_family_verification import verify_shopify_family
 from .image_profile_repository import ImageProfileRepository
 from .coordinator_migrations import migrate_coordinator
 from .operator_authorization import OperatorAudit, OperatorCredentials, install_operator_authorization
@@ -834,6 +835,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 str(payload.get("action") or ""),
                 actor=actor,
                 reason=str(payload.get("reason") or ""),
+                verify_shopify=verify_shopify_family,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

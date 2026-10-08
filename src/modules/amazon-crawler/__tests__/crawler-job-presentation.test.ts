@@ -44,6 +44,14 @@ test("completed crawl with pending queue work is no longer presented as crawling
   assert.equal(presentation.canCancel, true);
 });
 
+test("retained Queue and Review siblings are not reported as a new SEO handoff", () => {
+  const presentation = resolveCrawlerJobPresentation(job({ status: "completed",
+    seoQueueHandoff: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0,
+      skippedExistingPipeline: 2, totalDetected: 2 } }));
+  assert.equal(presentation.label, "Đã kiểm tra · giữ nguyên 2 sản phẩm đang ở SEO Queue/Review");
+  assert.equal(presentation.hasReachedSeoQueue, false);
+});
+
 test("durable queue handoff hides crawler pause and cancel controls", () => {
   const presentation = resolveCrawlerJobPresentation(job({
     status: "review_pending",

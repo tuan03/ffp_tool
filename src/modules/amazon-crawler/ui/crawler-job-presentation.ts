@@ -39,6 +39,12 @@ export function resolveCrawlerJobPresentation(job: PresentableJob): CrawlerJobPr
     return { label: `Đã tạm dừng · ${completedLinks}/${totalLinks} link`, tone: "warning", canPause: true, canCancel: true, hasReachedSeoQueue: false };
   }
   if (["completed", "review_pending"].includes(job.status) && handoff?.totalProducts === 0
+      && (handoff.skippedExistingPipeline ?? 0) > 0) {
+    return { label: `Đã kiểm tra · giữ nguyên ${handoff.skippedExistingPipeline} sản phẩm đang ở SEO Queue/Review${
+      (handoff.skippedExistingShopify ?? 0) > 0 ? ` · ${handoff.skippedExistingShopify} đã có trên Shopify` : ""}`,
+      tone: "success", canPause: false, canCancel: false, hasReachedSeoQueue: false };
+  }
+  if (["completed", "review_pending"].includes(job.status) && handoff?.totalProducts === 0
       && (handoff.skippedExistingShopify ?? 0) > 0) {
     return { label: `Đã kiểm tra · bỏ qua ${handoff.skippedExistingShopify} sản phẩm đã có trên Shopify`,
       tone: "success", canPause: false, canCancel: false, hasReachedSeoQueue: false };

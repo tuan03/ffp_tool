@@ -202,6 +202,23 @@ test("preflight identifies a family cleared from SEO Queue without automatically
   assert.deepEqual(result.allowedAsins, []);
 });
 
+test("preflight does not treat a historical DB mapping as a live Shopify product", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      return { products: { nodes: [] } } as T;
+    },
+  };
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"],
+    families: [{ parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"],
+      isResolved: true, databaseStatus: "synced", hasSyncedFamilyMembers: true }],
+  }, "apply");
+  assert.equal(result.families[0]?.status, "reconciliation_required");
+  assert.equal(result.families[0]?.hasExistingFamilyProducts, false);
+  assert.deepEqual(result.allowedAsins, []);
+});
+
 test("preflight allows a deliberately released family to be crawled again", async () => {
   const client = {
     async query<T>(_store: StoreConfig, query: string): Promise<T> {
@@ -219,6 +236,26 @@ test("preflight allows a deliberately released family to be crawled again", asyn
 
   assert.equal(result.families[0]?.status, "available");
   assert.deepEqual(result.allowedAsins, ["B0CHILD001"]);
+});
+
+test("a deleted requested synced ASIN needs reconciliation even when Shopify has live siblings", async () => {
+  const client = {
+    async query<T>(_store: StoreConfig, query: string, variables?: Record<string, unknown>): Promise<T> {
+      if (query.includes("query AmazonAsinDefinitions")) return filterableDefinitions as T;
+      return { products: { nodes: String(variables?.query).includes("amazon_parent_asin") ? [{
+        id: "gid://shopify/Product/456", title: "Live sibling", metafield: { value: "B0CHILD002" },
+        parentMetafield: { value: "B0PARENT01" },
+      }] : [] } } as T;
+    },
+  };
+  const result = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"], families: [{ parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"],
+      memberAsins: ["B0CHILD001", "B0CHILD002"], isResolved: true, databaseStatus: "synced",
+      hasSyncedFamilyMembers: true, inputSyncedAsins: ["B0CHILD001"] }],
+  }, "apply");
+  assert.equal(result.families[0]?.status, "reconciliation_required");
+  assert.deepEqual(result.allowedAsins, []);
+  assert.equal(result.matches[0]?.asin, "B0CHILD002");
 });
 
 test("preflight does not start incremental discovery while the family is pending sync", async () => {

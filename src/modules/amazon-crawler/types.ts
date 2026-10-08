@@ -84,6 +84,7 @@ export interface AmazonAsinFamilyPreflight {
   readonly hasExistingFamilyProducts?: boolean;
   readonly recoveredStaleRegistry?: boolean;
   readonly hasSyncedFamilyMembers?: boolean;
+  readonly inputSyncedAsins?: readonly string[];
 }
 
 export interface AmazonAsinPreflightResult {
@@ -481,6 +482,7 @@ export interface AmazonCrawlerSeoQueueHandoffSummary {
   pending: number;
   notHandedOver: number;
   skippedExistingShopify?: number;
+  skippedExistingPipeline?: number;
   totalDetected?: number;
 }
 

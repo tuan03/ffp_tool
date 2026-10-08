@@ -79,3 +79,9 @@ test("crawler preserves skip counts when every detected product already exists o
     skippedExistingShopify: 10, totalDetected: 10 };
   assert.deepEqual(resolveCrawlerSeoHandoffSummary([], summary), summary);
 });
+
+test("crawler preserves counts for retained downstream products", () => {
+  const summary = { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0,
+    skippedExistingPipeline: 2, totalDetected: 2 };
+  assert.deepEqual(resolveCrawlerSeoHandoffSummary([], summary), summary);
+});
