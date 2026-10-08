@@ -144,10 +144,9 @@ class TrayApplication:
 
     def _check_for_update(self, *, notify: bool) -> str | None:
         try:
-            request = urllib.request.Request(
-                f"{self.agent.config.server_url}/api/v1/agent-release",
-                headers={"Accept": "application/json"},
-            )
+            from .zip_release import build_release_catalog_request
+            request = build_release_catalog_request(
+                f"{self.agent.config.server_url}/api/v1/agent-release", AGENT_VERSION)
             with urllib.request.urlopen(request, timeout=15) as response:
                 payload = json.loads(response.read(65537).decode("utf-8"))
             from .zip_release import verify_release

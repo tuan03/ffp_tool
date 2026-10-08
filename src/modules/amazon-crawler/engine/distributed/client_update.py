@@ -95,11 +95,13 @@ def launch_agent_update(command_id: str, target_version: str, project_root: Path
         import urllib.request
         from .client_config import AgentConfig
         from . import AGENT_VERSION
-        from .zip_release import verify_release, require_compatible, download_zip
+        from .zip_release import build_release_catalog_request, verify_release, require_compatible, download_zip
         from .zip_updater import prepare_update, launch_prepared_update
         try:
             config = AgentConfig.load(config_path)
-            with urllib.request.urlopen(config.server_url + "/api/v1/agent-release", timeout=30) as response:
+            release_request = build_release_catalog_request(
+                config.server_url + "/api/v1/agent-release", AGENT_VERSION)
+            with urllib.request.urlopen(release_request, timeout=30) as response:
                 payload = json.loads(response.read(65537))
             manifest = verify_release(payload["release"])
             require_compatible(manifest, AGENT_VERSION, payload["serverVersion"], payload["protocolVersion"])

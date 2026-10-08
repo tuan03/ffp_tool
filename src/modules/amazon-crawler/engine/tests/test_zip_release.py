@@ -8,7 +8,13 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from engine.distributed.zip_release import EXECUTABLE, verify_release, validate_zip, require_compatible
+from engine.distributed.zip_release import (
+    EXECUTABLE,
+    build_release_catalog_request,
+    require_compatible,
+    validate_zip,
+    verify_release,
+)
 from engine.distributed.zip_updater import install_runtime, launch_prepared_update
 
 
@@ -34,6 +40,11 @@ class ZipReleaseTests(unittest.TestCase):
             verify_release(envelope, keys=self.keys)
         with self.assertRaises(ValueError):
             verify_release(self.envelope(), keys={})
+
+    def test_release_catalog_request_identifies_agent_to_edge_security(self):
+        request = build_release_catalog_request("https://coordinator.example/api/v1/agent-release", "5.3.4")
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(request.get_header("User-agent"), "FFP-Amazon-Crawler-Agent/5.3.4")
 
     def test_compatibility_and_downgrade_are_rejected(self):
         require_compatible(self.manifest, "5.2.3", "5.2.3", "5")
@@ -117,6 +128,27 @@ class ZipReleaseTests(unittest.TestCase):
         self.assertIsNone(tray._latest_agent_version)
         self.assertIsNone(tray._latest_release_payload)
         self.assertIn("chưa kiểm tra được", tray._update_status_text(None))
+
+    def test_tray_identifies_agent_when_loading_public_release_catalog(self):
+        from engine.distributed import AGENT_VERSION
+        from engine.distributed.client_tray import TrayApplication
+        tray = object.__new__(TrayApplication)
+        tray.agent = Mock()
+        tray.agent.config.server_url = "https://coordinator.example"
+        tray._latest_agent_version = None
+        tray._latest_release_payload = None
+        tray._update_message = ""
+        tray._icon = None
+        response = Mock()
+        response.read.return_value = json.dumps({"release": self.envelope()}).encode()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with patch("urllib.request.urlopen", return_value=response) as open_request, patch(
+                "engine.distributed.zip_release.TRUSTED_RELEASE_KEYS", self.keys):
+            self.assertEqual(tray._check_for_update(notify=False), self.manifest["version"])
+        request = open_request.call_args.args[0]
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(request.get_header("User-agent"), f"FFP-Amazon-Crawler-Agent/{AGENT_VERSION}")
 
 
 class ZipDrainTests(unittest.IsolatedAsyncioTestCase):

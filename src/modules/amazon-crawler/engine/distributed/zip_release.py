@@ -20,6 +20,18 @@ MAX_EXPANDED_BYTES = 6 * 1024**3
 EXECUTABLE = "FFPAmazonCrawlerAgent.exe"
 
 
+def build_release_catalog_request(url: str, agent_version: str) -> urllib.request.Request:
+    return urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            # Cloudflare Browser Integrity rejects urllib's default
+            # Python-urllib signature before the public Coordinator route.
+            "User-Agent": f"FFP-Amazon-Crawler-Agent/{agent_version}",
+        },
+    )
+
+
 def version_tuple(value: str) -> tuple[int, int, int]:
     if not isinstance(value, str) or not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", value):
         raise ValueError("Invalid stable release version.")
