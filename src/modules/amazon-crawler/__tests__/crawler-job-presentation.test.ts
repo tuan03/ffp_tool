@@ -26,6 +26,14 @@ function job(overrides: Partial<AmazonCrawlerJobSnapshot> = {}): AmazonCrawlerJo
   };
 }
 
+test("finished family containing only existing Shopify products is not reported as handed over", () => {
+  const presentation = resolveCrawlerJobPresentation(job({ status: "completed",
+    seoQueueHandoff: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0,
+      skippedExistingShopify: 10, totalDetected: 10 } }));
+  assert.equal(presentation.label, "Đã kiểm tra · bỏ qua 10 sản phẩm đã có trên Shopify");
+  assert.equal(presentation.hasReachedSeoQueue, false);
+});
+
 test("completed crawl with pending queue work is no longer presented as crawling", () => {
   const presentation = resolveCrawlerJobPresentation(job({
     progress: { phase: "seo", completed: 1, total: 1, message: "" },

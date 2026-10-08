@@ -1,6 +1,7 @@
 """Recovery admission gates, independent of crawler/browser execution."""
 import asyncio
 import json
+import threading
 import tempfile
 import unittest
 from dataclasses import replace
@@ -26,6 +27,85 @@ class AgentRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_completed_upload_remains_in_heartbeat_until_durable_ack(self):
+        assignment = {"taskId": "task", "leaseId": "lease", "jobId": "job", "settingsFingerprint": "x"}
+        self.agent.store.save_assignment(assignment)
+        payload = {"jobId": "job", "products": []}
+        self.agent.store.spool_result(task_id="task", lease_id="lease", checksum=payload_checksum(payload), payload=payload)
+        self.assertEqual(self.agent.store.recover_assignments(), [])
+        self.assertEqual(self.agent._current_tasks_snapshot()[0]["leaseId"], "lease")
+        self.assertEqual(self.agent.executing_task_ids, set())
+        self.agent.store.acknowledge_result(self.agent.store.pending_results()[0]["resultId"])
+        self.assertEqual(self.agent._current_tasks_snapshot(), [])
+
+    def test_quarantined_upload_is_not_renewed_or_retried(self):
+        assignment = {"taskId": "task", "leaseId": "lease", "jobId": "job", "settingsFingerprint": "x"}
+        self.agent.store.save_assignment(assignment)
+        self.agent.store.spool_result(task_id="task", lease_id="lease", checksum="x", payload={"products": []})
+        self.agent.store.quarantine_attempt("task", "lease", "upload_stale")
+        self.assertEqual(self.agent._current_tasks_snapshot(), [])
+        self.assertEqual(self.agent.store.pending_results(), [])
+
+    async def test_lost_ack_keeps_final_result_pending_and_duplicate_receipt_finishes_it(self):
+        assignment = {"taskId": "task", "leaseId": "lease", "jobId": "job", "settingsFingerprint": "x"}
+        self.agent.store.save_assignment(assignment)
+        payload = {"jobId": "job", "products": []}
+        self.agent.store.spool_result(task_id="task", lease_id="lease", checksum=payload_checksum(payload), payload=payload)
+        with patch.object(self.agent, "_upload_result", side_effect=TimeoutError("ACK lost")), \
+                patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.agent._upload_loop()
+        self.assertEqual(len(self.agent._current_tasks_snapshot()), 1)
+        pending = self.agent.store.pending_results()[0]
+        receipt = {"status": "duplicate", "receiptId": payload_checksum([
+            "final", "task", self.agent.client_id, "lease", ""]), "checksum": payload_checksum(payload)}
+        with patch.object(self.agent, "_upload_result", return_value=receipt), \
+                patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.agent._upload_loop()
+        self.assertEqual(pending["attempts"], 1)
+        self.assertEqual(self.agent.store.pending_results(), [])
+        self.assertEqual(self.agent._current_tasks_snapshot(), [])
+
+    async def test_final_upload_waits_for_product_receipts(self):
+        self.agent.store.spool_product(task_id="task", lease_id="lease", product_key="product", checksum="x",
+            payload={"product": {"id": "product"}})
+        self.agent.store.spool_result(task_id="task", lease_id="lease", checksum="x", payload={"products": []})
+        with patch.object(self.agent, "_upload_product", side_effect=TimeoutError("not acknowledged")), \
+                patch.object(self.agent, "_upload_result") as upload_final, \
+                patch("engine.distributed.client_agent.asyncio.sleep", side_effect=asyncio.CancelledError):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.agent._upload_loop()
+        upload_final.assert_not_called()
+        self.assertEqual(len(self.agent.store.pending_results()), 1)
+
+    async def test_slow_product_does_not_block_other_product_uploads(self):
+        release = threading.Event()
+        fast_uploaded = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for key in ("slow", "fast"):
+            self.agent.store.spool_product(task_id="task", lease_id="lease", product_key=key,
+                checksum=key, payload={"product": {"id": key}})
+
+        def upload(product):
+            if product["productKey"] == "slow":
+                if not release.wait(3):
+                    raise TimeoutError("slow test upload was never released")
+            else:
+                loop.call_soon_threadsafe(fast_uploaded.set)
+            return {"status": "accepted"}
+
+        with patch.object(self.agent, "_upload_product", side_effect=upload), patch.object(self.agent, "_validate_upload_receipt"):
+            uploader = asyncio.create_task(self.agent._upload_loop())
+            try:
+                await asyncio.wait_for(fast_uploaded.wait(), timeout=1)
+                self.assertFalse(release.is_set())
+            finally:
+                release.set()
+                uploader.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await uploader
 
     def test_offline_and_unreconciled_capacity_is_zero(self):
         self.agent._command_recovery_complete = True

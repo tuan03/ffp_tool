@@ -387,7 +387,11 @@ function readSeoQueueHandoff(value: unknown): AmazonCrawlerSeoQueueHandoffSummar
   const handedOver = typeof value.handedOver === "number" ? value.handedOver : 0;
   const pending = typeof value.pending === "number" ? value.pending : 0;
   const notHandedOver = typeof value.notHandedOver === "number" ? value.notHandedOver : 0;
-  return { totalProducts, handedOver, pending, notHandedOver };
+  return {
+    totalProducts, handedOver, pending, notHandedOver,
+    ...(typeof value.skippedExistingShopify === "number" ? { skippedExistingShopify: value.skippedExistingShopify } : {}),
+    ...(typeof value.totalDetected === "number" ? { totalDetected: value.totalDetected } : {}),
+  };
 }
 
 function readJobSnapshot(value: unknown): AmazonCrawlerJobSnapshot {

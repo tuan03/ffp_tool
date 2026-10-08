@@ -1018,7 +1018,10 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(asyncio.CancelledError):
                     await agent._upload_loop()
 
-            self.assertEqual(upload.call_count, 1)
+            # Up to three requests can already be in flight when an attempt is
+            # rejected. No later request may start after quarantine is recorded.
+            self.assertGreaterEqual(upload.call_count, 1)
+            self.assertLessEqual(upload.call_count, 2)
             self.assertEqual(len(agent.store.pending_products()), 0)
             self.assertEqual(agent.store.upload_counts()["products"], 2)
             self.assertEqual(len(agent.store.quarantined_uploads()), 2)
@@ -2156,6 +2159,28 @@ class CoordinatorStoreTests(unittest.TestCase):
             self.assertEqual(task.status, "leased")
             self.assertIsNotNone(task.lease_expires_at)
 
+    def test_completed_agent_upload_heartbeat_renews_server_lease_until_ack(self) -> None:
+        self.store.create_job({"urls": ["B0FR4MSS2H"]})
+        self.store.register_client(client_hello(slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            agent = DistributedCrawlerAgent(project_root=Path(directory), config=AgentConfig(
+                server_url="http://127.0.0.1:9999", display_name="test", max_concurrent_inputs=1,
+                limits=AgentLimits(), data_directory=Path(directory)))
+            agent.store.save_assignment(lease)
+            agent.store.spool_result(task_id=lease["taskId"], lease_id=lease["leaseId"],
+                checksum="checksum", payload={"jobId": lease["jobId"], "products": []})
+            almost_expired = utc_now() + timedelta(seconds=5)
+            with self.sessions.begin() as session:
+                session.get(CrawlTask, lease["taskId"]).lease_expires_at = almost_expired
+            self.store.heartbeat("client-a", agent._current_tasks_snapshot(), "online", executing_task_ids=set())
+            with self.sessions() as session:
+                renewed = session.get(CrawlTask, lease["taskId"])
+                self.assertGreater(renewed.lease_expires_at.replace(tzinfo=almost_expired.tzinfo), almost_expired)
+                self.assertIsNone(renewed.result)
+            agent.store.acknowledge_result(agent.store.pending_results()[0]["resultId"])
+            self.assertEqual(agent._current_tasks_snapshot(), [])
+
     def test_terminal_stop_waits_for_online_agent_cleanup_then_purges_job(self) -> None:
         job = self.store.create_job({"urls": ["B0FR4MSS2H"]})
         self.store.register_client(client_hello(slots=1))
@@ -3285,6 +3310,9 @@ class CoordinatorStoreTests(unittest.TestCase):
             lease["taskId"], "client-a", lease["leaseId"], "final-checksum", final_payload,
         )
         self.assertEqual(final_response["status"], "accepted")
+        summary = self.store.get_job(str(job["id"]))["seoQueueHandoff"]
+        self.assertEqual(summary["skippedExistingShopify"], 1)
+        self.assertEqual(summary["totalDetected"], 3)
         with self.sessions() as session:
             stored_products = list(session.scalars(select(CrawlProductItem).order_by(CrawlProductItem.source_key)))
             self.assertEqual(

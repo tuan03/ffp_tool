@@ -3053,6 +3053,11 @@ export function AmazonCrawlerPage({
                 <p><span className="block text-xs text-slate-400">Final variants</span>{resultProducts.length > 0 ? output.statistics.finalVariants : "—"}</p>
                 <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
               </div>
+              {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 ? (
+                <p className="text-sm text-amber-200">
+                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify} đã có trên Shopify, không bàn giao lại · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
+                </p>
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
                 <p>
                   SEO Queue: <strong className="text-emerald-300">{seoHandoffSummary.handedOver}/{seoHandoffSummary.totalProducts} đã bàn giao</strong>

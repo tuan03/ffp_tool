@@ -628,12 +628,24 @@ class CoordinatorStore(CoordinatorObservability):
                 not_handed_over += 1
             else:
                 pending += 1
-        return {
+        summary = {
             "totalProducts": len(rows),
             "handedOver": handed_over,
             "pending": pending,
             "notHandedOver": not_handed_over,
         }
+        # Streamed uploads and the final result can report the same skipped
+        # product repeatedly (including new leases). Count stable identities.
+        skipped_sources = set(session.scalars(select(JobEvent.payload["sourceKey"].as_string()).where(
+            JobEvent.job_id == job_id, JobEvent.event_type == "product_skipped_existing_shopify",
+        )).all()) - {None, ""}
+        accepted_sources = set(session.scalars(select(CrawlProductItem.source_key).where(
+            CrawlProductItem.job_id == job_id,
+        )).all())
+        skipped_count = len(skipped_sources - accepted_sources)
+        if skipped_count:
+            summary.update({"skippedExistingShopify": skipped_count, "totalDetected": len(rows) + skipped_count})
+        return summary
 
     @staticmethod
     def _refresh_job(session, job_id: str) -> None:

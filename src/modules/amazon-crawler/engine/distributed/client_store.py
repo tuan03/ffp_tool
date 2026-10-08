@@ -219,6 +219,19 @@ class ClientStore:
             for row in rows
         ]
 
+    def uploading_assignments(self) -> list[dict[str, Any]]:
+        """Renew completed attempts until their final durable receipt arrives."""
+        with self._connection() as connection:
+            rows = connection.execute("""
+                SELECT l.payload_json FROM leases l
+                WHERE l.status='completed_pending_upload' AND EXISTS (
+                    SELECT 1 FROM pending_results r
+                    WHERE r.task_id=l.task_id AND r.lease_id=l.lease_id
+                    AND r.result_id NOT IN (SELECT result_id FROM outbox_quarantine)
+                )
+            """).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
+
     def assignment(self, task_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(

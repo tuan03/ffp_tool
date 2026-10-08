@@ -669,6 +669,8 @@ test("job controller lists, cancels, replaces, archives and deletes coordinator 
     inputs: ["B0MOCK0001"],
     settings: DEFAULT_AMAZON_CRAWLER_SETTINGS,
     progress: { phase: "product", completed: 0, total: 1, message: "Running" },
+    seoQueueHandoff: { totalProducts: 2, handedOver: 2, pending: 0, notHandedOver: 0,
+      skippedExistingShopify: 18, totalDetected: 20 },
     createdAt: "2026-09-24T00:00:00Z",
     startedAt: "2026-09-24T00:00:01Z",
     completedAt: null,
@@ -700,6 +702,8 @@ test("job controller lists, cancels, replaces, archives and deletes coordinator 
   });
 
   assert.equal((await jobs.list())[0]?.jobId, "job-1");
+  assert.equal((await jobs.list())[0]?.seoQueueHandoff?.skippedExistingShopify, 18);
+  assert.equal((await jobs.list())[0]?.seoQueueHandoff?.totalDetected, 20);
   assert.equal((await jobs.cancel("job-1")).status, "cancelling");
   await jobs.cancelTask("task/1");
   assert.equal(requests.at(-1)?.url, "http://coordinator.test/api/v1/crawl-tasks/task%2F1/cancel");

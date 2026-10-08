@@ -38,6 +38,11 @@ export function resolveCrawlerJobPresentation(job: PresentableJob): CrawlerJobPr
   if (job.executionState === "paused") {
     return { label: `Đã tạm dừng · ${completedLinks}/${totalLinks} link`, tone: "warning", canPause: true, canCancel: true, hasReachedSeoQueue: false };
   }
+  if (["completed", "review_pending"].includes(job.status) && handoff?.totalProducts === 0
+      && (handoff.skippedExistingShopify ?? 0) > 0) {
+    return { label: `Đã kiểm tra · bỏ qua ${handoff.skippedExistingShopify} sản phẩm đã có trên Shopify`,
+      tone: "success", canPause: false, canCancel: false, hasReachedSeoQueue: false };
+  }
   if (handoff && handoff.totalProducts > 0 && handoff.pending === 0) {
     if (handoff.handedOver === handoff.totalProducts) {
       return {

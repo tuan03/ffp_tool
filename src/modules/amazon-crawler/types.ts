@@ -480,6 +480,8 @@ export interface AmazonCrawlerSeoQueueHandoffSummary {
   handedOver: number;
   pending: number;
   notHandedOver: number;
+  skippedExistingShopify?: number;
+  totalDetected?: number;
 }
 
 export interface AmazonCrawlerPendingAgentCancellation {

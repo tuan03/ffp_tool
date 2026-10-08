@@ -251,6 +251,12 @@ class DistributedCrawlerAgent:
             last_processed_command_sequence = self.store.last_processed_command_sequence()
         except (OSError, sqlite3.Error):
             last_processed_command_sequence = 0
+        try:
+            current_tasks = self._current_tasks_snapshot()
+        except (OSError, sqlite3.Error):
+            # The storage-pressure snapshot below fails closed; the dashboard
+            # must remain readable even when the durable spool is unavailable.
+            current_tasks = []
         return {
             "clientId": self.client_id,
             "displayName": self.config.display_name,
@@ -285,7 +291,7 @@ class DistributedCrawlerAgent:
             "lastProcessedCommandSequence": last_processed_command_sequence,
             "globalAdmissionGate": dict(self._global_admission_gate),
             "capabilities": self._agent_capabilities(),
-            "currentTasks": self._current_tasks_snapshot(),
+            "currentTasks": current_tasks,
             "cache": self.cache.metrics_snapshot(),
             "observability": self._telemetry_snapshot(),
         }
@@ -1953,7 +1959,9 @@ class DistributedCrawlerAgent:
                 self._task_activity.pop(stale_task_id, None)
             activities = {task_id: dict(activity) for task_id, activity in self._task_activity.items()}
         snapshots: list[dict[str, Any]] = []
-        for task_id, assignment in list(self.active.items()):
+        assignments = {assignment["taskId"]: assignment for assignment in self.store.uploading_assignments()}
+        assignments.update(self.active)
+        for task_id, assignment in assignments.items():
             settings = assignment.get("settings") if isinstance(assignment.get("settings"), dict) else {}
             activity = activities.get(task_id, {})
             queries = settings.get("custom_queries") if isinstance(settings.get("custom_queries"), list) else []
@@ -1967,7 +1975,10 @@ class DistributedCrawlerAgent:
                 "niche": str(settings.get("niche") or assignment.get("source") or ""),
                 "product": str(settings.get("product") or ""),
                 "queryCount": len(queries),
-                "message": str(activity.get("message") or "Đang chuẩn bị tác vụ trên Agent."),
+                "message": str(activity.get("message") or (
+                    "Đã cào xong; đang chờ server xác nhận kết quả."
+                    if task_id not in self.active else "Đang chuẩn bị tác vụ trên Agent."
+                )),
                 "percent": max(0, min(100, int(activity.get("percent") or 0))),
                 "updatedAt": activity.get("updatedAt"),
             })
@@ -2240,25 +2251,15 @@ class DistributedCrawlerAgent:
             upload_failed = False
             retry_delay = 1
             pending_products = self.store.pending_products()
-            for product in pending_products:
-                task_id = str(product["taskId"])
-                if not self.store.is_upload_pending(product["resultId"]):
-                    continue
-                try:
-                    response = await asyncio.to_thread(self._upload_product, product)
-                    self._validate_upload_receipt(product, response)
-                    self.store.acknowledge_product(product["resultId"])
-                except Exception as error:
-                    was_quarantined = self._quarantine_rejected_upload(product, error)
-                    self._dashboard_update(
-                        "delivery",
-                        task_id,
-                        str(product["leaseId"]),
-                        "quarantined" if was_quarantined else "retry",
-                    )
-                    self.store.product_failed(product["resultId"], redact(error))
-                    upload_failed = True
-                    retry_delay = max(retry_delay, min(30, 2 ** min(int(product.get("attempts", 0)), 5)))
+            # Bound concurrency independently from crawler slots. A slow HTTP
+            # request must not prevent other durable products from reaching us.
+            upload_slots = asyncio.Semaphore(3)
+            product_delays = await asyncio.gather(*(
+                self._deliver_product(product, upload_slots) for product in pending_products
+            ))
+            if any(product_delays):
+                upload_failed = True
+                retry_delay = max(retry_delay, *product_delays)
             pending = self.store.pending_results()
             if not pending:
                 self._uploads_checked.set()
@@ -2332,6 +2333,22 @@ class DistributedCrawlerAgent:
             self._publish_status()
             self._uploads_checked.set()
             await asyncio.sleep(retry_delay if upload_failed else 1)
+
+    async def _deliver_product(self, product: dict[str, Any], slots: asyncio.Semaphore) -> int:
+        async with slots:
+            if not self.store.is_upload_pending(product["resultId"]):
+                return 0
+            try:
+                response = await asyncio.to_thread(self._upload_product, product)
+                self._validate_upload_receipt(product, response)
+                self.store.acknowledge_product(product["resultId"])
+                return 0
+            except Exception as error:
+                was_quarantined = self._quarantine_rejected_upload(product, error)
+                self._dashboard_update("delivery", str(product["taskId"]), str(product["leaseId"]),
+                                       "quarantined" if was_quarantined else "retry")
+                self.store.product_failed(product["resultId"], redact(error))
+                return min(30, 2 ** min(int(product.get("attempts", 0)), 5))
 
     def _quarantine_rejected_upload(self, upload: dict[str, Any], error: Exception) -> bool:
         if isinstance(error, urllib.error.HTTPError) and error.code in {404, 409}:

@@ -73,3 +73,9 @@ test("crawler prefers the durable coordinator handoff count when product details
     notHandedOver: 0,
   });
 });
+
+test("crawler preserves skip counts when every detected product already exists on Shopify", () => {
+  const summary = { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0,
+    skippedExistingShopify: 10, totalDetected: 10 };
+  assert.deepEqual(resolveCrawlerSeoHandoffSummary([], summary), summary);
+});
