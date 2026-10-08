@@ -2,9 +2,10 @@ import type { ProductCustomization } from "../customization-normalizer";
 
 export interface BulkCustomizationField {
   readonly key: string;
-  readonly kind: "text" | "option";
+  readonly kind: "surface" | "text" | "option";
   readonly label: string;
   readonly detail: string;
+  readonly imageUrl?: string;
 }
 
 export interface BulkCustomizationEntry<Product> {
@@ -67,9 +68,41 @@ function optionFieldKey(field: Record<string, unknown>): string {
   ].join(":");
 }
 
+function surfaceLabel(surface: Record<string, unknown>, index: number): string {
+  return displayLabel(surface.name ?? surface.label, `Mặt in ${index + 1}`);
+}
+
+function surfaceKey(surface: Record<string, unknown>, index: number): string {
+  return ["surface", normalizeIdentity(surfaceLabel(surface, index)), String(index)].join(":");
+}
+
+function surfaceImageUrl(surface: Record<string, unknown>): string | undefined {
+  for (const directKey of ["previewUrl", "url"]) {
+    const directUrl = surface[directKey];
+    if (typeof directUrl === "string" && directUrl.trim()) return directUrl.trim();
+  }
+  for (const nestedKey of ["baseImage", "image"]) {
+    const nestedImage = surface[nestedKey];
+    if (!isRecord(nestedImage)) continue;
+    const nestedUrl = nestedImage.url;
+    if (typeof nestedUrl === "string" && nestedUrl.trim()) return nestedUrl.trim();
+  }
+  return undefined;
+}
+
 export function listBulkCustomizationFields(
   customization: ProductCustomization,
 ): readonly BulkCustomizationField[] {
+  const surfaces = (customization.surfaces ?? []).flatMap((surface, index) => {
+    if (!isRecord(surface)) return [];
+    return [{
+      key: surfaceKey(surface, index),
+      kind: "surface" as const,
+      label: surfaceLabel(surface, index),
+      detail: `Mặt in ${index + 1}`,
+      imageUrl: surfaceImageUrl(surface),
+    }];
+  });
   const textFields = (customization.textInputs ?? []).flatMap((field) => {
     if (!isRecord(field)) return [];
     return [{
@@ -90,7 +123,7 @@ export function listBulkCustomizationFields(
     }];
   });
 
-  return [...textFields, ...optionFields];
+  return [...surfaces, ...textFields, ...optionFields];
 }
 
 export function groupBulkCustomizations<Product>(
@@ -123,6 +156,9 @@ export function removeBulkCustomizationFields(
 ): ProductCustomization {
   return {
     ...customization,
+    surfaces: (customization.surfaces ?? []).filter(
+      (surface, index) => !isRecord(surface) || !fieldKeys.has(surfaceKey(surface, index)),
+    ),
     textInputs: (customization.textInputs ?? []).filter(
       (field) => !isRecord(field) || !fieldKeys.has(textFieldKey(field)),
     ),

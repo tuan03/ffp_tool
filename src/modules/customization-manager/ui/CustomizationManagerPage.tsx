@@ -624,9 +624,9 @@ export function CustomizationManagerPage({
 
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
               <div>
-                <div className="text-sm font-bold text-slate-100">Sửa trường cho nhiều sản phẩm</div>
+                <div className="text-sm font-bold text-slate-100">Sửa Customizer cho nhiều sản phẩm</div>
                 <div className="mt-1 text-xs text-slate-400">
-                  Nhóm các sản phẩm có cùng bộ trường rồi xóa một lần cho cả nhóm.
+                  Nhóm sản phẩm có cùng mặt in và trường tùy chọn rồi chỉnh một lần cho cả nhóm.
                 </div>
               </div>
               <button
@@ -1047,7 +1047,7 @@ export function CustomizationManagerPage({
             onComplete={(updatedCount) => {
               setStatusMessage({
                 type: "success",
-                text: `Đã cập nhật trường tùy biến cho ${updatedCount} sản phẩm.`,
+                text: `Đã cập nhật Customizer cho ${updatedCount} sản phẩm.`,
               });
             }}
           />

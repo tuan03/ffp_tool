@@ -8,6 +8,13 @@ import {
 } from "../bulk-edit";
 
 const customization = {
+  surfaces: [
+    {
+      id: "surface-a",
+      name: "Front",
+      previewUrl: "https://cdn.example.com/front-a.jpg",
+    },
+  ],
   textInputs: [
     { id: "name-a", type: "TextInputComponent", label: "Customize Your Name", maxLength: 30 },
     { id: "number-a", type: "TextInputComponent", label: "Customize Your Number", maxLength: 5 },
@@ -29,6 +36,11 @@ describe("Customizer bulk editing", () => {
   it("groups matching field structures even when Shopify field IDs differ", () => {
     const secondCustomization = {
       ...customization,
+      surfaces: customization.surfaces.map((surface) => ({
+        ...surface,
+        id: `${surface.id}-other`,
+        previewUrl: "https://cdn.example.com/front-b.jpg",
+      })),
       textInputs: customization.textInputs.map((field) => ({ ...field, id: `${field.id}-other` })),
       optionGroups: customization.optionGroups.map((group) => ({
         ...group,
@@ -44,7 +56,7 @@ describe("Customizer bulk editing", () => {
 
     assert.equal(groups.length, 1);
     assert.equal(groups[0].entries.length, 2);
-    assert.equal(groups[0].fields.length, 3);
+    assert.equal(groups[0].fields.length, 4);
   });
 
   it("removes the selected semantic field while preserving other fields", () => {
@@ -57,6 +69,34 @@ describe("Customizer bulk editing", () => {
 
     assert.equal(updated.textInputs?.length, 2);
     assert.deepEqual(updated.optionGroups, []);
+    assert.equal(updated.surfaces?.length, 1);
+  });
+
+  it("removes a matching print surface across products while ignoring image URL differences", () => {
+    const surface = listBulkCustomizationFields(customization).find(
+      (field) => field.kind === "surface",
+    );
+    assert.ok(surface);
+
+    const updated = removeBulkCustomizationFields(customization, new Set([surface.key]));
+
+    assert.deepEqual(updated.surfaces, []);
+    assert.equal(updated.textInputs?.length, 2);
+    assert.equal(updated.optionGroups?.length, 1);
+  });
+
+  it("keeps products with different print surface layouts in separate groups", () => {
+    const backOnlyCustomization = {
+      ...customization,
+      surfaces: [{ ...customization.surfaces[0], name: "Back" }],
+    };
+
+    const groups = groupBulkCustomizations([
+      { product: { id: "front" }, customization },
+      { product: { id: "back" }, customization: backOnlyCustomization },
+    ]);
+
+    assert.equal(groups.length, 2);
   });
 
   it("groups legacy fields whose labels are not strings without crashing", () => {
