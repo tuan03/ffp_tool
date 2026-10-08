@@ -24,6 +24,19 @@ async function fixture() {
   return { pg, repository, operation, review, advance: () => { now += 120_001; } };
 }
 
+test("publish reports invalid image identity separately from approval and never queues a write", async () => {
+  const f = await fixture();
+  try {
+    await f.pg.query("DELETE FROM seo_publish_operations WHERE job_id='job'");
+    await f.pg.query("UPDATE gpt_review_state SET payload=$1 WHERE job_id='job'", [JSON.stringify({
+      ...f.review, images: [{ id: "img-0-old", alt: { value: "Approved ALT" } }],
+    })]);
+    await assert.rejects(f.repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "retry", operator: "operator" }), /REVIEW_IMAGE_MAPPING_REQUIRED/);
+    const rows = await f.pg.query("SELECT id FROM seo_publish_operations WHERE job_id='job'");
+    assert.equal(rows.rows.length, 0);
+  } finally { await f.pg.close(); }
+});
+
 test("publish preserves remote SEO baseline and recovers the same frozen version after lost response", async () => {
   const f = await fixture();
   let fields: PublishFields = f.operation.fields;

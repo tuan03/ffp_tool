@@ -319,7 +319,7 @@ test("adaptAutoSeoItemToViewModel: successfully adapts AutoSeoItemResult to SeoP
       tags: ["Wall Art", "Gothic"],
       images: [
         {
-          id: "img-1",
+          id: "gid://shopify/MediaImage/1",
           url: "https://example.com/art.jpg",
           altText: "Gothic wall art preview",
         },
@@ -356,6 +356,7 @@ test("adaptAutoSeoItemToViewModel: successfully adapts AutoSeoItemResult to SeoP
   assert.equal(vm.handle.value, "enchanted-gothic-wall-art");
   assert.equal(vm.images.length, 1);
   assert.equal(vm.images[0].previewUrl.value, "https://example.com/art.jpg");
+  assert.equal(vm.images[0].id, "gid://shopify/MediaImage/1");
   assert.equal(vm.images[0].webpUrl.value, "https://cdn.example.com/art.webp");
 });
 

@@ -1,6 +1,8 @@
 import type { GptSeoJob } from "../../modules/custom-gpt-seo";
 import type { AutoSeoSourceProduct, SeoContentDetailedOutput } from "../../modules/seo-content";
+
 import { adaptAutoSeoItemToViewModel } from "./seo-content-ui-adapter";
+import { restoreShopifyReviewImageIds } from "./shopify-review-images";
 import type { SeoProductUiViewModel } from "./types";
 
 interface ReviewPage<TReview> {
@@ -42,5 +44,7 @@ export function adaptCustomGptReview(job: GptSeoJob, saved: Record<string, unkno
     seoOutput: result.output,
     success: true,
   }, job.storeId);
-  return { ...product, ...saved, id: `gpt-${job.id}`, gptJobId: job.id, storeId: job.storeId, sourceOrigin: "auto_seo" } as SeoProductUiViewModel;
+  const review = { ...product, ...saved, id: `gpt-${job.id}`, gptJobId: job.id, storeId: job.storeId, sourceOrigin: "auto_seo" } as SeoProductUiViewModel;
+  // Previously saved reviews contain presentation IDs. Preserve their edits while repairing identity.
+  return { ...review, images: restoreShopifyReviewImageIds(review.images, sourceProduct.images) };
 }

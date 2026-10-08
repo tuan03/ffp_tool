@@ -119,7 +119,10 @@ export class SeoPublishRepository {
         AND newer.payload::jsonb->>'sourceIdentity'=current.payload::jsonb->>'sourceIdentity' LIMIT 1`, [input.jobId])).rows[0];
       if (newer) throw new SeoWorkerError("STALE_SOURCE");
       const review = reviewSchema.safeParse(JSON.parse(String(row.review)));
-      if (!review.success) throw new SeoWorkerError("APPROVED_REVIEW_REQUIRED");
+      if (!review.success) {
+        if (review.error.issues.every(issue => issue.path[0] === "images")) throw new SeoWorkerError("REVIEW_IMAGE_MAPPING_REQUIRED");
+        throw new SeoWorkerError("APPROVED_REVIEW_REQUIRED");
+      }
       if (review.data.updatedAt !== input.reviewUpdatedAt) throw new SeoWorkerError("VERSION_CONFLICT");
       const job = z.object({ execution: z.object({ productId: z.string().regex(/^(gid:\/\/shopify\/Product\/)?\d+$/),
         originalSnapshot: z.object({ updatedAt: z.string().min(1), seoVersion: z.number().int().nonnegative().optional() }) }) }).safeParse(JSON.parse(String(row.payload)));

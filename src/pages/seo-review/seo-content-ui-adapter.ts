@@ -14,6 +14,8 @@ import type {
   ApprovedProductPatch,
   ApprovedProductUpdate,
 } from "../../modules/orchestrator";
+
+import { restoreShopifyReviewImageIds } from "./shopify-review-images";
 import type {
   DisplayField,
   FieldSource,
@@ -553,7 +555,8 @@ export function adaptAutoSeoItemToViewModel(
     };
   }
 
-  return adaptSeoOutputToViewModel(item.seoOutput, options);
+  const product = adaptSeoOutputToViewModel(item.seoOutput, options);
+  return { ...product, images: restoreShopifyReviewImageIds(product.images, sourceProduct.images) };
 }
 
 /**

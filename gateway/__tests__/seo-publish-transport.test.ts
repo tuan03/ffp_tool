@@ -4,6 +4,18 @@ import test from "node:test";
 import { createSeoPublishTransport } from "../seo-worker/publish-transport";
 import type { PublishOperation } from "../seo-worker/publish-repository";
 
+test("publish refuses a media ID absent from the current product without writing", async () => {
+  let writes = 0;
+  const fields = { title: "Title", descriptionHtml: "Description", seo: { title: "SEO", description: "Meta" }, images: [{ id: "gid://shopify/MediaImage/1", altText: "Approved ALT" }] };
+  const transport = createSeoPublishTransport({ dispatch: async request => {
+    if (request.operation === "products.update") writes++;
+    return { success: true, storeId: "demo", operation: request.operation, data: request.operation === "metafields.get"
+      ? { value: null } : { product: { ...fields, updatedAt: "v1", images: [{ id: "gid://shopify/MediaImage/2", altText: "Other" }] } } };
+  } });
+  await assert.rejects(transport.read({ id: "receipt", jobId: "job", storeId: "demo", productId: "123", sourceVersion: "v1", state: "CHECKING", leaseId: "lease", seoVersion: null, errorCode: null, fields }), /SOURCE_IMAGE_MISSING/);
+  assert.equal(writes, 0);
+});
+
 test("publish refuses corrupt or incorrectly typed Shopify SEO versions", async () => {
   for (const metafield of [{ value: "-1", type: "number_integer" }, { value: "1.5", type: "number_integer" }, { value: "7", type: "single_line_text_field" }, { value: "9007199254740992", type: "number_integer" }]) {
     const fields = { title: "Title", descriptionHtml: "Description", seo: { title: "SEO", description: "Meta" } };

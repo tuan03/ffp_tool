@@ -53,6 +53,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
           STALE_SOURCE: "Nguồn Shopify đã thay đổi. Cần tạo revision mới để đánh giá lại.",
           OPERATOR_REQUIRED: "Đăng nhập bằng tài khoản quản trị để Sync Shopify.",
           APPROVED_REVIEW_REQUIRED: "Cần lưu và duyệt bản Review hợp lệ trước khi Sync.",
+          REVIEW_IMAGE_MAPPING_REQUIRED: "Chưa xác định được ID ảnh Shopify trong Review. Tải lại Review để đối chiếu ảnh; không cần chạy lại SEO.",
+          SOURCE_IMAGE_MISSING: "Ảnh trong bản Review không còn trên sản phẩm Shopify. Cần đối chiếu lại ảnh trước khi Sync.",
           VERSION_CONFLICT: "Bản Review đã thay đổi. Tải lại trước khi Sync.",
           SEO_VERSION_READ_DISABLED: "Lịch sử SEO chưa được bật cho store này.",
           SEO_VERSION_WRITE_DISABLED: "Store đang ở chế độ chỉ đọc lịch sử SEO.",
