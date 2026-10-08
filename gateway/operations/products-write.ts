@@ -1202,6 +1202,28 @@ export async function executeProductsUpdate(
     }
   }
 
+  if (productPatch.metafields !== undefined) {
+    if (!Array.isArray(productPatch.metafields)) {
+      throw new GatewayError("Product metafields must be an array", "SHOPIFY_INVALID_INPUT", 400);
+    }
+    input.metafields = productPatch.metafields.map((metafield: unknown) => {
+      if (!metafield || typeof metafield !== "object") {
+        throw new GatewayError("Invalid product metafield", "SHOPIFY_INVALID_INPUT", 400);
+      }
+      const candidate = metafield as Record<string, unknown>;
+      const hasId = typeof candidate.id === "string" && /^gid:\/\/shopify\/Metafield\/\d+$/.test(candidate.id);
+      const hasKey = typeof candidate.namespace === "string" && candidate.namespace.trim() !== "" &&
+        typeof candidate.key === "string" && candidate.key.trim() !== "";
+      if ((!hasId && !hasKey) || typeof candidate.value !== "string" ||
+        (candidate.type !== undefined && (typeof candidate.type !== "string" || candidate.type.trim() === ""))) {
+        throw new GatewayError("Invalid product metafield input", "SHOPIFY_INVALID_INPUT", 400);
+      }
+      return { ...(hasId ? { id: candidate.id } : {}),
+        ...(hasKey ? { namespace: String(candidate.namespace).trim(), key: String(candidate.key).trim() } : {}),
+        ...(candidate.type !== undefined ? { type: candidate.type } : {}), value: candidate.value };
+    });
+  }
+
   const fileUpdateList: FileUpdateItem[] = [];
   const mediaList: CreateMediaInputItem[] = [];
   const seenFileIds = new Set<string>();

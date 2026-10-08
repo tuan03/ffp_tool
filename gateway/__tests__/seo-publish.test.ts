@@ -7,6 +7,7 @@ import { getQueueSchemaSql } from "../custom-gpt-seo/postgres-database";
 import { SeoPublishRepository } from "../seo-worker/publish-repository";
 import type { PublishFields, PublishOperation } from "../seo-worker/publish-repository";
 import { processSeoPublish } from "../seo-worker/publish-worker";
+import { SeoWorkerError } from "../seo-worker/protocol";
 
 import { createTestEnqueue } from "./seo-v2-fixtures";
 
@@ -34,6 +35,39 @@ test("publish reports invalid image identity separately from approval and never 
     await assert.rejects(f.repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "retry", operator: "operator" }), /REVIEW_IMAGE_MAPPING_REQUIRED/);
     const rows = await f.pg.query("SELECT id FROM seo_publish_operations WHERE job_id='job'");
     assert.equal(rows.rows.length, 0);
+  } finally { await f.pg.close(); }
+});
+
+test("definite pre-write rejection clears write intent and retries only after operator request", async () => {
+  const f = await fixture();
+  try {
+    await processSeoPublish(f.repository, {
+      read: async () => ({ version: "v1", fields: f.operation.fields }),
+      write: async () => { throw new SeoWorkerError("PUBLISH_INPUT_REJECTED"); },
+    });
+    const rejected = await f.pg.query<{state: string; has_write_intent: boolean; error_code: string}>("SELECT state,has_write_intent,error_code FROM seo_publish_operations WHERE id=$1", [f.operation.id]);
+    assert.equal(rejected.rows[0]?.state, "BLOCKED");
+    assert.equal(rejected.rows[0]?.has_write_intent, false);
+    assert.equal(rejected.rows[0]?.error_code, "PUBLISH_INPUT_REJECTED");
+    assert.equal(await f.repository.claim(), null);
+    await f.repository.requestReconciliation("demo", "job", "operator");
+    let writes = 0;
+    await processSeoPublish(f.repository, { read: async () => ({ version: writes ? "v2" : "v1", fields: f.operation.fields }), write: async () => { writes++; } });
+    assert.equal(writes, 1);
+    assert.equal((await f.repository.get("demo", f.operation.id)).state, "SUCCEEDED");
+  } finally { await f.pg.close(); }
+});
+
+test("retrying a rejected publish still blocks a changed source before another write", async () => {
+  const f = await fixture();
+  try {
+    await processSeoPublish(f.repository, { read: async () => ({ version: "v1", fields: f.operation.fields }),
+      write: async () => { throw new SeoWorkerError("PUBLISH_INPUT_REJECTED"); } });
+    await f.repository.requestReconciliation("demo", "job", "operator");
+    let writes = 0;
+    await processSeoPublish(f.repository, { read: async () => ({ version: "changed", fields: f.operation.fields }), write: async () => { writes++; } });
+    assert.equal(writes, 0);
+    assert.equal((await f.repository.get("demo", f.operation.id)).errorCode, "STALE_SOURCE");
   } finally { await f.pg.close(); }
 });
 

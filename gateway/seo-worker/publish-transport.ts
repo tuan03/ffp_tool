@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { GatewayError } from "../errors";
 import type { GatewayDispatcher } from "../dispatcher";
 import type { ShopifySeoSnapshotReader } from "../seo-versioning/shopify-snapshot-reader";
 
@@ -45,11 +46,20 @@ export function createSeoPublishTransport(dispatcher: Pick<GatewayDispatcher, "d
       } };
     },
     async write(op) {
-      const response = await dispatcher.dispatch({ storeId: op.storeId, operation: "products.update", requestId: `seo-publish-${op.id}`,
-        payload: { id: `gid://shopify/Product/${op.productId}`, expectedUpdatedAt: op.sourceVersion,
-          product: { title: op.fields.title, descriptionHtml: op.fields.descriptionHtml, seo: op.fields.seo,
-            ...(op.fields.images ? { images: op.fields.images } : {}), ...(op.fields.metafields ? { metafields: op.fields.metafields } : {}) } } });
-      if (!response.success) throw new SeoWorkerError("PUBLISH_WRITE_UNCONFIRMED");
+      try {
+        const response = await dispatcher.dispatch({ storeId: op.storeId, operation: "products.update", mode: "apply", requestId: `seo-publish-${op.id}`,
+          payload: { id: `gid://shopify/Product/${op.productId}`, expectedUpdatedAt: op.sourceVersion,
+            product: { title: op.fields.title, descriptionHtml: op.fields.descriptionHtml, seo: op.fields.seo,
+              ...(op.fields.images ? { images: op.fields.images } : {}), ...(op.fields.metafields ? { metafields: op.fields.metafields } : {}) } } });
+        if (!response.success) throw new SeoWorkerError("PUBLISH_WRITE_UNCONFIRMED");
+      } catch (error) {
+        // Only definite local input rejection is safe to mark as not written.
+        // Network, Shopify user errors and partial writes remain uncertain.
+        if (error instanceof GatewayError && error.code === "SHOPIFY_INVALID_INPUT" && !error.reconciliationRequired) {
+          throw new SeoWorkerError("PUBLISH_INPUT_REJECTED");
+        }
+        throw error;
+      }
     },
   };
 }

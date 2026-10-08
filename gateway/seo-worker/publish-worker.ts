@@ -57,6 +57,10 @@ export async function processSeoPublish(repository: SeoPublishRepository, transp
     await repository.confirmWithSnapshot(op, confirmed.snapshot);
   } catch (error) {
     const code = error instanceof SeoWorkerError ? error.code : error instanceof Error ? error.message : "";
+    if (code === "PUBLISH_INPUT_REJECTED") {
+      await repository.rejectBeforeWrite(op, code);
+      return;
+    }
     if (["REVIEW_CHANGED", "PRODUCT_DELETED", "SOURCE_IMAGE_MISSING", "INVALID_SEO_VERSION", "CONTENT_CONFLICT",
       "SEO_DRAFT_BASE_REQUIRED", "SEO_VERSION_SNAPSHOT_REQUIRED", "SEO_VERSION_COMMIT_MISMATCH"].includes(code)) await repository.block(op, code);
     else await repository.defer(op, hasWriteIntent);

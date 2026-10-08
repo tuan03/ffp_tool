@@ -89,6 +89,11 @@ export class SeoPublishRepository {
       const row = (await sql.query("SELECT * FROM seo_publish_operations WHERE store_id=$1 AND job_id=$2 FOR UPDATE", [storeId, jobId])).rows[0];
       if (!row) throw new SeoWorkerError("PUBLISH_NOT_FOUND");
       if (row.state !== "BLOCKED") return operation(row);
+      if (row.has_write_intent === false && row.error_code === "PUBLISH_INPUT_REJECTED") {
+        const next = (await sql.query("UPDATE seo_publish_operations SET state='QUEUED',attempts=0,retry_at=0,error_code=NULL,updated_at=$2 WHERE id=$1 RETURNING *", [row.id, this.now()])).rows[0];
+        await sql.query("INSERT INTO gpt_audit(store_id,job_id,event,created_at) VALUES ($1,$2,$3,$4)", [storeId, jobId, `PUBLISH_REJECTED_RETRY_REQUESTED:${operatorName}`, this.now()]);
+        return operation(next);
+      }
       if (row.has_write_intent !== true) throw new SeoWorkerError("SOURCE_REASSESSMENT_REQUIRED");
       const next = (await sql.query("UPDATE seo_publish_operations SET state='UNCERTAIN',attempts=0,retry_at=0,error_code=NULL,updated_at=$2 WHERE id=$1 RETURNING *", [row.id, this.now()])).rows[0];
       await sql.query("INSERT INTO gpt_audit(store_id,job_id,event,created_at) VALUES ($1,$2,$3,$4)", [storeId, jobId, `PUBLISH_READBACK_REQUESTED:${operatorName}`, this.now()]);
@@ -210,6 +215,12 @@ export class SeoPublishRepository {
       await sql.query(`UPDATE seo_publish_operations SET state=CASE WHEN attempts>=5 THEN 'BLOCKED' WHEN $3 THEN 'UNCERTAIN' ELSE 'QUEUED' END,
         lease_id=NULL,lease_until=NULL,retry_at=$4,error_code=CASE WHEN attempts>=5 THEN 'RECONCILIATION_REQUIRED' ELSE 'TRANSPORT_UNAVAILABLE' END,updated_at=$5
         WHERE id=$1 AND lease_id=$2 AND lease_until>$5`, [op.id, op.leaseId, uncertain, this.now() + 60_000, this.now()]);
+    });
+  }
+
+  async rejectBeforeWrite(op: PublishOperation, code: "PUBLISH_INPUT_REJECTED"): Promise<void> {
+    await this.database.transaction(async sql => {
+      await sql.query("UPDATE seo_publish_operations SET state='BLOCKED',has_write_intent=false,error_code=$3,lease_id=NULL,lease_until=NULL,updated_at=$4 WHERE id=$1 AND lease_id=$2 AND state='WRITING' AND lease_until>$4", [op.id, op.leaseId, code, this.now()]);
     });
   }
 
