@@ -772,6 +772,8 @@ class CoordinatorStore(CoordinatorObservability):
         not_handed_over = 0
         for status, raw_result in rows:
             pipeline_result = raw_result if isinstance(raw_result, dict) else {}
+            if pipeline_result.get("skippedExistingShopify"):
+                continue
             external_seo = pipeline_result.get("externalSeo")
             has_external_job = (
                 isinstance(external_seo, dict)
@@ -785,7 +787,7 @@ class CoordinatorStore(CoordinatorObservability):
             else:
                 pending += 1
         summary = {
-            "totalProducts": len(rows),
+            "totalProducts": handed_over + pending + not_handed_over,
             "handedOver": handed_over,
             "pending": pending,
             "notHandedOver": not_handed_over,
@@ -797,6 +799,7 @@ class CoordinatorStore(CoordinatorObservability):
         )).all()) - {None, ""}
         accepted_sources = set(session.scalars(select(CrawlProductItem.source_key).where(
             CrawlProductItem.job_id == job_id,
+            func.coalesce(CrawlProductItem.shopify_result["skippedExistingShopify"].as_boolean(), False) == False,
         )).all())
         skipped_count = len(skipped_sources - accepted_sources)
         protected_sources = set(session.scalars(select(JobEvent.payload["sourceKey"].as_string()).where(
@@ -805,7 +808,7 @@ class CoordinatorStore(CoordinatorObservability):
         if skipped_count or protected_sources:
             summary.update({"skippedExistingShopify": skipped_count,
                             "skippedExistingPipeline": len(protected_sources),
-                            "totalDetected": len(rows) + skipped_count + len(protected_sources)})
+                            "totalDetected": summary["totalProducts"] + skipped_count + len(protected_sources)})
         return summary
 
     @staticmethod
@@ -2291,6 +2294,7 @@ class CoordinatorStore(CoordinatorObservability):
                         if pipeline_result.get("recoverySyncGeneration") else item.checksum
                     ),
                     "attempt": item.attempt_count,
+                    "isRecovery": bool(pipeline_result.get("recoverySyncGeneration")),
                     "stage": "sync" if is_sync_claim else "prepare",
                     "externalSeo": pipeline_result.get("externalSeo"),
                     "inputAsin": task.asin,
@@ -2311,6 +2315,50 @@ class CoordinatorStore(CoordinatorObservability):
                 })
                 self._refresh_job(session, item.job_id)
         return claimed
+
+    def skip_existing_shopify_product(
+        self, item_id: str, *, worker_id: str, matches: list[dict[str, Any]],
+    ) -> bool:
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None or item.claimed_by != worker_id or item.status != "normalizing":
+                return False
+            pipeline_result = dict(item.shopify_result or {})
+            if pipeline_result.get("externalSeo") or pipeline_result.get("recoverySyncGeneration"):
+                return False
+            exact_asins = self._product_exact_asins(item.raw_payload)
+            matched_asins = {str(match.get("asin") or "") for match in matches}
+            if not exact_asins or matched_asins != exact_asins or any(
+                re.fullmatch(r"gid://shopify/Product/[0-9]+", str(match.get("productId") or "")) is None
+                for match in matches
+            ):
+                return False
+            job = session.get(CrawlJob, item.job_id)
+            store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
+            if not store_id:
+                return False
+            for match in matches:
+                self._upsert_asin_registry(
+                    session, store_id=store_id, job_id=item.job_id,
+                    product={**item.raw_payload, "asin": match["asin"], "sourceVariants": [{"asin": match["asin"]}]},
+                    status="synced", shopify_product_id=match["productId"],
+                )
+            pipeline_result.update({"skippedExistingShopify": True, "existingShopifyMatches": matches})
+            item.shopify_result = pipeline_result
+            item.status = "completed"
+            item.claimed_by = None
+            item.claim_expires_at = None
+            item.next_attempt_at = None
+            item.last_error = None
+            item.completed_at = utc_now()
+            self._event(session, item.job_id, "product_skipped_existing_shopify", {
+                "sourceKey": item.source_key, "productItemId": item.id,
+                "asins": sorted(exact_asins), "shopifyProductIds": sorted({match["productId"] for match in matches}),
+                "reason": "live_exact_asin_check",
+            })
+            session.flush()
+            self._refresh_job(session, item.job_id)
+            return True
 
     def defer_external_seo(
         self,
@@ -4235,7 +4283,10 @@ class CoordinatorStore(CoordinatorObservability):
         ).all())
         product_counts = dict(session.execute(
             select(CrawlProductItem.status, func.count(CrawlProductItem.id))
-            .where(CrawlProductItem.job_id == job.id).group_by(CrawlProductItem.status)
+            .where(
+                CrawlProductItem.job_id == job.id,
+                func.coalesce(CrawlProductItem.shopify_result["skippedExistingShopify"].as_boolean(), False) == False,
+            ).group_by(CrawlProductItem.status)
         ).all())
         handoff = CoordinatorStore._seo_queue_handoff_summary(session, job.id)
         completed = sum(int(task_counts.get(status, 0)) for status in TERMINAL_TASK_STATUSES)
@@ -4439,7 +4490,10 @@ class CoordinatorStore(CoordinatorObservability):
             query = select(
                 CrawlProductItem.id, CrawlProductItem.product_id,
                 CrawlProductItem.source_key, CrawlProductItem.status,
-            ).where(CrawlProductItem.job_id == job_id)
+            ).where(
+                CrawlProductItem.job_id == job_id,
+                func.coalesce(CrawlProductItem.shopify_result["skippedExistingShopify"].as_boolean(), False) == False,
+            )
             if cursor:
                 query = query.where(CrawlProductItem.id > cursor)
             rows = session.execute(query.order_by(CrawlProductItem.id).limit(page_size + 1)).all()
@@ -4543,6 +4597,8 @@ class CoordinatorStore(CoordinatorObservability):
             ).all()
             if pipeline_items:
                 for item in pipeline_items:
+                    if (item.shopify_result or {}).get("skippedExistingShopify"):
+                        continue
                     if item.status in {
                         "waiting_review", "rejected", "sync_queued", "syncing",
                         "shopify_writing", "completed",
@@ -4710,7 +4766,10 @@ class CoordinatorStore(CoordinatorObservability):
             progress_items.append(item)
         product_counts = dict(session.execute(
             select(CrawlProductItem.status, func.count(CrawlProductItem.id))
-            .where(CrawlProductItem.job_id == job.id)
+            .where(
+                CrawlProductItem.job_id == job.id,
+                func.coalesce(CrawlProductItem.shopify_result["skippedExistingShopify"].as_boolean(), False) == False,
+            )
             .group_by(CrawlProductItem.status)
         ).all())
         handoff = CoordinatorStore._seo_queue_handoff_summary(session, job.id)

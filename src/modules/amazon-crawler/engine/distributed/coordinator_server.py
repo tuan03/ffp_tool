@@ -1784,6 +1784,21 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
         return {"status": "syncing"}
 
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/skip-existing-shopify")
+    def skip_existing_shopify_product(
+        item_id: str, payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        matches = payload.get("matches")
+        if not isinstance(matches, list) or not matches or len(matches) > 200 or any(
+            not isinstance(match, dict) for match in matches
+        ):
+            raise HTTPException(status_code=422, detail="Exact Shopify ASIN matches are required.")
+        if not store.skip_existing_shopify_product(item_id, worker_id=str(payload.get("workerId") or ""), matches=matches):
+            raise HTTPException(status_code=409, detail="Pipeline claim is stale or ASIN matches are invalid.")
+        return {"status": "skipped", "reason": "existing_shopify_product"}
+
     @app.post("/api/v1/internal/product-pipeline/{item_id}/external-seo")
     def defer_external_seo(
         item_id: str,

@@ -1715,6 +1715,41 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CoordinatorStoreTests(unittest.TestCase):
+    def test_live_shopify_duplicate_is_terminal_without_a_seo_handoff(self) -> None:
+        job = self.store.create_job({"urls": ["B0CHILD001"], "storeId": "store-1"})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            task.status = "completed"
+            session.add(CrawlProductItem(
+                id="duplicate-item", job_id=job["id"], task_id=task.id,
+                source_key="amazon:B0PARENT01:color:red", product_id="duplicate-product",
+                client_id="client-a", lease_id="lease-a", checksum="duplicate-checksum",
+                raw_payload={"asin": "B0CHILD001", "parentAsin": "B0PARENT01"}, status="received",
+            ))
+        claim = self.store.claim_product_items(worker_id="worker-1", store_id="store-1", limit=1)[0]
+        matches = [{"asin": "B0CHILD001", "productId": "gid://shopify/Product/123"}]
+        self.assertFalse(self.store.skip_existing_shopify_product(claim["id"], worker_id="stale-worker", matches=matches))
+        self.assertFalse(self.store.skip_existing_shopify_product(claim["id"], worker_id="worker-1", matches=[
+            {"asin": "B0OTHER001", "productId": "gid://shopify/Product/123"},
+        ]))
+        with self.sessions.begin() as session:
+            session.get(CrawlProductItem, claim["id"]).shopify_result = {"recoverySyncGeneration": 1}
+        self.assertFalse(self.store.skip_existing_shopify_product(claim["id"], worker_id="worker-1", matches=matches))
+        with self.sessions.begin() as session:
+            session.get(CrawlProductItem, claim["id"]).shopify_result = None
+        self.assertTrue(self.store.skip_existing_shopify_product(claim["id"], worker_id="worker-1", matches=matches))
+        snapshot = self.store.get_job(job["id"])
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["seoQueueHandoff"]["handedOver"], 0)
+        self.assertEqual(snapshot["seoQueueHandoff"]["skippedExistingShopify"], 1)
+        self.assertEqual(snapshot["productCounts"], {})
+        self.assertEqual(self.store.job_products(job["id"])["products"], [])
+        self.assertEqual(self.store.job_results(job["id"])["products"], [])
+        self.assertEqual(self.store.claim_product_items(worker_id="worker-2", store_id="store-1", limit=1), [])
+        with self.sessions() as session:
+            registry = session.scalar(select(AmazonAsinRegistry).where(AmazonAsinRegistry.asin == "B0CHILD001"))
+            self.assertEqual(registry.shopify_product_ids, ["gid://shopify/Product/123"])
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         database_path = Path(self.temporary_directory.name) / "coordinator.sqlite3"

@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
+import { findExistingAmazonProducts } from "./pipeline-amazon-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
 import { bindExternalSeoProduct } from "../src/modules/seo-content";
@@ -13,6 +14,9 @@ import {
   loadLocalEnv,
   loadRuntimeStores,
   startGatewayServer,
+  ShopifyGraphqlClient,
+  CompositeTokenProvider,
+  InMemoryThrottleManager,
 } from "../gateway/index";
 import { getAutoSeoDatabaseUrl } from "../gateway/auto-seo-database-url";
 import {
@@ -47,6 +51,7 @@ interface PipelineClaim {
   readonly productId: string;
   readonly checksum: string;
   readonly seoSourceRevision?: string;
+  readonly isRecovery?: boolean;
   readonly attempt: number;
   readonly stage?: "prepare" | "sync";
   readonly externalSeo?: { readonly jobId: string; readonly provider?: "custom_gpt" | "codex_mcp" } | null;
@@ -165,6 +170,10 @@ let proxyStores = storeId
 let effectiveStores = proxyStores.length > 0 ? proxyStores : (baseStore ? [baseStore] : []);
 
 let gatewayServer: ReturnType<typeof startGatewayServer> | undefined;
+const duplicateCheckClient = new ShopifyGraphqlClient({
+  tokenProvider: new CompositeTokenProvider(),
+  throttleManager: new InMemoryThrottleManager(),
+});
 
 function getPipelineStoreProfile(targetStoreId: string): ReturnType<typeof resolvePipelineStoreProfile> {
   const resolved = resolvePipelineStoreProfile({
@@ -425,7 +434,7 @@ async function failClaim(
   options?: {
     readonly retryable?: boolean;
     readonly reconciliationRequired?: boolean;
-    readonly phase?: "normalization" | "seo" | "image_processing" | "shopify";
+    readonly phase?: "normalization" | "seo" | "image_processing" | "shopify" | "shopify_duplicate_check";
     readonly timings?: PipelineTimings;
     readonly createdProductId?: string;
   },
@@ -485,6 +494,35 @@ async function processClaim(
   let baseNormalizedProduct = claim.product;
   let assetsNormalized = Number(claim.review?.assetsNormalized ?? 0);
   if (!isSyncStage) {
+    if (!claim.externalSeo && !claim.isRecovery && claim.sourceKey.startsWith("amazon:")) {
+      const duplicateCheckHeartbeat = setInterval(() => {
+        void postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, { workerId })
+          .then((response: unknown) => {
+            if (isRecord(response) && response.status === "cancelled") cancellationController.abort();
+          }).catch(() => cancellationController.abort());
+      }, 20_000);
+      try {
+        const { storeConfig } = getPipelineStoreProfile(targetStore);
+        if (!storeConfig) throw new Error(`STORE_REQUIRED:${targetStore}`);
+        const matches = await findExistingAmazonProducts({
+          product: claim.product,
+          query: <T>(document: string, variables?: Record<string, unknown>) =>
+            duplicateCheckClient.query<T>(storeConfig, document, variables),
+        });
+        throwIfCancelled();
+        if (matches.length > 0) {
+          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/skip-existing-shopify`, {
+            workerId, matches,
+          });
+          return;
+        }
+      } catch (error: unknown) {
+        await failClaim(claim, workerId, error, { retryable: true, phase: "shopify_duplicate_check", timings });
+        return;
+      } finally {
+        clearInterval(duplicateCheckHeartbeat);
+      }
+    }
     const blockers = productBlockers(claim.product);
     if (blockers.length > 0) {
       await failClaim(claim, workerId, new Error(blockers.join(" ")), {
