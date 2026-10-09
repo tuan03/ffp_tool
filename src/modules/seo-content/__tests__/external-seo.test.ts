@@ -33,6 +33,31 @@ test("external analysis excludes every literal artwork text from SEO facts", () 
   assert.deepEqual(analysis.understanding.typography.customizationSampleTexts, ["WILLIAM", "33"]);
 });
 
+test("external analysis combines vertical single-letter OCR into one excluded name", () => {
+  const analysis = validateExternalSeoAnalysis(input, {
+    physicalProductIdentity: "structured handbag",
+    visualEntities: "gold floral portrait artwork",
+    sceneContext: "product mockup",
+    typography: {
+      visibleTexts: ["GOD", "A", "M", "E", "L", "I", "A", "PA"],
+      customizationSampleTexts: ["Amelia"],
+      styleSummary: "vertical serif name lettering",
+    },
+    shoppingContext: {
+      targetAudience: ["artwork gift shoppers"],
+      suitableOccasions: ["birthday"],
+      useCases: ["personalized gift"],
+      buyerIntentKeywords: ["portrait artwork gift"],
+    },
+    evidence: [{ imageId: "front", observation: "The artwork shows a vertical AMELIA name." }],
+  });
+
+  assert.deepEqual(
+    analysis.understanding.typography.excludedLiteralTexts,
+    ["GOD", "AMELIA", "PA"],
+  );
+});
+
 test("external SEO finalizes without any network and preserves old product keywords", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "external-seo-"));
   const corpus = new FileSeoConflictCorpus({ filePath: path.join(directory, "corpus.json"), maxRegisteredKeywordsPerProduct: 1024 });
@@ -56,9 +81,19 @@ test("external SEO finalizes without any network and preserves old product keywo
     await assert.rejects(
       finalizeExternalSeo(input, personalizationAnalysis, { keywords: ["geometric cotton rug"], reason: "same" }, {
         ...submission,
-        draft: { ...submission.draft, productTitle: "Baseball geometric rug" },
+        draft: {
+          ...submission.draft,
+          productTitle: "Baseball geometric rug",
+          intro: "A William-inspired baseball design.",
+        },
       }, { execution, corpus }),
-      /literal artwork text/i,
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /content\.draft\.productTitle contains "BASEBALL"/);
+        assert.match(error.message, /content\.draft\.intro contains "WILLIAM"/);
+        assert.match(error.message, /content\.draft\.intro contains "BASEBALL"/);
+        return true;
+      },
     );
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

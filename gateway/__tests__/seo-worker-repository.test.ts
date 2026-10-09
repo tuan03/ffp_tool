@@ -433,6 +433,43 @@ test("worker checkpoints are fenced, ordered and submission receipts survive del
   } finally { await f.pg.close(); }
 });
 
+test("job status returns safe actionable validation details only for repairable drafts", async () => {
+  const f = await fixture();
+  try {
+    await f.enqueue("validation-detail", "store-a", "PENDING", "902");
+    await f.repository.enableStore("store-a");
+    const worker = await f.worker("validation-worker", 1);
+    const { lease } = await f.repository.claim(
+      worker.token,
+      worker.sessionId,
+      worker.run.id,
+      "claim-validation",
+    );
+    assert.ok(lease);
+    const actionable = 'Generated SEO content quotes literal artwork text: content.draft.intro contains "AMELIA"';
+    await f.pg.query(
+      `UPDATE gpt_jobs SET status='NEEDS_CHANGES',payload=(payload::jsonb || jsonb_build_object(
+        'status','NEEDS_CHANGES','error',$2::text))::text WHERE id=$1`,
+      [lease.jobId, `${actionable}\npostgresql://admin:secret@database/ffp_tool`],
+    );
+
+    const repairStatus = await f.repository.jobResult(worker.token, lease.jobId);
+    assert.match(repairStatus.error ?? "", new RegExp(actionable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(repairStatus.error ?? "", /postgresql:\/\/\[redacted\]@database/);
+    assert.doesNotMatch(repairStatus.error ?? "", /admin:secret/);
+
+    await f.pg.query(
+      `UPDATE gpt_jobs SET status='FAILED',payload=(payload::jsonb || jsonb_build_object(
+        'status','FAILED','error','postgresql://admin:secret@database/ffp_tool'))::text WHERE id=$1`,
+      [lease.jobId],
+    );
+    assert.equal(
+      (await f.repository.jobResult(worker.token, lease.jobId)).error,
+      "VALIDATION_FAILED: revise grounded SEO/AEO output or request operator review.",
+    );
+  } finally { await f.pg.close(); }
+});
+
 test("analysis requires actual image fetch receipts bound to the current lease", async () => {
   const f = await fixture();
   try {

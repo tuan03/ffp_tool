@@ -39,6 +39,14 @@ test("B5 finalization accepts formatter strong tags but rejects a literal in the
   const completed = await executeB5ContentGeneration(context, { generator: { generate: async () => draft } });
   assert.match(completed.contentResult?.productDescription ?? "", /<strong>/);
   await assert.rejects(executeB5ContentGeneration(context, { generator: { generate: async () => ({ ...draft, intro: "STRONG floral artwork." }) } }), /literal artwork/i);
+  await assert.rejects(executeB5ContentGeneration(context, { generator: { generate: async () => ({
+    ...draft, intro: "STRONG floral artwork.", closing: "COFFEE floral artwork.",
+  }) } }), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /content\.draft\.intro contains "STRONG"/);
+    assert.match(error.message, /content\.draft\.closing contains "COFFEE"/);
+    return true;
+  });
   await assert.rejects(executeB5ContentGeneration({ ...context,
     conflictResult: { approvedKeywords: ["strong floral handbag"], discardedKeywords: [], conflictReasons: {} },
   }, { generator: { generate: async () => draft } }), /literal artwork/i);

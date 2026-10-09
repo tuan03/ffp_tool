@@ -155,7 +155,13 @@ test("Jeminise rejects material or product-format text in Shopify description", 
       productSeoTitle: draft.productSeoTitle,
       productSeoDescription: draft.productSeoDescription,
     }, draft, facts, KEYWORDS, CONSTRAINTS),
-    /visual-design-only policy/i,
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /visual-design-only policy/i);
+      assert.match(error.message, /found "Materials"/i);
+      assert.match(error.message, /found "microfiber"/i);
+      return true;
+    },
   );
 });
 

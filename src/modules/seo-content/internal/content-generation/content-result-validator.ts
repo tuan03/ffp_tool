@@ -1,4 +1,8 @@
-import { extractDescriptionText, findExcludedLiteral } from "../literal-text-guard";
+import {
+  extractDescriptionText,
+  findExcludedLiterals,
+  formatExcludedLiteralViolations,
+} from "../literal-text-guard";
 import { checkClaimGrounding } from "./claim-guard";
 import {
   ContentGenerationSchemaError,
@@ -32,7 +36,7 @@ const VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS: readonly {
   readonly topic: string;
 }[] = [
   { pattern: /\b(?:comforter|quilt|duvet(?:\s+cover)?|blanket|throw|handbag|purse|wallet|tote|crossbody|shoulder\s+bag|satchel)\b/i, topic: "product format" },
-  { pattern: /\b(?:material|fabric|microfiber|polyester|cotton|wool|silk|leather|canvas|nylon)\b/i, topic: "material" },
+  { pattern: /\b(?:materials?|fabric|microfiber|polyester|cotton|wool|silk|leather|canvas|nylon)\b/i, topic: "material" },
   { pattern: /\b(?:size|sizing|dimension|measurement|capacity)\b/i, topic: "size or capacity" },
   { pattern: /\b\d+(?:\.\d+)?\s*(?:mm|cm|m|inches?|in|feet|foot|ft)\b/i, topic: "dimension" },
   { pattern: /\b(?:wash|care|tumble\s+dry|zipper|corner\s+ties|batting|compartment|pocket|closure|strap|handle)\b/i, topic: "care or construction" },
@@ -177,14 +181,17 @@ export function validateFinalContent(
   keywords: KeywordAllocation,
   constraints: ContentConstraints,
 ): void {
-  const literalViolation = findExcludedLiteral(
-    { result: { ...result, productDescription: extractDescriptionText(result.productDescription) }, draft, keywords },
+  const descriptionText = extractDescriptionText(result.productDescription);
+  const literalViolations = findExcludedLiterals(
+    { result: { ...result, productDescription: descriptionText }, draft, keywords },
     facts.excludedLiteralTexts ?? [],
   );
-  if (literalViolation) {
+  if (literalViolations.length > 0) {
     throw new ContentGroundingViolationError(
-      `Generated SEO content quotes literal artwork text in ${literalViolation.path}`,
-      ["Literal artwork text must remain a generic customization reference"],
+      `Generated SEO content quotes literal artwork text: ${formatExcludedLiteralViolations(literalViolations)}`,
+      literalViolations.map(
+        ({ path, literal }) => `${path} must not quote ${JSON.stringify(literal)}`,
+      ),
     );
   }
 
@@ -217,9 +224,12 @@ export function validateFinalContent(
   }
 
   if (facts.storeProfile?.productDescriptionPolicy?.mode === "visual-design-only") {
-    const violations = VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS
-      .filter(({ pattern }) => pattern.test(result.productDescription))
-      .map(({ topic }) => `${facts.storeProfile?.storeName ?? "Store"} product description must not mention ${topic}`);
+    const violations = VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS.flatMap(({ pattern, topic }) => {
+      const matches = descriptionText.match(new RegExp(pattern.source, "gi")) ?? [];
+      return [...new Set(matches)].map((match) =>
+        `${facts.storeProfile?.storeName ?? "Store"} product description must not mention ${topic} (found ${JSON.stringify(match)})`,
+      );
+    });
     if (violations.length > 0) {
       throw new ContentGroundingViolationError(
         `Product description violates visual-design-only policy: ${violations.join("; ")}`,
