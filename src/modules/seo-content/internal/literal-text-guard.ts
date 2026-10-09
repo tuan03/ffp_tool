@@ -12,10 +12,74 @@ function literalPattern(literal: string, global = false): RegExp | undefined {
 }
 
 export function normalizeExcludedLiterals(literals: readonly string[]): readonly string[] {
-  const normalized = literals
-    .map((literal) => literal.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-  return [...new Set(normalized)];
+  const normalized: string[] = [];
+  let letterRun: string[] = [];
+
+  const flushLetterRun = (): void => {
+    // Vision models sometimes return a vertically printed name as A, M, E, L,
+    // I, A. Guarding each character would reject ordinary English articles and
+    // pronouns, so preserve the artwork text as one enforceable literal instead.
+    if (letterRun.length > 1) normalized.push(letterRun.join(""));
+    letterRun = [];
+  };
+
+  for (const literal of literals) {
+    const candidate = literal.replace(/\s+/g, " ").trim();
+    if (/^\p{L}$/u.test(candidate)) {
+      letterRun.push(candidate);
+      continue;
+    }
+    flushLetterRun();
+    if (candidate) normalized.push(candidate);
+  }
+  flushLetterRun();
+
+  const seen = new Set<string>();
+  return normalized.filter((literal) => {
+    const key = literal.toLocaleLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function findExcludedLiterals(
+  value: unknown,
+  literals: readonly string[],
+  path = "content",
+): readonly { readonly path: string; readonly literal: string }[] {
+  if (typeof value === "string") {
+    return literals
+      .filter((candidate) => literalPattern(candidate)?.test(value))
+      .map((literal) => ({ path, literal }));
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) =>
+      findExcludedLiterals(entry, literals, `${path}[${index}]`),
+    );
+  }
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) =>
+    findExcludedLiterals(entry, literals, `${path}.${key}`),
+  );
+}
+
+export function formatExcludedLiteralViolations(
+  violations: readonly { readonly path: string; readonly literal: string }[],
+  maximumDetails = 12,
+): string {
+  const unique = [...new Map(
+    violations.map((violation) => [
+      `${violation.path}\u0000${violation.literal.toLocaleLowerCase()}`,
+      violation,
+    ]),
+  ).values()];
+  const details = unique
+    .slice(0, maximumDetails)
+    .map(({ path, literal }) => `${path} contains ${JSON.stringify(literal)}`)
+    .join("; ");
+  const remaining = unique.length - maximumDetails;
+  return remaining > 0 ? `${details}; and ${remaining} more violation(s)` : details;
 }
 
 export function findExcludedLiteral(
@@ -23,23 +87,7 @@ export function findExcludedLiteral(
   literals: readonly string[],
   path = "content",
 ): { readonly path: string; readonly literal: string } | undefined {
-  if (typeof value === "string") {
-    const literal = literals.find((candidate) => literalPattern(candidate)?.test(value));
-    return literal ? { path, literal } : undefined;
-  }
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      const match = findExcludedLiteral(value[index], literals, `${path}[${index}]`);
-      if (match) return match;
-    }
-    return undefined;
-  }
-  if (!value || typeof value !== "object") return undefined;
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const match = findExcludedLiteral(entry, literals, `${path}.${key}`);
-    if (match) return match;
-  }
-  return undefined;
+  return findExcludedLiterals(value, literals, path)[0];
 }
 
 export function redactExcludedLiterals(

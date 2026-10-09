@@ -14,6 +14,15 @@ function digest(value: unknown): string { return createHash("sha256").update(can
 function requireLabel(value: string): void {
   if (!value.trim() || value.length > 200 || /[\x00-\x1f]/.test(value)) throw new SeoWorkerError("INVALID_IDENTIFIER");
 }
+function safeValidationError(value: string): string {
+  return value
+    .replace(/\b((?:postgres(?:ql)?|https?):\/\/)[^/\s:@]+:[^@\s/]+@/gi, "$1[redacted]@")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, "$1 [redacted]")
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1000);
+}
 function runOutput(row: Record<string, unknown>): WorkerRun {
   return { id: String(row.id), target: Number(row.target), successful: Number(row.successful),
     state: row.state as WorkerRun["state"], stopReason: row.stop_reason === null ? null : String(row.stop_reason) };
@@ -195,7 +204,20 @@ export class SeoWorkerRepository {
         WHERE w.job_id=$1 AND w.store_id=$2 AND w.worker_id=$3`, [jobId, principal.storeId, principal.workerId])).rows[0];
       if (!row) throw new SeoWorkerError("JOB_NOT_FOUND");
       const job = JSON.parse(String(row.payload)) as GptSeoJob;
-      return { jobId, status: String(row.status), ...(job.error ? { error: "VALIDATION_FAILED: revise grounded SEO/AEO output or request operator review." } : {}) };
+      const validationError = row.status === "NEEDS_CHANGES" && job.error
+        ? safeValidationError(job.error)
+        : "";
+      return {
+        jobId,
+        status: String(row.status),
+        ...(job.error
+          ? {
+              error: validationError
+                ? `VALIDATION_FAILED: ${validationError}`
+                : "VALIDATION_FAILED: revise grounded SEO/AEO output or request operator review.",
+            }
+          : {}),
+      };
     });
   }
 
