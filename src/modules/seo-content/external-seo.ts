@@ -4,7 +4,11 @@ import { validateDraft } from "./internal/content-generation/content-result-vali
 import { FileSeoConflictCorpus } from "./internal/conflict-control/file-seo-conflict-corpus";
 import { isSameProduct } from "./internal/conflict-control/seo-conflict-corpus";
 import { UnofficialGoogleSuggestClient } from "./internal/search-suggestions/google-suggest-client";
-import { findExcludedLiteral } from "./internal/literal-text-guard";
+import {
+  findExcludedLiterals,
+  formatExcludedLiteralViolations,
+  normalizeExcludedLiterals,
+} from "./internal/literal-text-guard";
 import type { ProductUnderstanding, ShoppingContext } from "./internal/domain-types";
 import type { SeoConflictCorpus } from "./internal/conflict-control/seo-conflict-corpus";
 import type { SeoContentDetailedOutput, SeoContentInput, SeoExecutionEnvelope } from "./types";
@@ -59,7 +63,9 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
   const imageIds = input.images.map((image, index) => image.id || `image-${index + 1}`);
   if (imageIds.length === 0 || imageIds.some(id => !evidence.some(entry => entry.imageId === id)) || evidence.some(entry => !imageIds.includes(entry.imageId))) throw new Error("Image evidence must cover exactly the supplied product images; attach missing images before continuing");
   const typography = object(analysis.typography);
-  const visibleTexts = strings(typography.visibleTexts, "visibleTexts");
+  const visibleTexts = normalizeExcludedLiterals(
+    strings(typography.visibleTexts, "visibleTexts"),
+  );
   const customizationSampleTexts = typography.customizationSampleTexts === undefined
     ? []
     : strings(typography.customizationSampleTexts, "customizationSampleTexts");
@@ -119,10 +125,15 @@ export async function finalizeExternalSeo(input: SeoContentInput, analysisPayloa
   if (check.conflicts.some(conflict => conflict.matches.length)) throw new Error("Keyword conflict: check keywords again and choose non-conflicting targets");
   const raw = object(submission);
   const excludedLiteralTexts = analysis.understanding.typography.excludedLiteralTexts ?? [];
-  const submissionViolation = findExcludedLiteral(raw, excludedLiteralTexts);
-  if (submissionViolation) throw new Error(`Generated SEO content quotes literal artwork text in ${submissionViolation.path}`);
-  const keywordViolation = findExcludedLiteral(keywords, excludedLiteralTexts, "keywords");
-  if (keywordViolation) throw new Error(`Generated SEO content quotes literal artwork text in ${keywordViolation.path}`);
+  const literalViolations = findExcludedLiterals(
+    { draft: raw.draft, alts: raw.alts, keywords },
+    excludedLiteralTexts,
+  );
+  if (literalViolations.length > 0) {
+    throw new Error(
+      `Generated SEO content quotes literal artwork text: ${formatExcludedLiteralViolations(literalViolations)}`,
+    );
+  }
   const draft = validateDraft(raw.draft);
   // Arbitrary JSON-LD from an external model must not bypass fact validation.
   if (draft.aeo_json_ld) throw new Error("Submit structured FAQ fields, not arbitrary JSON-LD");

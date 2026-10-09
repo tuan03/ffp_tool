@@ -1,4 +1,7 @@
-import { findExcludedLiteral } from "../literal-text-guard";
+import {
+  findExcludedLiterals,
+  formatExcludedLiteralViolations,
+} from "../literal-text-guard";
 import { checkClaimGrounding } from "./claim-guard";
 import {
   ContentGenerationSchemaError,
@@ -177,14 +180,16 @@ export function validateFinalContent(
   keywords: KeywordAllocation,
   constraints: ContentConstraints,
 ): void {
-  const literalViolation = findExcludedLiteral(
+  const literalViolations = findExcludedLiterals(
     { result, draft, keywords },
     facts.excludedLiteralTexts ?? [],
   );
-  if (literalViolation) {
+  if (literalViolations.length > 0) {
     throw new ContentGroundingViolationError(
-      `Generated SEO content quotes literal artwork text in ${literalViolation.path}`,
-      ["Literal artwork text must remain a generic customization reference"],
+      `Generated SEO content quotes literal artwork text: ${formatExcludedLiteralViolations(literalViolations)}`,
+      literalViolations.map(
+        ({ path, literal }) => `${path} must not quote ${JSON.stringify(literal)}`,
+      ),
     );
   }
 
@@ -217,9 +222,12 @@ export function validateFinalContent(
   }
 
   if (facts.storeProfile?.productDescriptionPolicy?.mode === "visual-design-only") {
-    const violations = VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS
-      .filter(({ pattern }) => pattern.test(result.productDescription))
-      .map(({ topic }) => `${facts.storeProfile?.storeName ?? "Store"} product description must not mention ${topic}`);
+    const violations = VISUAL_DESIGN_ONLY_DESCRIPTION_PATTERNS.flatMap(({ pattern, topic }) => {
+      const match = result.productDescription.match(pattern);
+      return match
+        ? [`${facts.storeProfile?.storeName ?? "Store"} product description must not mention ${topic} (found ${JSON.stringify(match[0])})`]
+        : [];
+    });
     if (violations.length > 0) {
       throw new ContentGroundingViolationError(
         `Product description violates visual-design-only policy: ${violations.join("; ")}`,
