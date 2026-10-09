@@ -6,6 +6,7 @@ import { resolveStoreProfile } from "../../src/modules/seo-content";
 import { assertV2WorkerJob, normalizeSeoEnqueue, parseSeoGenerationInput } from "../custom-gpt-seo/input-contract";
 import type { SeoWorkerRepository } from "../seo-worker/repository";
 import { createWorkerWorkflow } from "../seo-worker/workflow";
+import { SeoWorkerError } from "../seo-worker/protocol";
 
 const storeProfile = {
   profileId: "jeminise-bedding",
@@ -90,7 +91,29 @@ test("worker rejects low-confidence product identity even when reviewRequired is
     typography: { visibleTexts: [], styleSummary: "none" },
     shoppingContext: { targetAudience: [], suitableOccasions: [], useCases: [], buyerIntentKeywords: [] },
     evidence: [{ imageId: "image-1", observation: "A patterned bed covering" }] };
-  await assert.rejects(workflow.analysis("token", lease, "request", analysis), /PRODUCT_IDENTITY_AMBIGUOUS/);
+  await assert.rejects(workflow.analysis("token", lease, "request", analysis), (error: unknown) => {
+    assert.ok(error instanceof SeoWorkerError);
+    assert.equal(error.code, "PRODUCT_IDENTITY_AMBIGUOUS");
+    assert.deepEqual(error.reasons, ["LOW_IDENTITY_CONFIDENCE"]);
+    return true;
+  });
+  await assert.rejects(workflow.analysis("token", lease, "review", { ...analysis, confidence: 0.95, reviewRequired: true }), (error: unknown) => {
+    assert.ok(error instanceof SeoWorkerError);
+    assert.deepEqual(error.reasons, ["IDENTITY_REVIEW_REQUIRED"]);
+    return true;
+  });
+  for (const [requestId, patch, reasons] of [
+    ["unknown", { physicalProductIdentity: "unknown" }, ["UNKNOWN_PRODUCT_IDENTITY"]],
+    ["missing-candidates", { identityCandidates: undefined }, ["MISSING_IDENTITY_CANDIDATES"]],
+    ["invalid-confidence", { confidence: NaN }, ["INVALID_IDENTITY_CONFIDENCE"]],
+  ] as const) {
+    await assert.rejects(workflow.analysis("token", lease, requestId, { ...analysis, confidence: 0.95, ...patch }), (error: unknown) => {
+      assert.ok(error instanceof SeoWorkerError);
+      assert.deepEqual(error.reasons, reasons);
+      return true;
+    });
+  }
+  await assert.doesNotReject(workflow.analysis("token", lease, "grounded", { ...analysis, confidence: 0.6 }));
 });
 
 function normalizePersisted(job: GptSeoJob): GptSeoJob {

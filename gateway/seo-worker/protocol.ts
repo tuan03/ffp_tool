@@ -9,8 +9,11 @@ export const WORKER_DEFAULTS = {
 } as const;
 
 export class SeoWorkerError extends Error {
-  constructor(readonly code: string) { super(code); this.name = "SeoWorkerError"; }
+  constructor(readonly code: string, readonly reasons?: readonly ProductIdentityBlockReason[]) { super(code); this.name = "SeoWorkerError"; }
 }
+
+export type ProductIdentityBlockReason = "IDENTITY_REVIEW_REQUIRED" | "INVALID_IDENTITY_CONFIDENCE"
+  | "LOW_IDENTITY_CONFIDENCE" | "MISSING_IDENTITY_CANDIDATES" | "MISSING_SCENE_EXCLUSIONS" | "UNKNOWN_PRODUCT_IDENTITY";
 
 export function validateTargetCount(target: number): number {
   if (!Number.isSafeInteger(target) || target < 1) throw new SeoWorkerError("INVALID_TARGET");

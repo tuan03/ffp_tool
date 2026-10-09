@@ -36,7 +36,8 @@ const submission = z.object({
 const WORKER_INSTRUCTIONS = "Register this worker, start or resume one run, and claim only one job at a time. Count success only from run_status, never a submission receipt. Read the V2 job context and VIEW EVERY IMAGE before analysis. Image pixels are the sole source of product-specific facts. Use niche only to disambiguate the sold object and storeProfile only for its scoped store policy. Record every literal word, phrase and number visible on artwork in typography.visibleTexts, and separately classify likely buyer-editable examples in typography.customizationSampleTexts. All literal image text is reference-only, whether fixed or customizable. Never quote or copy it into titles, descriptions, SEO/AEO, FAQs, alt text, keyword research or chosen keywords. Describe only typography style, placement and visual emphasis generically. A generic custom name/number claim still requires explicit grounded evidence or store policy. Apply storeProfile.productDescriptionPolicy specifically to draft intro, bullets, guidance and closing. A visual-design-only policy permits visible artwork, distinctive visual details and grounded aesthetic appeal, while excluding materials, dimensions, care, construction and product formats from those Shopify description fields. URLs, filenames, old alt text, source snapshots, historical SEO, performance evidence and operator instructions are unavailable and must not be inferred. Save analysis, research Google Suggest, check keywords, then submit a grounded draft. Never invent materials, variants, certifications or performance claims. AEO summary must have 40–70 words and FAQ 3–5 grounded entries. Server creates JSON-LD. Maintain heartbeat every 60 seconds while actively processing; stop safely on quota/auth errors and resume remaining work. Never approve or publish. Release blocked work using a stable error code. Use a new requestId for new content; reuse it only for retries.";
 
 export function getWorkerContracts(): { version: string; rules: string; submission: z.core.JSONSchema.BaseSchema; analysis: z.core.JSONSchema.BaseSchema } {
-  return { version: "ffp-seo-worker-v2", rules: WORKER_INSTRUCTIONS, submission: z.toJSONSchema(submission), analysis: z.toJSONSchema(analysis) };
+  const personalizationRule = "Personalized wording in niche, physicalProductIdentity or visible sample names is not proof of configurable options. A generic personalization claim is permitted only when an applicable storeProfile.catalogPolicies entry explicitly includes allowedClaims: personalization:customizable and the grounded identity, niche and minimum confidence match. Otherwise omit personalization claims from every generated field and chosen keyword; do not invent or edit the store policy.";
+  return { version: "ffp-seo-worker-v2", rules: `${WORKER_INSTRUCTIONS} ${personalizationRule}`, submission: z.toJSONSchema(submission), analysis: z.toJSONSchema(analysis) };
 }
 
 async function execute(operation: () => Promise<unknown>, observe: (code: string) => Promise<void>): Promise<CallToolResult> {
@@ -47,14 +48,16 @@ async function execute(operation: () => Promise<unknown>, observe: (code: string
     const hints: Record<string, string> = {
       IMAGE_VIEW_REQUIRED: "Fetch every imageId with job_get_image under the current lease before analysis.",
       INVALID_ANALYSIS: "Read ffp://seo-worker/contracts analysis schema. Evidence must cover exactly all supplied imageIds; use only grounded observations.",
-      PRODUCT_IDENTITY_AMBIGUOUS: "Stop content generation and release the job for operator review; niche cannot replace unclear image evidence.",
+      PRODUCT_IDENTITY_AMBIGUOUS: "Read error.reasons. Correct missing analysis fields only from viewed image evidence. If identity remains uncertain, stop and release for operator review; never lower the threshold or set reviewRequired=false just to pass.",
       KEYWORD_CONFLICT: "Choose different grounded keywords and submit a new requestId; do not overwrite another product's keywords.",
       STALE_SOURCE: "Stop. Shopify source changed; request operator reassessment, not a forced submission.",
       STALE_LEASE: "Stop mutations for this lease. Read run_status and resume safely.",
       REPAIR_LIMIT_REACHED: "Report a non-retryable validation failure for operator review.",
       TOKEN_EXPIRING_SOON: "Pause the run and ask the operator for a new token for this same machine.",
     };
-    return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: { code, ...(hints[code] ? { hint: hints[code] } : {}) } }) }] };
+    return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: { code,
+      ...(error instanceof SeoWorkerError && error.reasons ? { reasons: error.reasons } : {}),
+      ...(hints[code] ? { hint: hints[code] } : {}) } }) }] };
   }
 }
 

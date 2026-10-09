@@ -1,4 +1,4 @@
-import { findExcludedLiteral } from "../literal-text-guard";
+import { extractDescriptionText, findExcludedLiteral } from "../literal-text-guard";
 import { checkClaimGrounding } from "./claim-guard";
 import {
   ContentGenerationSchemaError,
@@ -178,7 +178,7 @@ export function validateFinalContent(
   constraints: ContentConstraints,
 ): void {
   const literalViolation = findExcludedLiteral(
-    { result, draft, keywords },
+    { result: { ...result, productDescription: extractDescriptionText(result.productDescription) }, draft, keywords },
     facts.excludedLiteralTexts ?? [],
   );
   if (literalViolation) {

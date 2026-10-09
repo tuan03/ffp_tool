@@ -5,7 +5,7 @@ import { downloadProductImage } from "../custom-gpt-seo/images";
 import { assertV2WorkerJob, SEO_WORKER_SCHEMA_VERSION } from "../custom-gpt-seo/input-contract";
 
 import { SeoWorkerError } from "./protocol";
-import type { WorkerLease } from "./protocol";
+import type { ProductIdentityBlockReason, WorkerLease } from "./protocol";
 import type { SeoWorkerRepository } from "./repository";
 
 export function createWorkerWorkflow(repository: SeoWorkerRepository, dependencies: {
@@ -51,13 +51,16 @@ export function createWorkerWorkflow(repository: SeoWorkerRepository, dependenci
           const candidate = analysis && typeof analysis === "object" && !Array.isArray(analysis)
             ? analysis as Record<string, unknown>
             : {};
-          if (candidate.reviewRequired !== false || typeof candidate.confidence !== "number"
-            || candidate.confidence < 0.6 || candidate.confidence > 1
-            || !Array.isArray(candidate.identityCandidates) || !Array.isArray(candidate.excludedSceneEntities)
-            || !validated.understanding.physicalProductIdentity.trim()
-            || validated.understanding.physicalProductIdentity.trim().toLowerCase() === "unknown") {
-            throw new SeoWorkerError("PRODUCT_IDENTITY_AMBIGUOUS");
-          }
+          const reasons: ProductIdentityBlockReason[] = [];
+          if (candidate.reviewRequired !== false) reasons.push("IDENTITY_REVIEW_REQUIRED");
+          if (typeof candidate.confidence !== "number" || !Number.isFinite(candidate.confidence)
+            || candidate.confidence < 0 || candidate.confidence > 1) reasons.push("INVALID_IDENTITY_CONFIDENCE");
+          else if (candidate.confidence < 0.6) reasons.push("LOW_IDENTITY_CONFIDENCE");
+          if (!Array.isArray(candidate.identityCandidates)) reasons.push("MISSING_IDENTITY_CANDIDATES");
+          if (!Array.isArray(candidate.excludedSceneEntities)) reasons.push("MISSING_SCENE_EXCLUSIONS");
+          const identity = validated.understanding.physicalProductIdentity.trim();
+          if (!identity || identity.toLowerCase() === "unknown") reasons.push("UNKNOWN_PRODUCT_IDENTITY");
+          if (reasons.length) throw new SeoWorkerError("PRODUCT_IDENTITY_AMBIGUOUS", reasons);
         }
         catch (error) {
           if (error instanceof SeoWorkerError) throw error;

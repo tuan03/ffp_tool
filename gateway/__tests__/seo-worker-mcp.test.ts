@@ -11,10 +11,36 @@ import { getQueueSchemaSql } from "../custom-gpt-seo/postgres-database";
 import { createWorkerMcpServer } from "../seo-worker/mcp-server";
 import { SeoWorkerRepository } from "../seo-worker/repository";
 import { createWorkerWorkflow } from "../seo-worker/workflow";
+import { SeoWorkerError } from "../seo-worker/protocol";
 import { handleWorkerMcp } from "../seo-worker/mcp-handler";
 import { handleSeoAgentHttp } from "../seo-worker/admin-handler";
 
 import { createTestEnqueue } from "./seo-v2-fixtures";
+
+test("MCP reports allowlisted identity reasons without leaking rejected analysis", async () => {
+  const observed: string[] = [];
+  const repository = { metrics: { record: async (_token: string, code: string) => { observed.push(code); } } } as unknown as SeoWorkerRepository;
+  const workflow = { ...createWorkerWorkflow(repository, { checkSource: async () => undefined }),
+    analysis: async () => { throw new SeoWorkerError("PRODUCT_IDENTITY_AMBIGUOUS", ["LOW_IDENTITY_CONFIDENCE"]); } };
+  const server = createWorkerMcpServer(repository, workflow, "synthetic-token");
+  const client = new Client({ name: "diagnostics-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  try {
+    const response = await client.callTool({ name: "job_save_analysis", arguments: {
+      lease: { jobId: "job", runId: "run", sessionId: "session", leaseId: "lease", leaseVersion: 1, expiresAt: 10 }, requestId: "analysis-request",
+      analysis: { physicalProductIdentity: "synthetic-private-observation", visualEntities: "pattern", sceneContext: "plain background",
+        identityCandidates: ["rug"], excludedSceneEntities: [], confidence: 0.59, reviewRequired: false,
+        typography: { visibleTexts: [], customizationSampleTexts: [], styleSummary: "none" },
+        shoppingContext: { targetAudience: [], suitableOccasions: [], useCases: [], buyerIntentKeywords: [] },
+        evidence: [{ imageId: "front", observation: "pattern" }] },
+    } });
+    assert.equal(response.isError, true);
+    assert.match(JSON.stringify(response), /LOW_IDENTITY_CONFIDENCE/);
+    assert.doesNotMatch(JSON.stringify(response), /synthetic-private-observation/);
+    assert.deepEqual(observed, ["PRODUCT_IDENTITY_AMBIGUOUS"]);
+  } finally { await client.close(); await server.close(); }
+});
 
 test("operator token issuance grants registry stores only and retains authentication/CSRF checks", async () => {
   const pg = await PGlite.create();
@@ -68,6 +94,7 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     const contracts = await client.readResource({ uri: "ffp://seo-worker/contracts" });
     assert.match(JSON.stringify(contracts), /productSeoTitle/);
     assert.match(JSON.stringify(contracts), /customizationSampleTexts/);
+    assert.match(JSON.stringify(contracts), /personalization:customizable/);
     const status = await client.callTool({ name: "worker_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.match(JSON.stringify(status), /demo/);

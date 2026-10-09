@@ -1,12 +1,9 @@
-import { normalizeExcludedLiterals, redactExcludedLiterals } from "../literal-text-guard";
-import { projectStoreContentProfile } from "../store-profiles/types";
+import { findExcludedLiteral, normalizeExcludedLiterals, redactExcludedLiterals } from "../literal-text-guard";
+import { findApplicableCatalogPolicy, projectStoreContentProfile } from "../store-profiles/types";
 
 import type { SeoContentInput } from "../../types";
 import type { ProductUnderstanding, SeoPipelineContext } from "../domain-types";
 import type { ContentFactSheet } from "./content-generation-types";
-
-const PERSONALIZATION_PATTERN =
-  /\b(personalized|personalised|personalization|personalisation|custom\s+name|your\s+name|custom\s+text|custom\s+photo|upload\s+photo|custom\s+image|monogram|initials|customizable|customisable|engraved|engraving|custom\s+song|custom\s+spotify)\b/i;
 
 const PLACEHOLDER_PATTERN =
   /^(unknown|none|n\/a|not applicable|unspecified|sample|test|sku.*)[\s.]*$/i;
@@ -24,16 +21,20 @@ export function sanitizeFactText(text?: string): string | undefined {
 
 /**
  * Deterministically detects whether the product explicitly supports customization/personalization
- * based on verified source text, OCR text, and niche.
+ * based on an explicit store catalog policy applicable to the grounded identity.
  */
 export function detectPersonalizationEvidence(
-  _source: SeoContentInput,
+  source: SeoContentInput,
   understanding?: ProductUnderstanding,
+  effectiveNiche = source.niche,
 ): boolean {
   // Visible names/initials prove typography, not configurable personalization.
   // V2 requires an explicit applicable store policy for such a claim.
-  void understanding;
-  return false;
+  if (understanding?.reviewRequired === true || understanding?.confidence === undefined
+    || !Number.isFinite(understanding.confidence) || understanding.confidence < 0 || understanding.confidence > 1) return false;
+  const policy = findApplicableCatalogPolicy(source.storeProfile,
+    understanding?.physicalProductIdentity, effectiveNiche, understanding?.confidence);
+  return policy?.allowedClaims.includes("personalization:customizable") ?? false;
 }
 
 /**
@@ -56,6 +57,7 @@ export function buildContentFactSheet(
   const personalizationSupported = detectPersonalizationEvidence(
     source,
     productUnderstanding,
+    effectiveNiche,
   );
 
   const sanitizedNiche = sanitizeFactText(effectiveNiche);
@@ -73,6 +75,9 @@ export function buildContentFactSheet(
   const typographyStyleSummary = productUnderstanding?.typography.styleSummary
     ? redactExcludedLiterals(productUnderstanding.typography.styleSummary, excludedLiteralTexts, "unknown")
     : undefined;
+  // Drop a contaminated concept as a whole rather than changing its meaning by word removal.
+  const safeFraming = (phrases: readonly string[] | undefined): readonly string[] =>
+    (phrases ?? []).filter((phrase) => !findExcludedLiteral(phrase, excludedLiteralTexts));
 
   return {
     originalTitle: [sanitizedProductIdentity, sanitizeFactText(visualEntities)]
@@ -87,9 +92,9 @@ export function buildContentFactSheet(
     excludedLiteralTexts,
     typographyStyleSummary: sanitizeFactText(typographyStyleSummary),
     visualEntities: sanitizeFactText(visualEntities),
-    targetAudience: shoppingContext?.targetAudience ?? [],
-    occasions: shoppingContext?.suitableOccasions ?? [],
-    useCases: shoppingContext?.useCases ?? [],
+    targetAudience: safeFraming(shoppingContext?.targetAudience),
+    occasions: safeFraming(shoppingContext?.suitableOccasions),
+    useCases: safeFraming(shoppingContext?.useCases),
     personalizationSupported,
     storeProfile,
   };

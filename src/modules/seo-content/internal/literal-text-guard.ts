@@ -1,3 +1,19 @@
+import { parseFragment } from "parse5";
+import type { DefaultTreeAdapterMap } from "parse5";
+
+const TEXT_BOUNDARY_TAGS = new Set(["p", "div", "ul", "ol", "li", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "blockquote"]);
+
+/** Decode HTML entities and preserve inline word continuity without matching tag names. */
+export function extractDescriptionText(html: string): string {
+  function visit(node: DefaultTreeAdapterMap["node"]): string {
+    if ("value" in node && node.nodeName === "#text") return node.value;
+    if (!("childNodes" in node)) return "";
+    const text = node.childNodes.map(visit).join("");
+    return "tagName" in node && TEXT_BOUNDARY_TAGS.has(node.tagName) ? ` ${text} ` : text;
+  }
+  return visit(parseFragment(html));
+}
+
 function escapedLiteral(literal: string): string {
   return literal.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
 }
