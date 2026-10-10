@@ -1,3 +1,5 @@
+import type { SeoReviewListPage, SeoReviewListQuery } from "../../shared/seo-review-list";
+
 export type AmazonCrawlerProfile = "default" | "jeminise" | "preaurem";
 
 export type AmazonCrawlerJobStatus =
@@ -764,6 +766,9 @@ export interface AmazonCrawlerReviewEditPatch {
 }
 
 export interface AmazonCrawlerReviewClient {
+  catalog?(query: SeoReviewListQuery): Promise<SeoReviewListPage>;
+  detail?(itemId: string, storeId: string, signal?: AbortSignal): Promise<AmazonCrawlerReviewItem>;
+  subscribeCatalog?(storeId: string, onChange: () => void): () => void;
   list(): Promise<readonly AmazonCrawlerReviewItem[]>;
   subscribe(onItems: (items: readonly AmazonCrawlerReviewItem[]) => void): () => void;
   update(itemId: string, expectedVersion: number, patch: AmazonCrawlerReviewEditPatch): Promise<AmazonCrawlerReviewItem>;

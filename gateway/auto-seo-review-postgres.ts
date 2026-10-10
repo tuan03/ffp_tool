@@ -2,6 +2,8 @@ import { Pool } from "pg";
 
 import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import type { ListSeoReviewItemsOptions, SeoReviewItemRecord, SeoReviewStatus } from "./seo-review-db";
+import { reviewListWhere } from "./review-list-query";
+import type { SeoReviewListItem, SeoReviewListPage, SeoReviewListQuery } from "../src/shared/seo-review-list";
 
 export interface AutoSeoReviewInput extends SeoReviewItemRecord {
   readonly backupId: string;
@@ -159,6 +161,23 @@ export class AutoSeoPostgresReviewRepository {
     params.push(typeof options?.offset === "number" && options.offset >= 0 ? options.offset : 0);
     const result = await this.pool.query<ReviewRow>(`${this.selectSql()} ${where} ORDER BY replace(r.created_at,' ','T')::timestamp DESC LIMIT $${limitIndex} OFFSET $${params.length}`, params);
     return { items: result.rows.map(mapHydrated), total: Number(count.rows[0]?.count ?? 0) };
+  }
+  public async listSummaries(query: SeoReviewListQuery): Promise<SeoReviewListPage> {
+    const catalog = `SELECT r.item_id AS id,r.store_id,r.product_id,
+      COALESCE(r.generated_payload::jsonb->>'productTitle',r.generated_payload::jsonb->>'title',r.title) AS title,r.handle,
+      '' AS asin,COALESCE(r.generated_payload::jsonb#>>'{images,0,webp,url}',r.generated_payload::jsonb#>>'{images,0,sourceUrl}','') AS thumbnail_url,
+      r.review_status AS decision,'idle' AS sync_status,extract(epoch FROM replace(r.updated_at,' ','T')::timestamp)*1000 AS updated_at
+      FROM ${this.schema}.seo_review_items r WHERE r.source_origin='auto_seo' AND r.deleted_at IS NULL`;
+    const where = reviewListWhere(query);
+    const bind = (sql: string): string => { let index = 0; return sql.replace(/\?/g, () => `$${++index}`); };
+    const count = await this.pool.query<{ total: string }>(bind(`SELECT COUNT(*) AS total FROM (${catalog}) catalog WHERE ${where.sql}`), [...where.parameters]);
+    const rows = await this.pool.query<Record<string, unknown>>(bind(`SELECT * FROM (${catalog}) catalog WHERE ${where.sql} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`), [...where.parameters, query.limit ?? 50, query.offset ?? 0]);
+    const items = rows.rows.map((row): SeoReviewListItem => ({ id: String(row.product_id), recordId: String(row.id), storeId: String(row.store_id), source: "auto_seo",
+      productId: String(row.product_id), title: String(row.title), handle: String(row.handle), thumbnailUrl: String(row.thumbnail_url),
+      decision: row.decision as SeoReviewListItem["decision"], syncStatus: "idle", updatedAt: Number(row.updated_at) }));
+    const total = Number(count.rows[0]?.total ?? 0);
+    const next = (query.offset ?? 0) + items.length;
+    return { items, total, nextOffset: next < total ? next : null };
   }
 
   public async updateStatus(itemId: string, status: SeoReviewStatus, notes?: string): Promise<boolean> {

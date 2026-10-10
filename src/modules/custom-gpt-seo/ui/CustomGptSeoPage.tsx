@@ -56,6 +56,18 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const [statusGroup, setStatusGroup] = useState<QueueStatusGroup>("all");
   const [providerFilter, setProviderFilter] = useState<QueueProviderFilter>("all");
   const refreshGeneration = useRef(0);
+  const viewingStore = useRef(storeId);
+  viewingStore.current = storeId;
+  const refreshController = useRef<AbortController | null>(null);
+  const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
+
+  useEffect(() => {
+    let isCurrent = true;
+    void client.settings(storeId).then(next => { if (isCurrent) setSettings(next); }).catch(error => {
+      if (isCurrent) setNotice({ kind: "error", text: error instanceof Error ? error.message : "Không tải được cấu hình SEO." });
+    });
+    return () => { isCurrent = false; };
+  }, [client, storeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,15 +90,15 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
 
   const refresh = useCallback(async (): Promise<void> => {
     const generation = ++refreshGeneration.current;
-    const [nextSettings, nextQueue] = await Promise.all([
-      client.settings(storeId),
-      client.list(storeId, offset, {
+    refreshController.current?.abort();
+    const controller = new AbortController();
+    refreshController.current = controller;
+    const nextQueue = await client.list(storeId, offset, {
+        signal: controller.signal,
         statuses: getStatusesForGroup(statusGroup),
         ...(providerFilter === "all" ? {} : { provider: providerFilter }),
-      }),
-    ]);
+      });
     if (generation !== refreshGeneration.current) return;
-    setSettings(nextSettings);
     setQueue(nextQueue);
   }, [client, offset, providerFilter, statusGroup, storeId]);
 
@@ -101,7 +113,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       .finally(() => {
         if (!cancelled) setIsBusy(false);
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; refreshController.current?.abort(); };
   }, [refresh]);
 
   useEffect(() => {
@@ -135,13 +147,18 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     setNotice(null);
     try {
       await operation();
-      await refresh();
+      if (viewingStore.current !== storeId) return;
+      const settingsPromise = client.settings(storeId).then(nextSettings => {
+        if (viewingStore.current === storeId) setSettings(nextSettings);
+      });
+      await Promise.all([refresh(), settingsPromise]);
+      if (viewingStore.current !== storeId) return;
       if (selectedJobId) setSelectedJob(await client.job(storeId, selectedJobId));
       setNotice({ kind: "success", text: successMessage });
     } catch (error) {
-      setNotice({ kind: "error", text: error instanceof Error ? error.message : "Thao tác thất bại." });
+      if (viewingStore.current === storeId) setNotice({ kind: "error", text: error instanceof Error ? error.message : "Thao tác thất bại." });
     } finally {
-      setIsBusy(false);
+      if (viewingStore.current === storeId) setIsBusy(false);
     }
   }
 
@@ -150,6 +167,8 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     persistBrowserActiveStoreId(nextStoreId);
     setSearchParams({ storeId: nextStoreId }, { replace: true });
     refreshGeneration.current += 1;
+    refreshController.current?.abort();
+    setIsAgentPanelOpen(false);
     setStoreId(nextStoreId);
     setOffset(0);
     setSettings(null);
@@ -216,7 +235,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở SEO Review →</Link>
         </div>
       </header>
-      <details className="rounded-2xl border border-slate-800 p-4"><summary className="cursor-pointer font-medium text-cyan-300">Kết nối Codex <span className="ml-2 text-sm font-normal text-slate-400">Máy xử lý & phiên chạy</span></summary><AgentAccessPanel key={storeId} client={client} storeId={storeId} /></details>
+      <details open={isAgentPanelOpen} onToggle={event => setIsAgentPanelOpen(event.currentTarget.open)} className="rounded-2xl border border-slate-800 p-4"><summary className="cursor-pointer font-medium text-cyan-300">Kết nối Codex <span className="ml-2 text-sm font-normal text-slate-400">Máy xử lý & phiên chạy</span></summary>{isAgentPanelOpen && <AgentAccessPanel key={storeId} client={client} storeId={storeId} />}</details>
 
       {notice && (
         <div role="status" className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${notice.kind === "success" ? "border-emerald-900 bg-emerald-950/40 text-emerald-200" : "border-rose-900 bg-rose-950/40 text-rose-200"}`}>

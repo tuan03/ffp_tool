@@ -5,6 +5,12 @@ import { mockWorkerMetrics } from "./worker-metrics";
 export function createMockCustomGptClient(): CustomGptClient {
   let settings = structuredClone(mockSettings);
   return {
+    reviewList: async () => ({ items: [], total: 0, nextOffset: null }),
+    reviewDetail: async (storeId, jobId) => {
+      const job = mockJobs.find(entry => entry.storeId === storeId && entry.id === jobId);
+      if (!job) throw new Error("Job not found");
+      return { job: structuredClone(job), state: {} };
+    },
     seoVersionLifecycle: async (storeId, productGid) => ({
       flags: { storeId, readEnabled: true, writeEnabled: false },
       current: { storeId, shopifyProductGid: productGid, currentVersion: {

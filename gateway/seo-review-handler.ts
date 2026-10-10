@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { getAutoSeoReviewRepository } from "./auto-seo-review-postgres";
 import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
+import { readReviewListQuery } from "./review-list-query";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import {
   deleteSeoReviewItem,
@@ -16,7 +17,7 @@ import {
 export interface SeoReviewHttpRequestOptions {
   readonly db?: DatabaseSync;
   readonly autoSeoReviewRepository?: Pick<AutoSeoPostgresReviewRepository, "listHydrated" | "findHydrated" | "updateStatus" | "updatePayload"> &
-    Partial<Pick<AutoSeoPostgresReviewRepository, "delete">>;
+    Partial<Pick<AutoSeoPostgresReviewRepository, "delete" | "listSummaries">>;
   readonly authToken?: string;
   readonly maxBodyBytes?: number;
 }
@@ -34,6 +35,12 @@ async function handleAutoSeoReviewRequest(
     if (pathname === "/api/seo-review/items") {
       if (req.method !== "GET") {
         sendJsonResponse(res, 405, { success: false, error: { code: "SEO_REVIEW_METHOD_NOT_ALLOWED", message: "Method Not Allowed" } });
+        return;
+      }
+      if (urlObj.searchParams.get("view") === "summary") {
+        if (!repository.listSummaries) throw new Error("Review catalog is unavailable");
+        const query = readReviewListQuery(urlObj, urlObj.searchParams.get("storeId") ?? "");
+        sendJsonResponse(res, 200, { success: true, ...await repository.listSummaries(query) });
         return;
       }
       const limit = Number(urlObj.searchParams.get("limit") ?? "50");
@@ -105,6 +112,10 @@ async function handleAutoSeoReviewRequest(
     sendJsonResponse(res, updated ? 200 : 404, updated ? { success: true, itemId } : { success: false, error: { code: "SEO_REVIEW_ITEM_NOT_FOUND", message: "Review item not found" } });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    if (message === "Invalid review list query") {
+      sendJsonResponse(res, 400, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message } });
+      return;
+    }
     const integrity = message.startsWith("AUTO_SEO_REVIEW_INTEGRITY");
     sendJsonResponse(res, 500, { success: false, error: { code: integrity ? "AUTO_SEO_REVIEW_INTEGRITY" : "SEO_REVIEW_DB_ERROR", message: integrity ? message : "Auto SEO review database unavailable" } });
   }

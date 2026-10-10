@@ -1466,6 +1466,29 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         items = store.list_product_reviews()
         return {"items": items, "total": len(items)}
 
+    @app.get("/api/v1/product-reviews/catalog")
+    def product_review_catalog(store_id: str = Query(..., alias="storeId", min_length=1, max_length=100),
+                               offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=50),
+                               search: str = Query("", max_length=200), decision: str | None = None) -> dict[str, Any]:
+        if decision not in {None, "pending", "approved", "rejected", "sync_failed"}:
+            raise HTTPException(status_code=422, detail="Invalid review decision filter.")
+        return store.product_review_catalog(store_id, offset=offset, limit=limit, search=search, decision=decision)
+
+    @app.get("/api/v1/product-reviews/catalog/events")
+    async def product_review_catalog_events(request: Request, store_id: str = Query(..., alias="storeId", min_length=1, max_length=100)) -> StreamingResponse:
+        async def stream():
+            previous = None
+            while not await request.is_disconnected():
+                page = await asyncio.to_thread(store.product_review_catalog, store_id, limit=1)
+                revision = (page["total"], [(item["id"], item["updatedAt"]) for item in page["items"]])
+                if previous is not None and revision != previous:
+                    yield "event: review_list_changed\ndata: {}\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+                previous = revision
+                await asyncio.sleep(3)
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
     @app.delete("/api/v1/product-reviews")
     def delete_all_product_reviews() -> dict[str, int]:
         return store.delete_all_product_reviews()
@@ -1494,6 +1517,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 await asyncio.sleep(1)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/v1/product-reviews/{item_id}")
+    def get_product_review(item_id: str, store_id: str = Query(..., alias="storeId", min_length=1, max_length=100)) -> dict[str, Any]:
+        item = store.get_product_review(item_id, store_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Review item was not found in this store.")
+        return item
 
     @app.patch("/api/v1/product-reviews/{item_id}")
     def update_product_review(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:

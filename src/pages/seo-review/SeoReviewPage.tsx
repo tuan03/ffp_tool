@@ -4,7 +4,9 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { environment } from "../../config/environment";
 import { getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { adaptCustomGptReview, loadAllCustomGptReviewRecords } from "./custom-gpt-review";
-import { loadAutoSeoReviews, updateAutoSeoReviewPayload, updateAutoSeoReviewStatus } from "./auto-seo-review-client";
+import { loadAutoSeoReview, updateAutoSeoReviewPayload, updateAutoSeoReviewStatus } from "./auto-seo-review-client";
+import { adaptReviewListItem } from "./review-catalog";
+import { useReviewCatalog } from "./use-review-catalog";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
 import { getModuleApiRunner, type ModuleApiRunner } from "../../modules/module-api";
 import {
@@ -54,6 +56,7 @@ function isDurableAutoSeoReview(product: SeoProductUiViewModel): boolean {
 }
 
 function toPushProductItem(vm: SeoProductUiViewModel): SeoReviewPushProductItem {
+  if (vm.reviewListItem) throw new Error("Review details must be loaded before sync");
   const printMaster = vm.sourcePinterestItem?.printMaster;
   const metafields = printMaster ? [
     {
@@ -210,7 +213,7 @@ export function SeoReviewPage({
   });
 
   useEffect(() => {
-    if (!amazonCrawlerReviews) return;
+    if (!amazonCrawlerReviews || (environment !== "mock" && amazonCrawlerReviews.catalog)) return;
     return amazonCrawlerReviews.subscribe((reviewItems) => {
       const crawlerProducts = reviewItems.map((item) =>
         adaptAmazonCrawlerReviewToViewModel(item, amazonCrawlerReviews.imageUrl),
@@ -237,6 +240,7 @@ export function SeoReviewPage({
   const [conflictModalProduct, setConflictModalProduct] = useState<SeoProductUiViewModel | null>(null);
   const setSyncFeedback = useCallback((fb: { type: "success" | "error" | "warning"; message: string } | null) => {
     if (!fb) return;
+    if (fb.type === "success" && typeof window !== "undefined") window.dispatchEvent(new Event("ffp-review-changed"));
     notifyUser({
       title: fb.type === "success" ? "✓ Thành công" : fb.type === "warning" ? "⚠️ Cảnh báo" : "✕ Lỗi thao tác",
       message: fb.message,
@@ -250,7 +254,7 @@ export function SeoReviewPage({
 
   useEffect(() => {
     if (pendingCrawlerSyncIds.length === 0) return;
-    const targets = pendingCrawlerSyncIds.map((id) => products.find((product) => product.coordinatorReview?.itemId === id));
+    const targets = pendingCrawlerSyncIds.map((id) => products.find((product) => product.id === id || product.coordinatorReview?.itemId === id));
     const succeeded = targets.filter((product) => product?.shopifySyncStatus === "synced").length;
     const failed = targets.filter((product) => product?.shopifySyncStatus === "failed").length;
     if (succeeded + failed < pendingCrawlerSyncIds.length) {
@@ -300,6 +304,7 @@ export function SeoReviewPage({
   });
 
   useEffect(() => {
+    if (environment !== "mock") return;
     let isCancelled = false;
 
     async function loadPersistedAutoSeoReviews(): Promise<void> {
@@ -361,10 +366,11 @@ export function SeoReviewPage({
   }, [selectedStoreId]);
 
   const gptClient = useMemo(() => getCustomGptClient(environment), []);
-  const [gptReviewLoadState, setGptReviewLoadState] = useState<"loading" | "has_reviews" | "empty">("loading");
+  const [, setGptReviewLoadState] = useState<"loading" | "has_reviews" | "empty">("loading");
   const persistedGptReviews = useRef(new Map<string, string>());
   const gptSaveChain = useRef(Promise.resolve());
   useEffect(() => {
+    if (environment !== "mock") return;
     let cancelled = false;
     async function loadGptReviews(): Promise<void> {
       const loaded: SeoProductUiViewModel[] = [];
@@ -391,13 +397,16 @@ export function SeoReviewPage({
 
   useEffect(() => {
     for (const product of products) {
-      if (!product.gptJobId || !product.storeId || !persistedGptReviews.current.has(product.id)) continue;
+      if (product.reviewListItem || !product.gptJobId || !product.storeId || !persistedGptReviews.current.has(product.id)) continue;
       if (product.backendPublish || (product.backendPublishRequired && product.isSyncing)) continue;
       const serialized = JSON.stringify(product);
       if (persistedGptReviews.current.get(product.id) === serialized) continue;
       persistedGptReviews.current.set(product.id, serialized);
       const jobId = product.gptJobId; const targetStore = product.storeId;
-      gptSaveChain.current = gptSaveChain.current.then(async () => { await gptClient.saveReviewState(targetStore, jobId, product); }).catch(() => {
+      gptSaveChain.current = gptSaveChain.current.then(async () => {
+        await gptClient.saveReviewState(targetStore, jobId, product);
+        window.dispatchEvent(new Event("ffp-review-changed"));
+      }).catch(() => {
         persistedGptReviews.current.set(product.id, "");
         notifyUser({ title: "GPT SEO", message: "Không lưu được trạng thái Review. Giữ trang mở và kiểm tra kết nối trước khi tiếp tục.", type: "error" });
       });
@@ -461,7 +470,7 @@ export function SeoReviewPage({
                   defaultProductType: s.defaultProductType || existing?.defaultProductType,
                 });
               }
-              return Array.from(map.values());
+              return environment === "mock" ? Array.from(map.values()) : fetchedStores;
             });
           }
         }
@@ -483,24 +492,6 @@ export function SeoReviewPage({
     if (firstProductStore) return firstProductStore;
     return "capozen";
   }, [urlStoreId, storeId, selectedStoreId, products]);
-
-  useEffect(() => {
-    if (environment === "mock" || gptReviewLoadState === "loading") return;
-    let isCurrent = true;
-    void loadAutoSeoReviews(effectiveStoreId).then((loaded) => {
-      if (!isCurrent) return;
-      setProducts((current) => [
-        ...current.filter((product) => product.gptJobId || product.sourceOrigin !== "auto_seo" || product.storeId?.toLowerCase() !== effectiveStoreId),
-        ...loaded,
-      ]);
-    }).catch((error: unknown) => {
-      if (!isCurrent) return;
-      if (gptReviewLoadState === "has_reviews") return;
-      const message = error instanceof Error ? error.message : String(error);
-      setSyncFeedback({ type: "error", message: `Không thể tải Auto SEO review: ${message}` });
-    });
-    return () => { isCurrent = false; };
-  }, [effectiveStoreId, gptReviewLoadState]);
 
   // High-Resolution Image Zoom Modal State
   const [zoomState, setZoomState] = useState<{
@@ -549,6 +540,86 @@ export function SeoReviewPage({
     onlyMockData: false,
   });
 
+  const catalog = useReviewCatalog({ enabled: environment !== "mock", gpt: gptClient, crawler: amazonCrawlerReviews,
+    source: filter.sourceOriginFilter ?? "all", query: { storeId: effectiveStoreId, search: filter.searchQuery,
+      decision: filter.decisionFilter === "all" ? undefined : filter.decisionFilter } });
+  const productsRef = useRef(products);
+  productsRef.current = products;
+  const viewingStoreRef = useRef(effectiveStoreId);
+  viewingStoreRef.current = effectiveStoreId;
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const detailController = useRef(new AbortController());
+  const hydratedCatalogVersions = useRef(new Map<string, number>());
+
+  useEffect(() => {
+    detailController.current.abort(); detailController.current = new AbortController();
+    hydratedCatalogVersions.current.clear();
+    setSelectedIds(new Set()); setActiveProduct(null); setIsDrawerOpen(false); setIsEditModalOpen(false);
+    setExpandedTableIds(new Set()); setPendingCrawlerSyncIds([]);
+    setFilter({ searchQuery: "", statusFilter: "all", decisionFilter: "all", onlyMockData: false });
+    return () => detailController.current.abort();
+  }, [effectiveStoreId]);
+
+  useEffect(() => {
+    if (environment === "mock" || !catalog.catalog) return;
+    setProducts(current => {
+      const byId = new Map(current.filter(product => product.storeId === effectiveStoreId).map(product => [product.id, product]));
+      const rows = catalog.catalog?.items.map(item => {
+        const existing = byId.get(item.id);
+        if (existing && !existing.reviewListItem && (hydratedCatalogVersions.current.get(item.id) === item.updatedAt || existing.updatedAt >= item.updatedAt)) return existing;
+        return adaptReviewListItem(item);
+      }) ?? [];
+      return [...current.filter(product => product.storeId === effectiveStoreId && (product.sourceOrigin === "pinterest_pod" || (!amazonCrawlerReviews?.catalog && product.coordinatorReview))), ...rows];
+    });
+  }, [catalog.catalog, effectiveStoreId, amazonCrawlerReviews]);
+
+  const hydrateProduct = useCallback(async (product: SeoProductUiViewModel): Promise<SeoProductUiViewModel> => {
+    if (product.storeId && product.storeId !== viewingStoreRef.current) throw new Error("Sản phẩm không thuộc store đang xem.");
+    if (!product.reviewListItem) return product;
+    const item = product.reviewListItem;
+    const signal = AbortSignal.any([detailController.current.signal, AbortSignal.timeout(15_000)]);
+    let loaded: SeoProductUiViewModel;
+    if (item.source === "gpt") {
+      const detail = await gptClient.reviewDetail(item.storeId, item.recordId, signal);
+      loaded = adaptCustomGptReview(detail.job, detail.state);
+    } else if (item.source === "auto_seo") loaded = await loadAutoSeoReview(item.recordId, item.storeId, signal);
+    else {
+      if (!amazonCrawlerReviews?.detail) throw new Error("Crawler Review detail API is unavailable");
+      loaded = adaptAmazonCrawlerReviewToViewModel(await amazonCrawlerReviews.detail(item.recordId, item.storeId, signal), amazonCrawlerReviews.imageUrl);
+    }
+    if (viewingStoreRef.current !== item.storeId || loaded.storeId !== item.storeId) throw new Error("Store đã đổi; hãy chọn lại sản phẩm.");
+    hydratedCatalogVersions.current.set(item.id, item.updatedAt);
+    if (loaded.gptJobId) persistedGptReviews.current.set(loaded.id, JSON.stringify(loaded));
+    productsRef.current = productsRef.current.map(existing => existing.id === product.id && existing.storeId === item.storeId ? loaded : existing);
+    setProducts(current => current.map(existing => existing.id === product.id && existing.storeId === item.storeId ? loaded : existing));
+    return loaded;
+  }, [gptClient, amazonCrawlerReviews]);
+
+  async function hydrateTargets(targets: readonly SeoProductUiViewModel[]): Promise<readonly SeoProductUiViewModel[]> {
+    const loaded: SeoProductUiViewModel[] = [];
+    for (let index = 0; index < targets.length; index += 5) loaded.push(...await Promise.all(targets.slice(index, index + 5).map(hydrateProduct)));
+    return loaded;
+  }
+
+  async function loadTarget(product: SeoProductUiViewModel | undefined): Promise<SeoProductUiViewModel | undefined> {
+    if (!product) return undefined;
+    setIsDetailLoading(true);
+    try {
+      const loaded = await hydrateProduct(product);
+      return loaded.storeId && loaded.storeId !== viewingStoreRef.current ? undefined : loaded;
+    }
+    catch (error: unknown) {
+      if (!(error instanceof Error && error.name === "AbortError")) setSyncFeedback({ type: "error", message: error instanceof Error ? error.message : "Không tải được chi tiết Review." });
+      return undefined;
+    }
+    finally { setIsDetailLoading(false); }
+  }
+
+  useEffect(() => {
+    if (viewMode !== "split" || !activeProduct?.reviewListItem || activeProduct.storeId !== effectiveStoreId) return;
+    void loadTarget(activeProduct).then(product => { if (product && product.storeId === viewingStoreRef.current) setActiveProduct(product); });
+  }, [viewMode, activeProduct?.id, activeProduct?.reviewListItem, effectiveStoreId]);
+
   // Notify approver when new products arrive from other pipelines
   useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
@@ -589,7 +660,7 @@ export function SeoReviewPage({
   useEffect(() => {
     if (typeof window !== "undefined" && window.sessionStorage) {
       try {
-        const legacyProducts = products.filter((product) => !product.coordinatorReview && (environment === "mock" || product.sourceOrigin !== "auto_seo"));
+        const legacyProducts = products.filter((product) => !product.reviewListItem && !product.coordinatorReview && (environment === "mock" || product.sourceOrigin !== "auto_seo"));
         window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(legacyProducts));
       } catch {
         // Storage limit or private mode warning
@@ -717,7 +788,8 @@ export function SeoReviewPage({
   }
 
   // Table row accordion expansion handlers
-  function handleToggleExpandTable(id: string) {
+  async function handleToggleExpandTable(id: string) {
+    if (!expandedTableIds.has(id) && !await loadTarget(productsRef.current.find(product => product.id === id))) return;
     setExpandedTableIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -729,10 +801,11 @@ export function SeoReviewPage({
     });
   }
 
-  function handleToggleExpandAllTable() {
+  async function handleToggleExpandAllTable() {
     if (filteredProducts.length > 0 && filteredProducts.every((p) => expandedTableIds.has(p.id))) {
       setExpandedTableIds(new Set());
     } else {
+      try { await hydrateTargets(filteredProducts); } catch { setSyncFeedback({ type: "error", message: "Không tải được đầy đủ chi tiết để mở các dòng." }); return; }
       setExpandedTableIds(new Set(filteredProducts.map((p) => p.id)));
     }
   }
@@ -746,6 +819,7 @@ export function SeoReviewPage({
     const targetStore = effectiveStoreId;
     let gptSyncToken: string | undefined;
     try {
+      targetProduct = await hydrateProduct(targetProduct);
       if (targetProduct.coordinatorReview) {
         if (!amazonCrawlerReviews) throw new Error("Coordinator Review API is unavailable.");
         const coordinatorItemId = targetProduct.coordinatorReview.itemId;
@@ -905,6 +979,7 @@ export function SeoReviewPage({
   }
 
   async function triggerBatchPushToShopify(targets: readonly SeoProductUiViewModel[]) {
+    targets = await hydrateTargets(targets);
     const crawlerTargets = targets.filter((target) => target.coordinatorReview);
     if (crawlerTargets.length > 0) {
       const concurrency = 3;
@@ -1036,13 +1111,16 @@ export function SeoReviewPage({
   }
 
   // Individual Actions
-  function handleViewProduct(product: SeoProductUiViewModel) {
+  async function handleViewProduct(product: SeoProductUiViewModel) {
+    const loaded = await loadTarget(product);
+    if (!loaded) return;
+    product = loaded;
     setActiveProduct(product);
     setIsDrawerOpen(true);
   }
 
-  function handleRetrySync(id: string) {
-    const target = products.find((p) => p.id === id);
+  async function handleRetrySync(id: string) {
+    const target = await loadTarget(productsRef.current.find((p) => p.id === id));
     if (!target) return;
 
     const syncingTarget: SeoProductUiViewModel = {
@@ -1064,8 +1142,8 @@ export function SeoReviewPage({
     setErrorModalProduct(product);
   }
 
-  function handleForceOverwrite(id: string) {
-    const target = products.find((p) => p.id === id || p.productId === id);
+  async function handleForceOverwrite(id: string) {
+    const target = await loadTarget(productsRef.current.find((p) => p.id === id || p.productId === id));
     if (!target) return;
 
     const syncingTarget: SeoProductUiViewModel = {
@@ -1083,8 +1161,8 @@ export function SeoReviewPage({
     void triggerPushToShopify(syncingTarget, { force: true });
   }
 
-  function handleReRunSeo(id: string) {
-    const target = products.find((p) => p.id === id || p.productId === id);
+  async function handleReRunSeo(id: string) {
+    const target = await loadTarget(productsRef.current.find((p) => p.id === id || p.productId === id));
     if (!target) return;
 
     setProducts((prev) =>
@@ -1108,7 +1186,7 @@ export function SeoReviewPage({
   }
 
   async function handleApproveProduct(id: string): Promise<void> {
-    const target = products.find((p) => p.id === id);
+    const target = await loadTarget(productsRef.current.find((p) => p.id === id));
     if (!target) return;
     if (target.backendPublish) { setSyncFeedback({ type: "warning", message: "Bản Review đã gắn tác vụ publish được giữ nguyên để đối chiếu. Cần revision mới để sửa." }); return; }
     if (target.isSyncing || target.isReverting) return;
@@ -1149,7 +1227,7 @@ export function SeoReviewPage({
   }
 
   async function handleRejectProduct(id: string, reason = "Nội dung SEO chưa đạt yêu cầu"): Promise<void> {
-    const target = products.find((p) => p.id === id);
+    const target = await loadTarget(productsRef.current.find((p) => p.id === id));
     if (target?.backendPublish) { setSyncFeedback({ type: "warning", message: "Không thể thay quyết định của bản Review đã gửi publish." }); return; }
     if (!target || target.isSyncing || target.isReverting) return;
 
@@ -1216,6 +1294,8 @@ export function SeoReviewPage({
     if (targets.length === 0) return;
     if (targets.some(product => product.backendPublish)) { setSyncFeedback({ type: "warning", message: "Bỏ chọn bản Review đã gửi publish trước khi duyệt hàng loạt." }); return; }
     try {
+      targets = await hydrateTargets(targets);
+      if (targets.some(product => product.backendPublish)) throw new Error("Không thể duyệt bản Review đã gửi publish.");
       const updatedReviews = await Promise.all(targets.flatMap((target) => {
         if (!target.coordinatorReview || !amazonCrawlerReviews) return [];
         return [amazonCrawlerReviews.decide(
@@ -1362,7 +1442,7 @@ export function SeoReviewPage({
 
   async function handleRejectSelected(): Promise<void> {
     if (products.some(product => selectedIds.has(product.id) && product.backendPublish)) { setSyncFeedback({ type: "warning", message: "Bỏ chọn bản Review đã gửi publish trước khi từ chối hàng loạt." }); return; }
-    const targets = products.filter(
+    let targets = products.filter(
       (p) => selectedIds.has(p.id) && !p.isSyncing && !p.isReverting,
     );
     if (targets.length === 0) return;
@@ -1370,6 +1450,8 @@ export function SeoReviewPage({
 
     const reason = "Từ chối hàng loạt trong đợt review";
     try {
+      targets = [...await hydrateTargets(targets)];
+      if (targets.some(product => product.backendPublish)) throw new Error("Không thể từ chối bản Review đã gửi publish.");
       const updatedReviews = await Promise.all(targets.flatMap((target) => {
         if (!target.coordinatorReview || !amazonCrawlerReviews) return [];
         return [amazonCrawlerReviews.decide(
@@ -1444,7 +1526,7 @@ export function SeoReviewPage({
   }
 
   async function handleRollbackProduct(id: string): Promise<void> {
-    const target = products.find((p) => p.id === id);
+    const target = await loadTarget(productsRef.current.find((p) => p.id === id));
     if (!target) return;
     if (target.backendPublishRequired) { setSyncFeedback({ type: "warning", message: "Store dùng backend publish không cho hoàn tác trực tiếp từ trình duyệt. Cần tạo và duyệt revision mới." }); return; }
     if (target.isSyncing || target.isReverting) return;
@@ -1535,8 +1617,10 @@ export function SeoReviewPage({
   }
 
   async function handleRollbackSelected(): Promise<void> {
+    try { await hydrateTargets(products.filter(product => selectedIds.has(product.id))); }
+    catch { setSyncFeedback({ type: "error", message: "Không tải được backup để hoàn tác." }); return; }
     if (products.some(product => selectedIds.has(product.id) && product.backendPublishRequired)) { setSyncFeedback({ type: "warning", message: "Không thể hoàn tác trực tiếp các bản backend publish. Cần revision mới." }); return; }
-    const targets = products.filter(
+    const targets = productsRef.current.filter(
       (p) =>
         selectedIds.has(p.id) &&
         Boolean(p.originalBackup) &&
@@ -1675,14 +1759,17 @@ export function SeoReviewPage({
   }
 
   // Edit Handlers
-  function handleEditProduct(product: SeoProductUiViewModel) {
+  async function handleEditProduct(product: SeoProductUiViewModel) {
+    const loaded = await loadTarget(product);
+    if (!loaded) return;
+    product = loaded;
     if (product.isSyncing || product.isReverting) return;
     setEditingProduct(product);
     setIsEditModalOpen(true);
   }
 
   async function handleSaveEdit(id: string, updated: SeoProductEditInput, autoApprove = false): Promise<boolean> {
-    const target = products.find((product) => product.id === id);
+    const target = await loadTarget(productsRef.current.find((product) => product.id === id));
     if (!target) return false;
     if (target.backendPublish) { setSyncFeedback({ type: "warning", message: "Bản đã gửi publish không thể sửa; cần revision mới." }); return false; }
 
@@ -1898,8 +1985,10 @@ export function SeoReviewPage({
   }
 
   // Export approved JSON
-  function handleExportApprovedJson() {
-    const approvedProducts = products.filter((p) => p.reviewDecision === "approved");
+  async function handleExportApprovedJson() {
+    let approvedProducts: readonly SeoProductUiViewModel[];
+    try { approvedProducts = await hydrateTargets(storeScopedProducts.filter((p) => p.reviewDecision === "approved")); }
+    catch { setSyncFeedback({ type: "error", message: "Không tải được chi tiết để xuất JSON." }); return; }
     if (approvedProducts.length === 0) {
       alert("Chưa có sản phẩm nào được phê duyệt (Approved) để xuất file.");
       return;
@@ -1955,8 +2044,9 @@ export function SeoReviewPage({
     }
 
     try {
-      const gptTargets = targets.filter((t) => Boolean(t.gptJobId));
-      const durableTargets = targets.filter((t) => isDurableAutoSeoReview(t));
+      const loadedTargets = await hydrateTargets(targets);
+      const gptTargets = loadedTargets.filter((t) => Boolean(t.gptJobId));
+      const durableTargets = loadedTargets.filter((t) => isDurableAutoSeoReview(t));
 
       if (gptTargets.length > 0) {
         const revisionTargets = gptTargets.filter(target => target.backendPublishRequired);
@@ -2012,7 +2102,7 @@ export function SeoReviewPage({
     try {
       const outcomes = await Promise.allSettled(
         targets.map(async (target) => {
-          await deleteSeoReviewProduct(target, { crawler: amazonCrawlerReviews, gpt: gptClient });
+          await deleteSeoReviewProduct(await hydrateProduct(target), { crawler: amazonCrawlerReviews, gpt: gptClient });
           return target.id;
         }),
       );
@@ -2032,7 +2122,7 @@ export function SeoReviewPage({
     } finally {
       isDeletingReviewsRef.current = false;
     }
-  }, [amazonCrawlerReviews, gptClient, removeProductsFromUi]);
+  }, [amazonCrawlerReviews, gptClient, removeProductsFromUi, hydrateProduct]);
 
   const handleDeleteProduct = useCallback(async (id: string) => {
     const target = products.find((p) => p.id === id);
@@ -2088,7 +2178,7 @@ export function SeoReviewPage({
     return products.filter(
       (p) =>
         selectedIds.has(p.id) &&
-        Boolean(p.originalBackup) &&
+        (Boolean(p.originalBackup) || p.reviewListItem?.source === "auto_seo") &&
         (p.reviewDecision === "approved" || Boolean(p.lastSyncedAt)) &&
         !p.isSyncing &&
         !p.isReverting,
@@ -2120,7 +2210,7 @@ export function SeoReviewPage({
         {/* Quick Stats Badges */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
           <div className="rounded-lg bg-slate-900 border border-slate-800 px-3 py-1.5 text-center">
-            <div className="text-[10px] text-slate-500 font-semibold uppercase">Tổng số</div>
+            <div className="text-[10px] text-slate-500 font-semibold uppercase">{environment === "mock" ? "Tổng số" : "Trong trang"}</div>
             <div className="text-sm font-bold text-slate-200 font-mono">{stats.total}</div>
           </div>
           <div className="rounded-lg bg-slate-900 border border-slate-800 px-3 py-1.5 text-center">
@@ -2168,7 +2258,7 @@ export function SeoReviewPage({
         </div>
       </div>
 
-      {/* Target Shopify Store Destination Card - LOCKED TO PREVENT MISMATCH */}
+      {/* Viewing store selection never changes a product's immutable publish destination. */}
       <div className="flex flex-col gap-3 rounded-xl border border-teal-800/40 bg-gradient-to-r from-slate-900/95 via-slate-900/80 to-teal-950/30 p-3.5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2.5">
@@ -2176,7 +2266,7 @@ export function SeoReviewPage({
               🏪
             </span>
             <span className="text-sm font-semibold text-slate-200">
-              Shopify Store đích:
+              <label htmlFor="review-store">Store đang xem:</label>
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-500/40 bg-teal-500/10 px-2.5 py-1 font-mono text-xs font-bold text-teal-300">
               <span>{effectiveStoreId.toUpperCase()}</span>
@@ -2184,12 +2274,17 @@ export function SeoReviewPage({
                 ({availableStores.find((s) => s.storeId.toLowerCase() === effectiveStoreId.toLowerCase())?.shopDomain || effectiveStoreId})
               </span>
             </span>
-            <span
-              className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[11px] font-semibold text-amber-300"
-              title="Store đích được cố định tự động từ pipeline Crawler / POD để bảo vệ không bị lẫn lộn dữ liệu giữa các store."
-            >
-              🔒 ĐÃ KHÓA THEO PIPELINE
-            </span>
+            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              onChange={event => {
+                const nextStore = event.target.value;
+                setSelectedIds(new Set()); setActiveProduct(null); setIsDrawerOpen(false); setIsEditModalOpen(false);
+                persistBrowserActiveStoreId(nextStore);
+                navigate(`/seo-review?storeId=${encodeURIComponent(nextStore)}`);
+              }}>
+              {!availableStores.some(store => store.storeId === effectiveStoreId) && <option value={effectiveStoreId}>{effectiveStoreId}</option>}
+              {availableStores.map(store => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
+            </select>
+            <span className="text-xs text-slate-400">Đổi store để xem; store đích của từng sản phẩm được giữ nguyên.</span>
           </div>
 
           <div className="text-xs text-slate-400 flex items-center gap-2">
@@ -2227,7 +2322,18 @@ export function SeoReviewPage({
       </div>
 
       {/* Batch Actions & Filters Toolbar */}
+      {environment !== "mock" && <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
+        <span>{catalog.isLoading ? "Đang tải danh sách Review…" : `${catalog.catalog?.total ?? 0} kết quả · Trang ${catalog.page} · Các thao tác hàng loạt áp dụng cho trang hiện tại`}</span>
+        <div className="flex gap-2">
+          <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40">Trang trước</button>
+          <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40">Trang sau</button>
+          <button type="button" onClick={catalog.refresh} className="rounded border border-slate-700 px-3 py-1">Làm mới</button>
+        </div>
+        {catalog.error && <p role="alert" className="w-full text-rose-300">{catalog.error} <button type="button" onClick={catalog.refresh}>Thử lại</button></p>}
+      </div>}
+      {isDetailLoading && <p role="status" className="text-sm text-cyan-300">Đang tải chi tiết sản phẩm…</p>}
       <SeoBatchToolbar
+        isPaged={environment !== "mock"}
         totalCount={storeScopedProducts.length}
         filteredCount={filteredProducts.length}
         crawlCount={stats.crawlCount}
@@ -2346,7 +2452,7 @@ export function SeoReviewPage({
             <ProductSplitView
               products={filteredProducts}
               selectedIds={selectedIds}
-              activeProduct={activeProduct}
+              activeProduct={activeProduct?.reviewListItem ? null : activeProduct}
               currentStoreId={effectiveStoreId}
               onSelectActive={setActiveProduct}
               onToggleSelect={handleToggleSelect}

@@ -2465,6 +2465,49 @@ class CoordinatorStore(CoordinatorObservability):
             "product": product,
         }
 
+    def product_review_catalog(self, store_id: str, *, offset: int = 0, limit: int = 50,
+                               search: str = "", decision: str | None = None) -> dict[str, Any]:
+        review = CrawlProductItem.shopify_result["review"]
+        product = CrawlProductItem.normalized_payload
+        raw = CrawlProductItem.raw_payload
+        store = func.coalesce(review["storeId"].as_string(), CrawlJob.settings["storeId"].as_string(), "")
+        title = func.coalesce(product["title"].as_string(), raw["title"].as_string(), "")
+        handle = func.coalesce(product["handle"].as_string(), raw["handle"].as_string(), "")
+        asin = func.coalesce(product["parentAsin"].as_string(), raw["parentAsin"].as_string(), "")
+        selected_decision = func.coalesce(review["decision"].as_string(), "pending")
+        sync_status = func.coalesce(review["syncStatus"].as_string(), "idle")
+        conditions = [store == store_id, review["decision"].as_string().is_not(None),
+                      CrawlProductItem.status.in_(["waiting_review", "sync_queued", "syncing", "shopify_writing",
+                                                   "completed", "failed", "rejected", "reconciliation_required"])]
+        if search:
+            pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            conditions.append(or_(title.ilike(pattern, escape="\\"), handle.ilike(pattern, escape="\\"), asin.ilike(pattern, escape="\\")))
+        if decision:
+            conditions.append(sync_status == "failed" if decision == "sync_failed" else selected_decision == decision)
+        with self.sessions() as session:
+            total = session.scalar(select(func.count()).select_from(CrawlProductItem).join(CrawlJob).where(*conditions)) or 0
+            rows = session.execute(select(CrawlProductItem.id, CrawlProductItem.updated_at, store, title, handle, asin,
+                                          selected_decision, sync_status, review["syncError"].as_string(),
+                                          func.coalesce(product["media"][0]["processedUrl"].as_string(),
+                                                        product["media"][0]["url"].as_string(), raw["media"][0]["url"].as_string(), ""),
+                                          product["media"][0]["processedFileToken"].as_string())
+                                   .join(CrawlJob).where(*conditions)
+                                   .order_by(CrawlProductItem.updated_at.desc(), CrawlProductItem.id.desc())
+                                   .offset(offset).limit(limit)).all()
+            items = [{"id": row[0], "recordId": row[0], "source": "crawler", "storeId": row[2],
+                      "title": row[3], "handle": row[4], "asin": row[5], "decision": row[6], "syncStatus": row[7],
+                      "syncError": row[8], "thumbnailUrl": row[9], "thumbnailToken": row[10],
+                      "updatedAt": row[1].replace(tzinfo=utc_now().tzinfo).timestamp() * 1000} for row in rows]
+            return {"items": items, "total": total, "nextOffset": offset + len(items) if offset + len(items) < total else None}
+
+    def get_product_review(self, item_id: str, store_id: str) -> dict[str, Any] | None:
+        with self.sessions() as session:
+            item = session.get(CrawlProductItem, item_id)
+            if item is None or item.status == "deleted" or not (item.shopify_result or {}).get("review"):
+                return None
+            snapshot = self._review_snapshot(item, session.get(CrawlJob, item.job_id))
+            return snapshot if snapshot["storeId"] == store_id else None
+
     def list_product_reviews(self) -> list[dict[str, Any]]:
         with self.sessions() as session:
             items = session.scalars(

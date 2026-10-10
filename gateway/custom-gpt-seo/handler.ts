@@ -7,6 +7,7 @@ import type { SeoQueue } from "./queue-contract";
 import { verifyImageSignature, downloadProductImage } from "./images";
 import { createExternalSeoWorkflow } from "./workflow";
 import { parseSeoGenerationInput, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
+import { readReviewListQuery } from "../review-list-query";
 
 export interface CustomGptHandlerOptions {
   readonly queue: SeoQueue;
@@ -123,7 +124,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/reviews", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/reviews", "admin/review-list", "admin/review-detail", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       let result: unknown;
@@ -217,15 +218,23 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           break;
         }
         case "admin/jobs": {
-          const activeBatches = (await queue.activeBatches(storeId));
+          // Expire leases before taking catalog counts; this read may also perform queue housekeeping.
+          const activeBatches = await queue.activeBatches(storeId);
           const filters = parseJobFilters(url);
-          const [jobs, filteredCount] = await Promise.all([
+          const [jobs, filteredCount, counts] = await Promise.all([
             queue.listFiltered(storeId, filters, offset),
             queue.countFiltered(storeId, filters),
+            queue.visibleCounts(storeId),
           ]);
-          result = { jobs: jobs.map(job => ({ ...job, original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts: (await queue.visibleCounts(storeId)), activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
+          result = { jobs: jobs.map(job => ({ ...job, original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
+        case "admin/review-list": {
+          if (!queue.reviewList) throw new Error("Review catalog is unavailable");
+          result = await queue.reviewList(readReviewListQuery(url, storeId));
+          break;
+        }
+        case "admin/review-detail": result = { job: await queue.get(storeId, jobId), state: await queue.reviewState(storeId, jobId) }; break;
         case "admin/reviews": {
           const jobs = (await queue.list(storeId, "REVIEW_READY", offset));
           const total = (await queue.counts(storeId)).REVIEW_READY ?? 0;

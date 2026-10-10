@@ -570,7 +570,7 @@ export function ProductListTable({
                         ) : null}
 
                         {/* Nút Hoàn tác dữ liệu cũ (chỉ hiện khi đã duyệt/sync và có bản backup) */}
-                        {Boolean(product.originalBackup) &&
+                        {(Boolean(product.originalBackup) || product.reviewListItem?.source === "auto_seo") &&
                           (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
                             <button
                               type="button"
@@ -867,7 +867,7 @@ export function ProductListTable({
                             </div>
                             <div className="flex items-center gap-2">
                               {/* Nút Hoàn tác dữ liệu cũ */}
-                              {Boolean(product.originalBackup) &&
+                              {(Boolean(product.originalBackup) || product.reviewListItem?.source === "auto_seo") &&
                                 (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
                                   <button
                                     type="button"

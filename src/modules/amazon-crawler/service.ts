@@ -1,3 +1,5 @@
+import { readSeoReviewListPage } from "../../shared/seo-review-list";
+
 import type {
   AmazonAsinChecker,
   AmazonAsinPreflightResult,
@@ -1367,6 +1369,29 @@ export function createAmazonCrawlerReviewClient({
   };
 
   return {
+    async catalog(query) {
+      const parameters = new URLSearchParams({ storeId: query.storeId, offset: String(query.offset ?? 0), limit: String(query.limit ?? 50) });
+      if (query.search) parameters.set("search", query.search);
+      if (query.decision) parameters.set("decision", query.decision);
+      const value = await readJson(await fetchImplementation(`${reviewUrl}/catalog?${parameters}`, { signal: query.signal }));
+      if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") throw new AmazonCrawlerServiceError("Invalid review catalog.", "INVALID_ENGINE_RESPONSE");
+      return readSeoReviewListPage(value, query.storeId);
+    },
+    async detail(itemId, storeId, signal) {
+      return readReviewItem(await readJson(await fetchImplementation(`${reviewUrl}/${encodeURIComponent(itemId)}?storeId=${encodeURIComponent(storeId)}`, { signal })));
+    },
+    subscribeCatalog(storeId, onChange) {
+      let isStreaming = false;
+      let didConnect = false;
+      const timer = setInterval(() => { if (!isStreaming && document.visibilityState !== "hidden") onChange(); }, 10_000);
+      const source = typeof EventSource === "undefined" ? null : new EventSource(`${reviewUrl}/catalog/events?storeId=${encodeURIComponent(storeId)}`);
+      if (source) {
+        source.onopen = () => { isStreaming = true; if (didConnect) onChange(); didConnect = true; };
+        source.onerror = () => { isStreaming = false; };
+        source.addEventListener("review_list_changed", onChange);
+      }
+      return () => { clearInterval(timer); source?.close(); };
+    },
     async list() {
       return readReviewItems(await readJson(await fetchImplementation(reviewUrl)));
     },

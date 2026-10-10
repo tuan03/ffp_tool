@@ -1,4 +1,6 @@
 import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, ClearQueueResult, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt, SeoProductLifecycleDto, SeoRollbackDraftRequestDto, SeoVersionDiffDto, SeoVersionPageDto } from "./types";
+import { readSeoReviewListPage } from "../../shared/seo-review-list";
+import type { SeoReviewListQuery } from "../../shared/seo-review-list";
 
 export interface GptQueuePage {
   readonly jobs: readonly GptSeoJob[];
@@ -9,6 +11,7 @@ export interface GptQueuePage {
 }
 
 export interface GptQueueFilters {
+  readonly signal?: AbortSignal;
   readonly statuses?: readonly GptSeoJob["status"][];
   readonly provider?: SeoProvider;
 }
@@ -32,7 +35,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function createCustomGptClient(fetcher: typeof fetch = fetch) {
+  const readCache = new Map<string, { expiresAt: number; payload: unknown }>();
+  let cacheRevision = 0;
   async function agentRequest<T>(route: string, storeId: string, body?: unknown): Promise<T> {
+    if (body !== undefined) { readCache.clear(); cacheRevision += 1; }
     const response = await fetcher(`/api/seo-agent/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, {
       method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
       headers: { "Content-Type": "application/json", "x-ffp-agent": "1" },
@@ -73,12 +79,23 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     }
     return await response.json() as T;
   }
-  async function request<T>(route: string, storeId: string, body?: unknown): Promise<T> {
-    const response = await fetcher(`/api/v1/gpt-seo/admin/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  async function request<T>(route: string, storeId: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    const cacheKey = `${storeId}:${route}`;
+    const ttl = route === "settings" ? 30_000 : route.startsWith("jobs?") ? 5_000 : 0;
+    if (body !== undefined) { readCache.clear(); cacheRevision += 1; }
+    const startedRevision = cacheRevision;
+    signal?.throwIfAborted();
+    const cached = body === undefined ? readCache.get(cacheKey) : undefined;
+    if (cached && cached.expiresAt > Date.now()) return structuredClone(cached.payload) as T;
+    const response = await fetcher(`/api/v1/gpt-seo/admin/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, { method: body === undefined ? "GET" : "POST", signal, headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const payload: unknown = await response.json();
     if (!response.ok) {
       const error = payload && typeof payload === "object" && "error" in payload ? payload.error : undefined;
       throw new Error(error && typeof error === "object" && "message" in error ? String(error.message) : `GPT SEO request failed (${response.status})`);
+    }
+    if (body === undefined && ttl > 0 && startedRevision === cacheRevision && !signal?.aborted) {
+      readCache.set(cacheKey, { expiresAt: Date.now() + ttl, payload });
+      if (readCache.size > 30) readCache.delete(readCache.keys().next().value ?? "");
     }
     return payload as T;
   }
@@ -106,6 +123,11 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   }
 
   return {
+    reviewList: async (query: SeoReviewListQuery) => {
+      const params = new URLSearchParams({ offset: String(query.offset ?? 0), limit: String(query.limit ?? 50), search: query.search ?? "", ...(query.decision ? { decision: query.decision } : {}) });
+      return readSeoReviewListPage(await request<unknown>(`review-list?${params}`, query.storeId, undefined, query.signal), query.storeId);
+    },
+    reviewDetail: (storeId: string, jobId: string, signal?: AbortSignal) => request<GptReviewPage["reviews"][number]>(`review-detail?jobId=${encodeURIComponent(jobId)}`, storeId, undefined, signal),
     workerReviewHistory: (storeId: string, jobId: string, offset = 0) => agentRequest<WorkerReviewHistory>(`review-history?jobId=${encodeURIComponent(jobId)}&offset=${offset}`, storeId),
     seoVersionLifecycle: (storeId: string, productGid: string) => agentRequest<SeoProductLifecycleDto>(`versioning/lifecycle?productGid=${encodeURIComponent(productGid)}`, storeId),
     seoVersionHistory: (storeId: string, productGid: string, limit = 25, offset = 0) => agentRequest<SeoVersionPageDto>(`versioning/history?productGid=${encodeURIComponent(productGid)}&limit=${limit}&offset=${offset}`, storeId),
@@ -130,7 +152,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     list: (storeId: string, offset = 0, filters: GptQueueFilters = {}) => {
       const statuses = filters.statuses?.length ? `&statuses=${encodeURIComponent(filters.statuses.join(","))}` : "";
       const provider = filters.provider ? `&provider=${encodeURIComponent(filters.provider)}` : "";
-      return request<GptQueuePage>(`jobs?offset=${offset}${statuses}${provider}`, storeId);
+      return request<GptQueuePage>(`jobs?offset=${offset}${statuses}${provider}`, storeId, undefined, filters.signal);
     },
     reviews: (storeId: string, offset = 0) => request<GptReviewPage>(`reviews?offset=${offset}`, storeId),
     job: (storeId: string, jobId: string) => request<GptSeoJob>(`job?jobId=${encodeURIComponent(jobId)}`, storeId),

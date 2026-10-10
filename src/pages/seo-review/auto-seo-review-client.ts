@@ -71,6 +71,14 @@ export async function loadAutoSeoReviews(storeId: string): Promise<readonly SeoP
   }
 }
 
+export async function loadAutoSeoReview(itemId: string, storeId: string, signal?: AbortSignal): Promise<SeoProductUiViewModel> {
+  const response = await fetch(`/api/seo-review/items/${encodeURIComponent(itemId)}?source=auto_seo`, { signal });
+  if (!response.ok) throw new Error(`Auto SEO review reload failed (${response.status})`);
+  const body = await response.json() as { item: DurableAutoSeoReview };
+  if (body.item?.storeId !== storeId) throw new Error("Review does not belong to the selected store");
+  return mapReview(body.item);
+}
+
 export async function updateAutoSeoReviewStatus(product: SeoProductUiViewModel, status: "pending" | "approved" | "rejected", notes?: string): Promise<void> {
   if (product.sourceOrigin !== "auto_seo" || !product.storeId || !product.productId) return;
   const itemId = `${product.storeId}:${product.productId}`;

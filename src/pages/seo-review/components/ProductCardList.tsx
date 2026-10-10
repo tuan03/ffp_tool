@@ -419,7 +419,7 @@ export function ProductCardList({
                   ) : null}
 
                   {/* Nút Hoàn tác (chỉ hiện khi đã duyệt/sync và có bản backup) */}
-                  {Boolean(product.originalBackup) &&
+                  {(Boolean(product.originalBackup) || product.reviewListItem?.source === "auto_seo") &&
                     (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
                       <button
                         type="button"

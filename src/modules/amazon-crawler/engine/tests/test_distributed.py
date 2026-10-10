@@ -1889,6 +1889,25 @@ class CoordinatorStoreTests(unittest.TestCase):
             self.store.delete_job(str(job["id"]))
         self.assertIsNotNone(self.store.get_job(str(job["id"])))
 
+    def test_review_catalog_scopes_light_rows_and_hydrates_only_the_exact_store_item(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            session.add(CrawlProductItem(
+                id="catalog-item", job_id=job["id"], task_id=task.id, source_key="catalog-source",
+                product_id="catalog-product", client_id="client-a", lease_id="catalog-lease", checksum="catalog-checksum",
+                raw_payload={}, normalized_payload={"title": "Catalog 100%", "media": [{"url": "https://example.test/image", "processedFileToken": "logo-token"}], "variants": [{"detail": "only-on-demand"}]},
+                status="waiting_review", shopify_result={"review": {"decision": "pending", "storeId": "catalog-store"}},
+            ))
+        catalog = self.store.product_review_catalog("catalog-store", limit=1, search="100%")
+        self.assertEqual(catalog["total"], 1)
+        self.assertEqual(catalog["items"][0]["thumbnailToken"], "logo-token")
+        self.assertNotIn("product", catalog["items"][0])
+        self.assertEqual(self.store.product_review_catalog("another-store")["total"], 0)
+        self.assertEqual(self.store.product_review_catalog("catalog-store", decision="approved")["total"], 0)
+        self.assertIsNone(self.store.get_product_review("catalog-item", "another-store"))
+        self.assertEqual(self.store.get_product_review("catalog-item", "catalog-store")["product"]["variants"][0]["detail"], "only-on-demand")
+
     def test_delete_all_reviews_hides_ready_items_but_skips_active_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})
         with self.sessions.begin() as session:

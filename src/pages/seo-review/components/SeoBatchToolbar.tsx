@@ -1,6 +1,7 @@
 import type { SeoReviewFilterState, SeoReviewViewMode } from "../types";
 
 export interface SeoBatchToolbarProps {
+  readonly isPaged?: boolean;
   readonly totalCount: number;
   readonly filteredCount?: number;
   readonly crawlCount?: number;
@@ -37,6 +38,7 @@ export interface SeoBatchToolbarProps {
 }
 
 export function SeoBatchToolbar({
+  isPaged = false,
   totalCount,
   filteredCount,
   crawlCount = 0,
@@ -313,7 +315,7 @@ export function SeoBatchToolbar({
             onClick={onSelectAll}
             className="text-slate-400 hover:text-cyan-400 transition cursor-pointer font-medium"
           >
-            Chọn tất cả
+            {isPaged ? "Chọn trang này" : "Chọn tất cả"}
           </button>
 
           {selectedCount > 0 && (
@@ -361,10 +363,10 @@ export function SeoBatchToolbar({
               onClick={onApproveAllPending}
               disabled={isApprovingAll || isSyncing || isReverting}
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-600 px-3 py-1.5 font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
-              title="Duyệt nhanh toàn bộ sản phẩm đang chờ review của store hiện tại"
+              title={isPaged ? "Duyệt sản phẩm đang chờ trên trang hiện tại" : "Duyệt nhanh toàn bộ sản phẩm đang chờ review của store hiện tại"}
             >
               <span>{isApprovingAll ? "⏳" : "✓"}</span>
-              <span>{isApprovingAll ? `Đang duyệt (${pendingCount})...` : `Duyệt nhanh tất cả (${pendingCount})`}</span>
+              <span>{isApprovingAll ? `Đang duyệt (${pendingCount})...` : `${isPaged ? "Duyệt trang này" : "Duyệt nhanh tất cả"} (${pendingCount})`}</span>
             </button>
           )}
           {selectedCount > 0 && (
@@ -529,11 +531,11 @@ export function SeoBatchToolbar({
             <button
               type="button"
               onClick={onClearAll}
-              title="Xóa toàn bộ danh sách sản phẩm"
+              title={isPaged ? "Xóa sản phẩm trên trang hiện tại" : "Xóa toàn bộ danh sách sản phẩm"}
               className="px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-rose-400 hover:border-rose-900/60 transition cursor-pointer flex items-center gap-1"
             >
               <span>🗑️</span>
-              <span>Xóa</span>
+              <span>{isPaged ? "Xóa trang này" : "Xóa"}</span>
             </button>
           )}
         </div>
