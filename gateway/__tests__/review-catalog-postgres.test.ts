@@ -54,6 +54,8 @@ test("PostgreSQL catalogs scope, paginate and project saved edits without full s
     const receipt = (await pool.query(`SELECT * FROM "${schema}".seo_publish_operations WHERE job_id='51'`)).rows[0];
     const synced = await queue.reviewList({ storeId: "demo", workspace: "history" });
     assert.equal(synced.counts?.history, 2);
+    assert.equal(synced.counts?.synced, 1);
+    assert.equal((await queue.reviewList({ storeId: "demo", workspace: "synced" })).total, 1);
     assert.equal(synced.items.find(row => row.recordId === "51")?.actions?.canDecide, false);
     await queue.archiveReview("demo", "51");
     await queue.archiveReview("demo", "51");
@@ -87,6 +89,12 @@ test("PostgreSQL catalogs scope, paginate and project saved edits without full s
     await auto.saveReview({ ...review, backupId: "archive-backup-2" });
     assert.equal((await auto.findHydrated(review.itemId))?.reviewArchivedAt, undefined);
     assert.equal((await auto.findHydrated(review.itemId))?.originalBackup.productDescription, "Keep backup");
+    await auto.updatePayload(review.itemId, { shopifySyncStatus: "synced" });
+    const legacySynced = await auto.listSummaries({ storeId: "demo", workspace: "synced" });
+    assert.equal(legacySynced.total, 1);
+    assert.equal(legacySynced.counts?.synced, 1);
+    assert.equal(legacySynced.items[0]?.syncStatus, "synced");
+    assert.equal(legacySynced.items[0]?.actions?.canSync, false);
   } finally {
     await queue.close(); await auto.close(); await backups.close();
     await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await pool.end();

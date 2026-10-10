@@ -1,4 +1,4 @@
-import { reviewActions } from "../review-actions";
+import { canStartReviewSync, reviewActions } from "../review-actions";
 import type { SeoProductUiViewModel } from "../types";
 
 export interface ReviewProductActionsProps {
@@ -17,8 +17,7 @@ export function ReviewProductActions(props: ReviewProductActionsProps): React.JS
   return <div className="flex flex-wrap items-center gap-2">
     {props.onView && <button type="button" aria-label="Xem chi tiết sản phẩm" onClick={() => props.onView?.(product)} className={button + " border-slate-700 text-slate-200"}>Xem</button>}
     {actions.canEdit && <button type="button" onClick={() => props.onEdit(product)} className={button + " border-slate-700 text-slate-300"}>Sửa</button>}
-    {actions.canDecide && product.reviewDecision !== "approved" && <button type="button" onClick={() => props.onApprove(product.id)} className={button + " border-emerald-700 text-emerald-300"}>Duyệt</button>}
-    {(actions.canSync || actions.canRetry) && props.onSync && <button type="button" onClick={() => props.onSync?.(product.id)}
+    {canStartReviewSync(product) && props.onSync && <button type="button" onClick={() => props.onSync?.(product.id)}
       className={button + " border-cyan-600 bg-cyan-950 text-cyan-200"}>{actions.canRetry ? "Thử lại Sync" : "Sync Shopify"}</button>}
     {product.shopifySyncStatus === "synced" && product.shopifyAdminUrl && <a href={product.shopifyAdminUrl} target="_blank" rel="noopener noreferrer"
       className={button + " border-teal-800 text-teal-300"}>Mở Shopify ↗</a>}

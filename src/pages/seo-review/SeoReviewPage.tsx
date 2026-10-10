@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { environment } from "../../config/environment";
 import { getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { adaptCustomGptReview, loadAllCustomGptReviewRecords } from "./custom-gpt-review";
-import { loadAutoSeoReview, updateAutoSeoReviewPayload, updateAutoSeoReviewStatus } from "./auto-seo-review-client";
+import { loadAutoSeoReview, saveAutoSeoReviewSyncOutcome, updateAutoSeoReviewPayload, updateAutoSeoReviewStatus } from "./auto-seo-review-client";
 import { adaptReviewListItem } from "./review-catalog";
 import { useReviewCatalog } from "./use-review-catalog";
 import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
@@ -29,7 +29,8 @@ import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { VersionConflictModal } from "./components/VersionConflictModal";
 import { archiveSeoReviewProduct } from "./archive-review-product";
-import { reviewActions, reviewStage } from "./review-actions";
+import { canStartReviewSync, isReviewSynced, reviewActions, reviewStage } from "./review-actions";
+import { prepareReviewSync } from "./prepare-review-sync";
 import { emptySeoReviewCounts } from "../../shared/seo-review-list";
 import type { SeoReviewWorkspace } from "../../shared/seo-review-list";
 import { filterSeoProducts, findNextProductInList } from "./review-navigation";
@@ -536,7 +537,9 @@ export function SeoReviewPage({
 
   const [expandedTableIds, setExpandedTableIds] = useState<ReadonlySet<string>>(new Set());
 
-  const [workspace, setWorkspace] = useState<SeoReviewWorkspace>("work");
+  const [workspace, setWorkspace] = useState<SeoReviewWorkspace>("all");
+  const [pinnedReviewIds, setPinnedReviewIds] = useState<ReadonlySet<string>>(new Set());
+  const inFlightSyncIds = useRef(new Set<string>());
   const [filter, setFilter] = useState<SeoReviewFilterState>({
     searchQuery: "",
     statusFilter: "all",
@@ -544,7 +547,7 @@ export function SeoReviewPage({
     onlyMockData: false,
   });
 
-  const catalog = useReviewCatalog({ enabled: environment !== "mock", gpt: gptClient, crawler: amazonCrawlerReviews,
+  const catalog = useReviewCatalog({ enabled: environment !== "mock", gpt: gptClient, crawler: amazonCrawlerReviews, pinnedIds: pinnedReviewIds,
     source: filter.sourceOriginFilter ?? "all", query: { storeId: effectiveStoreId, search: filter.searchQuery,
       decision: filter.decisionFilter === "all" ? undefined : filter.decisionFilter, workspace,
       stage: filter.stageFilter === "all" ? undefined : filter.stageFilter } });
@@ -562,9 +565,13 @@ export function SeoReviewPage({
     setSelectedIds(new Set()); setActiveProduct(null); setIsDrawerOpen(false); setIsEditModalOpen(false);
     setExpandedTableIds(new Set()); setPendingCrawlerSyncIds([]);
     setFilter({ searchQuery: "", statusFilter: "all", decisionFilter: "all", onlyMockData: false });
-    setWorkspace("work");
+    setWorkspace("all");
     return () => detailController.current.abort();
   }, [effectiveStoreId]);
+
+  useEffect(() => {
+    setPinnedReviewIds(new Set());
+  }, [effectiveStoreId, workspace, filter.sourceOriginFilter, filter.searchQuery, filter.stageFilter, catalog.page]);
 
   useEffect(() => {
     if (environment === "mock" || !catalog.catalog) return;
@@ -572,6 +579,8 @@ export function SeoReviewPage({
       const byId = new Map(current.filter(product => product.storeId === effectiveStoreId).map(product => [product.id, product]));
       const rows = catalog.catalog?.items.map(item => {
         const existing = byId.get(item.id);
+        if (existing && (inFlightSyncIds.current.has(item.id) || pinnedReviewIds.has(item.id) &&
+          (existing.backendPublish || isReviewSynced(existing) && item.syncStatus !== "synced"))) return existing;
         if (existing && !existing.reviewListItem && (hydratedCatalogVersions.current.get(item.id) === item.updatedAt || existing.updatedAt >= item.updatedAt)) {
           return existing.isSyncing ? existing : { ...existing, reviewDecision: item.decision, shopifySyncStatus: item.syncStatus,
             shopifySyncError: item.syncError, reviewActions: item.actions, reviewArchivedAt: item.archivedAt, reviewLifecycleStage: item.stage };
@@ -580,7 +589,29 @@ export function SeoReviewPage({
       }) ?? [];
       return [...current.filter(product => product.storeId === effectiveStoreId && (product.sourceOrigin === "pinterest_pod" || (!amazonCrawlerReviews?.catalog && product.coordinatorReview))), ...rows];
     });
-  }, [catalog.catalog, effectiveStoreId, amazonCrawlerReviews]);
+  }, [catalog.catalog, effectiveStoreId, amazonCrawlerReviews, pinnedReviewIds]);
+
+  useEffect(() => {
+    const fetchDetail = amazonCrawlerReviews?.detail;
+    if (!amazonCrawlerReviews || !fetchDetail || pendingCrawlerSyncIds.length === 0) return;
+    const controller = new AbortController();
+    let isPolling = false;
+    const poll = async () => {
+      if (isPolling) return;
+      isPolling = true;
+      try {
+        await Promise.all(pendingCrawlerSyncIds.map(async id => {
+          const fresh = adaptAmazonCrawlerReviewToViewModel(await fetchDetail(id, effectiveStoreId, controller.signal), amazonCrawlerReviews.imageUrl);
+          if (controller.signal.aborted || inFlightSyncIds.current.has(id)) return;
+          setProducts(current => current.map(product => product.id === id && product.storeId === effectiveStoreId ? mergeCrawlerReviewPollingState(product, fresh) : product));
+        }));
+      } catch (error: unknown) {
+        if (!controller.signal.aborted) setSyncFeedback({ type: "warning", message: "Chưa tải được tiến độ sync. Tác vụ vẫn được giữ trên server; không cần gửi lại." });
+      } finally { isPolling = false; }
+    };
+    const timer = setInterval(() => void poll(), 3000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [amazonCrawlerReviews, pendingCrawlerSyncIds, effectiveStoreId, setSyncFeedback]);
 
   const hydrateProduct = useCallback(async (product: SeoProductUiViewModel): Promise<SeoProductUiViewModel> => {
     if (product.storeId && product.storeId !== viewingStoreRef.current) throw new Error("Sản phẩm không thuộc store đang xem.");
@@ -601,8 +632,9 @@ export function SeoReviewPage({
       reviewArchivedAt: loaded.reviewArchivedAt ?? item.archivedAt, reviewLifecycleStage: item.stage };
     hydratedCatalogVersions.current.set(item.id, item.updatedAt);
     if (loaded.gptJobId) persistedGptReviews.current.set(loaded.id, JSON.stringify(loaded));
-    productsRef.current = productsRef.current.map(existing => existing.id === product.id && existing.storeId === item.storeId ? loaded : existing);
-    setProducts(current => current.map(existing => existing.id === product.id && existing.storeId === item.storeId ? loaded : existing));
+    const displayed = inFlightSyncIds.current.has(product.id) ? { ...loaded, isSyncing: true, shopifySyncStatus: "syncing" as const } : loaded;
+    productsRef.current = productsRef.current.map(existing => existing.id === product.id && existing.storeId === item.storeId ? displayed : existing);
+    setProducts(current => current.map(existing => existing.id === product.id && existing.storeId === item.storeId ? displayed : existing));
     return loaded;
   }, [gptClient, amazonCrawlerReviews]);
 
@@ -653,8 +685,8 @@ export function SeoReviewPage({
               }
             }
             notifyUser({
-              title: "📥 Sản phẩm mới cần kiểm duyệt!",
-              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}${handoff.storeId ? ` cho store ${handoff.storeId.toUpperCase()}` : ""}. Vui lòng kiểm tra và duyệt nội dung SEO.`,
+              title: "📥 Sản phẩm mới sẵn sàng sync!",
+              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}${handoff.storeId ? ` cho store ${handoff.storeId.toUpperCase()}` : ""}. Bạn có thể xem nội dung và bấm Sync Shopify.`,
               type: "info",
               sound: "chime",
               url: handoff.storeId ? `/seo-review?storeId=${encodeURIComponent(handoff.storeId)}` : "/seo-review",
@@ -700,19 +732,23 @@ export function SeoReviewPage({
 
   // 2. Filter products within the scoped store
   const filteredProducts = useMemo(() => {
-    return filterSeoProducts(storeScopedProducts, filter).filter(product => {
+    const matchingIds = new Set(filterSeoProducts(storeScopedProducts, filter).map(product => product.id));
+    return storeScopedProducts.filter(product => {
+      if (pinnedReviewIds.has(product.id)) return true;
+      if (!matchingIds.has(product.id)) return false;
       const stage = reviewStage(product);
-      return (workspace === "all" || (workspace === "history" ? stage === "history" : stage !== "history")) &&
+      return (workspace === "all" || (workspace === "synced" ? isReviewSynced(product) : workspace === "history" ? stage === "history" : stage !== "history")) &&
         (!filter.stageFilter || filter.stageFilter === "all" || stage === filter.stageFilter);
     });
-  }, [storeScopedProducts, filter, workspace]);
+  }, [storeScopedProducts, filter, workspace, pinnedReviewIds]);
 
   const workspaceCounts = useMemo(() => {
-    const counts = catalog.catalog ? { ...catalog.catalog.counts } : emptySeoReviewCounts();
+    const counts = catalog.catalog ? { ...catalog.catalog.counts, synced: catalog.catalog.counts.synced ?? 0 } : { ...emptySeoReviewCounts(), synced: 0 };
     for (const product of storeScopedProducts) {
       if (catalog.catalog && product.sourceOrigin !== "pinterest_pod" && (amazonCrawlerReviews?.catalog || !product.coordinatorReview)) continue;
       if (filter.sourceOriginFilter && filter.sourceOriginFilter !== "all" && product.sourceOrigin !== filter.sourceOriginFilter) continue;
       counts[reviewStage(product)] += 1;
+      if (isReviewSynced(product)) counts.synced += 1;
     }
     return counts;
   }, [catalog.catalog, storeScopedProducts, filter.sourceOriginFilter, amazonCrawlerReviews]);
@@ -722,7 +758,7 @@ export function SeoReviewPage({
       if (!selectedIds.has(product.id)) continue;
       const actions = reviewActions(product);
       if (actions.canDecide && product.reviewDecision !== "approved") counts.approve += 1;
-      if (actions.canSync || actions.canRetry) counts.sync += 1;
+      if (canStartReviewSync(product)) counts.sync += 1;
       if (actions.canArchive) counts.archive += 1;
     }
     return counts;
@@ -927,6 +963,15 @@ export function SeoReviewPage({
       );
 
       if (targetProduct.gptJobId && gptSyncToken) await gptClient.finishSync(targetStore, targetProduct.gptJobId, gptSyncToken, result.success ? "SYNCED" : "UNKNOWN");
+      if (isDurableAutoSeoReview(targetProduct) && !targetProduct.coordinatorReview) {
+        try {
+          await saveAutoSeoReviewSyncOutcome(targetProduct, { shopifySyncStatus: result.success ? "synced" : "failed", shopifyAdminUrl: result.adminUrl });
+        } catch (error: unknown) {
+          notifyUser({ title: "Chưa lưu được trạng thái Review", type: "warning", message: result.success
+            ? "Shopify đã sync thành công nhưng chưa lưu được trạng thái lịch sử. Không gửi lại sản phẩm; cần đối chiếu trước."
+            : "Chưa lưu được trạng thái lỗi sync; xem chi tiết sản phẩm trước khi thử lại." });
+        }
+      }
       if (result.success) {
         notifyUser({
           title: "🛍️ Shopify Sync thành công!",
@@ -1157,25 +1202,26 @@ export function SeoReviewPage({
   }
 
   async function handleRetrySync(id: string) {
-    const target = await loadTarget(productsRef.current.find((p) => p.id === id));
-    if (!target) return;
-    const actions = reviewActions(target);
-    if (!actions.canSync && !actions.canRetry && !actions.canReconcile) return;
-
-    const syncingTarget: SeoProductUiViewModel = {
-      ...target,
-      shopifySyncStatus: "syncing",
-      isSyncing: true,
-      shopifySyncError: undefined,
-      updatedAt: Date.now(),
-    };
-
-    setProducts((prev) =>
-      prev.map((p) => (p.id === id ? syncingTarget : p)),
-    );
-
-    await triggerPushToShopify(syncingTarget);
-    catalog.invalidate();
+    if (inFlightSyncIds.current.has(id)) return;
+    const original = productsRef.current.find(product => product.id === id);
+    if (!original || !canStartReviewSync(original) && !reviewActions(original).canReconcile) return;
+    inFlightSyncIds.current.add(id);
+    setPinnedReviewIds(current => new Set([...current, id]));
+    setProducts(current => current.map(product => product.id === id ? { ...product, isSyncing: true, shopifySyncStatus: "syncing", shopifySyncError: undefined } : product));
+    try {
+      const loaded = await hydrateProduct(original);
+      const prepared = await prepareReviewSync(loaded, { storeId: effectiveStoreId, crawler: amazonCrawlerReviews, gpt: gptClient });
+      const syncingTarget: SeoProductUiViewModel = { ...prepared, isSyncing: true, shopifySyncStatus: "syncing", shopifySyncError: undefined };
+      setProducts(current => current.map(product => product.id === id ? syncingTarget : product));
+      await triggerPushToShopify(prepared);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Không thể chuẩn bị Sync.";
+      setProducts(current => current.map(product => product.id === id ? { ...original, isSyncing: false, shopifySyncError: message } : product));
+      setSyncFeedback({ type: "error", message: `Không thể sync: ${message}` });
+    } finally {
+      inFlightSyncIds.current.delete(id);
+      catalog.invalidate();
+    }
   }
 
   function handleViewSyncError(product: SeoProductUiViewModel) {
@@ -1397,7 +1443,7 @@ export function SeoReviewPage({
   }
 
   async function handleSyncSelected(): Promise<void> {
-    const targets = filteredProducts.filter(product => selectedIds.has(product.id) && (reviewActions(product).canSync || reviewActions(product).canRetry));
+    const targets = filteredProducts.filter(product => selectedIds.has(product.id) && canStartReviewSync(product));
     for (const target of targets) await handleRetrySync(target.id);
     catalog.invalidate();
   }
@@ -2200,7 +2246,7 @@ export function SeoReviewPage({
     if (!confirm("Lưu trữ bản Review này? Giữ nguyên SEO, ảnh, backup và lịch sử; không xóa sản phẩm Shopify.")) return;
     const outcome = await deleteProductsFromReview([target]);
     if (outcome) setSyncFeedback({ type: outcome.errors.length ? "error" : "success",
-      message: outcome.errors.length ? `Không thể lưu trữ: ${outcome.errors[0]}` : "Đã lưu trữ. Nội dung và lịch sử vẫn xem được trong Lịch sử." });
+      message: outcome.errors.length ? `Không thể lưu trữ: ${outcome.errors[0]}` : "Đã lưu trữ. Nội dung và lịch sử vẫn xem được trong Tất cả." });
   }, [deleteProductsFromReview]);
 
   const handleDeleteSelected = useCallback(async () => {
@@ -2209,7 +2255,7 @@ export function SeoReviewPage({
     if (!confirm(`Lưu trữ ${targets.length} bản đã chọn? Không xóa sản phẩm Shopify, SEO, ảnh hoặc backup.`)) return;
     const outcome = await deleteProductsFromReview(targets);
     if (outcome) setSyncFeedback({ type: outcome.errors.length ? "warning" : "success",
-      message: `Đã lưu trữ ${outcome.deletedIds.size}/${targets.length} bản.${outcome.errors.length ? " Bản không thể lưu trữ được giữ nguyên: " + outcome.errors.join("; ") : " Xem lại trong Lịch sử."}` });
+      message: `Đã lưu trữ ${outcome.deletedIds.size}/${targets.length} bản.${outcome.errors.length ? " Bản không thể lưu trữ được giữ nguyên: " + outcome.errors.join("; ") : " Xem lại trong Tất cả."}` });
   }, [selectedIds, deleteProductsFromReview]);
 
   const canRollbackSelectedCount = useMemo(() => {
@@ -2287,7 +2333,7 @@ export function SeoReviewPage({
         {/* Other stores that have products in review queue */}
         {otherStoresWithProducts.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/60 text-xs text-slate-400">
-            <span className="text-slate-500">Các store khác có sản phẩm chờ duyệt:</span>
+            <span className="text-slate-500">Các store khác có bản Review:</span>
             {otherStoresWithProducts.map((os) => (
               <button
                 key={os.storeId}
@@ -2316,7 +2362,7 @@ export function SeoReviewPage({
         <div className="flex gap-2">
           <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40">Trang trước</button>
           <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40">Trang sau</button>
-          <button type="button" onClick={catalog.refresh} className="rounded border border-slate-700 px-3 py-1">Làm mới</button>
+          <button type="button" onClick={() => { setPinnedReviewIds(new Set()); catalog.refresh(); }} className="rounded border border-slate-700 px-3 py-1">Làm mới</button>
         </div>
         {catalog.error && <p role="alert" className="w-full text-rose-300">{catalog.error} <button type="button" onClick={catalog.refresh}>Thử lại</button></p>}
       </div>}
@@ -2340,11 +2386,11 @@ export function SeoReviewPage({
             📝
           </div>
           <h3 className="mt-4 text-base font-bold text-slate-200">
-            {catalog.isLoading ? "Đang tải Review…" : workspace === "history" ? "Chưa có lịch sử phù hợp" : "Không có sản phẩm cần xử lý phù hợp"}
+            {catalog.isLoading ? "Đang tải Review…" : workspace === "synced" ? "Chưa có sản phẩm đã sync phù hợp" : "Không có sản phẩm Review phù hợp"}
           </h3>
           <p className="mt-2 text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            {workspace === "history" ? "Các bản đã sync, bỏ qua hoặc lưu trữ được giữ ở đây để xem lại."
-              : "Các bản đã sync hoặc lưu trữ nằm trong Lịch sử. Đổi bộ lọc để xem các sản phẩm khác."}
+            {workspace === "synced" ? "Sản phẩm sync thành công sẽ xuất hiện ở đây và vẫn xem được trong Tất cả."
+              : "Chọn Tất cả để xem cả bản đã sync hoặc lưu trữ; bản sẵn sàng có thể Sync ngay, không cần duyệt."}
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
             <a

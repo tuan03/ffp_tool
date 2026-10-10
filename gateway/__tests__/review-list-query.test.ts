@@ -22,4 +22,6 @@ test("review workspace filters use server-side stages and reject unknown workspa
   assert.ok(where.parameters.includes("ready"));
   assert.throws(() => readReviewListQuery(new URL("http://test/?workspace=wrong"), "demo"));
   assert.throws(() => readReviewListQuery(new URL("http://test/?stage=wrong"), "demo"));
+  const synced = readReviewListQuery(new URL("http://test/?workspace=synced"), "demo");
+  assert.match(reviewListWhere(synced).sql, /sync_status='synced'/);
 });

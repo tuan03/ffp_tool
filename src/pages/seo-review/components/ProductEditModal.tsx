@@ -124,7 +124,7 @@ function EditModalInner({
                   Sản phẩm này đã đồng bộ trên Shopify Store ({product.storeId ? product.storeId.toUpperCase() : "STORE"})
                 </p>
                 <p className="text-[11px] text-teal-300/80 mt-0.5">
-                  Bấm <strong className="text-white">"✓ Cập nhật & Duyệt ngay"</strong> sẽ tự động lưu, phê duyệt và trực tiếp đồng bộ dữ liệu mới này đè lên Shopify Store.
+                  Bản đã sync được giữ để xem lại; tạo bản SEO mới nếu cần thay đổi nội dung trên Shopify.
                 </p>
               </div>
             </div>
@@ -285,46 +285,6 @@ function EditModalInner({
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-700 text-slate-200 hover:bg-slate-600 transition border border-slate-600"
             >
               {isSaving ? "Đang lưu..." : "Lưu thay đổi"}
-            </button>
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={async () => {
-                if (isSaving) return;
-                setIsSaving(true);
-                setSaveError(null);
-                try {
-                  const wasSaved = await onSave(product.id, {
-                    productTitle,
-                    productDescription,
-                    seoTitle,
-                    seoDescription,
-                    handle,
-                    imageAlts,
-                  }, true);
-                  if (wasSaved) onClose();
-                  else setSaveError("Không thể lưu chỉnh sửa hoặc đồng bộ lên Shopify. Hãy kiểm tra thông báo lỗi và thử lại.");
-                } finally {
-                  setIsSaving(false);
-                }
-              }}
-              className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition shadow-md shadow-emerald-900/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              title={
-                wasAlreadySynced
-                  ? "Cập nhật nội dung, phê duyệt và tự động đồng bộ trực tiếp lên Shopify Store"
-                  : "Lưu các thay đổi này và trực tiếp phê duyệt sản phẩm (Approved) để sẵn sàng đồng bộ lên Shopify"
-              }
-            >
-              <span>✓</span>
-              <span>
-                {isSaving
-                  ? wasAlreadySynced
-                    ? "Đang lưu & Đồng bộ..."
-                    : "Đang lưu..."
-                  : wasAlreadySynced
-                    ? "Cập nhật, Duyệt & Đồng bộ ngay"
-                    : "Cập nhật & Duyệt ngay"}
-              </span>
             </button>
           </div>
         </form>

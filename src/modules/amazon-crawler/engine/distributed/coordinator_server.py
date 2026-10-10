@@ -1473,7 +1473,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                                workspace: str | None = None, stage: str | None = None) -> dict[str, Any]:
         if decision not in {None, "pending", "approved", "rejected", "sync_failed"}:
             raise HTTPException(status_code=422, detail="Invalid review decision filter.")
-        if workspace not in {None, "all", "work", "history"} or stage not in {None, "pending", "ready", "syncing", "failed", "history"}:
+        if workspace not in {None, "all", "work", "history", "synced"} or stage not in {None, "pending", "ready", "syncing", "failed", "history"}:
             raise HTTPException(status_code=422, detail="Invalid review workspace filter.")
         return store.product_review_catalog(store_id, offset=offset, limit=limit, search=search, decision=decision, workspace=workspace, stage=stage)
 

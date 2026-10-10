@@ -1911,6 +1911,8 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertTrue(self.store.archive_product_review("catalog-item", "catalog-store")["archived"])
         self.assertEqual(self.store.product_review_catalog("catalog-store", workspace="work")["total"], 0)
         self.assertEqual(self.store.product_review_catalog("catalog-store", workspace="history")["total"], 1)
+        self.assertEqual(self.store.product_review_catalog("catalog-store", workspace="synced")["total"], 0)
+        self.assertEqual(self.store.product_review_catalog("catalog-store")["counts"]["synced"], 0)
         archived_product = self.store.get_product_review("catalog-item", "catalog-store")["product"]
         self.assertEqual(archived_product["variants"], original["variants"])
         self.assertEqual(archived_product["media"], original["media"])
@@ -1918,6 +1920,23 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertTrue(self.store.decide_product_review("catalog-item", expected_version=2, decision="approved", reason=None)["locked"])
         self.assertIsNone(self.store.get_product_review("catalog-item", "another-store"))
         self.assertEqual(self.store.get_product_review("catalog-item", "catalog-store")["product"]["variants"][0]["detail"], "only-on-demand")
+
+    def test_synced_catalog_excludes_archived_unsynced_reviews(self) -> None:
+        job = self.store.create_job({"urls": ["B0REVIEW01"]})
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            for item_id, sync_status in (("synced-catalog", "synced"), ("archived-catalog", "idle")):
+                session.add(CrawlProductItem(
+                    id=item_id, job_id=job["id"], task_id=task.id, source_key=item_id, product_id=item_id,
+                    client_id="client-a", lease_id=item_id, checksum=item_id, raw_payload={}, normalized_payload={"title": item_id},
+                    status="completed" if sync_status == "synced" else "rejected",
+                    shopify_result={"review": {"decision": "approved", "storeId": "catalog-store", "syncStatus": sync_status, "archivedAt": 10}},
+                ))
+        synced = self.store.product_review_catalog("catalog-store", workspace="synced")
+        self.assertEqual(synced["total"], 1)
+        self.assertEqual(synced["items"][0]["id"], "synced-catalog")
+        self.assertEqual(synced["counts"]["history"], 2)
+        self.assertEqual(synced["counts"]["synced"], 1)
 
     def test_delete_all_reviews_hides_ready_items_but_skips_active_sync(self) -> None:
         job = self.store.create_job({"urls": ["B0REVIEW01", "B0REVIEW02"]})

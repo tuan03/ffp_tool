@@ -2505,6 +2505,8 @@ class CoordinatorStore(CoordinatorObservability):
             conditions.append(review_stage != "history")
         elif workspace == "history":
             conditions.append(review_stage == "history")
+        elif workspace == "synced":
+            conditions.append(sync_status == "synced")
         if stage:
             conditions.append(review_stage == stage)
         if search:
@@ -2514,6 +2516,7 @@ class CoordinatorStore(CoordinatorObservability):
             conditions.append(sync_status == "failed" if decision == "sync_failed" else selected_decision == decision)
         with self.sessions() as session:
             counts = {key: 0 for key in ("pending", "ready", "syncing", "failed", "history")}
+            counts["synced"] = session.scalar(select(func.count()).select_from(CrawlProductItem).join(CrawlJob).where(*count_conditions, sync_status == "synced")) or 0
             for selected_stage, count in session.execute(select(review_stage, func.count()).select_from(CrawlProductItem).join(CrawlJob).where(*count_conditions).group_by(review_stage)):
                 counts[selected_stage] = count
             total = session.scalar(select(func.count()).select_from(CrawlProductItem).join(CrawlJob).where(*conditions)) or 0

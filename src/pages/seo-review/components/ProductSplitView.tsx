@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { reviewActions } from "../review-actions";
 import { ReviewProductActions } from "./ReviewProductActions";
+import { ReviewStatusBadge } from "./ReviewStatusBadge";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SeoSerpPreview } from "./SeoSerpPreview";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
@@ -151,28 +152,6 @@ export function ProductSplitView({
     return (
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
         Failed
-      </span>
-    );
-  }
-
-  function renderReviewBadge(decision: "pending" | "approved" | "rejected") {
-    if (decision === "approved") {
-      return (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-700">
-          ✓ Approved
-        </span>
-      );
-    }
-    if (decision === "rejected") {
-      return (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-950/80 text-rose-300 border border-rose-700">
-          ✕ Rejected
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">
-        Pending
       </span>
     );
   }
@@ -365,7 +344,7 @@ export function ProductSplitView({
 
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     <SourceOriginBadge product={product} showStatusHint={false} targetStoreId={currentStoreId} />
-                    {renderReviewBadge(product.reviewDecision)}
+                    <ReviewStatusBadge product={product} />
                     {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
                     {renderShopifySyncBadge(product)}
                     {product.isSyncing && (
@@ -468,7 +447,7 @@ export function ProductSplitView({
                 <div className="flex items-center gap-2 flex-wrap">
                   <SourceOriginBadge product={activeProduct} showStore targetStoreId={currentStoreId} />
                   <span className="text-xs text-slate-400">| Trạng thái:</span>
-                  {renderReviewBadge(activeProduct.reviewDecision)}
+                  <ReviewStatusBadge product={activeProduct} />
                   {renderShopifySyncBadge(activeProduct)}
                 </div>
                 <div className="flex items-center gap-2">

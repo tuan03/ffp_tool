@@ -1,7 +1,7 @@
 /** Review lifecycle shared by the UI and independent catalog data sources. */
 export type SeoReviewStage = "pending" | "ready" | "syncing" | "failed" | "history";
-export type SeoReviewWorkspace = "work" | "history" | "all";
-export type SeoReviewCounts = Readonly<Record<SeoReviewStage, number>>;
+export type SeoReviewWorkspace = "work" | "history" | "all" | "synced";
+export type SeoReviewCounts = Readonly<Record<SeoReviewStage, number> & { synced?: number }>;
 export interface SeoReviewActions {
   readonly canEdit: boolean;
   readonly canDecide: boolean;
@@ -115,7 +115,8 @@ export function readSeoReviewListPage(value: unknown, storeId: string): SeoRevie
       if (!Number.isSafeInteger(fields[key]) || Number(fields[key]) < 0) throw new Error("Invalid review counts");
       parsed[key] = Number(fields[key]);
     }
-    counts = parsed;
+    if (fields.synced !== undefined && (!Number.isSafeInteger(fields.synced) || Number(fields.synced) < 0)) throw new Error("Invalid synced review count");
+    counts = { ...parsed, ...(fields.synced !== undefined ? { synced: Number(fields.synced) } : {}) };
   }
   return { items, total: Number(value.total), counts, nextOffset: value.nextOffset === null ? null : Number(value.nextOffset) };
 }

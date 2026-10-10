@@ -11,6 +11,17 @@ export interface ReviewCatalog {
   readonly counts: SeoReviewCounts;
 }
 
+/** A timestamp change must not move a card under the pointer during background refresh. */
+export function stabilizeReviewCatalogItems(current: readonly SeoReviewListItem[], incoming: readonly SeoReviewListItem[], pinnedIds: ReadonlySet<string>): readonly SeoReviewListItem[] {
+  const byId = new Map(incoming.map(item => [item.id, item]));
+  const retained = current.flatMap(item => {
+    const fresh = byId.get(item.id);
+    byId.delete(item.id);
+    return fresh ? [fresh] : pinnedIds.has(item.id) ? [item] : [];
+  });
+  return [...retained, ...byId.values()];
+}
+
 export function mergeReviewCatalogPages(pages: Partial<Record<SeoReviewListItem["source"], SeoReviewListPage>>, offsets: ReviewOffsets): ReviewCatalog {
   const items = Object.values(pages).flatMap(page => [...page.items])
     .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id)).slice(0, 50);
@@ -22,7 +33,8 @@ export function mergeReviewCatalogPages(pages: Partial<Record<SeoReviewListItem[
     if (page.counts) for (const key of Object.keys(counts) as (keyof typeof counts)[]) counts[key] += page.counts[key];
   }
   const hasNextPage = Object.entries(pages).some(([source, page]) => nextOffsets[source as SeoReviewListItem["source"]] < page.total);
-  return { items, total, counts, nextOffsets, hasNextPage };
+  const synced = Object.values(pages).reduce((count, page) => count + (page.counts?.synced ?? 0), 0);
+  return { items, total, counts: { ...counts, synced }, nextOffsets, hasNextPage };
 }
 
 export function adaptReviewListItem(item: SeoReviewListItem): SeoProductUiViewModel {

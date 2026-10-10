@@ -172,7 +172,7 @@ export class AutoSeoPostgresReviewRepository {
     const catalog = reviewStageSql(`SELECT r.item_id AS id,r.store_id,r.product_id,
       COALESCE(r.generated_payload::jsonb->>'productTitle',r.generated_payload::jsonb->>'title',r.title) AS title,r.handle,
       '' AS asin,COALESCE(r.generated_payload::jsonb#>>'{images,0,webp,url}',r.generated_payload::jsonb#>>'{images,0,sourceUrl}','') AS thumbnail_url,
-      r.review_status AS decision,'idle' AS sync_status,
+      r.review_status AS decision,COALESCE(r.generated_payload::jsonb->>'shopifySyncStatus','idle') AS sync_status,
       COALESCE(extract(epoch FROM replace(r.archived_at,' ','T')::timestamp)*1000,0) AS archived_at,
       false AS is_superseded,false AS is_unresolved,extract(epoch FROM replace(r.updated_at,' ','T')::timestamp)*1000 AS updated_at
       FROM ${this.schema}.seo_review_items r WHERE r.source_origin='auto_seo' AND r.deleted_at IS NULL`);
@@ -185,12 +185,13 @@ export class AutoSeoPostgresReviewRepository {
     for (const row of grouped.rows) counts[row.review_stage as keyof typeof counts] = Number(row.total);
     const items = rows.rows.map((row): SeoReviewListItem => ({ id: String(row.product_id), recordId: String(row.id), storeId: String(row.store_id), source: "auto_seo",
       productId: String(row.product_id), title: String(row.title), handle: String(row.handle), thumbnailUrl: String(row.thumbnail_url),
-      decision: row.decision as SeoReviewListItem["decision"], syncStatus: "idle", updatedAt: Number(row.updated_at),
+      decision: row.decision as SeoReviewListItem["decision"], syncStatus: row.sync_status as SeoReviewListItem["syncStatus"], updatedAt: Number(row.updated_at),
       archivedAt: Number(row.archived_at) || undefined, stage: row.review_stage as SeoReviewListItem["stage"],
-      actions: getSeoReviewActions({ decision: row.decision as SeoReviewListItem["decision"], syncStatus: "idle", archivedAt: Number(row.archived_at) }) }));
+      actions: getSeoReviewActions({ decision: row.decision as SeoReviewListItem["decision"], syncStatus: row.sync_status as SeoReviewListItem["syncStatus"], archivedAt: Number(row.archived_at) }) }));
     const total = Number(count.rows[0]?.total ?? 0);
     const next = (query.offset ?? 0) + items.length;
-    return { items, total, counts, nextOffset: next < total ? next : null };
+    const syncedCount = await this.pool.query<{ total: string }>(`SELECT COUNT(*) AS total FROM (${catalog}) catalog WHERE store_id=$1 AND sync_status='synced'`, [query.storeId]);
+    return { items, total, counts: { ...counts, synced: Number(syncedCount.rows[0]?.total ?? 0) }, nextOffset: next < total ? next : null };
   }
 
   public async archive(itemId: string, storeId: string): Promise<boolean> {

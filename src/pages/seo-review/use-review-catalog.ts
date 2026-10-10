@@ -6,7 +6,7 @@ import type { AmazonCrawlerReviewClient } from "../../modules/amazon-crawler";
 import type { CustomGptClient } from "../../modules/custom-gpt-seo";
 import type { SeoReviewListPage, SeoReviewListQuery } from "../../shared/seo-review-list";
 
-import { mergeReviewCatalogPages } from "./review-catalog";
+import { mergeReviewCatalogPages, stabilizeReviewCatalogItems } from "./review-catalog";
 import type { ReviewOffsets } from "./review-catalog";
 
 type Catalog = ReturnType<typeof mergeReviewCatalogPages>;
@@ -15,8 +15,11 @@ const cache = new Map<string, { savedAt: number; catalog: Catalog }>();
 
 export function useReviewCatalog(options: {
   enabled: boolean; query: SeoReviewListQuery; source: string; gpt: CustomGptClient; crawler?: AmazonCrawlerReviewClient;
+  pinnedIds?: ReadonlySet<string>;
 }) {
   const { enabled, query, source, gpt, crawler } = options;
+  const pinnedIds = useRef(options.pinnedIds ?? new Set<string>());
+  pinnedIds.current = options.pinnedIds ?? new Set<string>();
   const [history, setHistory] = useState<readonly ReviewOffsets[]>([EMPTY_OFFSETS]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const displayedKey = useRef("");
@@ -61,7 +64,7 @@ export function useReviewCatalog(options: {
     const key = JSON.stringify([identity, offsets]);
     const cached = cache.get(key);
     const isWarm = cached !== undefined || displayedKey.current === key;
-    if (cached) setCatalog(cached.catalog);
+    if (cached && displayedKey.current !== key) setCatalog(cached.catalog);
     setIsLoading(!isWarm); setIsRefreshing(isWarm); setError(null); isFetching.current = true;
     const request = { ...query, search, limit: 50, signal: controller.signal };
     const pages: Partial<Record<keyof ReviewOffsets, SeoReviewListPage>> = {};
@@ -85,9 +88,13 @@ export function useReviewCatalog(options: {
       if (controller.signal.aborted || generation.current !== currentGeneration) return;
       const merged = mergeReviewCatalogPages(pages, offsets);
       cache.set(key, { savedAt: Date.now(), catalog: merged });
+      const isSamePage = displayedKey.current === key || cached !== undefined;
       displayedKey.current = key;
       if (cache.size > 20) cache.delete(cache.keys().next().value ?? "");
-      setCatalog(current => JSON.stringify(current) === JSON.stringify(merged) ? current : merged);
+      setCatalog(current => {
+        const stable = current && isSamePage ? { ...merged, items: stabilizeReviewCatalogItems(current.items, merged.items, pinnedIds.current) } : merged;
+        return JSON.stringify(current) === JSON.stringify(stable) ? current : stable;
+      });
     }
     void load().catch((cause: unknown) => {
       if (!controller.signal.aborted && generation.current === currentGeneration) setError(cause instanceof Error ? cause.message : "Không tải được Review.");

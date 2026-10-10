@@ -5,6 +5,7 @@ import type { CustomGptClient } from "../../../modules/custom-gpt-seo";
 import { sanitizeHtmlDescription } from "../sanitize-html";
 import { reviewActions } from "../review-actions";
 import { ReviewProductActions } from "./ReviewProductActions";
+import { ReviewStatusBadge } from "./ReviewStatusBadge";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { serializeProductRawJson } from "../product-raw-json-helper";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
@@ -217,7 +218,7 @@ export function ProductDetailDrawer({
                 storeId={product.storeId || currentStoreId || ""} productGid={product.productId} />}
             {product.backendPublishRequired && (
               <section className="rounded-xl border border-cyan-800 bg-slate-900 p-4" aria-label="Backend publish">
-                <h3 className="font-semibold text-cyan-300">Duyệt và Sync là hai bước riêng</h3>
+                <h3 className="font-semibold text-cyan-300">Sync trực tiếp qua backend</h3>
                 <p>Sync được lưu trên server, không cần giữ tab mở. Vendor, handle, giá và variants không được gửi cập nhật.</p>
                 {product.backendPublish && <p className="mt-2 break-all">Tác vụ: {product.backendPublish.id} · {product.backendPublish.state}{product.backendPublish.errorCode ? ` · ${product.backendPublish.errorCode}` : ""}</p>}
                 {product.originalBackup && <details className="mt-3">
@@ -247,19 +248,7 @@ export function ProductDetailDrawer({
                   </span>
                 )}
                 <span className="text-xs font-semibold uppercase text-slate-400">| Trạng thái:</span>
-                {product.reviewDecision === "approved" ? (
-                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-700">
-                    ✓ ĐÃ PHÊ DUYỆT (Approved)
-                  </span>
-                ) : product.reviewDecision === "rejected" ? (
-                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-rose-950 text-rose-300 border border-rose-700">
-                    ✕ TỪ CHỐI (Rejected)
-                  </span>
-                ) : (
-                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                    ⏳ CHỜ REVIEW (Pending)
-                  </span>
-                )}
+                <ReviewStatusBadge product={product} />
 
                 {/* Shopify Store Sync Badge */}
                 {product.shopifySyncStatus === "queued" && (

@@ -1,5 +1,5 @@
 import { adaptSeoOutputToViewModel } from "./seo-content-ui-adapter";
-import type { SeoProductBackup, SeoProductEditInput, SeoProductUiViewModel } from "./types";
+import type { SeoProductBackup, SeoProductEditInput, SeoProductUiViewModel, ShopifySyncStatus } from "./types";
 
 interface DurableAutoSeoReview {
   readonly itemId: string;
@@ -49,12 +49,23 @@ function mapReview(review: DurableAutoSeoReview): SeoProductUiViewModel {
   const imageAlts = Array.isArray(output.imageAlts) ? output.imageAlts : [];
   return {
     ...mapped,
+    shopifySyncStatus: ["idle", "queued", "syncing", "synced", "failed"].includes(String(output.shopifySyncStatus)) ? output.shopifySyncStatus as ShopifySyncStatus : "idle",
+    shopifyAdminUrl: typeof output.shopifyAdminUrl === "string" ? output.shopifyAdminUrl : undefined,
     reviewArchivedAt: review.reviewArchivedAt,
     images: mapped.images.map((image, index) => typeof imageAlts[index] === "string" ? { ...image, alt: { value: imageAlts[index] as string, source: "real" as const } } : image),
     sourceShopifyUpdatedAt: review.shopifyUpdatedAt ?? undefined,
     rejectionReason: review.reviewStatus === "rejected" ? review.notes ?? undefined : undefined,
     updatedAt: Number.isFinite(Date.parse(review.updatedAt)) ? Date.parse(review.updatedAt) : Date.now(),
   };
+}
+
+export async function saveAutoSeoReviewSyncOutcome(product: SeoProductUiViewModel, outcome: { readonly shopifySyncStatus: "synced" | "failed"; readonly shopifyAdminUrl?: string }): Promise<void> {
+  if (product.sourceOrigin !== "auto_seo" || product.gptJobId || !product.storeId || !product.productId) throw new Error("Invalid legacy Review sync outcome");
+  const itemId = `${product.storeId}:${product.productId}`;
+  const response = await fetch(`/api/seo-review/items/${encodeURIComponent(itemId)}/update?source=auto_seo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payload: outcome }),
+  });
+  if (!response.ok) throw new Error(`Auto SEO sync receipt save failed (${response.status})`);
 }
 
 export async function loadAutoSeoReviews(storeId: string): Promise<readonly SeoProductUiViewModel[]> {

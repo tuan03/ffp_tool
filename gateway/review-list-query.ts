@@ -9,7 +9,7 @@ export function readReviewListQuery(url: URL, storeId: string): SeoReviewListQue
   const stage = url.searchParams.get("stage") ?? "";
   if (!storeId || !Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 50 || search.length > 200 ||
     (decision && !["pending", "approved", "rejected", "sync_failed"].includes(decision)) ||
-    (workspace && !["work", "history", "all"].includes(workspace)) ||
+    (workspace && !["work", "history", "all", "synced"].includes(workspace)) ||
     (stage && !["pending", "ready", "syncing", "failed", "history"].includes(stage))) throw new Error("Invalid review list query");
   return { storeId, offset, limit, search, ...(decision ? { decision: decision as SeoReviewListQuery["decision"] } : {}),
     ...(workspace ? { workspace: workspace as SeoReviewListQuery["workspace"] } : {}), ...(stage ? { stage: stage as SeoReviewListQuery["stage"] } : {}) };
@@ -29,6 +29,7 @@ export function reviewListWhere(query: SeoReviewListQuery): { sql: string; param
   }
   if (query.workspace === "work") conditions.push("review_stage!='history'");
   if (query.workspace === "history") conditions.push("review_stage='history'");
+  if (query.workspace === "synced") conditions.push("sync_status='synced'");
   if (query.stage) { conditions.push("review_stage=?"); parameters.push(query.stage); }
   return { sql: conditions.join(" AND "), parameters };
 }

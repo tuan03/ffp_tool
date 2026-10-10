@@ -176,7 +176,8 @@ export class PostgresCustomGptQueue implements SeoQueue {
     }));
     const total = Number(count?.total ?? 0);
     const next = (query.offset ?? 0) + items.length;
-    return { items, total, counts, nextOffset: next < total ? next : null };
+    const syncedCount = await this.db.prepare(`SELECT COUNT(*) AS total FROM (${catalog}) catalog WHERE sync_status='synced'`).get(query.storeId);
+    return { items, total, counts: { ...counts, synced: Number(syncedCount?.total ?? 0) }, nextOffset: next < total ? next : null };
   }
   async findLatestSourceJobs(storeId: string, source: string, productIds: readonly string[]): Promise<ReadonlyMap<string, GptSeoJob>> {
     const rows = await this.db.prepare(`SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) gpt_jobs.payload,

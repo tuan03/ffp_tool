@@ -24,7 +24,7 @@ test("SEO Review cards show compact summaries and open details in the right draw
   }));
 
   assert.match(html, /Xem chi tiết sản phẩm/);
-  assert.match(html, /Duyệt/);
+  assert.doesNotMatch(html, />Duyệt</);
   assert.doesNotMatch(html, /Google Snippet|Image Alt Texts|Product Description/);
 
   const drawerHtml = renderToStaticMarkup(createElement(ProductDetailDrawer, {

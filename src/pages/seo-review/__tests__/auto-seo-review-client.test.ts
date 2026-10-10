@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { loadAutoSeoReviews, updateAutoSeoReviewStatus } from "../auto-seo-review-client";
+import { loadAutoSeoReviews, saveAutoSeoReviewSyncOutcome, updateAutoSeoReviewStatus } from "../auto-seo-review-client";
 
 test("Auto SEO review reload hydrates rollback backup with empty browser session", async () => {
   const originalFetch = globalThis.fetch;
@@ -13,6 +13,7 @@ test("Auto SEO review reload hydrates rollback backup with empty browser session
     return new Response(JSON.stringify({ success: true, total: 1, items: [{
       itemId: `store-1:${productId}`, storeId: "store-1", productId,
       reviewStatus: "approved", generatedPayload: JSON.stringify({
+        shopifySyncStatus: "synced", shopifyAdminUrl: "https://example.myshopify.com/admin/products/123",
         productTitle: "Generated", productDescription: "Generated body", productSeoTitle: "New SEO",
         productSeoDescription: "New SEO description", productHandle: "generated-handle",
       }), shopifyUpdatedAt: null, notes: null, updatedAt: "2026-09-30T00:00:00Z",
@@ -28,8 +29,12 @@ test("Auto SEO review reload hydrates rollback backup with empty browser session
     assert.equal(products[0]?.originalBackup?.seoTitle, "Old SEO");
     assert.equal(products[0]?.sourceOrigin, "auto_seo");
     assert.equal(products[0]?.productId, productId);
+    assert.equal(products[0]?.shopifySyncStatus, "synced");
+    assert.equal(products[0]?.shopifyAdminUrl, "https://example.myshopify.com/admin/products/123");
     if (products[0]) await updateAutoSeoReviewStatus(products[0], "rejected", "Needs revision");
     assert.match(calls[0] ?? "", /source=auto_seo/);
     assert.match(calls[1] ?? "", /store-1%3Agid%3A%2F%2Fshopify%2FProduct%2F8484620664917\/status\?source=auto_seo/);
+    if (products[0]) await saveAutoSeoReviewSyncOutcome(products[0], { shopifySyncStatus: "synced" });
+    assert.match(calls[2] ?? "", /\/update\?source=auto_seo/);
   } finally { globalThis.fetch = originalFetch; }
 });

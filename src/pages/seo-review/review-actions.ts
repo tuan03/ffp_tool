@@ -15,9 +15,18 @@ export function reviewActions(product: SeoProductUiViewModel): SeoReviewActions 
   const actions = product.reviewActions ?? getSeoReviewActions({ decision: product.reviewDecision,
     syncStatus: product.shopifySyncStatus ?? "idle", archivedAt: product.reviewArchivedAt, hasPublish: Boolean(product.backendPublish),
     isUnresolved: Boolean(product.backendPublish && product.backendPublish.state !== "SUCCEEDED") });
-  if (product.isSyncing || product.isReverting) return { ...actions, canEdit: false, canDecide: false, canSync: false, canRetry: false, canArchive: false, canRevise: false };
+  if (product.isSyncing || product.isReverting) return { ...actions, canEdit: false, canDecide: false, canSync: false, canRetry: false, canArchive: false, canRevise: false, canReconcile: false };
   if (product.backendPublish) return { ...actions, canEdit: false, canDecide: false, canSync: false, canRetry: false };
   return product.sourceOrigin === "pinterest_pod" && !product.coordinatorReview ? { ...actions, canArchive: false } : actions;
+}
+/** Clicking Sync is the operator's consent; pending drafts need no separate approval click. */
+export function canStartReviewSync(product: SeoProductUiViewModel): boolean {
+  const actions = reviewActions(product);
+  return actions.canSync || actions.canRetry || (actions.canDecide && product.reviewDecision === "pending" &&
+    (product.shopifySyncStatus ?? "idle") === "idle");
+}
+export function isReviewSynced(product: SeoProductUiViewModel): boolean {
+  return product.shopifySyncStatus === "synced" || product.backendPublish?.state === "SUCCEEDED";
 }
 export function reviewErrorMessage(error: string | undefined): string {
   if (!error) return "Mở chi tiết để kiểm tra lỗi đồng bộ.";
