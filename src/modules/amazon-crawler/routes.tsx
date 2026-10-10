@@ -12,6 +12,7 @@ import type {
   AmazonCrawlerRunner,
   AmazonCrawlerSyncRetrier,
   ImageProcessingProfileManager,
+  ShopifyAsinFilter,
 } from "./types";
 
 export function amazonCrawlerRoutes(
@@ -25,6 +26,7 @@ export function amazonCrawlerRoutes(
   amazonCrawlerJobs?: AmazonCrawlerJobController,
   loadAmazonCrawlerJob?: AmazonCrawlerJobLoader,
   operatorEngineUrl?: string,
+  filterShopifyAsins?: ShopifyAsinFilter,
 ): RouteObject[] {
   return [
     {
@@ -32,6 +34,7 @@ export function amazonCrawlerRoutes(
       element: (
         <AuthenticatedCrawlerPage
           engineUrl={operatorEngineUrl}
+          filterShopifyAsins={filterShopifyAsins}
           amazonCrawlerJobs={amazonCrawlerJobs}
           clearAmazonCrawlerCache={clearAmazonCrawlerCache}
           imageProcessingProfiles={imageProcessingProfiles}

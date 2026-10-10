@@ -14,6 +14,7 @@ import {
 import { executeConnectionTest } from "./operations/connection-test";
 import { executeProductsGet, executeProductsList } from "./operations/products";
 import { executeProductMediaPage } from "./operations/product-media";
+import { executeProductMetafieldPage } from "./operations/product-metafield-page";
 import {
   executeProductsBulkUpdate,
   executeProductsCreate,
@@ -416,6 +417,8 @@ export class GatewayDispatcher {
         return executeProductsGet(store, this.graphqlClient, payload);
       case "products.mediaPage":
         return executeProductMediaPage(store, this.graphqlClient, payload);
+      case "products.metafieldPage":
+        return executeProductMetafieldPage(store, this.graphqlClient, payload);
       case "collections.list":
         return executeCollectionsList(store, this.graphqlClient, payload);
       case "collections.get":

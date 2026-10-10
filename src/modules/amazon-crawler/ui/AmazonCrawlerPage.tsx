@@ -31,14 +31,16 @@ import {
   type AmazonCrawlerSyncRetrier,
   type ImageProcessingProfile,
   type ImageProcessingProfileManager,
+  type ShopifyAsinFilter,
 } from "../types";
 import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG } from "../types";
 import { getAgentVersionStatus } from "../agent-version";
-import { createAmazonAsinChecker } from "../service";
+import { createAmazonAsinChecker, createShopifyAsinFilter } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
 import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
+import { ShopifyAsinFilterDialog } from "./components/ShopifyAsinFilterDialog";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
@@ -79,6 +81,7 @@ import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
 export interface AmazonCrawlerPageProps {
   checkAmazonAsins?: AmazonAsinChecker;
+  filterShopifyAsins?: ShopifyAsinFilter;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
   clearAmazonCrawlerCache: AmazonCrawlerCacheClearer;
   loadAmazonCrawlerAgentRelease: AmazonCrawlerAgentReleaseLoader;
@@ -110,6 +113,7 @@ const COMMON_PRODUCT_TYPES = [
 const AGENT_RELEASE_FALLBACK_URL = "https://github.com/tuan03/ffp_tool/releases/latest";
 const CLIENTS_PER_PAGE = 25;
 const JOBS_PER_PAGE = 10;
+const defaultShopifyAsinFilter = createShopifyAsinFilter();
 
 function formatDownloadSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
@@ -204,6 +208,7 @@ function isNotFoundError(value: unknown): boolean {
 
 export function AmazonCrawlerPage({
   checkAmazonAsins = createAmazonAsinChecker(),
+  filterShopifyAsins = defaultShopifyAsinFilter,
   amazonCrawlerJobs,
   clearAmazonCrawlerCache,
   imageProcessingProfiles,
@@ -221,6 +226,7 @@ export function AmazonCrawlerPage({
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [isHistoryAllStores, setIsHistoryAllStores] = useState(false);
   const [isProductDetailsOpen, setIsProductDetailsOpen] = useState(false);
+  const [isAsinFilterOpen, setIsAsinFilterOpen] = useState(false);
   const session = useAmazonCrawlerSession();
   const {
     urlText,
@@ -2377,7 +2383,7 @@ export function AmazonCrawlerPage({
     <>
       <CrawlerWorkspace
         section={workspaceSection}
-        onSectionChange={(section) => { setWorkspaceSection(section); setIsProductDetailsOpen(false); setIsImageProfileEditorOpen(false); }}
+        onSectionChange={(section) => { setWorkspaceSection(section); setIsProductDetailsOpen(false); setIsImageProfileEditorOpen(false); setIsAsinFilterOpen(false); }}
         summary={<>
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-sm">
@@ -2415,6 +2421,7 @@ export function AmazonCrawlerPage({
       </label>
               <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED" || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0))} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>
+        <button type="button" onClick={() => setIsAsinFilterOpen(true)} className="rounded-lg border border-cyan-700 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-950/40">Lọc ASIN trên Shopify</button>
               </div>
 
           {coordinatorActiveJob ? (
@@ -3096,6 +3103,16 @@ export function AmazonCrawlerPage({
             requestId={selectedProduct?.diagnostics.familyRequestId ?? selectedProduct?.diagnostics.requestId} />
         </>}
       />
+        <ShopifyAsinFilterDialog isOpen={isAsinFilterOpen} storeId={activeStoreId} initialText={urlText} filterShopifyAsins={filterShopifyAsins}
+          canApply={!isRunning && !isCheckingAsins && !isHydratingJob && coordinatorActiveJob === undefined}
+          onClose={() => setIsAsinFilterOpen(false)} onApply={(asins) => {
+            if (isRunning || isCheckingAsins || isHydratingJob || coordinatorActiveJob !== undefined) return;
+            if (urlText.trim() && !window.confirm("Thay danh sách ASIN hiện tại bằng danh sách chưa có trên Shopify? Thao tác này không bắt đầu cào.")) return;
+            setCrawlerUrlText(asins.join("\n"));
+            setAsinPreflightError(null);
+            setAsinPreflightMatches([]);
+            setIsAsinFilterOpen(false);
+          }} />
       {editingImageProfile ? (
         <CrawlerDialog title="Cấu hình xử lý ảnh" isOpen={isImageProfileEditorOpen} onClose={() => setIsImageProfileEditorOpen(false)}><div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">

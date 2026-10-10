@@ -98,6 +98,37 @@ export interface AmazonAsinChecker {
   (storeId: string, asins: readonly string[]): Promise<AmazonAsinPreflightResult>;
 }
 
+export const SHOPIFY_ASIN_FILTER_LIMIT = 5000;
+
+export interface ShopifyAsinFilterMatch {
+  readonly asin: string;
+  readonly productId: string;
+  readonly title: string;
+  readonly status: string;
+  readonly adminUrl: string;
+}
+
+export interface ShopifyAsinFilterProgress {
+  readonly scannedProducts: number;
+  readonly pagesRead: number;
+}
+
+export interface ShopifyAsinFilterResult {
+  readonly storeId: string;
+  readonly matches: readonly ShopifyAsinFilterMatch[];
+  readonly missingAsins: readonly string[];
+  readonly scannedProducts: number;
+}
+
+export interface ShopifyAsinFilter {
+  (input: {
+    readonly storeId: string;
+    readonly asins: readonly string[];
+    readonly signal?: AbortSignal;
+    readonly onProgress?: (progress: ShopifyAsinFilterProgress) => void;
+  }): Promise<ShopifyAsinFilterResult>;
+}
+
 export interface AmazonCrawlerActiveVariant {
   asin: string;
   options: Record<string, string>;

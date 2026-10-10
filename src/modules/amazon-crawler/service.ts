@@ -1,6 +1,8 @@
 import type {
   AmazonAsinChecker,
   AmazonAsinPreflightResult,
+  ShopifyAsinFilter,
+  ShopifyAsinFilterMatch,
   AmazonCrawlerInput,
   AmazonCrawlerDeadLetterActionInput,
   AmazonCrawlerDeadLetterActionResult,
@@ -39,7 +41,7 @@ import type {
   ImageProcessingProfile,
   ImageProcessingProfileManager,
 } from "./types";
-import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG, DEFAULT_AMAZON_CRAWLER_SETTINGS } from "./types";
+import { DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG, DEFAULT_AMAZON_CRAWLER_SETTINGS, SHOPIFY_ASIN_FILTER_LIMIT } from "./types";
 import { readCrawlerMetrics, readCrawlerTrace } from "./observability-response";
 
 interface JobCreatedResponse {
@@ -261,6 +263,66 @@ export function createAmazonAsinChecker(
       throw new AmazonCrawlerServiceError("Shopify trả về kết quả kiểm tra ASIN không hợp lệ.", "INVALID_ENGINE_RESPONSE");
     }
     return preflight as unknown as AmazonAsinPreflightResult;
+  };
+}
+
+export function createShopifyAsinFilter(fetchImplementation: typeof fetch = fetch): ShopifyAsinFilter {
+  return async ({ storeId, asins, signal, onProgress }) => {
+    if (!storeId.trim() || asins.length === 0 || asins.length > SHOPIFY_ASIN_FILTER_LIMIT || asins.some((asin) => !/^[A-Z0-9]{10}$/.test(asin))) {
+      throw new AmazonCrawlerServiceError(`Chọn store và nhập 1–${SHOPIFY_ASIN_FILTER_LIMIT} ASIN hợp lệ.`, "INVALID_ASIN_FILTER_INPUT");
+    }
+    signal?.throwIfAborted();
+    const scanSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(15 * 60 * 1000)]);
+    const requestedAsins = [...new Set(asins)];
+    const requestedSet = new Set(requestedAsins);
+    const matches = new Map<string, ShopifyAsinFilterMatch>();
+    const cursors = new Set<string>();
+    let after: string | null = null;
+    let shopDomain: string | undefined;
+    let scannedProducts = 0;
+    let pagesRead = 0;
+    do {
+      scanSignal.throwIfAborted();
+      const response = await fetchImplementation("/api/shopify", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        signal: AbortSignal.any([scanSignal, AbortSignal.timeout(90_000)]),
+        body: JSON.stringify({ storeId, operation: "products.metafieldPage", payload: { namespace: "custom", key: "amazon_asin", first: 200, after } }),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isRecord(body) || body.success !== true || body.storeId !== storeId || !isRecord(body.data)) {
+        throw new AmazonCrawlerServiceError("Chưa xác minh được ASIN trên Shopify. Kiểm tra kết nối/quyền của store rồi thử lại; chưa thể kết luận ASIN nào chưa có.", "SHOPIFY_ASIN_FILTER_FAILED", response.status);
+      }
+      const page = body.data;
+      if (page.namespace !== "custom" || page.key !== "amazon_asin" || typeof page.shopDomain !== "string" ||
+        !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(page.shopDomain) || (shopDomain !== undefined && shopDomain !== page.shopDomain) ||
+        !Array.isArray(page.products) || !isRecord(page.pageInfo) || typeof page.pageInfo.hasNextPage !== "boolean" ||
+        (page.pageInfo.endCursor !== null && typeof page.pageInfo.endCursor !== "string")) {
+        throw new AmazonCrawlerServiceError("Shopify trả dữ liệu kiểm tra không đầy đủ; chưa thể phân loại ASIN.", "INVALID_ASIN_FILTER_RESPONSE");
+      }
+      shopDomain = page.shopDomain;
+      for (const product of page.products) {
+        if (!isRecord(product) || typeof product.id !== "string" || !/^gid:\/\/shopify\/Product\/\d+$/.test(product.id) ||
+          typeof product.title !== "string" || typeof product.status !== "string" || !["ACTIVE", "DRAFT", "ARCHIVED"].includes(product.status) ||
+          (product.value !== null && typeof product.value !== "string")) {
+          throw new AmazonCrawlerServiceError("Shopify trả dữ liệu sản phẩm không hợp lệ; chưa thể phân loại ASIN.", "INVALID_ASIN_FILTER_RESPONSE");
+        }
+        const asin = typeof product.value === "string" ? product.value.trim().toUpperCase() : "";
+        if (requestedSet.has(asin) && !matches.has(asin)) {
+          matches.set(asin, { asin, productId: product.id, title: product.title, status: product.status, adminUrl: `https://${shopDomain}/admin/products/${product.id.split("/").at(-1)}` });
+        }
+      }
+      scannedProducts += page.products.length;
+      pagesRead++;
+      const next = page.pageInfo.endCursor;
+      if (page.pageInfo.hasNextPage && (!next || typeof next !== "string" || cursors.has(next) || page.products.length === 0 || pagesRead >= 1000)) {
+        throw new AmazonCrawlerServiceError("Chưa kiểm tra hết Shopify do lỗi phân trang hoặc vượt giới hạn quét; chưa thể kết luận ASIN chưa có.", "INVALID_ASIN_FILTER_PAGINATION");
+      }
+      if (typeof next === "string") cursors.add(next);
+      onProgress?.({ scannedProducts, pagesRead });
+      after = page.pageInfo.hasNextPage && matches.size !== requestedSet.size ? String(next) : null;
+    } while (after !== null);
+    scanSignal.throwIfAborted();
+    return { storeId, matches: requestedAsins.flatMap((asin) => { const match = matches.get(asin); return match ? [match] : []; }), missingAsins: requestedAsins.filter((asin) => !matches.has(asin)), scannedProducts };
   };
 }
 

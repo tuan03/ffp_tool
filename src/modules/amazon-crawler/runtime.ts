@@ -1,10 +1,14 @@
 import { amazonCrawlerMockAgentRelease } from "./mocks/data";
-import { clearMockAmazonCrawlerCache, createMockAmazonCrawlerJobLoader, runMockAmazonCrawler } from "./mocks/runner";
+import { clearMockAmazonCrawlerCache, createMockAmazonCrawlerJobLoader, filterMockShopifyAsins, runMockAmazonCrawler } from "./mocks/runner";
 import { crawlerMockMetrics } from "./mocks/observability";
-import { createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager } from "./service";
+import { createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, createShopifyAsinFilter } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
-import type { AmazonCrawlerAgentReleaseLoader, AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager } from "./types";
+import type { AmazonCrawlerAgentReleaseLoader, AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager, ShopifyAsinFilter } from "./types";
+
+export function getShopifyAsinFilter(environment: AppEnvironment): ShopifyAsinFilter {
+  return environment === "mock" ? filterMockShopifyAsins : createShopifyAsinFilter();
+}
 
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {
   return environment === "mock" ? runMockAmazonCrawler : createAmazonCrawlerRunner({ engineUrl });

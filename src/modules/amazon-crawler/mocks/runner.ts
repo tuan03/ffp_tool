@@ -7,7 +7,24 @@ import type {
   AmazonCrawlerJobSummary,
   AmazonCrawlerOutput,
   AmazonCrawlerRunOptions,
+  ShopifyAsinFilter,
 } from "../types";
+import { SHOPIFY_ASIN_FILTER_LIMIT } from "../types";
+
+export const filterMockShopifyAsins: ShopifyAsinFilter = async ({ storeId, asins, signal, onProgress }) => {
+  signal?.throwIfAborted();
+  if (!storeId.trim() || asins.length === 0 || asins.length > SHOPIFY_ASIN_FILTER_LIMIT || asins.some((asin) => !/^[A-Z0-9]{10}$/.test(asin))) {
+    throw new Error("Chọn store và nhập danh sách ASIN hợp lệ.");
+  }
+  const requestedAsins = [...new Set(asins)];
+  const matches = requestedAsins.filter((asin) => asin === "B0MOCK1001").map((asin) => ({
+    asin, productId: "gid://shopify/Product/101", title: "Mock existing Shopify product", status: "ACTIVE",
+    adminUrl: `https://${storeId}.myshopify.com/admin/products/101`,
+  }));
+  onProgress?.({ scannedProducts: 1, pagesRead: 1 });
+  signal?.throwIfAborted();
+  return { storeId, matches, missingAsins: requestedAsins.filter((asin) => !matches.some((match) => match.asin === asin)), scannedProducts: 1 };
+};
 
 export async function clearMockAmazonCrawlerCache(): Promise<AmazonCrawlerCacheClearResult> {
   return { removedFiles: 0, removedBytes: 0 };
