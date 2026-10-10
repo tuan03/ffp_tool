@@ -5,9 +5,14 @@ export function readReviewListQuery(url: URL, storeId: string): SeoReviewListQue
   const limit = Number(url.searchParams.get("limit") ?? 50);
   const search = (url.searchParams.get("search") ?? "").trim();
   const decision = url.searchParams.get("decision") ?? "";
+  const workspace = url.searchParams.get("workspace") ?? "";
+  const stage = url.searchParams.get("stage") ?? "";
   if (!storeId || !Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 50 || search.length > 200 ||
-    (decision && !["pending", "approved", "rejected", "sync_failed"].includes(decision))) throw new Error("Invalid review list query");
-  return { storeId, offset, limit, search, ...(decision ? { decision: decision as SeoReviewListQuery["decision"] } : {}) };
+    (decision && !["pending", "approved", "rejected", "sync_failed"].includes(decision)) ||
+    (workspace && !["work", "history", "all"].includes(workspace)) ||
+    (stage && !["pending", "ready", "syncing", "failed", "history"].includes(stage))) throw new Error("Invalid review list query");
+  return { storeId, offset, limit, search, ...(decision ? { decision: decision as SeoReviewListQuery["decision"] } : {}),
+    ...(workspace ? { workspace: workspace as SeoReviewListQuery["workspace"] } : {}), ...(stage ? { stage: stage as SeoReviewListQuery["stage"] } : {}) };
 }
 
 export function reviewListWhere(query: SeoReviewListQuery): { sql: string; parameters: readonly (string | number)[] } {
@@ -22,5 +27,16 @@ export function reviewListWhere(query: SeoReviewListQuery): { sql: string; param
     conditions.push(query.decision === "sync_failed" ? "sync_status='failed'" : "decision=?");
     if (query.decision !== "sync_failed") parameters.push(query.decision);
   }
+  if (query.workspace === "work") conditions.push("review_stage!='history'");
+  if (query.workspace === "history") conditions.push("review_stage='history'");
+  if (query.stage) { conditions.push("review_stage=?"); parameters.push(query.stage); }
   return { sql: conditions.join(" AND "), parameters };
+}
+
+/** Catalogs expose these scalar aliases; heavy SEO/backup JSON never leaves the database. */
+export function reviewStageSql(catalog: string): string {
+  return `SELECT catalog.*,CASE WHEN archived_at>0 OR is_superseded OR sync_status='synced' OR decision='rejected' THEN 'history'
+    WHEN sync_status='failed' THEN 'failed'
+    WHEN sync_status IN ('queued','syncing') OR is_unresolved THEN 'syncing'
+    WHEN decision='approved' THEN 'ready' ELSE 'pending' END AS review_stage FROM (${catalog}) catalog`;
 }

@@ -3,29 +3,27 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SeoBatchToolbar } from "../components/SeoBatchToolbar";
+import type { SeoBatchToolbarProps } from "../components/SeoBatchToolbar";
 
-test("SEO batch toolbar exposes approve-all and quick Shopify sync actions", () => {
-  const markup = renderToStaticMarkup(
-    <SeoBatchToolbar
-      totalCount={100}
-      pendingCount={100}
-      approvedUnsyncedCount={0}
-      selectedCount={0}
-      filter={{ searchQuery: "", statusFilter: "all", decisionFilter: "all", onlyMockData: false }}
-      viewMode="cards"
-      onFilterChange={() => undefined}
-      onViewModeChange={() => undefined}
-      onSelectAll={() => undefined}
-      onClearSelection={() => undefined}
-      onApproveSelected={() => undefined}
-      onApproveAllPending={() => undefined}
-      onRejectSelected={() => undefined}
-      onSyncAllApproved={() => undefined}
-      onExportApprovedJson={() => undefined}
-      onClearAll={() => undefined}
-    />,
-  );
-
-  assert.match(markup, /Duyệt nhanh tất cả \(100\)/);
-  assert.match(markup, /Đồng bộ nhanh lên Shopify \(0\)/);
+const props: SeoBatchToolbarProps = {
+  counts: { pending: 0, ready: 0, syncing: 0, failed: 1, history: 354 },
+  workspace: "work", selectedCount: 0, approvableCount: 0, syncableCount: 0, archivableCount: 0, isBusy: false,
+  filter: { searchQuery: "", statusFilter: "all", decisionFilter: "all", onlyMockData: false }, viewMode: "cards",
+  onWorkspaceChange: () => undefined, onFilterChange: () => undefined, onViewModeChange: () => undefined,
+  onSelectAll: () => undefined, onClearSelection: () => undefined, onApproveSelected: () => undefined,
+  onSyncSelected: () => undefined, onArchiveSelected: () => undefined,
+};
+test("toolbar separates whole-store history from work and does not mislabel Auto SEO as needing approval", () => {
+  const markup = renderToStaticMarkup(<SeoBatchToolbar {...props} />);
+  assert.ok(markup.includes("Cần xử lý (1)"));
+  assert.ok(markup.includes("Lịch sử (354)"));
+  assert.doesNotMatch(markup, /Cần duyệt lại|Auto SEO \(50\)|Hoàn tác|Từ chối|Duyệt nhanh tất cả/);
+  assert.match(markup, /Chọn trang này/);
+  assert.doesNotMatch(markup, /Sync đã chọn/);
+});
+test("batch actions use eligible selection counts, not all history or all selected rows", () => {
+  const markup = renderToStaticMarkup(<SeoBatchToolbar {...props} selectedCount={5} approvableCount={2} archivableCount={4} />);
+  assert.ok(markup.includes("Duyệt đã chọn (2)"));
+  assert.ok(markup.includes("Lưu trữ đã chọn (4)"));
+  assert.doesNotMatch(markup, /Sync đã chọn/);
 });

@@ -282,6 +282,10 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           break;
         }
         case "admin/cancel": (await queue.cancelReview(storeId, jobId)); result = { cancelled: true }; break;
+        case "admin/archive": {
+          if (req.method !== "POST") throw new Error("Review archive requires POST");
+          await queue.archiveReview(storeId, jobId); result = { archived: true }; break;
+        }
         case "admin/clear": {
           if (req.method !== "POST") throw new Error("Queue clear requires POST");
           result = await queue.clearQueue(storeId);

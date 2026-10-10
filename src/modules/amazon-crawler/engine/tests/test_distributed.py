@@ -1905,6 +1905,17 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertNotIn("product", catalog["items"][0])
         self.assertEqual(self.store.product_review_catalog("another-store")["total"], 0)
         self.assertEqual(self.store.product_review_catalog("catalog-store", decision="approved")["total"], 0)
+        self.assertEqual(self.store.product_review_catalog("catalog-store", workspace="work")["counts"]["pending"], 1)
+        self.assertEqual(self.store.archive_product_review("catalog-item", "another-store")["reason"], "not_found")
+        original = self.store.get_product_review("catalog-item", "catalog-store")["product"]
+        self.assertTrue(self.store.archive_product_review("catalog-item", "catalog-store")["archived"])
+        self.assertEqual(self.store.product_review_catalog("catalog-store", workspace="work")["total"], 0)
+        self.assertEqual(self.store.product_review_catalog("catalog-store", workspace="history")["total"], 1)
+        archived_product = self.store.get_product_review("catalog-item", "catalog-store")["product"]
+        self.assertEqual(archived_product["variants"], original["variants"])
+        self.assertEqual(archived_product["media"], original["media"])
+        self.assertTrue(self.store.queue_product_review_sync("catalog-item")["archived"])
+        self.assertTrue(self.store.decide_product_review("catalog-item", expected_version=2, decision="approved", reason=None)["locked"])
         self.assertIsNone(self.store.get_product_review("catalog-item", "another-store"))
         self.assertEqual(self.store.get_product_review("catalog-item", "catalog-store")["product"]["variants"][0]["detail"], "only-on-demand")
 
@@ -3685,36 +3696,19 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(synced_review["product"]["pipeline"]["shopify"]["productId"], "gid://shopify/Product/123")
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "completed")
 
-        # Verify synced review can be edited and re-queued for sync
-        edited = self.store.update_product_review(
-            claim["id"],
-            expected_version=synced_review["version"],
-            patch={"productTitle": "Updated title after initial sync"},
-        )
-        self.assertEqual(edited["decision"], "pending")
-        self.assertEqual(edited["syncStatus"], "idle")
-        self.assertEqual(edited["product"]["title"], "Updated title after initial sync")
-
-        decided = self.store.decide_product_review(
-            claim["id"],
-            expected_version=edited["version"],
-            decision="approved",
-            reason=None,
-        )
-        self.assertEqual(decided["decision"], "approved")
-
-        requeued = self.store.queue_product_review_sync(claim["id"])
-        self.assertEqual(requeued["syncStatus"], "queued")
-
-        # Verify editing is locked while queued
+        # Synced drafts are immutable history; a new revision must own subsequent writes.
         self.assertEqual(
             self.store.update_product_review(
-                claim["id"],
-                expected_version=requeued["version"],
-                patch={"productTitle": "Should be locked while queued"},
+                claim["id"], expected_version=synced_review["version"],
+                patch={"productTitle": "Must not mutate published history"},
             ),
             {"locked": True},
         )
+        self.assertFalse(synced_review["actions"]["canDecide"])
+        self.assertEqual(self.store.archive_product_review(claim["id"], "store-1"), {"archived": True})
+        archived = self.store.get_product_review(claim["id"], "store-1")
+        self.assertEqual(archived["syncStatus"], "synced")
+        self.assertEqual(archived["product"]["pipeline"]["shopify"]["productId"], "gid://shopify/Product/123")
 
     def test_mark_product_review_sync_failed_persists_status_and_error(self) -> None:
         job = self.store.create_job({"urls": ["B0TESTFAIL"]})

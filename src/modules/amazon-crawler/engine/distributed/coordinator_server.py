@@ -1469,10 +1469,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.get("/api/v1/product-reviews/catalog")
     def product_review_catalog(store_id: str = Query(..., alias="storeId", min_length=1, max_length=100),
                                offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=50),
-                               search: str = Query("", max_length=200), decision: str | None = None) -> dict[str, Any]:
+                               search: str = Query("", max_length=200), decision: str | None = None,
+                               workspace: str | None = None, stage: str | None = None) -> dict[str, Any]:
         if decision not in {None, "pending", "approved", "rejected", "sync_failed"}:
             raise HTTPException(status_code=422, detail="Invalid review decision filter.")
-        return store.product_review_catalog(store_id, offset=offset, limit=limit, search=search, decision=decision)
+        if workspace not in {None, "all", "work", "history"} or stage not in {None, "pending", "ready", "syncing", "failed", "history"}:
+            raise HTTPException(status_code=422, detail="Invalid review workspace filter.")
+        return store.product_review_catalog(store_id, offset=offset, limit=limit, search=search, decision=decision, workspace=workspace, stage=stage)
 
     @app.get("/api/v1/product-reviews/catalog/events")
     async def product_review_catalog_events(request: Request, store_id: str = Query(..., alias="storeId", min_length=1, max_length=100)) -> StreamingResponse:
@@ -1501,6 +1504,18 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if result.get("reason") == "sync_in_progress":
             raise HTTPException(status_code=409, detail="Review item cannot be deleted while syncing.")
         return {"deleted": True}
+
+    @app.post("/api/v1/product-reviews/{item_id}/archive")
+    def archive_product_review(item_id: str, payload: dict[str, Any]) -> dict[str, bool]:
+        store_id = str(payload.get("storeId") or "").strip()
+        if not store_id:
+            raise HTTPException(status_code=422, detail="Archive requires an exact store.")
+        result = store.archive_product_review(item_id, store_id)
+        if result.get("reason") == "not_found":
+            raise HTTPException(status_code=404, detail="Review item was not found in this store.")
+        if result.get("reason") == "sync_in_progress":
+            raise HTTPException(status_code=409, detail="Đang đồng bộ hoặc cần đối chiếu Shopify; chưa thể lưu trữ.")
+        return {"archived": True}
 
     @app.get("/api/v1/product-reviews/events")
     async def stream_product_reviews(request: Request) -> StreamingResponse:
@@ -1576,6 +1591,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("notApproved"):
             raise HTTPException(status_code=409, detail="Only approved products can be synced.")
+        if result.get("archived"):
+            raise HTTPException(status_code=409, detail="Review đã lưu trữ; không thể đồng bộ bản này.")
         if result.get("deleted"):
             raise HTTPException(status_code=409, detail="Review item was deleted.")
         if result.get("reconciliationRequired"):

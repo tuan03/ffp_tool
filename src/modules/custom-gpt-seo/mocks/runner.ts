@@ -67,6 +67,7 @@ export function createMockCustomGptClient(): CustomGptClient {
     job: async () => structuredClone(mockJobs[0]),
     enqueue: async () => structuredClone(mockJobs[0]),
     beginSync: async () => ({ token: "mock-sync" }), finishSync: async () => ({}),
+    archiveReview: async () => ({ archived: true }),
     transfer: async () => ({}),
     retry: async () => ({}), requeue: async (_storeId, jobIds) => ({ requeued: jobIds.length }), cancelReview: async () => ({ cancelled: true }), clearQueue: async () => ({ cleared: mockJobs.length, archived: 0, preservedActive: 0, preservedFailed: 0 }), release: async () => ({}), reviewState: async () => ({}), saveReviewState: async () => ({}), saveReviewStates: async (_storeId, reviews) => ({ saved: reviews.length }),
   };

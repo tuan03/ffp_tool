@@ -1,545 +1,82 @@
+import type { SeoReviewCounts, SeoReviewWorkspace } from "../../../shared/seo-review-list";
 import type { SeoReviewFilterState, SeoReviewViewMode } from "../types";
 
 export interface SeoBatchToolbarProps {
-  readonly isPaged?: boolean;
-  readonly totalCount: number;
-  readonly filteredCount?: number;
-  readonly crawlCount?: number;
-  readonly podCount?: number;
-  readonly autoSeoCount?: number;
-  readonly pendingCount?: number;
-  readonly approvedCount?: number;
-  readonly approvedUnsyncedCount?: number;
-  readonly rejectedCount?: number;
-  readonly syncFailedCount?: number;
-  readonly selectedCount: number;
-  readonly canRollbackCount?: number;
+  readonly counts: SeoReviewCounts;
+  readonly workspace: SeoReviewWorkspace;
   readonly filter: SeoReviewFilterState;
   readonly viewMode: SeoReviewViewMode;
-  readonly isAllExpanded?: boolean;
-  readonly isSyncing?: boolean;
-  readonly isReverting?: boolean;
-  readonly isApprovingAll?: boolean;
-  readonly onFilterChange: (newFilter: Partial<SeoReviewFilterState>) => void;
+  readonly selectedCount: number;
+  readonly approvableCount: number;
+  readonly syncableCount: number;
+  readonly archivableCount: number;
+  readonly isBusy: boolean;
+  readonly onWorkspaceChange: (workspace: SeoReviewWorkspace) => void;
+  readonly onFilterChange: (filter: Partial<SeoReviewFilterState>) => void;
   readonly onViewModeChange: (mode: SeoReviewViewMode) => void;
-  readonly onToggleExpandAll?: () => void;
   readonly onSelectAll: () => void;
   readonly onClearSelection: () => void;
   readonly onApproveSelected: () => void;
-  readonly onApproveAllPending?: () => void;
-  readonly onRejectSelected: () => void;
-  readonly onSyncAllApproved: () => void;
-  readonly onRetryFailedSync?: () => void;
-  readonly onRollbackSelected?: () => void;
-  readonly onOpenRequeueModal?: () => void;
-  readonly onDeleteSelected?: () => void;
-  readonly onExportApprovedJson: () => void;
-  readonly onClearAll: () => void;
+  readonly onSyncSelected: () => void;
+  readonly onArchiveSelected: () => void;
 }
 
-export function SeoBatchToolbar({
-  isPaged = false,
-  totalCount,
-  filteredCount,
-  crawlCount = 0,
-  podCount = 0,
-  autoSeoCount = 0,
-  pendingCount = 0,
-  approvedCount = 0,
-  approvedUnsyncedCount = 0,
-  rejectedCount = 0,
-  syncFailedCount = 0,
-  selectedCount,
-  canRollbackCount = 0,
-  filter,
-  viewMode,
-  isAllExpanded = false,
-  isSyncing = false,
-  isReverting = false,
-  isApprovingAll = false,
-  onFilterChange,
-  onViewModeChange,
-  onToggleExpandAll,
-  onSelectAll,
-  onClearSelection,
-  onApproveSelected,
-  onApproveAllPending,
-  onRejectSelected,
-  onSyncAllApproved,
-  onRetryFailedSync,
-  onRollbackSelected,
-  onOpenRequeueModal,
-  onDeleteSelected,
-  onExportApprovedJson,
-  onClearAll,
-}: SeoBatchToolbarProps): React.JSX.Element {
-  return (
-    <div className="space-y-3.5">
-      {/* Product Source Origin Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
-            <span>🏷️</span>
-            <span>Nguồn sản phẩm:</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => onFilterChange({ sourceOriginFilter: "all" })}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
-              !filter.sourceOriginFilter || filter.sourceOriginFilter === "all"
-                ? "bg-slate-700/90 text-white shadow-sm ring-1 ring-slate-500/50"
-                : "bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800"
-            }`}
-          >
-            <span>🌐</span>
-            <span>Tất cả nguồn</span>
-            <span className="font-mono text-[11px] opacity-80">({totalCount})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onFilterChange({ sourceOriginFilter: "distributed_crawler" })}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
-              filter.sourceOriginFilter === "distributed_crawler"
-                ? "bg-cyan-950 text-cyan-200 border border-cyan-500 shadow-md shadow-cyan-950/40 ring-1 ring-cyan-500/30"
-                : "bg-slate-900/80 text-cyan-400/80 hover:text-cyan-300 border border-slate-800"
-            }`}
-            title="Sản phẩm cào từ Distributed Crawler (Amazon). Đã tối ưu SEO trong pipeline cào, sẵn sàng cập nhật hoặc duyệt."
-          >
-            <span>⚡</span>
-            <span>Distributed Crawl</span>
-            <span className="font-mono text-[11px] opacity-90">({crawlCount})</span>
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-950/90 text-emerald-300 border border-emerald-700/60 ml-0.5">
-              ✓ Đã SEO sẵn
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onFilterChange({ sourceOriginFilter: "pinterest_pod" })}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
-              filter.sourceOriginFilter === "pinterest_pod"
-                ? "bg-pink-950 text-pink-200 border border-pink-500 shadow-md shadow-pink-950/40 ring-1 ring-pink-500/30"
-                : "bg-slate-900/80 text-pink-400/80 hover:text-pink-300 border border-slate-800"
-            }`}
-            title="Sản phẩm thiết kế từ Pinterest POD Studio. Cần duyệt lại tiêu đề, mô tả và ảnh in."
-          >
-            <span>🎨</span>
-            <span>Pinterest POD</span>
-            <span className="font-mono text-[11px] opacity-90">({podCount})</span>
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 ml-0.5">
-              ⏳ Cần duyệt lại
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onFilterChange({ sourceOriginFilter: "auto_seo" })}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
-              filter.sourceOriginFilter === "auto_seo"
-                ? "bg-purple-950 text-purple-200 border border-purple-500 shadow-md shadow-purple-950/40 ring-1 ring-purple-500/30"
-                : "bg-slate-900/80 text-purple-400/80 hover:text-purple-300 border border-slate-800"
-            }`}
-            title="Sản phẩm tuyển chọn từ Auto SEO. Cần duyệt lại nội dung SEO trước khi đồng bộ."
-          >
-            <span>🤖</span>
-            <span>Auto SEO</span>
-            <span className="font-mono text-[11px] opacity-90">({autoSeoCount})</span>
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700/60 ml-0.5">
-              ⏳ Cần duyệt lại
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* Search, Filter Tabs & View Mode Switcher */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
-        {/* Search input */}
-        <div className="relative flex-1 max-w-md">
-          <input
-            type="text"
-            value={filter.searchQuery}
-            onChange={(e) => onFilterChange({ searchQuery: e.target.value })}
-            placeholder="Tìm theo tên sản phẩm, handle, ASIN..."
-            className="w-full rounded-xl border border-slate-800 bg-slate-900/90 pl-10 pr-8 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 shadow-inner"
-          />
-          <span className="absolute left-3.5 top-2.5 text-slate-500 text-xs">🔍</span>
-          {filter.searchQuery && (
-            <button
-              type="button"
-              onClick={() => onFilterChange({ searchQuery: "" })}
-              className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300 text-xs"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        {/* View Mode Switcher + Action Controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Quick Review Status Tabs */}
-          <div className="flex items-center rounded-xl bg-slate-900/90 p-1 border border-slate-800 text-xs">
-            <button
-              type="button"
-              onClick={() => onFilterChange({ decisionFilter: "all" })}
-              className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer ${
-                filter.decisionFilter === "all"
-                  ? "bg-slate-800 text-cyan-400 font-semibold shadow-sm"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              Tất cả ({totalCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => onFilterChange({ decisionFilter: "pending" })}
-              className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
-                filter.decisionFilter === "pending"
-                  ? "bg-amber-950/80 text-amber-300 font-semibold shadow-sm border border-amber-800/40"
-                  : "text-slate-400 hover:text-amber-300"
-              }`}
-            >
-              <span>Chờ duyệt</span>
-              <span className="text-[10px] opacity-80">({pendingCount})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onFilterChange({ decisionFilter: "approved" })}
-              className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
-                filter.decisionFilter === "approved"
-                  ? "bg-emerald-950/80 text-emerald-300 font-semibold shadow-sm border border-emerald-800/40"
-                  : "text-slate-400 hover:text-emerald-300"
-              }`}
-            >
-              <span>Đã duyệt</span>
-              <span className="text-[10px] opacity-80">({approvedCount})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onFilterChange({ decisionFilter: "rejected" })}
-              className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
-                filter.decisionFilter === "rejected"
-                  ? "bg-rose-950/80 text-rose-300 font-semibold shadow-sm border border-rose-800/40"
-                  : "text-slate-400 hover:text-rose-300"
-              }`}
-            >
-              <span>Từ chối</span>
-              <span className="text-[10px] opacity-80">({rejectedCount})</span>
-            </button>
-            {syncFailedCount > 0 && (
-              <button
-                type="button"
-                onClick={() => onFilterChange({ decisionFilter: "sync_failed" })}
-                className={`px-2.5 py-1 rounded-lg font-medium transition cursor-pointer flex items-center gap-1 ${
-                  filter.decisionFilter === "sync_failed"
-                    ? "bg-rose-900/90 text-rose-200 font-bold shadow-sm border border-rose-600"
-                    : "text-rose-400 hover:text-rose-200"
-                }`}
-                title="Lọc các sản phẩm gặp lỗi khi đẩy lên Shopify"
-              >
-                <span>⚠️ Lỗi đẩy</span>
-                <span className="text-[10px] opacity-90">({syncFailedCount})</span>
-              </button>
-            )}
-          </div>
-
-          {/* View Mode Toggle: Cards vs Table vs Split */}
-          <div className="flex items-center rounded-xl bg-slate-900/90 p-1 border border-slate-800 text-xs">
-            <button
-              type="button"
-              onClick={() => onViewModeChange("cards")}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition cursor-pointer ${
-                viewMode === "cards"
-                  ? "bg-cyan-600 text-white font-semibold shadow-sm"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title="Dạng thẻ chi tiết (Review cuộn liên tục)"
-            >
-              <span>🗂️</span>
-              <span>Dạng thẻ</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onViewModeChange("table")}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition cursor-pointer ${
-                viewMode === "table"
-                  ? "bg-cyan-600 text-white font-semibold shadow-sm"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title="Bảng dữ liệu mở rộng"
-            >
-              <span>📋</span>
-              <span>Bảng mở rộng</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onViewModeChange("split")}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition cursor-pointer ${
-                viewMode === "split"
-                  ? "bg-cyan-600 text-white font-semibold shadow-sm"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title="Chia đôi màn hình (Inspector nhanh)"
-            >
-              <span>🖥️</span>
-              <span>Chia màn hình</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Sub-toolbar: Filters, Expand all (for table), and Batch Operations */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800/80 bg-slate-900/50 px-4 py-2 text-xs">
-        {/* Left: Selection summary and Expand/Collapse for Table view */}
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-slate-400 font-mono">
-            {selectedCount > 0 ? (
-              <span className="text-cyan-400 font-semibold">
-                Đã chọn {selectedCount}/{filteredCount !== undefined ? filteredCount : totalCount} sản phẩm
-              </span>
-            ) : filteredCount !== undefined && filteredCount !== totalCount ? (
-              <span>
-                Hiển thị <strong className="text-cyan-400 font-semibold">{filteredCount}</strong> / {totalCount} sản phẩm
-              </span>
-            ) : (
-              <span>Tổng cộng: {totalCount} sản phẩm</span>
-            )}
-          </span>
-
-          <div className="h-3.5 w-px bg-slate-800" />
-
-          <button
-            type="button"
-            onClick={onSelectAll}
-            className="text-slate-400 hover:text-cyan-400 transition cursor-pointer font-medium"
-          >
-            {isPaged ? "Chọn trang này" : "Chọn tất cả"}
-          </button>
-
-          {selectedCount > 0 && (
-            <button
-              type="button"
-              onClick={onClearSelection}
-              className="text-slate-500 hover:text-slate-300 transition cursor-pointer"
-            >
-              Bỏ chọn
-            </button>
-          )}
-
-          {/* Expand/Collapse All for Table View */}
-          {viewMode === "table" && onToggleExpandAll && totalCount > 0 && (
-            <>
-              <div className="h-3.5 w-px bg-slate-800" />
-              <button
-                type="button"
-                onClick={onToggleExpandAll}
-                className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 transition cursor-pointer font-medium"
-              >
-                <span>{isAllExpanded ? "▲ Thu gọn tất cả hàng" : "▼ Mở rộng tất cả hàng"}</span>
-              </button>
-            </>
-          )}
-
-          {/* Only Mock toggle */}
-          <div className="h-3.5 w-px bg-slate-800" />
-          <label className="inline-flex items-center gap-1.5 text-slate-300 cursor-pointer hover:text-slate-200">
-            <input
-              type="checkbox"
-              checked={filter.onlyMockData}
-              onChange={(e) => onFilterChange({ onlyMockData: e.target.checked })}
-              className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-800 text-cyan-500 focus:ring-cyan-500"
-            />
-            <span className="text-[11px] font-medium text-amber-400/90">Chưa đủ dữ liệu</span>
-          </label>
-        </div>
-
-        {/* Right: Batch Actions */}
-        <div className="flex items-center gap-2">
-          {pendingCount > 0 && onApproveAllPending && (
-            <button
-              type="button"
-              onClick={onApproveAllPending}
-              disabled={isApprovingAll || isSyncing || isReverting}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-600 px-3 py-1.5 font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
-              title={isPaged ? "Duyệt sản phẩm đang chờ trên trang hiện tại" : "Duyệt nhanh toàn bộ sản phẩm đang chờ review của store hiện tại"}
-            >
-              <span>{isApprovingAll ? "⏳" : "✓"}</span>
-              <span>{isApprovingAll ? `Đang duyệt (${pendingCount})...` : `${isPaged ? "Duyệt trang này" : "Duyệt nhanh tất cả"} (${pendingCount})`}</span>
-            </button>
-          )}
-          {selectedCount > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={onApproveSelected}
-                disabled={isSyncing || isReverting}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
-                  isSyncing || isReverting
-                    ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
-                    : "bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30 cursor-pointer"
-                }`}
-              >
-                {isSyncing ? (
-                  <>
-                    <svg className="animate-spin h-3.5 w-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                    </svg>
-                    <span>Đang sync ({selectedCount})...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>✓ Duyệt ({selectedCount})</span>
-                  </>
-                )}
-              </button>
-
-              {onOpenRequeueModal && (
-                <button
-                  type="button"
-                  onClick={onOpenRequeueModal}
-                  disabled={isSyncing || isReverting}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
-                    isSyncing || isReverting
-                      ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                      : "bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600/30 border border-cyan-500/30 cursor-pointer shadow-sm shadow-cyan-950/40"
-                  }`}
-                  title="Đưa các sản phẩm đã chọn trở lại SEO Queue để AI xử lý lại từ đầu"
-                >
-                  <span>🔄</span>
-                  <span>SEO lại ({selectedCount})</span>
-                </button>
-              )}
-
-              {/* Nút Hoàn tác hàng loạt */}
-              {canRollbackCount > 0 && onRollbackSelected && (
-                <button
-                  type="button"
-                  onClick={onRollbackSelected}
-                  disabled={isSyncing || isReverting}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
-                    isReverting
-                      ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
-                      : isSyncing
-                        ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                        : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
-                  }`}
-                  title="Hoàn tác các sản phẩm đã chọn về dữ liệu gốc và đồng bộ lên Shopify"
-                >
-                  {isReverting ? (
-                    <>
-                      <svg className="animate-spin h-3.5 w-3.5 text-amber-400" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                      </svg>
-                      <span>Đang hoàn tác ({canRollbackCount})...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>↩ Hoàn tác ({canRollbackCount})</span>
-                    </>
-                  )}
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={onRejectSelected}
-                disabled={isSyncing || isReverting}
-                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg font-semibold transition ${
-                  isSyncing || isReverting
-                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                    : "bg-rose-600/20 text-rose-300 hover:bg-rose-600/30 border border-rose-500/30 cursor-pointer"
-                }`}
-              >
-                ✕ Từ chối ({selectedCount})
-              </button>
-
-              {onDeleteSelected && (
-                <button
-                  type="button"
-                  onClick={onDeleteSelected}
-                  disabled={isSyncing || isReverting}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition ${
-                    isSyncing || isReverting
-                      ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                      : "bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800/80 cursor-pointer shadow-sm shadow-rose-950/50"
-                  }`}
-                  title="Xóa các sản phẩm đã chọn khỏi danh sách SEO Review"
-                >
-                  <span>🗑️</span>
-                  <span>Xóa ({selectedCount})</span>
-                </button>
-              )}
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={onSyncAllApproved}
-            disabled={approvedUnsyncedCount === 0 || isSyncing || isReverting}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition ${
-              isSyncing
-                ? "border-cyan-500/60 bg-cyan-700/80 text-cyan-100 cursor-wait shadow-sm shadow-cyan-900/40"
-                : "border-cyan-500/40 bg-cyan-600 text-white hover:bg-cyan-500 cursor-pointer disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
-            }`}
-          >
-            {isSyncing ? (
-              <>
-                <svg className="animate-spin h-3.5 w-3.5 text-cyan-200" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-                <span>Đang đẩy Store ({approvedUnsyncedCount})...</span>
-              </>
-            ) : (
-              <>
-                <span>🛍️</span>
-                <span>Đồng bộ nhanh lên Shopify ({approvedUnsyncedCount})</span>
-              </>
-            )}
-          </button>
-
-          {syncFailedCount > 0 && onRetryFailedSync && (
-            <button
-              type="button"
-              onClick={onRetryFailedSync}
-              disabled={isSyncing || isReverting}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition ${
-                isSyncing
-                  ? "border-amber-500/60 bg-amber-700/80 text-amber-100 cursor-wait shadow-sm shadow-amber-900/40"
-                  : "border-amber-500/50 bg-amber-600 text-white hover:bg-amber-500 cursor-pointer disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500 shadow-md shadow-amber-950/40"
-              }`}
-              title="Thử lại đẩy tất cả các sản phẩm bị lỗi lên Shopify Store"
-            >
-              <span>🔄</span>
-              <span>Thử lại các sản phẩm lỗi ({syncFailedCount})</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={onExportApprovedJson}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 transition cursor-pointer"
-          >
-            📥 Xuất JSON đã duyệt
-          </button>
-
-          {totalCount > 0 && (
-            <button
-              type="button"
-              onClick={onClearAll}
-              title={isPaged ? "Xóa sản phẩm trên trang hiện tại" : "Xóa toàn bộ danh sách sản phẩm"}
-              className="px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-rose-400 hover:border-rose-900/60 transition cursor-pointer flex items-center gap-1"
-            >
-              <span>🗑️</span>
-              <span>{isPaged ? "Xóa trang này" : "Xóa"}</span>
-            </button>
-          )}
-        </div>
-      </div>
+export function SeoBatchToolbar(props: SeoBatchToolbarProps): React.JSX.Element {
+  const { counts, workspace, filter, viewMode, selectedCount, isBusy } = props;
+  const workCount = counts.pending + counts.ready + counts.syncing + counts.failed;
+  const button = "rounded-lg border px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40";
+  const stages = [
+    { value: "pending", label: "Chờ duyệt" }, { value: "ready", label: "Chờ sync" },
+    { value: "syncing", label: "Đang sync" }, { value: "failed", label: "Cần kiểm tra" },
+  ] as const;
+  return <section aria-label="Bộ lọc SEO Review" className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" aria-pressed={workspace === "work"} onClick={() => props.onWorkspaceChange("work")}
+        className={button + (workspace === "work" ? " border-cyan-500 bg-cyan-950 text-cyan-200" : " border-slate-700 text-slate-300")}>Cần xử lý ({workCount})</button>
+      <button type="button" aria-pressed={workspace === "history"} onClick={() => props.onWorkspaceChange("history")}
+        className={button + (workspace === "history" ? " border-teal-500 bg-teal-950 text-teal-200" : " border-slate-700 text-slate-300")}>Lịch sử ({counts.history})</button>
+      <span className="ml-auto text-xs text-slate-500">Số trạng thái tính trên toàn store / nguồn đang chọn</span>
     </div>
-  );
+    <div className="flex flex-wrap items-center gap-3">
+      <label className="min-w-48 flex-1 text-xs text-slate-400">Tìm sản phẩm
+        <input aria-label="Tìm sản phẩm Review" value={filter.searchQuery} onChange={event => props.onFilterChange({ searchQuery: event.target.value })}
+          placeholder="Tên, handle hoặc ASIN…" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <label className="text-xs text-slate-400">Nguồn
+        <select aria-label="Nguồn Review" value={filter.sourceOriginFilter ?? "all"}
+          onChange={event => props.onFilterChange({ sourceOriginFilter: event.target.value as SeoReviewFilterState["sourceOriginFilter"] })}
+          className="mt-1 block rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+          <option value="all">Tất cả nguồn</option><option value="distributed_crawler">Crawler</option>
+          <option value="auto_seo">Auto SEO</option><option value="pinterest_pod">Pinterest POD</option>
+        </select>
+      </label>
+      <label className="text-xs text-slate-400">Hiển thị
+        <select aria-label="Kiểu hiển thị Review" value={viewMode} onChange={event => props.onViewModeChange(event.target.value as SeoReviewViewMode)}
+          className="mt-1 block rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+          <option value="cards">Thẻ</option><option value="table">Danh sách</option><option value="split">Xem & duyệt</option>
+        </select>
+      </label>
+    </div>
+    {workspace === "work" && <div className="flex flex-wrap gap-2">
+      <button type="button" aria-pressed={!filter.stageFilter || filter.stageFilter === "all"} onClick={() => props.onFilterChange({ stageFilter: "all" })}
+        className={button + " border-slate-700 text-slate-200"}>Tất cả cần xử lý ({workCount})</button>
+      {stages.map(stage => <button key={stage.value} type="button" aria-pressed={filter.stageFilter === stage.value}
+        onClick={() => props.onFilterChange({ stageFilter: stage.value })}
+        className={button + (filter.stageFilter === stage.value ? " border-cyan-500 text-cyan-200" : " border-slate-700 text-slate-400")}>
+        {stage.label} ({counts[stage.value]})</button>)}
+    </div>}
+    <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-3">
+      <button type="button" onClick={props.onSelectAll} className={button + " border-slate-700 text-slate-300"}>Chọn trang này</button>
+      {selectedCount > 0 && <>
+        <span className="text-xs text-slate-400">Đã chọn {selectedCount}</span>
+        <button type="button" onClick={props.onClearSelection} className="px-2 text-xs text-slate-400">Bỏ chọn</button>
+        {props.approvableCount > 0 && <button type="button" disabled={isBusy} onClick={props.onApproveSelected}
+          className={button + " border-emerald-700 bg-emerald-950 text-emerald-200"}>Duyệt đã chọn ({props.approvableCount})</button>}
+        {props.syncableCount > 0 && <button type="button" disabled={isBusy} onClick={props.onSyncSelected}
+          className={button + " border-cyan-600 bg-cyan-700 text-white"}>Sync đã chọn ({props.syncableCount})</button>}
+        {props.archivableCount > 0 && <button type="button" disabled={isBusy} onClick={props.onArchiveSelected}
+          className={button + " border-slate-600 text-slate-300"}>Lưu trữ đã chọn ({props.archivableCount})</button>}
+      </>}
+    </div>
+  </section>;
 }

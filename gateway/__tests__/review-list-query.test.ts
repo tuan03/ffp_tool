@@ -12,3 +12,14 @@ test("review list requires a store and bounded pagination and binds literal sear
   }
   assert.throws(() => readReviewListQuery(new URL("http://test/"), ""));
 });
+
+test("review workspace filters use server-side stages and reject unknown workspaces", () => {
+  const query = readReviewListQuery(new URL("http://test/?workspace=work&stage=ready"), "demo");
+  assert.equal(query.workspace, "work");
+  assert.equal(query.stage, "ready");
+  const where = reviewListWhere(query);
+  assert.match(where.sql, /review_stage/);
+  assert.ok(where.parameters.includes("ready"));
+  assert.throws(() => readReviewListQuery(new URL("http://test/?workspace=wrong"), "demo"));
+  assert.throws(() => readReviewListQuery(new URL("http://test/?stage=wrong"), "demo"));
+});

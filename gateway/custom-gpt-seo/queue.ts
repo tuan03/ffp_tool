@@ -29,6 +29,7 @@ export class CustomGptQueue {
       CREATE TABLE IF NOT EXISTS gpt_mutations (scope TEXT NOT NULL, request_id TEXT NOT NULL, digest TEXT NOT NULL, response TEXT, PRIMARY KEY(scope,request_id));
       CREATE TABLE IF NOT EXISTS gpt_deliveries (job_id TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS gpt_review_state (job_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS gpt_review_archives (job_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, archived_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS gpt_sync (job_id TEXT PRIMARY KEY, token TEXT NOT NULL, status TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gpt_audit (id INTEGER PRIMARY KEY, store_id TEXT NOT NULL, job_id TEXT, event TEXT NOT NULL, created_at INTEGER NOT NULL);
     `);
@@ -319,6 +320,15 @@ export class CustomGptQueue {
       return updatedJob;
     });
   }
+  archiveReview(storeId: string, jobId: string): void {
+    this.transaction(() => {
+      const job = this.get(storeId, jobId);
+      if (job.status !== "REVIEW_READY") throw new Error("Job is not a ready review");
+      if (this.db.prepare("SELECT 1 FROM gpt_sync WHERE job_id=? AND status IN ('SYNCING','UNKNOWN')").get(jobId)) throw new Error("REVIEW_BUSY: reconcile the sync before archiving");
+      this.db.prepare("INSERT INTO gpt_review_archives VALUES (?,?,?) ON CONFLICT(job_id) DO NOTHING").run(jobId, storeId, this.now());
+      this.audit(storeId, jobId, "REVIEW_ARCHIVED");
+    });
+  }
   cancelReview(storeId: string, jobId: string): void {
     this.transaction(() => {
       const job = this.get(storeId, jobId);
@@ -451,9 +461,11 @@ export class CustomGptQueue {
   reviewState(storeId: string, jobId: string): Record<string, unknown> {
     this.get(storeId, jobId);
     const row = this.db.prepare("SELECT payload FROM gpt_review_state WHERE job_id=?").get(jobId);
-    return row ? record(json(row.payload)) : {};
+    const archive = this.db.prepare("SELECT archived_at FROM gpt_review_archives WHERE job_id=? AND store_id=?").get(jobId, storeId);
+    return { ...(row ? record(json(row.payload)) : {}), ...(archive ? { reviewArchivedAt: Number(archive.archived_at) } : {}) };
   }
   saveReviewState(storeId: string, jobId: string, state: Record<string, unknown>): void {
+    if (this.db.prepare("SELECT 1 FROM gpt_review_archives WHERE job_id=? AND store_id=?").get(jobId, storeId)) throw new Error("REVIEW_ARCHIVED");
     this.get(storeId, jobId);
     const current = this.reviewState(storeId, jobId);
     if (typeof current.updatedAt === "number" && typeof state.updatedAt === "number" && state.updatedAt < current.updatedAt) throw new Error("Review conflict: a newer edit is already saved");
@@ -463,6 +475,7 @@ export class CustomGptQueue {
     }
   }
   beginSync(storeId: string, jobId: string): string {
+    if (this.db.prepare("SELECT 1 FROM gpt_review_archives WHERE job_id=? AND store_id=?").get(jobId, storeId)) throw new Error("REVIEW_ARCHIVED");
     return this.transaction(() => {
       const job = this.get(storeId, jobId);
       if (job.status !== "REVIEW_READY") throw new Error("Sync requires a ready review");

@@ -6,6 +6,34 @@ import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import { createCustomGptHandler } from "../custom-gpt-seo/handler";
 import { createTestEnqueue } from "./seo-v2-fixtures";
 
+test("review archive requires operator auth and exact store, preserves SEO, and fences subsequent writes", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("capozen", { provider: "custom_gpt", batchSize: 5 });
+  const job = queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "archive-api", input: { niche: "home", images: [] }, original: {} }));
+  const batch = queue.claim("capozen", "archive-api-claim", "custom_gpt", "custom_gpt");
+  queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken,
+    requestId: "archive-submit", stage: "submission", payload: { title: "Keep SEO" } });
+  queue.finish("capozen", job.id, { output: { productTitle: "Keep SEO", aeo_quick_summary: "Keep AEO" } });
+  queue.saveReviewState("capozen", job.id, { reviewDecision: "approved", updatedAt: 1 });
+  const handler = createCustomGptHandler({ queue, actionKey: "action-key", storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const endpoint = `http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/archive`;
+  const request = { method: "POST", body: JSON.stringify({ jobId: job.id }), headers: { "Content-Type": "application/json", Authorization: "Bearer admin-key" } };
+  try {
+    assert.equal((await fetch(`${endpoint}?storeId=capozen`, { ...request, headers: { Authorization: "Bearer action-key" } })).status, 401);
+    assert.equal((await fetch(`${endpoint}?storeId=other`, request)).status, 404);
+    assert.equal((await fetch(`${endpoint}?storeId=capozen`, { headers: request.headers })).status, 405);
+    assert.equal((await fetch(`${endpoint}?storeId=capozen`, request)).status, 200);
+    assert.ok(queue.reviewState("capozen", job.id).reviewArchivedAt);
+    assert.deepEqual(queue.get("capozen", job.id).result, { output: { productTitle: "Keep SEO", aeo_quick_summary: "Keep AEO" } });
+    assert.throws(() => queue.beginSync("capozen", job.id), /REVIEW_ARCHIVED/);
+    assert.throws(() => queue.saveReviewState("capozen", job.id, {}), /REVIEW_ARCHIVED/);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
+});
+
 test("Actions reject missing keys and cannot access administration or another store", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);

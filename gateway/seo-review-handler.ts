@@ -17,7 +17,7 @@ import {
 export interface SeoReviewHttpRequestOptions {
   readonly db?: DatabaseSync;
   readonly autoSeoReviewRepository?: Pick<AutoSeoPostgresReviewRepository, "listHydrated" | "findHydrated" | "updateStatus" | "updatePayload"> &
-    Partial<Pick<AutoSeoPostgresReviewRepository, "delete" | "listSummaries">>;
+    Partial<Pick<AutoSeoPostgresReviewRepository, "delete" | "listSummaries" | "archive">>;
   readonly authToken?: string;
   readonly maxBodyBytes?: number;
 }
@@ -54,7 +54,7 @@ async function handleAutoSeoReviewRequest(
       return;
     }
     const rest = pathname.startsWith("/api/seo-review/items/") ? pathname.slice("/api/seo-review/items/".length) : "";
-    const action = rest.endsWith("/status") ? "status" : rest.endsWith("/update") ? "update" : "read";
+    const action = rest.endsWith("/archive") ? "archive" : rest.endsWith("/status") ? "status" : rest.endsWith("/update") ? "update" : "read";
     const rawId = action === "read" ? rest : rest.slice(0, -(action.length + 1));
     let itemId: string;
     try { itemId = decodeURIComponent(rawId); }
@@ -93,6 +93,13 @@ async function handleAutoSeoReviewRequest(
       return;
     }
     const body = parsed.body && typeof parsed.body === "object" && !Array.isArray(parsed.body) ? parsed.body as Record<string, unknown> : {};
+    if (action === "archive") {
+      if (!repository.archive || typeof body.storeId !== "string" || !body.storeId.trim()) {
+        sendJsonResponse(res, 400, { success: false, error: { code: "SEO_REVIEW_INVALID_INPUT", message: "Archive requires an exact store" } }); return;
+      }
+      const archived = await repository.archive(itemId, body.storeId);
+      sendJsonResponse(res, archived ? 200 : 404, { success: archived, archived }); return;
+    }
     if (action === "status") {
       const status = body.status;
       if (status !== "pending" && status !== "approved" && status !== "rejected") {

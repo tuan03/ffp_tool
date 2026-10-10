@@ -136,6 +136,7 @@ export class SeoPublishRepository {
       const row = (await sql.query(`SELECT j.payload,r.payload AS review FROM gpt_jobs j JOIN gpt_review_state r ON r.job_id=j.id
         WHERE j.id=$1 AND j.store_id=$2 AND j.status='REVIEW_READY' FOR UPDATE OF j,r`, [input.jobId, input.storeId])).rows[0];
       if (!row) throw new SeoWorkerError("APPROVED_REVIEW_REQUIRED");
+      if ((await sql.query("SELECT job_id FROM gpt_review_archives WHERE job_id=$1 AND store_id=$2", [input.jobId, input.storeId])).rows.length) throw new SeoWorkerError("REVIEW_ARCHIVED");
       const newer = (await sql.query(`SELECT 1 FROM gpt_jobs newer JOIN gpt_jobs current ON current.id=$1
         WHERE newer.store_id=current.store_id AND newer.queue_order>current.queue_order
         AND newer.payload::jsonb->>'source'=current.payload::jsonb->>'source'

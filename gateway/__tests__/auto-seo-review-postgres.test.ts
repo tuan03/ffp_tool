@@ -101,12 +101,16 @@ integrationTest("review upsert keeps the store/product key and resets status whi
   const record = { itemId, storeId: first.storeId, productId: first.productId, backupId: first.backupId, handle: "first", title: "First", reviewStatus: "pending" as const, generatedPayload: "{}", shopifyUpdatedAt: null };
   await reviewRepository.saveReview(record);
   await reviewRepository.updateStatus(itemId, "approved", "approved note");
+  assert.equal(await reviewRepository.archive(itemId, first.storeId), true);
+  await reviewRepository.saveReview(record);
+  assert.ok((await reviewRepository.findHydrated(itemId))?.reviewArchivedAt);
   await reviewRepository.saveReview({ ...record, backupId: second.backupId, title: "Second" });
   const saved = await reviewRepository.findHydrated(itemId);
   assert.equal(saved?.backupId, second.backupId);
   assert.equal(saved?.reviewStatus, "pending");
   assert.equal(saved?.notes, null);
   assert.equal(saved?.title, "Second");
+  assert.equal(saved?.reviewArchivedAt, undefined);
 });
 
 integrationTest("missing or corrupt exact backup fails hydration without selecting another", async () => {

@@ -125,6 +125,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
   return {
     reviewList: async (query: SeoReviewListQuery) => {
       const params = new URLSearchParams({ offset: String(query.offset ?? 0), limit: String(query.limit ?? 50), search: query.search ?? "", ...(query.decision ? { decision: query.decision } : {}) });
+      if (query.workspace) params.set("workspace", query.workspace);
+      if (query.stage) params.set("stage", query.stage);
       return readSeoReviewListPage(await request<unknown>(`review-list?${params}`, query.storeId, undefined, query.signal), query.storeId);
     },
     reviewDetail: (storeId: string, jobId: string, signal?: AbortSignal) => request<GptReviewPage["reviews"][number]>(`review-detail?jobId=${encodeURIComponent(jobId)}`, storeId, undefined, signal),
@@ -161,6 +163,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     requeue: (storeId: string, jobIds: readonly string[], options?: { provider?: SeoProvider; instructions?: string }) =>
       request<{ readonly requeued: number }>("requeue", storeId, { jobIds, ...options }),
     cancelReview: (storeId: string, jobId: string) => request<{ readonly cancelled: boolean }>("cancel", storeId, { jobId }),
+    archiveReview: (storeId: string, jobId: string) => request<{ readonly archived: boolean }>("archive", storeId, { jobId }),
     clearQueue: (storeId: string) => request<ClearQueueResult>("clear", storeId, {}),
     transfer: (storeId: string, jobId: string, provider: SeoProvider) => request<unknown>("transfer", storeId, { jobId, provider }),
     beginSync: (storeId: string, jobId: string) => request<{ token: string }>("begin-sync", storeId, { jobId }),

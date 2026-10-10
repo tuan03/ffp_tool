@@ -31,6 +31,18 @@ const approvedAeo = {
   aeoJsonLd: { value: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Product", name: "Red bag" }, { "@type": "FAQPage" }] }) },
 };
 
+test("publisher rejects an archived review before creating a write operation and preserves its SEO", async () => {
+  const f = await fixture("Description", approvedAeo);
+  try {
+    await f.pg.query("DELETE FROM seo_publish_operations WHERE job_id='job'");
+    await f.pg.query("DELETE FROM gpt_sync WHERE job_id='job'");
+    await f.pg.query("INSERT INTO gpt_review_archives VALUES('job','demo',1000)");
+    await assert.rejects(f.repository.enqueue({ storeId: "demo", jobId: "job", reviewUpdatedAt: 7, requestId: "after-archive", operator: "operator" }), /REVIEW_ARCHIVED/);
+    assert.equal((await f.pg.query("SELECT id FROM seo_publish_operations WHERE job_id='job'")).rows.length, 0);
+    assert.deepEqual(JSON.parse(String((await f.pg.query<{ payload: string }>("SELECT payload FROM gpt_review_state WHERE job_id='job'")).rows[0].payload)), f.review);
+  } finally { await f.pg.close(); }
+});
+
 test("publish freezes approved AEO HTML and JSON-LD and retries without another write", async () => {
   const f = await fixture("Description", approvedAeo);
   try {

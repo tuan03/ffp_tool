@@ -420,6 +420,8 @@ export function adaptAmazonCrawlerReviewToViewModel(
   const updatedAt = item.updatedAt ? Date.parse(item.updatedAt) : Date.now();
   return {
     id: item.id,
+    reviewActions: item.actions,
+    reviewArchivedAt: item.archivedAt ?? undefined,
     storeId: item.storeId || product.pipeline?.shopify.storeId,
     productId: syncedProductId,
     asin: product.parentAsin,

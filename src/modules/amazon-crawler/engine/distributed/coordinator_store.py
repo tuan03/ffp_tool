@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any, Callable
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import case, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
@@ -2438,6 +2438,20 @@ class CoordinatorStore(CoordinatorObservability):
             return True
 
     @staticmethod
+    def _review_actions(item: CrawlProductItem) -> dict[str, bool]:
+        review = dict((item.shopify_result or {}).get("review") or {})
+        sync_status = str(review.get("syncStatus") or "idle")
+        is_busy = sync_status in {"queued", "syncing"} or item.status in {"sync_queued", "syncing", "shopify_writing", "reconciliation_required"}
+        is_archived = bool(review.get("archivedAt"))
+        can_change = not is_busy and not is_archived and sync_status != "synced"
+        return {"canEdit": can_change, "canDecide": can_change,
+                "canSync": can_change and review.get("decision") == "approved" and sync_status == "idle",
+                "canArchive": not is_busy and not is_archived,
+                "canRetry": can_change and review.get("decision") == "approved" and sync_status == "failed",
+                "canReconcile": not is_archived and (sync_status == "synced" or item.status == "reconciliation_required"),
+                "canRevise": False}
+
+    @staticmethod
     def _review_snapshot(item: CrawlProductItem, job: CrawlJob | None) -> dict[str, Any]:
         pipeline_result = dict(item.shopify_result or {})
         review = dict(pipeline_result.get("review") or {})
@@ -2450,6 +2464,8 @@ class CoordinatorStore(CoordinatorObservability):
             "storeId": str(review.get("storeId") or settings.get("storeId") or ""),
             "decision": str(review.get("decision") or "pending"),
             "syncStatus": str(review.get("syncStatus") or "idle"),
+            "archivedAt": review.get("archivedAt"),
+            "actions": CoordinatorStore._review_actions(item),
             "syncGeneration": int(review.get("syncGeneration") or 0),
             "version": int(review.get("version") or 1),
             "rejectionReason": review.get("rejectionReason"),
@@ -2466,7 +2482,8 @@ class CoordinatorStore(CoordinatorObservability):
         }
 
     def product_review_catalog(self, store_id: str, *, offset: int = 0, limit: int = 50,
-                               search: str = "", decision: str | None = None) -> dict[str, Any]:
+                               search: str = "", decision: str | None = None,
+                               workspace: str | None = None, stage: str | None = None) -> dict[str, Any]:
         review = CrawlProductItem.shopify_result["review"]
         product = CrawlProductItem.normalized_payload
         raw = CrawlProductItem.raw_payload
@@ -2476,29 +2493,79 @@ class CoordinatorStore(CoordinatorObservability):
         asin = func.coalesce(product["parentAsin"].as_string(), raw["parentAsin"].as_string(), "")
         selected_decision = func.coalesce(review["decision"].as_string(), "pending")
         sync_status = func.coalesce(review["syncStatus"].as_string(), "idle")
+        archived_at = func.coalesce(review["archivedAt"].as_float(), 0)
+        is_busy = or_(sync_status.in_(["queued", "syncing"]), CrawlProductItem.status.in_(["sync_queued", "syncing", "shopify_writing", "reconciliation_required"]))
+        review_stage = case((or_(archived_at > 0, sync_status == "synced", selected_decision == "rejected"), "history"),
+                            (sync_status == "failed", "failed"), (is_busy, "syncing"), (selected_decision == "approved", "ready"), else_="pending")
         conditions = [store == store_id, review["decision"].as_string().is_not(None),
                       CrawlProductItem.status.in_(["waiting_review", "sync_queued", "syncing", "shopify_writing",
                                                    "completed", "failed", "rejected", "reconciliation_required"])]
+        count_conditions = list(conditions)
+        if workspace == "work":
+            conditions.append(review_stage != "history")
+        elif workspace == "history":
+            conditions.append(review_stage == "history")
+        if stage:
+            conditions.append(review_stage == stage)
         if search:
             pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             conditions.append(or_(title.ilike(pattern, escape="\\"), handle.ilike(pattern, escape="\\"), asin.ilike(pattern, escape="\\")))
         if decision:
             conditions.append(sync_status == "failed" if decision == "sync_failed" else selected_decision == decision)
         with self.sessions() as session:
+            counts = {key: 0 for key in ("pending", "ready", "syncing", "failed", "history")}
+            for selected_stage, count in session.execute(select(review_stage, func.count()).select_from(CrawlProductItem).join(CrawlJob).where(*count_conditions).group_by(review_stage)):
+                counts[selected_stage] = count
             total = session.scalar(select(func.count()).select_from(CrawlProductItem).join(CrawlJob).where(*conditions)) or 0
             rows = session.execute(select(CrawlProductItem.id, CrawlProductItem.updated_at, store, title, handle, asin,
                                           selected_decision, sync_status, review["syncError"].as_string(),
                                           func.coalesce(product["media"][0]["processedUrl"].as_string(),
                                                         product["media"][0]["url"].as_string(), raw["media"][0]["url"].as_string(), ""),
-                                          product["media"][0]["processedFileToken"].as_string())
+                                          product["media"][0]["processedFileToken"].as_string(), archived_at, review_stage, is_busy)
                                    .join(CrawlJob).where(*conditions)
                                    .order_by(CrawlProductItem.updated_at.desc(), CrawlProductItem.id.desc())
                                    .offset(offset).limit(limit)).all()
             items = [{"id": row[0], "recordId": row[0], "source": "crawler", "storeId": row[2],
                       "title": row[3], "handle": row[4], "asin": row[5], "decision": row[6], "syncStatus": row[7],
                       "syncError": row[8], "thumbnailUrl": row[9], "thumbnailToken": row[10],
+                      "archivedAt": row[11] or None, "stage": row[12],
+                      "actions": {"canEdit": not row[13] and not row[11] and row[7] != "synced",
+                                  "canDecide": not row[13] and not row[11] and row[7] != "synced",
+                                  "canSync": not row[13] and not row[11] and row[6] == "approved" and row[7] == "idle",
+                                  "canArchive": not row[13] and not row[11],
+                                  "canRetry": not row[13] and not row[11] and row[6] == "approved" and row[7] == "failed",
+                                  "canReconcile": not row[11] and (row[7] == "synced" or row[13] and row[7] == "failed"), "canRevise": False},
                       "updatedAt": row[1].replace(tzinfo=utc_now().tzinfo).timestamp() * 1000} for row in rows]
-            return {"items": items, "total": total, "nextOffset": offset + len(items) if offset + len(items) < total else None}
+            return {"items": items, "total": total, "counts": counts, "nextOffset": offset + len(items) if offset + len(items) < total else None}
+
+    def archive_product_review(self, item_id: str, store_id: str) -> dict[str, Any]:
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None or item.status == "deleted":
+                return {"reason": "not_found"}
+            job = session.get(CrawlJob, item.job_id)
+            snapshot = self._review_snapshot(item, job)
+            if snapshot["storeId"] != store_id or not (item.shopify_result or {}).get("review"):
+                return {"reason": "not_found"}
+            if snapshot.get("archivedAt"):
+                return {"archived": True}
+            # A claim still owns the row even if its lease expired; let recovery release it.
+            if not snapshot["actions"]["canArchive"] or item.claimed_by or item.claim_expires_at:
+                return {"reason": "sync_in_progress"}
+            pipeline_result = dict(item.shopify_result or {})
+            review = dict(pipeline_result["review"])
+            review["archivedAt"] = utc_now().timestamp() * 1000
+            review["updatedAt"] = utc_iso(utc_now())
+            review["version"] = int(review.get("version") or 1) + 1
+            pipeline_result["review"] = review
+            item.shopify_result = pipeline_result
+            if snapshot["syncStatus"] != "synced":
+                item.status = "rejected"
+                item.completed_at = utc_now()
+            item.updated_at = utc_now()
+            self._event(session, item.job_id, "product_review_archived", {"productItemId": item.id})
+            self._refresh_job(session, item.job_id)
+            return {"archived": True}
 
     def get_product_review(self, item_id: str, store_id: str) -> dict[str, Any] | None:
         with self.sessions() as session:
@@ -2620,7 +2687,7 @@ class CoordinatorStore(CoordinatorObservability):
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
+            if review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
             field_map = {
@@ -2691,7 +2758,7 @@ class CoordinatorStore(CoordinatorObservability):
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
+            if review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
                 return {"locked": True}
             review.update({
                 "decision": decision,
@@ -2720,6 +2787,8 @@ class CoordinatorStore(CoordinatorObservability):
                 return {"deleted": True}
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
+            if review.get("archivedAt"):
+                return {"archived": True}
             if str(review.get("decision") or "pending") != "approved":
                 return {"notApproved": True}
             if item.status == "reconciliation_required" and not reconcile:
@@ -2777,7 +2846,7 @@ class CoordinatorStore(CoordinatorObservability):
             for item in items:
                 pipeline_result = dict(item.shopify_result or {})
                 review = dict(pipeline_result.get("review") or {})
-                if str(review.get("decision") or "pending") != "approved":
+                if review.get("archivedAt") or str(review.get("decision") or "pending") != "approved":
                     continue
                 if str(review.get("syncStatus") or "idle") not in {"idle", "failed"}:
                     continue

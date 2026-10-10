@@ -15,7 +15,8 @@ import { SeoCutoverRepository } from "../seo-worker/cutover";
 import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
 import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
 import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
-import { reviewListWhere } from "../review-list-query";
+import { reviewListWhere, reviewStageSql } from "../review-list-query";
+import { emptySeoReviewCounts, getSeoReviewActions } from "../../src/shared/seo-review-list";
 import type { SeoReviewListItem, SeoReviewListPage, SeoReviewListQuery } from "../../src/shared/seo-review-list";
 
 const LEASE_MS = 30 * 60_000;
@@ -139,32 +140,43 @@ export class PostgresCustomGptQueue implements SeoQueue {
   }
   async reviewList(query: SeoReviewListQuery): Promise<SeoReviewListPage> {
     // A single read joins state/receipts. Do not acquire the writer's advisory lock for a catalog.
-    const catalog = `SELECT j.id,j.store_id,
+    const catalog = reviewStageSql(`SELECT j.id,j.store_id,
       COALESCE(j.payload::jsonb#>>'{execution,productId}',j.payload::jsonb->>'sourceIdentity') AS product_id,
       COALESCE(r.payload::jsonb#>>'{productTitle,value}',j.payload::jsonb#>>'{result,output,productTitle}',j.payload::jsonb#>>'{original,title}','') AS title,
       COALESCE(r.payload::jsonb#>>'{handle,value}',j.payload::jsonb#>>'{result,output,productHandle}',j.payload::jsonb#>>'{original,handle}','') AS handle,
       COALESCE(r.payload::jsonb->>'asin','') AS asin,
       COALESCE(r.payload::jsonb#>>'{images,0,previewUrl,value}',j.payload::jsonb#>>'{original,images,0,url}','') AS thumbnail_url,
       COALESCE(r.payload::jsonb->>'reviewDecision','pending') AS decision,
-      CASE WHEN p.state='SUCCEEDED' THEN 'synced' WHEN p.state='BLOCKED' THEN 'failed'
-        WHEN p.state IS NOT NULL THEN 'syncing' ELSE COALESCE(r.payload::jsonb->>'shopifySyncStatus','idle') END AS sync_status,
+      CASE WHEN p.state='SUCCEEDED' OR s.status='SYNCED' THEN 'synced' WHEN p.state='BLOCKED' THEN 'failed'
+        WHEN p.state IS NOT NULL OR s.status IN ('SYNCING','UNKNOWN') THEN 'syncing' ELSE COALESCE(r.payload::jsonb->>'shopifySyncStatus','idle') END AS sync_status,
       COALESCE(p.error_code,r.payload::jsonb->>'shopifySyncError','') AS sync_error,
-      GREATEST(COALESCE((r.payload::jsonb->>'updatedAt')::bigint,0),COALESCE((j.payload::jsonb->>'updatedAt')::bigint,j.created_at),COALESCE(p.updated_at,0)) AS updated_at
+      COALESCE(a.archived_at,0) AS archived_at,p.id IS NOT NULL AS has_publish,
+      COALESCE(p.state IN ('QUEUED','CHECKING','WRITING','UNCERTAIN') OR (p.state='BLOCKED' AND p.has_write_intent),false) OR COALESCE(s.status IN ('SYNCING','UNKNOWN'),false) AS is_unresolved,
+      EXISTS(SELECT 1 FROM seo_worker_revisions v WHERE v.previous_job_id=j.id) AS is_superseded,
+      GREATEST(COALESCE((r.payload::jsonb->>'updatedAt')::bigint,0),COALESCE((j.payload::jsonb->>'updatedAt')::bigint,j.created_at),COALESCE(p.updated_at,0),COALESCE(a.archived_at,0)) AS updated_at
       FROM gpt_jobs j LEFT JOIN gpt_review_state r ON r.job_id=j.id LEFT JOIN seo_publish_operations p ON p.job_id=j.id
-      WHERE j.store_id=? AND j.status='REVIEW_READY' AND j.payload::jsonb->>'source'='auto_seo'`;
+      LEFT JOIN gpt_review_archives a ON a.job_id=j.id LEFT JOIN gpt_sync s ON s.job_id=j.id
+      WHERE j.store_id=? AND j.status='REVIEW_READY' AND j.payload::jsonb->>'source'='auto_seo'`);
     const where = reviewListWhere(query);
     const count = await this.db.prepare(`SELECT COUNT(*) AS total FROM (${catalog}) catalog WHERE ${where.sql}`).get(query.storeId, ...where.parameters);
     const rows = await this.db.prepare(`SELECT * FROM (${catalog}) catalog WHERE ${where.sql} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`)
       .all(query.storeId, ...where.parameters, query.limit ?? 50, query.offset ?? 0);
+    const counts = emptySeoReviewCounts();
+    for (const row of await this.db.prepare(`SELECT review_stage,COUNT(*) AS total FROM (${catalog}) catalog GROUP BY review_stage`).all(query.storeId)) {
+      counts[row.review_stage as keyof typeof counts] = Number(row.total);
+    }
     const items = rows.map((row): SeoReviewListItem => ({
       id: `gpt-${String(row.id)}`, recordId: String(row.id), storeId: String(row.store_id), source: "gpt",
       productId: String(row.product_id), title: String(row.title), handle: String(row.handle), asin: String(row.asin),
       thumbnailUrl: String(row.thumbnail_url), decision: row.decision as SeoReviewListItem["decision"],
       syncStatus: row.sync_status as SeoReviewListItem["syncStatus"], syncError: String(row.sync_error), updatedAt: Number(row.updated_at),
+      archivedAt: Number(row.archived_at) || undefined, stage: row.review_stage as SeoReviewListItem["stage"],
+      actions: getSeoReviewActions({ decision: row.decision as SeoReviewListItem["decision"], syncStatus: row.sync_status as SeoReviewListItem["syncStatus"],
+        archivedAt: Number(row.archived_at), hasPublish: row.has_publish === true, isUnresolved: row.is_unresolved === true, isSuperseded: row.is_superseded === true }),
     }));
     const total = Number(count?.total ?? 0);
     const next = (query.offset ?? 0) + items.length;
-    return { items, total, nextOffset: next < total ? next : null };
+    return { items, total, counts, nextOffset: next < total ? next : null };
   }
   async findLatestSourceJobs(storeId: string, source: string, productIds: readonly string[]): Promise<ReadonlyMap<string, GptSeoJob>> {
     const rows = await this.db.prepare(`SELECT DISTINCT ON (json_extract(payload,'$.sourceIdentity')) gpt_jobs.payload,
@@ -446,6 +458,22 @@ export class PostgresCustomGptQueue implements SeoQueue {
       return updatedJob;
     }));
   }
+  async archiveReview(storeId: string, jobId: string): Promise<void> {
+    await this.transaction(async () => {
+      const row = await this.db.prepare("SELECT id,status FROM gpt_jobs WHERE store_id=? AND id=? FOR UPDATE").get(storeId, jobId);
+      if (!row) throw new Error("Job not found");
+      if (row.status !== "REVIEW_READY") throw new Error("Job is not a ready review");
+      const publish = await this.db.prepare("SELECT state,has_write_intent FROM seo_publish_operations WHERE job_id=? FOR UPDATE").get(jobId);
+      const worker = await this.db.prepare("SELECT lease_id FROM seo_worker_jobs WHERE job_id=? FOR UPDATE").get(jobId);
+      if (worker?.lease_id) throw new Error("REVIEW_BUSY: worker lease must be released before archiving");
+      const sync = await this.db.prepare("SELECT status FROM gpt_sync WHERE job_id=?").get(jobId);
+      if ((publish && (!['SUCCEEDED','BLOCKED'].includes(String(publish.state)) || publish.state === 'BLOCKED' && publish.has_write_intent)) ||
+          sync && ['SYNCING','UNKNOWN'].includes(String(sync.status))) throw new Error("REVIEW_BUSY: reconcile the Shopify write before archiving");
+      await this.db.prepare("INSERT INTO gpt_review_archives VALUES (?,?,?) ON CONFLICT(job_id) DO NOTHING").run(jobId, storeId, this.now());
+      await this.db.prepare("UPDATE seo_worker_jobs SET pipeline_active=false,state='CLOSED',updated_at=? WHERE job_id=? AND lease_id IS NULL").run(this.now(), jobId);
+      await this.audit(storeId, jobId, "REVIEW_ARCHIVED");
+    });
+  }
   async cancelReview(storeId: string, jobId: string): Promise<void> {
     (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
@@ -590,7 +618,8 @@ export class PostgresCustomGptQueue implements SeoQueue {
     const state = row ? record(json(row.payload)) : {};
     const publish = await this.publisher.status(storeId, jobId);
     const receipt = publish.operation;
-    return { ...state, ...(publish.managed ? { backendPublishRequired: true } : {}), ...(receipt ? {
+    const archive = await this.db.prepare("SELECT archived_at FROM gpt_review_archives WHERE job_id=? AND store_id=?").get(jobId, storeId);
+    return { ...state, ...(archive ? { reviewArchivedAt: Number(archive.archived_at) } : {}), ...(publish.managed ? { backendPublishRequired: true } : {}), ...(receipt ? {
       backendPublish: { id: receipt.id, jobId, state: receipt.state, errorCode: receipt.errorCode, seoVersion: receipt.seoVersion },
       shopifySyncStatus: receipt.state === "SUCCEEDED" ? "synced" : receipt.state === "BLOCKED" ? "failed" : "syncing",
       isSyncing: !["SUCCEEDED", "BLOCKED"].includes(receipt.state),
@@ -600,6 +629,8 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async saveReviewState(storeId: string, jobId: string, state: Record<string, unknown>): Promise<void> {
     await this.transaction(async () => {
     (await this.get(storeId, jobId));
+    await this.db.prepare("SELECT id FROM gpt_jobs WHERE store_id=? AND id=? FOR UPDATE").get(storeId, jobId);
+    if (await this.db.prepare("SELECT 1 FROM gpt_review_archives WHERE job_id=? AND store_id=?").get(jobId, storeId)) throw new Error("REVIEW_ARCHIVED");
     if (await this.db.prepare("SELECT job_id FROM seo_worker_revisions WHERE previous_job_id=?").get(jobId)) throw new Error("REVIEW_SUPERSEDED: preserve revision history");
     if (await this.db.prepare("SELECT id FROM seo_publish_operations WHERE job_id=?").get(jobId)) throw new Error("PUBLISH_ACTIVE: published review is immutable; create a new revision after reconciliation");
     const current = (await this.reviewState(storeId, jobId));
@@ -617,6 +648,8 @@ export class PostgresCustomGptQueue implements SeoQueue {
     return (await this.transaction(async () => {
       const job = (await this.get(storeId, jobId));
       if (job.status !== "REVIEW_READY") throw new Error("Sync requires a ready review");
+      await this.db.prepare("SELECT id FROM gpt_jobs WHERE store_id=? AND id=? FOR UPDATE").get(storeId, jobId);
+      if (await this.db.prepare("SELECT 1 FROM gpt_review_archives WHERE job_id=? AND store_id=?").get(jobId, storeId)) throw new Error("REVIEW_ARCHIVED");
       // Amazon crawler products are published as a complete product by the
       // Coordinator pipeline. The SEO publisher only updates an existing
       // Shopify product, so its store-wide gate does not apply to this source.

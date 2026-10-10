@@ -2,7 +2,8 @@ import { Pool } from "pg";
 
 import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import type { ListSeoReviewItemsOptions, SeoReviewItemRecord, SeoReviewStatus } from "./seo-review-db";
-import { reviewListWhere } from "./review-list-query";
+import { reviewListWhere, reviewStageSql } from "./review-list-query";
+import { emptySeoReviewCounts, getSeoReviewActions } from "../src/shared/seo-review-list";
 import type { SeoReviewListItem, SeoReviewListPage, SeoReviewListQuery } from "../src/shared/seo-review-list";
 
 export interface AutoSeoReviewInput extends SeoReviewItemRecord {
@@ -12,6 +13,7 @@ export interface AutoSeoReviewInput extends SeoReviewItemRecord {
 export interface AutoSeoDurableReview extends SeoReviewItemRecord {
   readonly backupId: string;
   readonly sourceOrigin: "auto_seo";
+  readonly reviewArchivedAt?: number;
   readonly originalBackup: {
     readonly productTitle: string;
     readonly productDescription: string;
@@ -40,6 +42,7 @@ interface ReviewRow {
   readonly backup_product_id: string | null;
   readonly backup_created_at: string | null;
   readonly deleted_at: string | null;
+  readonly archived_at: string | null;
 }
 
 function mapHydrated(row: ReviewRow): AutoSeoDurableReview {
@@ -64,6 +67,7 @@ function mapHydrated(row: ReviewRow): AutoSeoDurableReview {
     generatedPayload: row.generated_payload, shopifyUpdatedAt: row.shopify_updated_at,
     notes: row.notes, createdAt: row.created_at, updatedAt: row.updated_at,
     backupId: row.backup_id, sourceOrigin: "auto_seo",
+    ...(row.archived_at ? { reviewArchivedAt: Date.parse(row.archived_at) } : {}),
     originalBackup: {
       productTitle: product.title,
       productDescription: typeof product.descriptionHtml === "string" ? product.descriptionHtml : typeof product.description === "string" ? product.description : "",
@@ -111,6 +115,7 @@ export class AutoSeoPostgresReviewRepository {
         CONSTRAINT uq_seo_review_store_product UNIQUE (store_id,product_id)
       );
       ALTER TABLE ${this.schema}.seo_review_items ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+      ALTER TABLE ${this.schema}.seo_review_items ADD COLUMN IF NOT EXISTS archived_at TEXT;
       CREATE INDEX IF NOT EXISTS idx_seo_review_store_status ON ${this.schema}.seo_review_items(store_id,review_status,created_at DESC);
     `);
   }
@@ -130,6 +135,7 @@ export class AutoSeoPostgresReviewRepository {
         item_id=EXCLUDED.item_id,handle=EXCLUDED.handle,title=EXCLUDED.title,
         review_status=EXCLUDED.review_status,generated_payload=EXCLUDED.generated_payload,
         shopify_updated_at=EXCLUDED.shopify_updated_at,notes=EXCLUDED.notes,
+        archived_at=CASE WHEN ${this.schema}.seo_review_items.backup_id IS DISTINCT FROM EXCLUDED.backup_id THEN NULL ELSE ${this.schema}.seo_review_items.archived_at END,
         deleted_at=NULL,updated_at=EXCLUDED.updated_at,source_origin='auto_seo',backup_id=EXCLUDED.backup_id
       WHERE ${this.schema}.seo_review_items.source_origin='auto_seo'
     `, [item.itemId, item.storeId, item.productId, item.handle, item.title, item.reviewStatus,
@@ -163,28 +169,41 @@ export class AutoSeoPostgresReviewRepository {
     return { items: result.rows.map(mapHydrated), total: Number(count.rows[0]?.count ?? 0) };
   }
   public async listSummaries(query: SeoReviewListQuery): Promise<SeoReviewListPage> {
-    const catalog = `SELECT r.item_id AS id,r.store_id,r.product_id,
+    const catalog = reviewStageSql(`SELECT r.item_id AS id,r.store_id,r.product_id,
       COALESCE(r.generated_payload::jsonb->>'productTitle',r.generated_payload::jsonb->>'title',r.title) AS title,r.handle,
       '' AS asin,COALESCE(r.generated_payload::jsonb#>>'{images,0,webp,url}',r.generated_payload::jsonb#>>'{images,0,sourceUrl}','') AS thumbnail_url,
-      r.review_status AS decision,'idle' AS sync_status,extract(epoch FROM replace(r.updated_at,' ','T')::timestamp)*1000 AS updated_at
-      FROM ${this.schema}.seo_review_items r WHERE r.source_origin='auto_seo' AND r.deleted_at IS NULL`;
+      r.review_status AS decision,'idle' AS sync_status,
+      COALESCE(extract(epoch FROM replace(r.archived_at,' ','T')::timestamp)*1000,0) AS archived_at,
+      false AS is_superseded,false AS is_unresolved,extract(epoch FROM replace(r.updated_at,' ','T')::timestamp)*1000 AS updated_at
+      FROM ${this.schema}.seo_review_items r WHERE r.source_origin='auto_seo' AND r.deleted_at IS NULL`);
     const where = reviewListWhere(query);
     const bind = (sql: string): string => { let index = 0; return sql.replace(/\?/g, () => `$${++index}`); };
     const count = await this.pool.query<{ total: string }>(bind(`SELECT COUNT(*) AS total FROM (${catalog}) catalog WHERE ${where.sql}`), [...where.parameters]);
     const rows = await this.pool.query<Record<string, unknown>>(bind(`SELECT * FROM (${catalog}) catalog WHERE ${where.sql} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`), [...where.parameters, query.limit ?? 50, query.offset ?? 0]);
+    const counts = emptySeoReviewCounts();
+    const grouped = await this.pool.query<Record<string, unknown>>(`SELECT review_stage,COUNT(*) AS total FROM (${catalog}) catalog WHERE store_id=$1 GROUP BY review_stage`, [query.storeId]);
+    for (const row of grouped.rows) counts[row.review_stage as keyof typeof counts] = Number(row.total);
     const items = rows.rows.map((row): SeoReviewListItem => ({ id: String(row.product_id), recordId: String(row.id), storeId: String(row.store_id), source: "auto_seo",
       productId: String(row.product_id), title: String(row.title), handle: String(row.handle), thumbnailUrl: String(row.thumbnail_url),
-      decision: row.decision as SeoReviewListItem["decision"], syncStatus: "idle", updatedAt: Number(row.updated_at) }));
+      decision: row.decision as SeoReviewListItem["decision"], syncStatus: "idle", updatedAt: Number(row.updated_at),
+      archivedAt: Number(row.archived_at) || undefined, stage: row.review_stage as SeoReviewListItem["stage"],
+      actions: getSeoReviewActions({ decision: row.decision as SeoReviewListItem["decision"], syncStatus: "idle", archivedAt: Number(row.archived_at) }) }));
     const total = Number(count.rows[0]?.total ?? 0);
     const next = (query.offset ?? 0) + items.length;
-    return { items, total, nextOffset: next < total ? next : null };
+    return { items, total, counts, nextOffset: next < total ? next : null };
+  }
+
+  public async archive(itemId: string, storeId: string): Promise<boolean> {
+    const result = await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET archived_at=COALESCE(archived_at,$1),updated_at=$1
+      WHERE item_id=$2 AND store_id=$3 AND source_origin='auto_seo' AND deleted_at IS NULL`, [new Date().toISOString(), itemId, storeId]);
+    return (result.rowCount ?? 0) > 0;
   }
 
   public async updateStatus(itemId: string, status: SeoReviewStatus, notes?: string): Promise<boolean> {
     if (!["pending", "approved", "rejected"].includes(status)) throw new Error("Invalid review status");
     const result = notes === undefined
-      ? await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET review_status=$1,updated_at=$2 WHERE item_id=$3 AND source_origin='auto_seo' AND deleted_at IS NULL`, [status, new Date().toISOString(), itemId])
-      : await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET review_status=$1,notes=$2,updated_at=$3 WHERE item_id=$4 AND source_origin='auto_seo' AND deleted_at IS NULL`, [status, notes, new Date().toISOString(), itemId]);
+      ? await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET review_status=$1,updated_at=$2 WHERE item_id=$3 AND source_origin='auto_seo' AND deleted_at IS NULL AND archived_at IS NULL`, [status, new Date().toISOString(), itemId])
+      : await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET review_status=$1,notes=$2,updated_at=$3 WHERE item_id=$4 AND source_origin='auto_seo' AND deleted_at IS NULL AND archived_at IS NULL`, [status, notes, new Date().toISOString(), itemId]);
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -194,7 +213,7 @@ export class AutoSeoPostgresReviewRepository {
     const record = payload as Record<string, unknown>;
     const title = typeof record.title === "string" && record.title.trim() ? record.title.trim() : typeof record.productTitle === "string" && record.productTitle.trim() ? record.productTitle.trim() : null;
     const handle = typeof record.handle === "string" && record.handle.trim() ? record.handle.trim() : typeof record.productHandle === "string" && record.productHandle.trim() ? record.productHandle.trim() : null;
-    const result = await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET title=COALESCE($1,title),handle=COALESCE($2,handle),generated_payload=(generated_payload::jsonb || $3::jsonb)::text,updated_at=$4 WHERE item_id=$5 AND source_origin='auto_seo' AND deleted_at IS NULL`, [title, handle, serialized, new Date().toISOString(), itemId]);
+    const result = await this.pool.query(`UPDATE ${this.schema}.seo_review_items SET title=COALESCE($1,title),handle=COALESCE($2,handle),generated_payload=(generated_payload::jsonb || $3::jsonb)::text,updated_at=$4 WHERE item_id=$5 AND source_origin='auto_seo' AND deleted_at IS NULL AND archived_at IS NULL`, [title, handle, serialized, new Date().toISOString(), itemId]);
     return (result.rowCount ?? 0) > 0;
   }
 

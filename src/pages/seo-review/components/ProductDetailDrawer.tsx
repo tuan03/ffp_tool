@@ -3,6 +3,8 @@ import { WorkerReviewHistoryPanel } from "../../../modules/custom-gpt-seo";
 import type { CustomGptClient } from "../../../modules/custom-gpt-seo";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
+import { reviewActions } from "../review-actions";
+import { ReviewProductActions } from "./ReviewProductActions";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { serializeProductRawJson } from "../product-raw-json-helper";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
@@ -307,7 +309,7 @@ export function ProductDetailDrawer({
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30">
                     <span className="h-2 w-2 rounded-full bg-rose-400" />
                     <span title={product.shopifySyncError}>Lỗi đồng bộ Store</span>
-                    {onRetrySync && (
+                    {onRetrySync && reviewActions(product).canRetry && (
                       <button
                         type="button"
                         onClick={() => onRetrySync(product.id)}
@@ -383,7 +385,7 @@ export function ProductDetailDrawer({
               <ShopifySyncErrorBanner
                 error={product.shopifySyncError}
                 syncedAt={product.shopifySyncedAt}
-                onRetry={onRetrySync ? () => onRetrySync(product.id) : undefined}
+                onRetry={onRetrySync && reviewActions(product).canRetry ? () => onRetrySync(product.id) : undefined}
                 showDetailsByDefault={true}
               />
             )}
@@ -951,202 +953,9 @@ export function ProductDetailDrawer({
             </div>
           </div>
 
-          {/* Drawer Footer Actions */}
-          <div className="border-t border-slate-800 bg-slate-900/90 px-6 py-4 flex items-center justify-between sticky bottom-0 z-10">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onEdit(product)}
-                disabled={product.isSyncing || product.isReverting}
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                  product.isSyncing || product.isReverting
-                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                    : "bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700 cursor-pointer"
-                }`}
-              >
-                ✏️ Chỉnh sửa
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowRawJsonModal(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold bg-slate-800 text-cyan-300 hover:bg-slate-700 hover:text-cyan-200 border border-slate-700 cursor-pointer transition shadow-sm"
-                title="Xem trực quan toàn bộ object JSON đầy đủ của sản phẩm"
-              >
-                <span>🔍</span>
-                <span>Xem Raw JSON</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {product.shopifyAdminUrl && (
-                <a
-                  href={product.shopifyAdminUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/80 border border-emerald-800 transition inline-flex items-center gap-1.5"
-                >
-                  Shopify Admin ↗
-                </a>
-              )}
-
-              {product.shopifySyncStatus === "failed" && onRetrySync && (
-                <button
-                  type="button"
-                  onClick={() => onRetrySync(product.id)}
-                  className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 transition cursor-pointer"
-                >
-                  🔄 Thử lại đẩy Store
-                </button>
-              )}
-
-              {product.reviewDecision === "approved" &&
-                product.shopifySyncStatus !== "synced" &&
-                product.shopifySyncStatus !== "failed" &&
-                onRetrySync && (
-                  <button
-                    type="button"
-                    onClick={() => onRetrySync(product.id)}
-                    disabled={product.isSyncing}
-                    className="rounded-lg border border-cyan-500/40 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
-                  >
-                    🛍️ Sync Shopify
-                  </button>
-                )}
-
-              {product.shopifySyncStatus === "synced" && onRetrySync && (
-                <button
-                  type="button"
-                  title={
-                    product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
-                      ? `Đồng bộ sản phẩm này sang Store mục tiêu: ${currentStoreId}`
-                      : product.coordinatorReview
-                        ? "Kiểm tra sản phẩm trên Shopify và tạo lại qua Pipeline Worker nếu đã bị xóa"
-                        : "Đồng bộ lại toàn bộ dữ liệu mới nhất lên Shopify Store"
-                  }
-                  onClick={() => onRetrySync(product.id)}
-                  disabled={product.isSyncing}
-                  className="rounded-lg border border-teal-500/30 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-sm font-semibold text-teal-300 transition cursor-pointer disabled:opacity-50"
-                >
-                  <span>
-                    {product.storeId && currentStoreId && product.storeId.toLowerCase() !== currentStoreId.toLowerCase()
-                      ? `🔄 Sync sang ${currentStoreId}`
-                      : product.coordinatorReview ? "🔎 Kiểm tra / Tạo lại" : "🔄 Sync lại Shopify"}
-                  </span>
-                </button>
-              )}
-
-              <a
-                href={`/customization?productId=${encodeURIComponent(product.productId || product.id)}&storeId=${encodeURIComponent(product.storeId || currentStoreId || "")}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-lg border border-cyan-800/80 bg-cyan-950/40 px-3 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-900/60 inline-flex items-center gap-1.5"
-                title="Mở Customization Manager cho sản phẩm này"
-              >
-                <span>🎛️</span>
-                <span>Customizer ↗</span>
-              </a>
-
-              {/* Nút Hoàn tác dữ liệu cũ */}
-              {Boolean(product.originalBackup) &&
-                (product.reviewDecision === "approved" || Boolean(product.lastSyncedAt)) && (
-                  <button
-                    type="button"
-                    onClick={() => onRollback?.(product.id)}
-                    disabled={product.isSyncing || product.isReverting}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
-                      product.isReverting
-                        ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
-                        : product.isSyncing
-                          ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                          : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 cursor-pointer shadow-sm shadow-amber-950/40"
-                    }`}
-                    title="Hoàn tác sản phẩm về dữ liệu gốc đã backup lên Shopify"
-                  >
-                    {product.isReverting ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4 text-amber-400" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                        </svg>
-                        <span>Đang hoàn tác Shopify...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>↩</span>
-                        <span>Hoàn tác dữ liệu cũ</span>
-                      </>
-                    )}
-                  </button>
-                )}
-
-              {onDelete && (
-                <button
-                  type="button"
-                  onClick={() => onDelete(product.id)}
-                  disabled={product.isSyncing || product.isReverting}
-                  className="px-3.5 py-2 rounded-lg text-sm font-semibold transition bg-rose-950/40 text-rose-300 hover:bg-rose-900/70 border border-rose-800/60 cursor-pointer flex items-center gap-1.5 shadow-sm shadow-rose-950/40"
-                  title="Xóa sản phẩm này khỏi danh sách SEO Review"
-                >
-                  <span>🗑️</span>
-                  <span>Xóa khỏi Review</span>
-                </button>
-              )}
-
-              {onRequeue && (
-                <button
-                  type="button"
-                  onClick={() => onRequeue(product.id)}
-                  disabled={product.isSyncing || product.isReverting}
-                  className="px-3.5 py-2 rounded-lg text-sm font-semibold transition bg-amber-950/40 text-amber-300 hover:bg-amber-900/70 border border-amber-700/60 cursor-pointer flex items-center gap-1.5 shadow-sm shadow-amber-950/40"
-                  title="Đưa sản phẩm quay lại Queue để SEO lại với AI hoặc prompt mới"
-                >
-                  <span>🔄</span>
-                  <span>SEO lại</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => onReject(product.id)}
-                disabled={product.isSyncing || product.isReverting}
-                className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                  product.isSyncing || product.isReverting
-                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                    : "bg-rose-950/60 text-rose-300 hover:bg-rose-900/80 border border-rose-800 cursor-pointer"
-                }`}
-              >
-                ✕ Từ chối
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onApprove(product.id)}
-                disabled={product.isSyncing || product.isReverting}
-                className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
-                  product.isSyncing || product.isReverting
-                    ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
-                    : product.reviewDecision === "approved"
-                      ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 cursor-pointer"
-                      : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-md shadow-emerald-900/30 cursor-pointer"
-                }`}
-              >
-                {product.isSyncing ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 text-cyan-400" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                    </svg>
-                    <span>Đang đồng bộ Shopify...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>✓</span>
-                    <span>{product.reviewDecision === "approved" ? "Đã duyệt" : "Phê duyệt (Approve)"}</span>
-                  </>
-                )}
-              </button>
-            </div>
+          <div className="border-t border-slate-800 bg-slate-950 p-4">
+            <ReviewProductActions product={product} onEdit={onEdit} onApprove={onApprove}
+              onSync={onRetrySync} onArchive={onDelete} onRevise={onRequeue} />
           </div>
         </div>
       </div>

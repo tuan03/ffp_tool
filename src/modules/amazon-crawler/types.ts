@@ -1,4 +1,4 @@
-import type { SeoReviewListPage, SeoReviewListQuery } from "../../shared/seo-review-list";
+import type { SeoReviewActions, SeoReviewListPage, SeoReviewListQuery } from "../../shared/seo-review-list";
 
 export type AmazonCrawlerProfile = "default" | "jeminise" | "preaurem";
 
@@ -746,6 +746,8 @@ export interface AmazonCrawlerReviewItem {
   readonly storeId: string;
   readonly decision: AmazonCrawlerReviewDecision;
   readonly syncStatus: AmazonCrawlerReviewSyncStatus;
+  readonly archivedAt?: number | null;
+  readonly actions?: SeoReviewActions;
   readonly syncGeneration?: number;
   readonly version: number;
   readonly rejectionReason?: string | null;
@@ -766,6 +768,7 @@ export interface AmazonCrawlerReviewEditPatch {
 }
 
 export interface AmazonCrawlerReviewClient {
+  archive?(itemId: string, storeId: string): Promise<{ readonly archived: boolean }>;
   catalog?(query: SeoReviewListQuery): Promise<SeoReviewListPage>;
   detail?(itemId: string, storeId: string, signal?: AbortSignal): Promise<AmazonCrawlerReviewItem>;
   subscribeCatalog?(storeId: string, onChange: () => void): () => void;

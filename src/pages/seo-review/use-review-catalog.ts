@@ -19,7 +19,9 @@ export function useReviewCatalog(options: {
   const { enabled, query, source, gpt, crawler } = options;
   const [history, setHistory] = useState<readonly ReviewOffsets[]>([EMPTY_OFFSETS]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const displayedKey = useRef("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [search, setSearch] = useState(query.search ?? "");
@@ -28,10 +30,23 @@ export function useReviewCatalog(options: {
     return () => clearTimeout(timer);
   }, [query.search]);
   const generation = useRef(0);
-  const identity = JSON.stringify([query.storeId, search, query.decision, source]);
+  const identity = JSON.stringify([query.storeId, search, query.decision, query.workspace, query.stage, source]);
   const [activeIdentity, setActiveIdentity] = useState(identity);
   const offsets = history[history.length - 1] ?? EMPTY_OFFSETS;
-  const refresh = useCallback(() => { cache.clear(); setRevision(value => value + 1); }, []);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFetching = useRef(false);
+  const shouldRefreshAgain = useRef(false);
+  const refresh = useCallback(() => {
+    if (isFetching.current) { shouldRefreshAgain.current = true; return; }
+    if (refreshTimer.current !== null) return;
+    refreshTimer.current = setTimeout(() => { refreshTimer.current = null; setRevision(value => value + 1); }, 150);
+  }, []);
+  const invalidate = useCallback(() => {
+    // Explicit writes invalidate cached pages; routine polling keeps the current view stable.
+    cache.clear();
+    refresh();
+  }, [refresh]);
+  useEffect(() => () => { if (refreshTimer.current !== null) clearTimeout(refreshTimer.current); }, []);
 
   useEffect(() => {
     if (identity === activeIdentity) return;
@@ -45,9 +60,9 @@ export function useReviewCatalog(options: {
     const currentGeneration = ++generation.current;
     const key = JSON.stringify([identity, offsets]);
     const cached = cache.get(key);
-    const isWarm = cached !== undefined && Date.now() - cached.savedAt < 30_000;
-    if (isWarm) setCatalog(cached.catalog);
-    setIsLoading(!isWarm); setError(null);
+    const isWarm = cached !== undefined || displayedKey.current === key;
+    if (cached) setCatalog(cached.catalog);
+    setIsLoading(!isWarm); setIsRefreshing(isWarm); setError(null); isFetching.current = true;
     const request = { ...query, search, limit: 50, signal: controller.signal };
     const pages: Partial<Record<keyof ReviewOffsets, SeoReviewListPage>> = {};
     async function load(): Promise<void> {
@@ -58,6 +73,8 @@ export function useReviewCatalog(options: {
           const parameters = new URLSearchParams({ source: "auto_seo", view: "summary", storeId: query.storeId, limit: "50", offset: String(offsets.auto_seo) });
           if (search) parameters.set("search", search);
           if (query.decision) parameters.set("decision", query.decision);
+          if (query.workspace) parameters.set("workspace", query.workspace);
+          if (query.stage) parameters.set("stage", query.stage);
           const response = await fetch(`/api/seo-review/items?${parameters}`, { signal: controller.signal });
           if (!response.ok) throw new Error(`Không tải được danh sách Auto SEO (${response.status}).`);
           pages.auto_seo = readSeoReviewListPage(await response.json(), query.storeId); })(),
@@ -68,13 +85,19 @@ export function useReviewCatalog(options: {
       if (controller.signal.aborted || generation.current !== currentGeneration) return;
       const merged = mergeReviewCatalogPages(pages, offsets);
       cache.set(key, { savedAt: Date.now(), catalog: merged });
+      displayedKey.current = key;
       if (cache.size > 20) cache.delete(cache.keys().next().value ?? "");
-      setCatalog(merged);
+      setCatalog(current => JSON.stringify(current) === JSON.stringify(merged) ? current : merged);
     }
     void load().catch((cause: unknown) => {
       if (!controller.signal.aborted && generation.current === currentGeneration) setError(cause instanceof Error ? cause.message : "Không tải được Review.");
-    }).finally(() => { if (!controller.signal.aborted && generation.current === currentGeneration) setIsLoading(false); });
-    return () => controller.abort();
+    }).finally(() => {
+      if (!controller.signal.aborted && generation.current === currentGeneration) {
+        isFetching.current = false; setIsLoading(false); setIsRefreshing(false);
+        if (shouldRefreshAgain.current) { shouldRefreshAgain.current = false; refresh(); }
+      }
+    });
+    return () => { controller.abort(); isFetching.current = false; };
   }, [enabled, identity, activeIdentity, offsets, revision, gpt, crawler]);
 
   useEffect(() => {
@@ -92,7 +115,7 @@ export function useReviewCatalog(options: {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("ffp-review-changed", refresh); };
   }, [enabled, refresh]);
 
-  return { catalog: identity === activeIdentity ? catalog : null, isLoading, error, refresh,
+  return { catalog: identity === activeIdentity ? catalog : null, isLoading, isRefreshing, error, refresh, invalidate,
     page: history.length, hasPreviousPage: history.length > 1,
     next: () => { if (catalog?.hasNextPage) { setCatalog(null); setHistory(current => [...current, catalog.nextOffsets]); } },
     previous: () => { if (history.length > 1) { setCatalog(null); setHistory(current => current.slice(0, -1)); } },

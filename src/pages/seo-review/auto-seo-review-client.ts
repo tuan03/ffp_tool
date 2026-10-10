@@ -13,6 +13,7 @@ interface DurableAutoSeoReview {
   readonly backupId: string;
   readonly sourceOrigin: "auto_seo";
   readonly originalBackup: SeoProductBackup;
+  readonly reviewArchivedAt?: number;
 }
 
 function mapReview(review: DurableAutoSeoReview): SeoProductUiViewModel {
@@ -48,6 +49,7 @@ function mapReview(review: DurableAutoSeoReview): SeoProductUiViewModel {
   const imageAlts = Array.isArray(output.imageAlts) ? output.imageAlts : [];
   return {
     ...mapped,
+    reviewArchivedAt: review.reviewArchivedAt,
     images: mapped.images.map((image, index) => typeof imageAlts[index] === "string" ? { ...image, alt: { value: imageAlts[index] as string, source: "real" as const } } : image),
     sourceShopifyUpdatedAt: review.shopifyUpdatedAt ?? undefined,
     rejectionReason: review.reviewStatus === "rejected" ? review.notes ?? undefined : undefined,

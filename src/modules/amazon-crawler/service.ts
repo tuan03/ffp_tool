@@ -1373,12 +1373,21 @@ export function createAmazonCrawlerReviewClient({
       const parameters = new URLSearchParams({ storeId: query.storeId, offset: String(query.offset ?? 0), limit: String(query.limit ?? 50) });
       if (query.search) parameters.set("search", query.search);
       if (query.decision) parameters.set("decision", query.decision);
+      if (query.workspace) parameters.set("workspace", query.workspace);
+      if (query.stage) parameters.set("stage", query.stage);
       const value = await readJson(await fetchImplementation(`${reviewUrl}/catalog?${parameters}`, { signal: query.signal }));
       if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") throw new AmazonCrawlerServiceError("Invalid review catalog.", "INVALID_ENGINE_RESPONSE");
       return readSeoReviewListPage(value, query.storeId);
     },
     async detail(itemId, storeId, signal) {
       return readReviewItem(await readJson(await fetchImplementation(`${reviewUrl}/${encodeURIComponent(itemId)}?storeId=${encodeURIComponent(storeId)}`, { signal })));
+    },
+    async archive(itemId, storeId) {
+      const value = await readJson(await fetchImplementation(`${reviewUrl}/${encodeURIComponent(itemId)}/archive`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ storeId }),
+      }));
+      if (!isRecord(value) || value.archived !== true) throw new AmazonCrawlerServiceError("Review archive was not confirmed.", "INVALID_ENGINE_RESPONSE");
+      return { archived: true };
     },
     subscribeCatalog(storeId, onChange) {
       let isStreaming = false;

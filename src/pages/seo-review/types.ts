@@ -10,7 +10,7 @@ import type { AmazonCrawlerReviewTarget } from "../../modules/amazon-crawler";
 import type { PodDeliverableItem } from "../../modules/pinterest-pod";
 import type { GeneratedFaqItem } from "../../modules/seo-content";
 import type { SeoPublishReceipt } from "../../modules/custom-gpt-seo";
-import type { SeoReviewListItem } from "../../shared/seo-review-list";
+import type { SeoReviewActions, SeoReviewListItem, SeoReviewStage } from "../../shared/seo-review-list";
 
 export type ProductSourceOrigin = "all" | "distributed_crawler" | "pinterest_pod" | "auto_seo";
 
@@ -56,6 +56,9 @@ export interface SeoProductBackup {
 export interface SeoProductUiViewModel {
   /** Catalog-only row. Hydrate from its owning backend before reading SEO or performing writes. */
   readonly reviewListItem?: SeoReviewListItem;
+  readonly reviewActions?: SeoReviewActions;
+  readonly reviewArchivedAt?: number;
+  readonly reviewLifecycleStage?: SeoReviewStage;
   readonly id: string;
   readonly gptJobId?: string;
   readonly backendPublishRequired?: boolean;
@@ -125,6 +128,7 @@ export interface SeoReviewFilterState {
   readonly decisionFilter: "all" | ReviewDecision | "sync_failed";
   readonly onlyMockData: boolean;
   readonly sourceOriginFilter?: ProductSourceOrigin;
+  readonly stageFilter?: "all" | SeoReviewStage;
 }
 
 export interface SeoProductEditInput {
