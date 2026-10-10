@@ -27,12 +27,12 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
         ],
       } : {
         collections: [
-          { id: "collection-one", title: "Collection One", productsCount: 1 },
+          { id: "collection-one", title: "Collection One With A Long Name For Everyday Product Selection", productsCount: 1 },
           { id: "collection-two", title: "Collection Two", productsCount: 1 },
         ],
       } } });
     });
-    await page.goto(`${uiUrl}/amazon-crawler`);
+    await page.goto(`${uiUrl}/amazon-crawler`, { waitUntil: "domcontentloaded" });
     await page.getByRole("navigation", { name: "Khu vực crawler" }).waitFor();
     assert.ok(await page.getByText(/^mock$/i).isVisible(), "Do not exercise a production crawler in browser QA");
     const navigation = page.getByRole("navigation", { name: "Khu vực crawler" });
@@ -41,8 +41,22 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
     await asinInput.fill("B0MOCK1001\nB0MOCK1002");
     await crawl.getByLabel("Profile cào", { exact: true }).selectOption("preaurem");
     const settingsToggle = crawl.locator("summary").filter({ hasText: "Collection, loại sản phẩm" });
-    await settingsToggle.click();
-    await crawl.getByLabel("Thêm hoặc bỏ collection", { exact: true }).selectOption("collection-one");
+    assert.equal(await settingsToggle.locator("..").getAttribute("open"), "");
+    assert.equal(await crawl.getByLabel("Store nhận sản phẩm", { exact: true }).count(), 1);
+    const settingsBounds = await settingsToggle.locator("..").boundingBox();
+    const formBounds = await crawl.getByRole("region", { name: "Tạo phiên cào", exact: true }).boundingBox();
+    assert.ok(settingsBounds && formBounds && settingsBounds.width > formBounds.width * 0.9);
+    const collectionSearch = crawl.getByRole("searchbox", { name: "Tìm collection", exact: true });
+    const firstCollection = crawl.getByRole("checkbox", { name: "Collection One With A Long Name For Everyday Product Selection", exact: true });
+    await firstCollection.check();
+    await collectionSearch.fill("TWO");
+    assert.equal(await firstCollection.count(), 0);
+    await crawl.getByRole("checkbox", { name: "Collection Two", exact: true }).check();
+    assert.ok(await crawl.getByRole("button", { name: "Bỏ collection Collection One With A Long Name For Everyday Product Selection", exact: true }).isVisible());
+    await collectionSearch.fill("no matches");
+    assert.ok(await crawl.getByText("Không tìm thấy collection phù hợp.", { exact: true }).isVisible());
+    await collectionSearch.fill("");
+    assert.equal(await firstCollection.isChecked(), true);
     await crawl.getByLabel("Giá cộng thêm ($)", { exact: true }).fill("6.95");
     await navigation.getByRole("button", { name: "Agent", exact: true }).click();
     assert.equal(await asinInput.isVisible(), false);
@@ -53,8 +67,12 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
     assert.equal(await asinInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
     assert.equal(await crawl.getByLabel("Profile cào", { exact: true }).inputValue(), "preaurem");
     assert.equal(await crawl.getByLabel("Giá cộng thêm ($)", { exact: true }).inputValue(), "6.95");
-    assert.ok(await crawl.getByText("Collection One", { exact: true }).first().isVisible());
+    assert.equal(await firstCollection.isChecked(), true);
+    assert.equal(await crawl.getByRole("checkbox", { name: "Collection Two", exact: true }).isChecked(), true);
     await settingsToggle.click();
+    await settingsToggle.click();
+    assert.equal(await firstCollection.isChecked(), true);
+    assert.equal(await crawl.getByLabel("Giá cộng thêm ($)", { exact: true }).inputValue(), "6.95");
 
     const imageButton = crawl.getByRole("button", { name: "Cấu hình ảnh", exact: true });
     await imageButton.click();
@@ -83,8 +101,20 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
     await imageButton.click();
     assert.ok(await imageDialog.evaluate((dialog) => dialog.getBoundingClientRect().right <= innerWidth));
     await imageDialog.getByRole("button", { name: "Đóng", exact: true }).click();
-    await page.reload();
+    await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("navigation", { name: "Khu vực crawler" }).waitFor();
+    assert.equal(await settingsToggle.locator("..").getAttribute("open"), "");
+    await firstCollection.waitFor();
+    assert.equal(await firstCollection.isChecked(), true);
+    await crawl.getByRole("button", { name: "Bỏ chọn hết", exact: true }).click();
+    assert.equal(await firstCollection.isChecked(), false);
+    await crawl.getByRole("button", { name: "Chọn tất cả (2)", exact: true }).click();
+    assert.equal(await firstCollection.isChecked(), true);
+    await collectionSearch.fill("TWO");
+    await crawl.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("jeminise");
+    assert.equal(await collectionSearch.inputValue(), "");
+    await firstCollection.waitFor();
+    assert.equal(await firstCollection.isChecked(), false);
     assert.equal(await asinInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
     assert.equal(await crawl.getByLabel("Profile cào", { exact: true }).inputValue(), "preaurem");
     assert.deepEqual(errors, []);

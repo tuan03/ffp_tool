@@ -38,6 +38,7 @@ import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
 import { CrawlerDialog } from "./components/CrawlerDialog";
+import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
@@ -325,7 +326,6 @@ export function AmazonCrawlerPage({
   const [isDeleteStoreOpen, setIsDeleteStoreOpen] = useState(false);
   const [availableCollections, setAvailableCollections] = useState<Array<{ id: string; title: string; productsCount?: number }>>([]);
   const [isLoadingCollections, setIsLoadingCollections] = useState(false);
-  const [isCollectionListOpen, setIsCollectionListOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -2456,6 +2456,12 @@ export function AmazonCrawlerPage({
             </select>
           </label>
 
+          <div className="flex flex-wrap gap-3 text-xs">
+            <button type="button" aria-label="Sửa store" disabled={isRunning} onClick={() => setIsEditStoreOpen(true)} className="text-slate-300 hover:text-white disabled:opacity-50">Sửa store</button>
+            <button type="button" aria-label="Thêm store" disabled={isRunning} onClick={() => setIsAddStoreOpen(true)} className="text-cyan-300 hover:text-cyan-200 disabled:opacity-50">Thêm store</button>
+            <button type="button" aria-label="Xóa store" disabled={isRunning} onClick={() => setIsDeleteStoreOpen(true)} className="text-rose-300 hover:text-rose-200 disabled:opacity-50">Xóa store</button>
+          </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-1 text-sm text-slate-300">
           Profile cào
@@ -2512,17 +2518,17 @@ export function AmazonCrawlerPage({
         </div>
       </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-200">{imageProfileMessage}</p> : null}
-              <details className="min-w-0 rounded-xl border border-slate-700 bg-slate-950/40 p-3">
+            </div>
+              <details className="min-w-0 rounded-xl border border-slate-700 bg-slate-950/40 p-4 xl:col-span-2" open>
                 <summary className="cursor-pointer text-sm font-medium text-slate-200">Collection, loại sản phẩm & định giá
                   <span className="mt-1 block text-xs font-normal text-slate-400">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
-                  {selectedCollections.length > 0 ? <span className="mt-1 block truncate text-xs font-normal text-slate-500" title={selectedCollections.map((collection) => collection.title).join(", ")}>{selectedCollections.map((collection) => collection.title).join(", ")}</span> : null}
                 </summary>
                 <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
       <section className="min-w-0 space-y-4 [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-slate-100 tracking-tight">
-              Cấu hình Shopify &amp; Định giá
+              Áp dụng cho store: {activeStoreId}
             </h2>
             <button
               className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/90 px-2 py-0.5 text-[11px] font-medium text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2547,197 +2553,13 @@ export function AmazonCrawlerPage({
         </div>
 
 
-        {/* Row 1: Store, Collection & Product Type */}
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-          {/* Store selector */}
-          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-slate-200">
-                  Shopify Store
-                </label>
-                <span className="text-[11px] font-mono text-slate-400" title="Shopify Vendor">
-                  ({((settings.storeId || "capozen").split("--")[0] || "CAPOZEN").trim().toUpperCase()})
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsEditStoreOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-xs font-medium text-slate-300 shadow-sm transition-all hover:border-slate-600 hover:bg-slate-700 hover:text-white"
-                  title={`Chỉnh sửa cấu hình App hoặc Proxy của store ${activeStoreId}`}
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span>Sửa</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsDeleteStoreOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-300 shadow-sm transition-all hover:border-rose-500/50 hover:bg-rose-500/20 hover:text-rose-200"
-                  title={`Xóa store ${activeStoreId} khỏi danh sách`}
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span>Xóa</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsAddStoreOpen(true)}
-                  className="inline-flex items-center gap-1 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-300 shadow-sm transition-all hover:border-cyan-400 hover:bg-cyan-500/20 hover:text-white"
-                  title="Thêm và kết nối Shopify Store mới"
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                    <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span>Thêm</span>
-                </button>
-              </div>
-            </div>
-            <select
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
-              value={settings.storeId || "capozen"}
-              onChange={(e) => {
-                handleStoreChange(e.target.value);
-              }}
-            >
-              {availableStores.map((s) => (
-                <option key={s.storeId} value={s.storeId}>
-                  {s.storeId} ({s.shopDomain})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Collection multi-selector */}
-          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                <span>Collections</span>
-                {selectedCollections.length > 0 && (
-                  <span className="text-xs text-slate-300 font-mono">
-                    ({selectedCollections.length})
-                  </span>
-                )}
-                {isLoadingCollections && (
-                  <span className="text-[11px] text-slate-400 animate-pulse font-normal">Đang tải...</span>
-                )}
-              </label>
-              <div className="flex items-center gap-2 text-xs">
-                {selectedCollections.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={handleClearCollections}
-                    className="text-slate-400 hover:text-rose-400 transition-colors"
-                  >
-                    Bỏ chọn hết
-                  </button>
-                ) : (
-                  availableCollections.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleSelectAllCollections}
-                      className="text-slate-400 hover:text-slate-200 transition-colors"
-                    >
-                      Chọn tất cả
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
-
-            {/* Selected Pills */}
-            {selectedCollections.length > 0 && (
-              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
-                {selectedCollections.map((col) => (
-                  <span
-                    key={col.id}
-                    className="inline-flex items-center gap-1 rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-200"
-                  >
-                    <span className="truncate max-w-[130px]">{col.title}</span>
-                    <button
-                      type="button"
-                      onClick={() => toggleCollection(col.id)}
-                      className="text-slate-400 hover:text-rose-400 ml-0.5 text-xs"
-                      title="Bỏ chọn"
-                    >
-                      ✕
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Add Collection dropdown */}
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-              <select
-                aria-label="Thêm hoặc bỏ collection"
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-slate-500 disabled:opacity-50 text-sm cursor-pointer"
-                disabled={isLoadingCollections || availableCollections.length === 0}
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) {
-                    toggleCollection(e.target.value);
-                  }
-                }}
-              >
-                <option value="">+ Thêm / Bỏ Collection...</option>
-                {availableCollections.map((c) => {
-                  const isSelected = activeCollectionIds.includes(c.id);
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {isSelected ? "✓ " : "+ "}{c.title} ({c.productsCount ?? 0})
-                    </option>
-                  );
-                })}
-              </select>
-              <button
-                type="button"
-                onClick={() => setIsCollectionListOpen(!isCollectionListOpen)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                  isCollectionListOpen
-                    ? "border-slate-600 bg-slate-700 text-white"
-                    : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`}
-                title="Bật/tắt danh sách checklist"
-              >
-                {isCollectionListOpen ? "Thu gọn" : "Chi tiết ▾"}
-              </button>
-            </div>
-
-            {/* Expandable Checklist */}
-            {isCollectionListOpen && availableCollections.length > 0 && (
-              <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-slate-800 bg-slate-950/80 p-2 text-xs">
-                {availableCollections.map((c) => {
-                  const isChecked = activeCollectionIds.includes(c.id);
-                  return (
-                    <label
-                      key={c.id}
-                      className="flex items-center gap-2 text-slate-300 hover:text-slate-100 cursor-pointer py-0.5 select-none"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleCollection(c.id)}
-                        className="rounded border-slate-700 text-slate-400 focus:ring-0 cursor-pointer"
-                      />
-                      <span className={`truncate flex-1 ${isChecked ? "text-white font-medium" : ""}`}>
-                        {c.title}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">
-                        {c.productsCount ?? 0}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+        {/* Row 1: Collection & Product Type */}
+        <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <CrawlerCollectionPicker key={activeStoreId} collections={availableCollections} selectedIds={activeCollectionIds}
+            isLoading={isLoadingCollections} onToggle={toggleCollection} onSelectAll={handleSelectAllCollections} onClear={handleClearCollections} />
 
           {/* Product Type selector */}
-          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5 sm:col-span-2 lg:col-span-1">
+          <div className="min-w-0 space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-slate-200">
                 Loại sản phẩm
@@ -2882,7 +2704,7 @@ export function AmazonCrawlerPage({
         <div className="grid gap-4 sm:grid-cols-2">
           {/* Price Addition */}
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="text-sm font-medium text-slate-200">
                 Giá cộng thêm ($)
               </label>
@@ -3019,6 +2841,7 @@ export function AmazonCrawlerPage({
         })()}
       </section></div>
               </details>
+            <div className="min-w-0 space-y-3 xl:col-span-2">
       <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerAdvancedOpen}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
       </button>
