@@ -8,9 +8,10 @@ import type {
 
 interface AmazonCrawlerDeadLetterPanelProps {
   controller: AmazonCrawlerJobController | undefined;
+  isActive?: boolean;
 }
 
-export function AmazonCrawlerDeadLetterPanel({ controller }: AmazonCrawlerDeadLetterPanelProps) {
+export function AmazonCrawlerDeadLetterPanel({ controller, isActive = true }: AmazonCrawlerDeadLetterPanelProps) {
   const [items, setItems] = useState<readonly AmazonCrawlerDeadLetterTask[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -40,7 +41,8 @@ export function AmazonCrawlerDeadLetterPanel({ controller }: AmazonCrawlerDeadLe
     }
   }
 
-  useEffect(() => { void refresh(0, ""); }, []);
+  // Reload on entering diagnostics, keeping the current filter and audit reason.
+  useEffect(() => { if (isActive) void refresh(); }, [controller, isActive]);
 
   async function handleAction(action: "requeue" | "delete", mode: "selected" | "error-type"): Promise<void> {
     if (!controller?.applyDeadLetterAction || reason.trim().length < 10) return;

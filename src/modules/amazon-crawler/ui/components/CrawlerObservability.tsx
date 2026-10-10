@@ -42,10 +42,11 @@ export function CrawlerMetricsView({ metrics }: { metrics: AmazonCrawlerMetrics 
   </div>;
 }
 
-export function CrawlerObservability({ controller, jobId, requestId }: {
+export function CrawlerObservability({ controller, jobId, requestId, isActive = true }: {
   controller?: AmazonCrawlerJobController;
   jobId?: string;
   requestId?: string;
+  isActive?: boolean;
 }): React.JSX.Element | null {
   const [metrics, setMetrics] = useState<AmazonCrawlerMetrics | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
@@ -56,7 +57,7 @@ export function CrawlerObservability({ controller, jobId, requestId }: {
   const traceVersion = useRef(0);
 
   useEffect(() => {
-    if (!controller?.metrics) return;
+    if (!isActive || !controller?.metrics) return;
     let isMounted = true;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     async function refresh(): Promise<void> {
@@ -71,7 +72,7 @@ export function CrawlerObservability({ controller, jobId, requestId }: {
     }
     void refresh();
     return () => { isMounted = false; if (timeout !== undefined) clearTimeout(timeout); };
-  }, [controller]);
+  }, [controller, isActive]);
 
   useEffect(() => {
     traceVersion.current += 1;

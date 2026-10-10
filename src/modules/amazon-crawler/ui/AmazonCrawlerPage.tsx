@@ -37,6 +37,9 @@ import { getAgentVersionStatus } from "../agent-version";
 import { createAmazonAsinChecker } from "../service";
 import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
+import { CrawlerDialog } from "./components/CrawlerDialog";
+import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
+import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
 
 import {
@@ -213,6 +216,10 @@ export function AmazonCrawlerPage({
   runAmazonCrawler,
 }: AmazonCrawlerPageProps): React.JSX.Element {
   const navigate = useNavigate();
+  const [workspaceSection, setWorkspaceSection] = useState<CrawlerWorkspaceSection>("crawl");
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
+  const [isHistoryAllStores, setIsHistoryAllStores] = useState(false);
+  const [isProductDetailsOpen, setIsProductDetailsOpen] = useState(false);
   const session = useAmazonCrawlerSession();
   const {
     urlText,
@@ -396,9 +403,13 @@ export function AmazonCrawlerPage({
   const clientPageCount = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
   const visibleClientPage = Math.min(clientPage, clientPageCount - 1);
   const visibleClients = filteredClients.slice(visibleClientPage * CLIENTS_PER_PAGE, (visibleClientPage + 1) * CLIENTS_PER_PAGE);
-  const jobPageCount = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE));
+  const historyJobs = isHistoryAllStores ? jobs : jobs.filter((job) =>
+    (job.settings?.storeId || "capozen").toLowerCase() === (settings.storeId || "capozen").toLowerCase());
+  const jobPageCount = Math.max(1, Math.ceil(historyJobs.length / JOBS_PER_PAGE));
   const visibleJobPage = Math.min(jobPage, jobPageCount - 1);
-  const visibleJobs = jobs.slice(visibleJobPage * JOBS_PER_PAGE, (visibleJobPage + 1) * JOBS_PER_PAGE);
+  const visibleJobs = isHistoryExpanded
+    ? historyJobs.slice(visibleJobPage * JOBS_PER_PAGE, (visibleJobPage + 1) * JOBS_PER_PAGE)
+    : historyJobs.slice(0, 5);
   const activeManagedJob = activeJobId ? jobs.find((job) => job.jobId === activeJobId) : undefined;
   const coordinatorActiveJob = jobs.find((job) =>
     ["queued", "running", "waiting_captcha", "cancelling"].includes(job.status)
@@ -735,7 +746,7 @@ export function AmazonCrawlerPage({
   }, [loadAmazonCrawlerAgentRelease]);
 
   useEffect(() => {
-    if (!amazonCrawlerCommands || clients.length === 0 || isClientSnapshotStale) return;
+    if (workspaceSection !== "agents" || !amazonCrawlerCommands || clients.length === 0 || isClientSnapshotStale) return;
     let isActive = true;
     const refreshCommandHistory = async (): Promise<void> => {
       const histories = await Promise.all(clients.map(async (client) => {
@@ -766,7 +777,7 @@ export function AmazonCrawlerPage({
       isActive = false;
       window.clearInterval(interval);
     };
-  }, [amazonCrawlerCommands, clients, isClientSnapshotStale]);
+  }, [workspaceSection, amazonCrawlerCommands, clients, isClientSnapshotStale]);
 
   // 1. Fetch recent jobs list from coordinator
   useEffect(() => {
@@ -1104,6 +1115,27 @@ export function AmazonCrawlerPage({
 
   function handleSelectProduct(productId: string): void {
     selectCrawlerProduct(productId);
+    setIsProductDetailsOpen(true);
+  }
+
+  async function handleCopyJobId(jobId: string): Promise<void> {
+    if (!navigator.clipboard) {
+      window.prompt("Sao chép ID phiên cào:", jobId);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(jobId);
+    } catch {
+      setJobControlTone("error");
+      setJobControlMessage("Không sao chép được ID. Hãy sao chép từ chi tiết phiên.");
+    }
+  }
+
+  function handleRequestCancelJob(job: AmazonCrawlerJobSnapshot): void {
+    const warning = job.status === "cancelling"
+      ? "Buộc dừng phiên cào ngay? Task đang chạy có thể bị gián đoạn."
+      : "Hủy phiên cào này? Dữ liệu tạm sẽ được dọn; cache hợp lệ và sản phẩm đã sync Shopify được giữ nguyên.";
+    if (window.confirm(warning)) void handleStopJob(job.jobId);
   }
 
   function updateSetting<K extends keyof AmazonCrawlerSettings>(key: K, value: AmazonCrawlerSettings[K]): void {
@@ -1690,15 +1722,7 @@ export function AmazonCrawlerPage({
     }
   }
 
-  return (
-    <div className="mt-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Amazon Crawler</h1>
-        <p className="mt-2 text-sm text-slate-400">Cào Amazon family, tách product và xử lý Customize — không rewrite dữ liệu.</p>
-      </div>
-
-      <AmazonCrawlerDeadLetterPanel controller={amazonCrawlerJobs} />
-
+  const agentPanel = (
       <section className="rounded-xl border border-slate-700 bg-slate-950/50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -1885,7 +1909,8 @@ export function AmazonCrawlerPage({
                       {commandBusyClientId === client.id ? "Đang gửi…" : client.desiredExecutionState === "PAUSED" || client.desiredExecutionState === "DRAINED" ? "Tiếp tục nhận việc" : "Dừng nhận việc"}
                     </button>
                   </div>
-                  <div className="mt-3 space-y-2 rounded border border-slate-700 p-2">
+                  <details className="mt-3 space-y-2 rounded border border-slate-800 p-3">
+                    <summary className="cursor-pointer text-sm text-slate-400">Quản trị nâng cao</summary>
                     <label className="block text-[11px] text-slate-300" htmlFor={`pending-purge-tasks-${client.id}`}>
                       Purge assignment chưa chạy (nhập task ID, cách nhau bằng dấu phẩy hoặc dòng mới)
                     </label>
@@ -1973,7 +1998,6 @@ export function AmazonCrawlerPage({
                         </button> : null}
                     </div>
                     <p className="text-[10px] text-slate-500">Chỉ thao tác khi agent PAUSED; task đang chạy và outbox không bị xóa.</p>
-                  </div>
                   {(commandHistories[client.id] ?? []).slice(-3).reverse().map((command) => {
                     const result = command.events.map((event) => event.detail.result).find((value): value is Record<string, unknown> =>
                       typeof value === "object" && value !== null && !Array.isArray(value));
@@ -2010,6 +2034,7 @@ export function AmazonCrawlerPage({
                     </div>;
                   })}
                   {commandHistoryErrors[client.id] ? <p role="status" className="mt-2 text-[11px] text-amber-300">Không tải được trạng thái lệnh mới; lịch sử bên dưới có thể đã cũ.</p> : null}
+                  </details>
                 </div> : null}
               </article>
               );
@@ -2022,11 +2047,359 @@ export function AmazonCrawlerPage({
           <button type="button" disabled={visibleClientPage + 1 >= clientPageCount} onClick={() => setClientPage(visibleClientPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Agent tiếp</button>
         </div> : null}
       </section>
+  );
 
-      <CrawlerObservability controller={amazonCrawlerJobs}
-        jobId={selectedProduct?.diagnostics.jobId ?? activeJobId ?? lastJobId ?? undefined}
-        requestId={selectedProduct?.diagnostics.familyRequestId ?? selectedProduct?.diagnostics.requestId} />
+  const historyPanel = (
+    <>
+      {amazonCrawlerJobs ? (
+        <section className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-100">Lịch sử phiên cào</h2>
+              <p className="mt-1 text-xs text-slate-400">Chọn phiên để xem kết quả. Ẩn khỏi Crawler không xóa SEO Queue hay xử lý ảnh.</p>
+            </div>
+            <div className="text-right text-xs text-slate-500">
+              <p>Tự cập nhật · tối đa 100 phiên gần nhất</p>
+              {lastJobRefreshAt !== null ? <p>{isJobSnapshotStale ? "Snapshot cũ; trạng thái hiện chưa xác minh" : "Cập nhật"} lúc {new Date(lastJobRefreshAt).toLocaleTimeString()}</p> : null}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-sm text-slate-400">Phạm vi
+              <select aria-label="Phạm vi lịch sử" value={isHistoryAllStores ? "all" : "current"} onChange={(event) => { setIsHistoryAllStores(event.target.value === "all"); setJobPage(0); }} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-200">
+                <option value="current">Store đang chọn</option><option value="all">Tất cả store</option>
+              </select>
+            </label>
+            {historyJobs.length > 5 ? <button type="button" onClick={() => { setIsHistoryExpanded((expanded) => !expanded); setJobPage(0); }} className="text-sm text-cyan-300">{isHistoryExpanded ? "Thu gọn" : `Xem tất cả (${historyJobs.length})`}</button> : null}
+          </div>
+          {historyJobs.length === 0 ? <p className="text-sm text-slate-400">{!hasLoadedJobs ? "Đang tải danh sách phiên cào…" : isJobSnapshotStale ? "Chưa thể xác minh danh sách phiên do lỗi kết nối." : "Chưa có phiên cào trong phạm vi đã chọn."}</p> : (
+            <div className="grid gap-2">
+              {visibleJobs.map((job) => {
+                const presentation = resolveCrawlerJobPresentation(job);
+                const cancellationMessage = describeJobCancellation(job);
+                const activeJobTasks = (job.progress.items ?? []).filter((task): task is typeof task & { taskId: string } =>
+                  Boolean(task.taskId) && ["queued", "running", "cancelling"].includes(task.status));
+                const hasTaskDetails = activeJobTasks.length > 0 || job.cancellation.pendingAgents.length > 0 || job.cancellation.pendingPipeline.length > 0;
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
+                    <div className="min-w-0">
+                      <button type="button" disabled={!loadAmazonCrawlerJob || isRunning || isHydratingJob || isJobSnapshotStale} onClick={() => void handleSelectRecentJob(job.jobId)} className="text-left text-sm font-medium text-slate-100 hover:text-cyan-300 disabled:opacity-60">{job.settings.storeId || "Store mặc định"} · {new Date(job.createdAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {job.inputs.length} link</button>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-slate-500"><span className="font-mono" title={job.jobId}>#{job.jobId.slice(0, 8)}</span><button type="button" aria-label={`Sao chép ID phiên ${job.jobId}`} onClick={() => void handleCopyJobId(job.jobId)} className="text-slate-400 hover:text-slate-200">Sao chép ID</button></div>
+                      <p className={`text-sm ${presentation.tone === "success" ? "text-emerald-300" : presentation.tone === "warning" ? "text-amber-300" : presentation.tone === "error" ? "text-rose-300" : presentation.tone === "active" ? "text-cyan-200" : "text-slate-300"}`}>
+                        {presentation.label}
+                      </p>
+                      {cancellationMessage ? <p className="mt-1 text-xs text-amber-300">{cancellationMessage}</p> : null}
+                      {hasTaskDetails ? <details className="mt-2">
+                        <summary className="cursor-pointer text-xs text-slate-400">Task & xác nhận dừng · {activeJobTasks.length} task · {job.cancellation.pendingAgents.length + job.cancellation.pendingPipeline.length} xác nhận đang chờ</summary>
+                        <div className="mt-2 max-h-60 space-y-1 overflow-auto">
+                      {activeJobTasks.map((task) => (
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-400" key={task.taskId}>
+                          <span>{task.asin} · {task.status}</span>
+                          {task.status !== "cancelling" ? (
+                            <button
+                              className="rounded border border-rose-800 px-2 py-0.5 text-rose-300 disabled:opacity-50"
+                              type="button"
+                              disabled={isJobSnapshotStale || controlledTaskId !== null || controlledJobId !== null || job.status === "cancelling"}
+                              onClick={() => void handleCancelTask(job.jobId, task.taskId, task.asin)}
+                            >
+                              {controlledTaskId === task.taskId ? "Đang hủy..." : "Hủy task"}
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                      {job.cancellation.pendingAgents.length > 0 ? (
+                        <div className="text-xs text-slate-400">
+                          {job.cancellation.pendingAgents.map((agent) => (
+                            <p key={agent.clientId}>
+                              Agent {agent.displayName}: {agent.hasReceived ? "đã nhận lệnh, đang nhả" : "chưa nhận lệnh"} {agent.taskCount} task
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                      {job.cancellation.pendingPipeline.length > 0 ? (
+                        <div className="text-xs text-slate-400">
+                          {job.cancellation.pendingPipeline.map((pendingItem) => (
+                            <p key={pendingItem.itemId}>
+                              Pipeline {pendingItem.sourceKey}: {pendingItem.receivedAt ? "đã nhận lệnh, đang kết thúc" : "chưa nhận lệnh tại"} bước {formatCancellationPhase(pendingItem.phase)}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                        </div>
+                      </details> : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {presentation.canPause || presentation.canCancel ? (
+                        <>
+                          {presentation.canPause ? <button
+                            className="rounded border border-amber-500 px-3 py-1 text-xs font-semibold text-amber-300 disabled:opacity-50"
+                            disabled={isJobSnapshotStale || controlledJobId !== null}
+                            type="button"
+                            onClick={() => void handlePauseResumeJob(job)}
+                          >
+                            {controlledJobId === job.jobId
+                              ? "Đang cập nhật..."
+                              : job.executionState === "pausing" ? "Tiếp tục ngay"
+                                : job.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
+                          </button> : null}
+                          {presentation.canCancel ? <button className="rounded border border-rose-900 px-3 py-1 text-xs text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => handleRequestCancelJob(job)}>{job.status === "cancelling" ? "Buộc dừng ngay" : "Hủy phiên"}</button> : null}
+                        </>
+                      ) : null}
+                      {presentation.hasReachedSeoQueue ? (
+                        <button
+                          className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300"
+                          type="button"
+                          onClick={() => {
+                            const targetStore = (job.settings?.storeId as string | undefined) || activeStoreId;
+                            try {
+                              window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
+                            } catch {
+                              // ignore
+                            }
+                            navigate(`/gpt-seo?storeId=${encodeURIComponent(targetStore)}`);
+                          }}
+                        >
+                          Mở SEO Queue
+                        </button>
+                      ) : null}
+                      {["completed", "partial", "cancelled", "review_pending"].includes(job.status) ? (
+                        <>
+                          <button className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Cào lại</button>
+                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Ẩn khỏi Crawler</button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {isHistoryExpanded && historyJobs.length > JOBS_PER_PAGE ? <div className="flex items-center justify-end gap-3 text-xs text-slate-400">
+            <button type="button" disabled={visibleJobPage === 0} onClick={() => setJobPage(visibleJobPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job trước</button>
+            <span>{visibleJobPage * JOBS_PER_PAGE + 1}–{Math.min((visibleJobPage + 1) * JOBS_PER_PAGE, historyJobs.length)} / {historyJobs.length}</span>
+            <button type="button" disabled={visibleJobPage + 1 >= jobPageCount} onClick={() => setJobPage(visibleJobPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job tiếp</button>
+          </div> : null}
+          {shouldShowStandaloneJobControlMessage(jobControlTone, jobControlMessage) ? (
+            <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : "text-rose-300"}`}>
+              {jobControlMessage}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+<div className="flex flex-wrap items-center justify-end">        {!amazonCrawlerJobs && recentJobs.length > 0 && (
+          <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 ml-auto">
+            <span className="text-xs text-slate-400 font-medium whitespace-nowrap">📋 Phiên cào gần đây:</span>
+            <select
+              value={lastJobId ?? ""}
+              onChange={(event) => void handleSelectRecentJob(event.target.value)}
+              className="rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none"
+              disabled={isRunning || isHydratingJob}
+            >
+              <option value="" disabled>-- Chọn phiên cào để xem lại --</option>
+              {recentJobs.map((job) => {
+                const timeLabel = job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+                const productCount = job.productCounts
+                  ? Object.values(job.productCounts).reduce((total, count) => total + count, 0)
+                  : job.acceptedInputs;
+                return (
+                  <option key={job.id} value={job.id}>
+                    {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {resolveCrawlerJobPresentation(job).label})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}</div>
+    </>
+  );
 
+  const resultsPanel = (
+    <>
+      {output === null && resultProducts.length === 0 ? null : (
+        <section className="space-y-4">
+          {output ? (
+            <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+              <div className="grid gap-3 sm:grid-cols-4">
+                <p><span className="block text-xs text-slate-400">Sản phẩm</span>{Math.max(output.statistics.products, seoHandoffSummary.totalProducts)}</p>
+                <p><span className="block text-xs text-slate-400">Biến thể nguồn</span>{resultProducts.length > 0 ? output.statistics.sourceVariants : "—"}</p>
+                <p><span className="block text-xs text-slate-400">Biến thể cuối</span>{resultProducts.length > 0 ? output.statistics.finalVariants : "—"}</p>
+                <p><span className="block text-xs text-slate-400">Lỗi</span>{output.errors.length}</p>
+              </div>
+              {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 || (seoHandoffSummary.skippedExistingPipeline ?? 0) > 0 ? (
+                <p className="text-sm text-amber-200">
+                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify ?? 0} đã có trên Shopify · {seoHandoffSummary.skippedExistingPipeline ?? 0} đang có trong SEO Queue/Review, không bàn giao lại · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
+                </p>
+              ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+                <p>
+                  SEO Queue: <strong className="text-emerald-300">{seoHandoffSummary.handedOver}/{seoHandoffSummary.totalProducts} đã bàn giao</strong>
+                  {seoHandoffSummary.pending > 0 ? <> · <strong className="text-cyan-300">{seoHandoffSummary.pending} đang chuẩn bị</strong></> : null}
+                  {seoHandoffSummary.notHandedOver > 0 ? <> · <strong className="text-rose-300">{seoHandoffSummary.notHandedOver} chưa bàn giao</strong></> : null}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-cyan-800 bg-cyan-950/20 p-3 text-sm text-cyan-200">
+              Sản phẩm sẽ xuất hiện khi server nhận từng nhóm. Xử lý SEO và ảnh tiếp tục ở SEO Queue / Review.
+            </p>
+          )}
+          {resultProducts.length === 0 ? (
+            <p className="rounded-xl border border-slate-700 p-6 text-slate-400">Không có sản phẩm hợp lệ trong kết quả crawl.</p>
+          ) : (
+            <div>
+              <div className="max-h-[28rem] space-y-2 overflow-auto rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                <div className="flex items-center justify-between px-2 pb-2">
+                  <h2 className="text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
+                  {onHandoverToSeo ? (
+                    <button
+                      className="rounded bg-emerald-500 hover:bg-emerald-400 px-2 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
+                      disabled={isRunning || isHandingOver}
+                      type="button"
+                      onClick={() => void handleHandover()}
+                      title="Bàn giao toàn bộ sản phẩm sang SEO Review"
+                    >
+                      {isHandingOver ? "Đang xử lý..." : "Bàn giao SEO ➔"}
+                    </button>
+                  ) : null}
+                </div>
+                {resultProducts.map((product) => {
+                  const isSelected = product.id === selectedProduct?.id;
+                  const mediaUrl = firstProductMediaUrl(product);
+                  const handoffState = crawlerSeoHandoffState(product.pipeline);
+                  return (
+                    <button
+                      key={product.id}
+                      className={`grid w-full grid-cols-[3.5rem_1fr] gap-3 rounded-lg border p-2 text-left ${isSelected ? "border-cyan-800 bg-cyan-950/20" : "border-slate-800 bg-slate-900/40 hover:border-slate-600"}`}
+                      type="button"
+                      onClick={() => handleSelectProduct(product.id)}
+                    >
+                      {mediaUrl ? <img alt="" className="h-14 w-14 rounded-md bg-white object-contain" src={mediaUrl} /> : <span className="flex h-14 w-14 items-center justify-center rounded-md bg-slate-800 text-xs text-slate-500">No image</span>}
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-slate-100">{product.title}</span>
+                        <span className="mt-1 block text-xs text-slate-400">{product.splitContext.attribute && product.splitContext.value ? `${product.splitContext.attribute}: ${product.splitContext.value}` : product.parentAsin}</span>
+                        <span className="mt-1 block text-xs text-slate-400">{product.sourceVariants.length} biến thể nguồn · {product.variants.length} biến thể cuối · Nhấn để xem ảnh và chi tiết</span>
+                        <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
+                          {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
+                          {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
+                          <span className={`rounded px-1.5 py-0.5 ${handoffState === "handed_over" ? "bg-emerald-900/60 text-emerald-200" : handoffState === "not_handed_over" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>{crawlerSeoHandoffLabel(product.pipeline)}</span>
+                          {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedProduct === null ? (
+                <div className="rounded-xl border border-slate-700 p-8 text-center text-slate-400">Chọn một sản phẩm để xem chi tiết.</div>
+              ) : (
+                <CrawlerDialog title="Chi tiết sản phẩm đã cào" isOpen={isProductDetailsOpen} onClose={() => setIsProductDetailsOpen(false)}>
+                <article className="min-w-0 space-y-5">
+                  <div className="grid gap-5 xl:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
+                    <div>
+                      {activeMediaUrl ? (
+                        <img alt={selectedProduct.title} className="aspect-square w-full rounded-xl bg-white object-contain" src={activeMediaUrl} />
+                      ) : (
+                        <div className="flex aspect-square items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">Không có ảnh</div>
+                      )}
+                      {firstMediaUrl && selectedProduct.media.length > 1 ? (
+                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                          {selectedProduct.media.map((media) => (
+                            <button key={media.url} className={`shrink-0 rounded-md border p-1 ${activeMediaUrl === media.url ? "border-cyan-400" : "border-slate-700"}`} type="button" onClick={() => setCrawlerSelectedMediaUrl(media.url)}>
+                              {media.kind === "image" ? <img alt="" className="h-14 w-14 bg-white object-contain" src={media.url} /> : <span className="flex h-14 w-14 items-center justify-center text-xs">Video</span>}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="min-w-0">
+                      <h3 className="text-xl font-bold text-slate-100">{selectedProduct.title}</h3>
+                      <p className="mt-2 font-mono text-xs text-cyan-300">ASIN gốc: {selectedProduct.parentAsin}</p>
+                      <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
+                        <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
+                        <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
+                        <div><dt className="text-slate-500">SEO Queue</dt><dd className={crawlerSeoHandoffState(selectedProduct.pipeline) === "handed_over" ? "text-emerald-300" : undefined}>{crawlerSeoHandoffLabel(selectedProduct.pipeline)}</dd></div>
+                        <div><dt className="text-slate-500">Xử lý ảnh</dt><dd>Tiếp tục tự động sau SEO theo profile đã chọn</dd></div>
+                      </dl>
+                      <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
+                      {selectedProduct.sourceVariants.some((variant) => variant.diagnostics?.fetchMode === "failed") ? (
+                        <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">
+                          Amazon: Không tải được trang ASIN con {selectedProduct.sourceVariants.filter((variant) => variant.diagnostics?.fetchMode === "failed").map((variant) => variant.asin).join(", ")}. Kiểm tra CAPTCHA hoặc kết nối proxy rồi cào lại.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 border-b border-slate-700 pb-3">
+                    {(["overview", "source", "final", "customize", "json"] as const).map((tab) => (
+                      <button key={tab} className={`rounded-lg px-3 py-2 text-sm ${activeTab === tab ? "bg-cyan-400 text-slate-950" : "bg-slate-800 text-slate-300"}`} type="button" onClick={() => setCrawlerActiveTab(tab)}>
+                        {{ overview: "Thông tin", source: "Source variants", final: "Final variants", customize: "Customize", json: "Product JSON" }[tab]}
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeTab === "overview" ? (
+                    <div className="space-y-4 text-sm">
+                      {selectedProduct.description ? <p className="whitespace-pre-wrap text-slate-300">{selectedProduct.description}</p> : null}
+                      {selectedProduct.bulletPoints.length ? <ul className="list-disc space-y-1 pl-5 text-slate-300">{selectedProduct.bulletPoints.map((point) => <li key={point}>{point}</li>)}</ul> : null}
+                      <p className="text-slate-400">Categories: {selectedProduct.categories.join(" / ") || "—"}</p>
+                      {Object.keys(selectedProduct.productDetails).length ? <dl className="grid gap-2 rounded-lg border border-slate-800 p-3 sm:grid-cols-2">{Object.entries(selectedProduct.productDetails).map(([name, value]) => <div key={name}><dt className="text-slate-500">{name}</dt><dd>{value}</dd></div>)}</dl> : null}
+                      {selectedProduct.warnings.map((warning) => <p key={warning} className="rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-amber-200">⚠ {warning}</p>)}
+                    </div>
+                  ) : null}
+                  {activeTab === "source" ? (
+                    <div className="space-y-2">{selectedProduct.sourceVariants.map((variant) => <div key={variant.asin} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{variant.asin}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}{variant.priceInference.isInferred ? " · inferred" : ""}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p>{variant.diagnostics ? <p className="mt-1 text-xs text-slate-500">Fetch: {variant.diagnostics.fetchMode} · {variant.diagnostics.attempts} attempts{variant.diagnostics.captchaEncountered ? " · CAPTCHA" : ""}</p> : null}{variant.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-300">⚠ {warning}</p>)}{variant.diagnostics?.fetchTrace ? <details className="mt-2"><summary className="cursor-pointer text-xs font-semibold text-cyan-300">Fetch debug</summary><pre className="mt-2 max-h-72 overflow-auto rounded bg-slate-950 p-3 text-[11px] text-slate-300">{JSON.stringify(variant.diagnostics.fetchTrace, null, 2)}</pre></details> : null}</div>)}</div>
+                  ) : null}
+                  {activeTab === "final" ? (
+                    <div className="max-h-[42rem] space-y-2 overflow-auto pr-1">{selectedProduct.variants.map((variant) => <div key={variant.id} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong className="break-all">{variant.sku}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p><p className="mt-1 text-xs text-slate-500">Source: {variant.sourceAsin ?? "preset"} · Base: {variant.price && variant.surcharge ? `$${(variant.price.amount - variant.surcharge.amount).toFixed(2)}` : moneyLabel(variant.price?.raw, variant.price?.amount)} · Surcharge: {moneyLabel(variant.surcharge?.raw, variant.surcharge?.amount)}</p></div>)}</div>
+                  ) : null}
+                  {activeTab === "customize" ? (
+                    selectedProduct.customization ? <div className="space-y-4"><div className="rounded-lg border border-violet-800 bg-violet-950/20 p-3 text-sm"><p className="font-semibold text-violet-200">Paid groups đã chuyển thành variants: {selectedProduct.customization.pricing.paidOptionGroups.length}</p>{selectedProduct.customization.pricing.paidOptionGroups.map((group) => <p key={group.id} className="mt-1 text-slate-300">{group.label}: {group.options.map((option) => `${option.label} (${moneyLabel(option.price.raw, option.price.amount)})`).join(" · ")}</p>)}</div><p className="text-sm text-slate-400">Controls còn lại: {selectedProduct.customization.optionGroups.length + selectedProduct.customization.textInputs.length + selectedProduct.customization.imageInputs.length + selectedProduct.customization.fontGroups.length + selectedProduct.customization.colorGroups.length}</p><pre className="max-h-[36rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs text-slate-300">{JSON.stringify(selectedProduct.customization, null, 2)}</pre></div> : <p className="text-sm text-slate-400">Sản phẩm này không có Amazon Customize.</p>
+                  ) : null}
+                  {activeTab === "json" ? <pre className="max-h-[42rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(selectedProduct, null, 2)}</pre> : null}
+                </article>
+                </CrawlerDialog>
+              )}
+            </div>
+          )}
+          {output?.errors.map((crawlError) => <div key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">
+            <p>{crawlError.source}: {crawlError.code === "WORKER_INTERRUPTED" ? "Family bị gián đoạn khi worker khởi động lại; dữ liệu đã lấy vẫn được giữ." : crawlError.stage ? `Quá thời gian xử lý ở bước ${crawlError.stage}.` : crawlError.message}</p>
+            {crawlError.stage ? <details className="mt-2"><summary className="cursor-pointer text-xs">Chi tiết timeout</summary><pre className="mt-2 overflow-auto text-xs">{JSON.stringify({ stage: crawlError.stage, attempt: crawlError.attempt, route: crawlError.route, profile: crawlError.profile, elapsedMs: crawlError.elapsedMs, isRetryable: crawlError.isRetryable, retryAfter: crawlError.retryAfter }, null, 2)}</pre></details> : null}
+          </div>)}
+          {output?.status === "partial" ? <button className="rounded-lg border border-amber-600 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50" disabled={isRetryingSync} type="button" onClick={() => void handleRetrySyncs()}>{isRetryingSync ? "Đang retry..." : "Retry Shopify lỗi"}</button> : null}
+          {syncMessage ? <p className="text-sm text-amber-200">{syncMessage}</p> : null}
+        </section>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      <CrawlerWorkspace
+        section={workspaceSection}
+        onSectionChange={(section) => { setWorkspaceSection(section); setIsProductDetailsOpen(false); setIsImageProfileEditorOpen(false); }}
+        summary={<>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+            <span className="text-slate-400">Store <strong className="ml-1 text-slate-100">{activeStoreId}</strong></span>
+            <span className={isClientSnapshotStale ? "text-amber-300" : "text-slate-300"}>{isLoadingClients ? "Đang kiểm tra agent…" : isClientSnapshotStale ? "Kết nối agent chưa xác minh" : connectedClients.length + " agent kết nối"}</span>
+            <span className={admissionGate?.state === "STOPPED" ? "text-amber-300" : "text-slate-400"}>{admissionGate?.state === "STOPPED" ? "Đã ngừng nhận task mới" : admissionGate ? "Đang mở nhận việc" : ""}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <button type="button" onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)} className="text-sm text-cyan-300 hover:text-cyan-200">Mở SEO Queue →</button>
+            <button type="button" onClick={() => setWorkspaceSection("agents")} className="text-sm text-slate-400 hover:text-slate-200">Quản lý agent →</button>
+          </div>
+        </div>
+        {admissionGate?.state === "STOPPED" ? <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">Hệ thống đang dừng nhận task mới. Task đang chạy có thể hoàn tất; mở lại tại khu vực Agent.</p> : null}
+        {clientError || (!isLoadingClients && connectedClients.length === 0) ? <p role="alert" className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">{clientError ?? "Chưa có agent kết nối. Mở Agent để kiểm tra hoặc tải Agent Windows."}</p> : null}
+        {isJobSnapshotStale ? <p role="alert" className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">Chưa xác minh được trạng thái job. Các thao tác điều khiển tạm khóa; đang kết nối lại.</p> : null}
+        {admissionGateError ? <p role="alert" className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">Chưa xác minh được trạng thái nhận việc toàn hệ thống. Mở Agent để kiểm tra kết nối.</p> : null}
+
+        </>}
+        crawl={<>
+          <section className="grid min-w-0 items-start gap-5 rounded-2xl border border-slate-800 bg-slate-900/30 p-4 sm:p-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]" aria-label="Tạo phiên cào">
+            <div className="min-w-0 space-y-4">
       <label className="grid gap-2 text-sm font-medium text-slate-200">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị
         <textarea
@@ -2040,9 +2413,112 @@ export function AmazonCrawlerPage({
           }}
         />
       </label>
+              <div className="flex flex-wrap items-center gap-3">
+        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED" || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0))} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>
+              </div>
 
-      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
-      <section className="rounded-2xl border border-slate-700/80 bg-slate-950/70 p-5 sm:p-6 shadow-xl space-y-5">
+          {coordinatorActiveJob ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-slate-300">{resolveCrawlerJobPresentation(coordinatorActiveJob).label}</span>
+              {resolveCrawlerJobPresentation(coordinatorActiveJob).canPause ? <button type="button" disabled={isJobSnapshotStale || controlledJobId !== null} onClick={() => void handlePauseResumeJob(coordinatorActiveJob)} className="rounded-lg border border-amber-700 px-3 py-2 text-sm text-amber-200 disabled:opacity-50">{controlledJobId === coordinatorActiveJob.jobId ? "Đang cập nhật…" : coordinatorActiveJob.executionState === "paused" || coordinatorActiveJob.executionState === "pausing" ? "Tiếp tục phiên cào" : "Tạm dừng phiên cào"}</button> : null}
+              {resolveCrawlerJobPresentation(coordinatorActiveJob).canCancel ? <button type="button" disabled={isJobSnapshotStale || controlledJobId !== null} onClick={() => handleRequestCancelJob(coordinatorActiveJob)} className="rounded-lg border border-rose-900 px-3 py-2 text-sm text-rose-300 disabled:opacity-50">{coordinatorActiveJob.status === "cancelling" ? "Buộc dừng phiên cào" : "Hủy phiên cào"}</button> : null}
+            </div>
+          ) : isRunning && !amazonCrawlerJobs ? <button type="button" onClick={() => { if (window.confirm("Dừng phiên cào hiện tại?")) void handleStop(); }} className="rounded-lg border border-rose-900 px-3 py-2 text-sm text-rose-300">Dừng phiên cào</button> : null}
+
+              <p className="text-xs leading-relaxed text-slate-400">Tạm dừng phiên cào: không nhận ASIN mới sau khi task hiện tại kết thúc an toàn. Kết quả đã lưu và xử lý ảnh được giữ lại.</p>
+            </div>
+            <div className="min-w-0 space-y-4">
+
+        {/* Niche Mismatch Warning Banner */}
+        {isNicheMismatch && detectedProductNiche && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-200">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400">⚠️</span>
+              <span>
+                Link cào có vẻ là <strong className="text-white">{detectedProductNiche.label}</strong>, nhưng store đang chọn là <strong className="font-mono text-amber-100">{currentStoreId}</strong>.
+              </span>
+            </div>
+            {detectedProductNiche.targetStore && detectedProductNiche.targetStore !== currentStoreId && (
+              <button
+                type="button"
+                onClick={() => handleStoreChange(detectedProductNiche.targetStore)}
+                className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400 transition-colors"
+              >
+                Chuyển sang {detectedProductNiche.targetStore} →
+              </button>
+            )}
+          </div>
+        )}
+          <label className="grid gap-2 text-sm text-slate-300">
+            Store nhận sản phẩm
+            <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning} onChange={(event) => handleStoreChange(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-slate-100 disabled:opacity-50">
+              {availableStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
+            </select>
+          </label>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="grid gap-1 text-sm text-slate-300">
+          Profile cào
+          <select
+            aria-label="Profile cào"
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            value={settings.profileSlug}
+            onChange={(event) => {
+              const selectedProfile = event.target.value;
+              const nextProfile: AmazonCrawlerProfile =
+                selectedProfile === "jeminise" || selectedProfile === "preaurem"
+                  ? selectedProfile
+                  : "default";
+              updateSetting("profileSlug", nextProfile);
+              if (nextProfile === "jeminise") {
+                updateSetting("applyJeminisePreset", true);
+              } else {
+                updateSetting("applyJeminisePreset", false);
+              }
+            }}
+          >
+            <option value="default">Default</option>
+            <option value="jeminise">Jeminise</option>
+            <option value="preaurem">Preaurem</option>
+          </select>
+        </label>
+        {settings.profileSlug === "jeminise" ? <label className="flex items-center gap-3 self-end rounded-lg border border-slate-700 p-2 text-sm text-slate-200">
+          <input
+            checked={settings.applyJeminisePreset}
+            disabled={settings.profileSlug !== "jeminise"}
+            type="checkbox"
+            onChange={(event) => updateSetting("applyJeminisePreset", event.target.checked)}
+          />
+          Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
+        </label> : null}
+        <label className="grid gap-1 text-sm text-slate-300">
+          Xử lý ảnh
+          <select
+            aria-label="Profile xử lý ảnh"
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            value={settings.imageProfileSlug}
+            onChange={(event) => {
+              const slug = event.target.value;
+              updateSetting("imageProfileSlug", slug);
+              setEditingImageProfile(imageProfiles.find((profile) => profile.slug === slug) ?? null);
+            }}
+          >
+            {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
+          </select>
+        </label>
+        <div className="flex items-end gap-2">
+          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
+          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
+        </div>
+      </div>
+              {imageProfileMessage ? <p role="status" className="text-xs text-amber-200">{imageProfileMessage}</p> : null}
+              <details className="min-w-0 rounded-xl border border-slate-700 bg-slate-950/40 p-3">
+                <summary className="cursor-pointer text-sm font-medium text-slate-200">Collection, loại sản phẩm & định giá
+                  <span className="mt-1 block text-xs font-normal text-slate-400">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
+                  {selectedCollections.length > 0 ? <span className="mt-1 block truncate text-xs font-normal text-slate-500" title={selectedCollections.map((collection) => collection.title).join(", ")}>{selectedCollections.map((collection) => collection.title).join(", ")}</span> : null}
+                </summary>
+                <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
+      <section className="min-w-0 space-y-4 [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-slate-100 tracking-tight">
@@ -2070,29 +2546,9 @@ export function AmazonCrawlerPage({
           )}
         </div>
 
-        {/* Niche Mismatch Warning Banner */}
-        {isNicheMismatch && detectedProductNiche && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-200">
-            <div className="flex items-center gap-2">
-              <span className="text-amber-400">⚠️</span>
-              <span>
-                Link cào có vẻ là <strong className="text-white">{detectedProductNiche.label}</strong>, nhưng store đang chọn là <strong className="font-mono text-amber-100">{currentStoreId}</strong>.
-              </span>
-            </div>
-            {detectedProductNiche.targetStore && detectedProductNiche.targetStore !== currentStoreId && (
-              <button
-                type="button"
-                onClick={() => handleStoreChange(detectedProductNiche.targetStore)}
-                className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400 transition-colors"
-              >
-                Chuyển sang {detectedProductNiche.targetStore} →
-              </button>
-            )}
-          </div>
-        )}
 
         {/* Row 1: Store, Collection & Product Type */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2">
           {/* Store selector */}
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3.5">
             <div className="flex items-center justify-between gap-2">
@@ -2215,8 +2671,9 @@ export function AmazonCrawlerPage({
             )}
 
             {/* Add Collection dropdown */}
-            <div className="grid grid-cols-[1fr_auto] gap-1.5">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-1.5">
               <select
+                aria-label="Thêm hoặc bỏ collection"
                 className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-slate-100 outline-none focus:border-slate-500 disabled:opacity-50 text-sm cursor-pointer"
                 disabled={isLoadingCollections || availableCollections.length === 0}
                 value=""
@@ -2385,7 +2842,7 @@ export function AmazonCrawlerPage({
             </div>
 
             {/* Dropdown & Direct Text Input Combo */}
-            <div className="grid grid-cols-[1fr_auto] gap-1.5">
+            <div className="grid min-w-0 gap-1.5 sm:grid-cols-2">
               <input
                 type="text"
                 placeholder="Hoặc nhập loại khác..."
@@ -2394,7 +2851,7 @@ export function AmazonCrawlerPage({
                 onChange={(e) => updateSetting("productType", e.target.value)}
               />
               <select
-                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200 outline-none focus:border-slate-500 text-xs cursor-pointer"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200 outline-none focus:border-slate-500 text-xs cursor-pointer"
                 value={settings.productType || ""}
                 onChange={(e) => {
                   if (e.target.value) {
@@ -2461,6 +2918,7 @@ export function AmazonCrawlerPage({
                 placeholder="0.00"
                 className="w-full rounded-lg border border-slate-700 bg-slate-900 pl-7 pr-3 py-2 text-slate-100 outline-none focus:border-slate-500 font-mono text-sm"
                 value={settings.priceAddition ?? 0}
+                aria-label="Giá cộng thêm ($)"
                 onChange={(e) => {
                   const val = Math.max(0, Number(e.target.value) || 0);
                   updateSetting("priceAddition", val);
@@ -2479,7 +2937,7 @@ export function AmazonCrawlerPage({
                 {settings.discountPercent ?? 0}%
               </span>
             </div>
-            <div className="grid grid-cols-[1fr_auto] gap-2">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
               <select
                 className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-slate-500 text-sm"
                 value={
@@ -2516,6 +2974,7 @@ export function AmazonCrawlerPage({
                   placeholder="%"
                   className="w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 pr-6 text-slate-100 outline-none focus:border-slate-500 font-mono text-sm text-right"
                   value={settings.discountPercent ?? 0}
+                  aria-label="Giá gạch ngang (%)"
                   onChange={(e) => {
                     const val = Math.min(95, Math.max(0, Number(e.target.value) || 0));
                     updateSetting("discountPercent", val);
@@ -2558,106 +3017,10 @@ export function AmazonCrawlerPage({
             </div>
           );
         })()}
-      </section>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-1 text-sm text-slate-300">
-          Profile
-          <select
-            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
-            value={settings.profileSlug}
-            onChange={(event) => {
-              const selectedProfile = event.target.value;
-              const nextProfile: AmazonCrawlerProfile =
-                selectedProfile === "jeminise" || selectedProfile === "preaurem"
-                  ? selectedProfile
-                  : "default";
-              updateSetting("profileSlug", nextProfile);
-              if (nextProfile === "jeminise") {
-                updateSetting("applyJeminisePreset", true);
-              } else {
-                updateSetting("applyJeminisePreset", false);
-              }
-            }}
-          >
-            <option value="default">Default</option>
-            <option value="jeminise">Jeminise</option>
-            <option value="preaurem">Preaurem</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-3 self-end rounded-lg border border-slate-700 p-2 text-sm text-slate-200">
-          <input
-            checked={settings.applyJeminisePreset}
-            disabled={settings.profileSlug !== "jeminise"}
-            type="checkbox"
-            onChange={(event) => updateSetting("applyJeminisePreset", event.target.checked)}
-          />
-          Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
-        </label>
-        <label className="grid gap-1 text-sm text-slate-300">
-          Xử lý ảnh
-          <select
-            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
-            value={settings.imageProfileSlug}
-            onChange={(event) => {
-              const slug = event.target.value;
-              updateSetting("imageProfileSlug", slug);
-              setEditingImageProfile(imageProfiles.find((profile) => profile.slug === slug) ?? null);
-            }}
-          >
-            {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
-          </select>
-        </label>
-        <div className="flex items-end gap-2">
-          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
-          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
-        </div>
-      </div>
-
-      {isImageProfileEditorOpen && editingImageProfile ? (
-        <section className="space-y-4 rounded-xl border border-cyan-900 bg-slate-950/60 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold text-cyan-200">Image profile · {editingImageProfile.slug}</h2>
-            <span className="text-xs text-slate-500">Revision {editingImageProfile.revision}</span>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="grid gap-1 text-sm">Tên<input className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.name} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, name: event.target.value })} /></label>
-            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.enabled} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, enabled: event.target.checked })} /> Bật xử lý ảnh</label>
-            <label className="grid gap-2 text-sm">
-              Logo PNG/JPEG/WebP
-              {editingImageProfile.logoUrl ? (
-                <span className="flex h-24 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-white/90 p-2">
-                  <img alt={`Logo hiện tại của ${editingImageProfile.name}`} className="max-h-full max-w-full object-contain" src={editingImageProfile.logoUrl} />
-                </span>
-              ) : (
-                <span className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-700 text-xs text-slate-500">Chưa có logo</span>
-              )}
-              <input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfileLogo(event.target.files?.[0])} />
-            </label>
-            <label className="grid gap-1 text-sm">Ảnh thử preview<input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfilePreview(event.target.files?.[0])} /></label>
-            <NumberSetting label="Random pixels" min={0} max={10000} value={editingImageProfile.randomPixels} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, randomPixels: value })} />
-            <NumberSetting label="Pixel delta" min={1} max={20} value={editingImageProfile.pixelDelta} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, pixelDelta: value })} />
-            <NumberSetting label="JPEG quality" min={70} max={98} value={editingImageProfile.jpegQuality} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, jpegQuality: value })} />
-            <NumberSetting label="Output width" min={100} max={4000} value={editingImageProfile.output.width} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, width: value } })} />
-            <NumberSetting label="Output height" min={100} max={4000} value={editingImageProfile.output.height} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, height: value } })} />
-            <label className="grid gap-1 text-sm">Fit<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.output.fit} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, fit: event.target.value === "cover" ? "cover" : "contain" } })}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
-            <label className="grid gap-1 text-sm">Background<input className="h-10 rounded border border-slate-700 bg-slate-900" type="color" value={editingImageProfile.output.background} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, background: event.target.value } })} /></label>
-            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.logo.enabled} disabled={!editingImageProfile.hasLogo} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, enabled: event.target.checked } })} /> Bật logo {editingImageProfile.hasLogo ? "" : "(chưa có file)"}</label>
-            <label className="grid gap-1 text-sm">Vị trí logo<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.logo.position} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, position: event.target.value as ImageProcessingProfile["logo"]["position"] } })}><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label>
-            <NumberSetting label="Logo max %" min={1} max={100} value={editingImageProfile.logo.maxPercent} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, maxPercent: value } })} />
-            <NumberSetting label="Logo padding" min={0} max={4000} value={editingImageProfile.logo.padding} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, padding: value } })} />
-          </div>
-          {imageProfilePreview ? <img alt="Image processing preview" className="max-h-80 rounded-lg border border-slate-700 object-contain" src={imageProfilePreview} /> : null}
-          <div className="flex gap-2">
-            <button className="rounded bg-cyan-500 px-4 py-2 font-semibold text-slate-950" type="button" onClick={() => void handleSaveImageProfile()}>Lưu profile</button>
-            <button className="rounded border border-rose-700 px-4 py-2 text-rose-300 disabled:opacity-40" disabled={editingImageProfile.slug === "default"} type="button" onClick={() => void handleDeleteImageProfile()}>Xóa profile</button>
-          </div>
-          {imageProfileMessage ? <p className="text-sm text-amber-200">{imageProfileMessage}</p> : null}
-        </section>
-      ) : null}
-
+      </section></div>
+              </details>
       <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerAdvancedOpen}>
-        {isAdvancedOpen ? "Ẩn" : "Hiện"} Advanced Settings
+        {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
       </button>
       {isAdvancedOpen ? (
         <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-950/50 p-4 sm:grid-cols-3">
@@ -2688,209 +3051,8 @@ export function AmazonCrawlerPage({
           </details>
         </div>
       ) : null}
-
-      {amazonCrawlerJobs ? (
-        <section className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/50 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-slate-100">Job đang chạy và gần đây</h2>
-              <p className="text-xs text-slate-400">Hủy job sẽ dừng crawler và dọn dữ liệu tạm của job. Cache sản phẩm hợp lệ và sản phẩm đã ghi lên Shopify được giữ nguyên.</p>
-              <p className="text-xs text-slate-400">Tạm dừng sẽ ngừng nhận ASIN mới sau khi task đang chạy kết thúc an toàn; kết quả đã lưu được giữ lại. Pipeline SEO của sản phẩm đã crawl vẫn tiếp tục. Pause agent riêng không thay thế Pause job.</p>
             </div>
-            <div className="text-right text-xs text-slate-500">
-              <p>Tự làm mới mỗi 3 giây · phân trang 10 job, tải 100 job gần nhất</p>
-              {lastJobRefreshAt !== null ? <p>{isJobSnapshotStale ? "Snapshot cũ; trạng thái hiện chưa xác minh" : "Cập nhật"} lúc {new Date(lastJobRefreshAt).toLocaleTimeString()}</p> : null}
-            </div>
-          </div>
-          {jobs.length === 0 ? <p className="text-sm text-slate-400">{!hasLoadedJobs ? "Đang tải danh sách job…" : isJobSnapshotStale ? "Chưa thể xác minh danh sách job do lỗi kết nối." : "Chưa có job trên coordinator."}</p> : (
-            <div className="grid gap-2">
-              {visibleJobs.map((job) => {
-                const presentation = resolveCrawlerJobPresentation(job);
-                const cancellationMessage = describeJobCancellation(job);
-                return (
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2" key={job.jobId}>
-                    <div className="min-w-0">
-                      <p className="font-mono text-xs text-cyan-300">{job.jobId}</p>
-                      <p className={`text-sm ${presentation.tone === "success" ? "text-emerald-300" : presentation.tone === "warning" ? "text-amber-300" : presentation.tone === "error" ? "text-rose-300" : presentation.tone === "active" ? "text-cyan-200" : "text-slate-300"}`}>
-                        {presentation.label}
-                      </p>
-                      {job.progress.items?.filter((task): task is typeof task & { taskId: string } =>
-                        Boolean(task.taskId) && ["queued", "running", "cancelling"].includes(task.status)
-                      ).map((task) => (
-                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-400" key={task.taskId}>
-                          <span>{task.asin} · {task.status}</span>
-                          {task.status !== "cancelling" ? (
-                            <button
-                              className="rounded border border-rose-800 px-2 py-0.5 text-rose-300 disabled:opacity-50"
-                              type="button"
-                              disabled={isJobSnapshotStale || controlledTaskId !== null || controlledJobId !== null || job.status === "cancelling"}
-                              onClick={() => void handleCancelTask(job.jobId, task.taskId, task.asin)}
-                            >
-                              {controlledTaskId === task.taskId ? "Đang hủy..." : "Hủy task"}
-                            </button>
-                          ) : null}
-                        </div>
-                      ))}
-                      {cancellationMessage ? (
-                        <p className={job.status === "cancelled" ? "text-xs text-emerald-300" : "text-xs text-amber-300"}>
-                          {cancellationMessage}
-                        </p>
-                      ) : null}
-                      {job.cancellation.pendingAgents.length > 0 ? (
-                        <div className="text-xs text-slate-400">
-                          {job.cancellation.pendingAgents.map((agent) => (
-                            <p key={agent.clientId}>
-                              Agent {agent.displayName}: {agent.hasReceived ? "đã nhận lệnh, đang nhả" : "chưa nhận lệnh"} {agent.taskCount} task
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
-                      {job.cancellation.pendingPipeline.length > 0 ? (
-                        <div className="text-xs text-slate-400">
-                          {job.cancellation.pendingPipeline.map((pendingItem) => (
-                            <p key={pendingItem.itemId}>
-                              Pipeline {pendingItem.sourceKey}: {pendingItem.receivedAt ? "đã nhận lệnh, đang kết thúc" : "chưa nhận lệnh tại"} bước {formatCancellationPhase(pendingItem.phase)}
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {presentation.canPause || presentation.canCancel ? (
-                        <>
-                          {presentation.canPause ? <button
-                            className="rounded border border-amber-500 px-3 py-1 text-xs font-semibold text-amber-300 disabled:opacity-50"
-                            disabled={isJobSnapshotStale || controlledJobId !== null}
-                            type="button"
-                            onClick={() => void handlePauseResumeJob(job)}
-                          >
-                            {controlledJobId === job.jobId
-                              ? "Đang cập nhật..."
-                              : job.executionState === "pausing" ? "Tiếp tục ngay"
-                                : job.executionState === "paused" ? "Tiếp tục" : "Tạm dừng"}
-                          </button> : null}
-                          {presentation.canCancel ? <button className="rounded border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleStopJob(job.jobId)}>{job.status === "cancelling" ? "Buộc dừng ngay" : "Hủy job"}</button> : null}
-                        </>
-                      ) : null}
-                      {presentation.hasReachedSeoQueue ? (
-                        <button
-                          className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-300"
-                          type="button"
-                          onClick={() => {
-                            const targetStore = (job.settings?.storeId as string | undefined) || activeStoreId;
-                            try {
-                              window.localStorage.setItem("ffp_seo_review_selected_store", targetStore);
-                            } catch {
-                              // ignore
-                            }
-                            navigate(`/gpt-seo?storeId=${encodeURIComponent(targetStore)}`);
-                          }}
-                        >
-                          Mở SEO Queue
-                        </button>
-                      ) : null}
-                      {["completed", "partial", "cancelled", "review_pending"].includes(job.status) ? (
-                        <>
-                          <button className="rounded border border-cyan-600 px-3 py-1 text-xs font-semibold text-cyan-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null || coordinatorActiveJob !== undefined || isCheckingAsins} type="button" onClick={() => void handleRunAgain(job)}>Run again</button>
-                          <button className="rounded border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-300 disabled:opacity-50" disabled={isJobSnapshotStale || controlledJobId !== null} type="button" onClick={() => void handleDeleteJob(job.jobId)}>Ẩn khỏi Crawler</button>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {jobs.length > JOBS_PER_PAGE ? <div className="flex items-center justify-end gap-3 text-xs text-slate-400">
-            <button type="button" disabled={visibleJobPage === 0} onClick={() => setJobPage(visibleJobPage - 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job trước</button>
-            <span>{visibleJobPage * JOBS_PER_PAGE + 1}–{Math.min((visibleJobPage + 1) * JOBS_PER_PAGE, jobs.length)} / {jobs.length}</span>
-            <button type="button" disabled={visibleJobPage + 1 >= jobPageCount} onClick={() => setJobPage(visibleJobPage + 1)} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40">Job tiếp</button>
-          </div> : null}
-          {shouldShowStandaloneJobControlMessage(jobControlTone, jobControlMessage) ? (
-            <p className={`text-sm ${jobControlTone === "success" ? "text-emerald-300" : "text-rose-300"}`}>
-              {jobControlMessage}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Start (${urls.length})`}</button>
-        <button
-          className="rounded-lg border border-emerald-500 px-5 py-2 font-semibold text-emerald-300 hover:bg-emerald-950/40"
-          type="button"
-          onClick={() => {
-            try {
-              window.localStorage.setItem("ffp_seo_review_selected_store", activeStoreId);
-            } catch {
-              // ignore
-            }
-            navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`);
-          }}
-        >
-          Mở SEO Queue
-        </button>
-        {output === null && resultProducts.length === 0 ? null : (
-          <>
-            {onHandoverToSeo ? (
-              <button
-                className="flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2 font-semibold text-slate-950 shadow-sm transition-colors hover:bg-emerald-400 disabled:opacity-50"
-                disabled={isRunning || isHandingOver || resultProducts.length === 0}
-                type="button"
-                onClick={() => void handleHandover()}
-              >
-                {isHandingOver ? (
-                  <>
-                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-950 border-r-transparent" />
-                    <span>Đang xử lý SEO ({resultProducts.length} SP)...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>✨ Bàn giao sang SEO Review ({resultProducts.length})</span>
-                  </>
-                )}
-              </button>
-            ) : null}
-            <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>
-            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning || isHandingOver} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
-          </>
-        )}
-        {amazonCrawlerJobs ? (
-          <>
-            <label className="flex items-center gap-2 text-sm text-slate-300">ASIN (ZIP hiện tại)
-              <input className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-2 font-mono text-slate-100" maxLength={10} value={cacheAsin} onChange={(event) => setCacheAsin(event.target.value.toUpperCase())} />
-            </label>
-            <button className="rounded-lg border border-amber-500 px-4 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache || cacheAsin.trim().length !== 10} type="button" onClick={() => void handleInvalidateProductCache()}>{isInvalidatingCache ? "Đang làm mới..." : "Xóa cache ASIN"}</button>
-            <button className="rounded-lg border border-slate-600 px-4 py-2 font-semibold text-slate-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache} type="button" onClick={() => void handleClearTemporaryData()}>{isClearingTemporaryData ? "Đang dọn..." : "Dọn dữ liệu tạm"}</button>
-          </>
-        ) : null}
-        <button className="rounded-lg border border-rose-500 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa toàn bộ cache"}</button>
-
-        {recentJobs.length > 0 && (
-          <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5 ml-auto">
-            <span className="text-xs text-slate-400 font-medium whitespace-nowrap">📋 Phiên cào gần đây:</span>
-            <select
-              value={lastJobId ?? ""}
-              onChange={(event) => void handleSelectRecentJob(event.target.value)}
-              className="rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none"
-              disabled={isRunning || isHydratingJob}
-            >
-              <option value="" disabled>-- Chọn phiên cào để xem lại --</option>
-              {recentJobs.map((job) => {
-                const timeLabel = job.createdAt ? new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-                const productCount = job.productCounts
-                  ? Object.values(job.productCounts).reduce((total, count) => total + count, 0)
-                  : job.acceptedInputs;
-                return (
-                  <option key={job.id} value={job.id}>
-                    {timeLabel ? `[${timeLabel}] ` : ""}{job.id.slice(0, 8)}... ({productCount} SP · {resolveCrawlerJobPresentation(job).label})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        )}
-      </div>
+          </section>
       {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}
       {asinPreflightMatches.length > 0 ? (
         <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
@@ -2960,20 +3122,18 @@ export function AmazonCrawlerPage({
           <span>{hydrateMessage}</span>
         </div>
       )}
-      {cacheMessage === null ? null : <p className="text-sm text-amber-200">{cacheMessage}</p>}
       {handoverError === null ? null : (
         <div className="rounded-xl border border-rose-600 bg-rose-950/40 p-4 text-sm text-rose-200">
           <p className="font-semibold text-rose-300">Không thể bàn giao sang SEO Review</p>
           <p className="mt-1">{handoverError}</p>
         </div>
       )}
-
       {progress === null ? null : (
         <div className={`space-y-4 rounded-xl border p-4 ${progress.phase === "captcha" ? "border-amber-400 bg-amber-950/30" : "border-slate-700 bg-slate-950/50"}`}>
           <div>
             <div className="flex flex-wrap justify-between gap-2 text-sm">
               <span>{progress.message}</span>
-              <strong>{progress.completed}/{progress.total} links</strong>
+              <strong>{progress.completed}/{progress.total} link</strong>
             </div>
             {progress.currentAsin || progress.errors ? (
               <p className="mt-1 text-xs text-slate-400">
@@ -2993,7 +3153,9 @@ export function AmazonCrawlerPage({
             ) : null}
           </div>
           {(progress.items ?? []).length === 0 ? null : (
-            <div className="grid gap-3 lg:grid-cols-2">
+            <details>
+              <summary className="cursor-pointer text-sm text-slate-300">Tiến độ từng ASIN ({progress.items?.length ?? 0}){progress.errors ? ` · ${progress.errors} lỗi cần kiểm tra` : ""}</summary>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
               {(progress.items ?? []).map((progressItem) => {
                 const variantPercent = progressItem.variantTotal > 0
                   ? Math.min(100, (progressItem.variantCompleted / progressItem.variantTotal) * 100)
@@ -3045,176 +3207,113 @@ export function AmazonCrawlerPage({
                 );
               })}
             </div>
+            </details>
           )}
         </div>
       )}
       {error === null ? null : <p className="rounded-xl border border-rose-600 bg-rose-950/30 p-4 text-rose-200">{error}</p>}
+          {shouldShowStandaloneJobControlMessage(jobControlTone, jobControlMessage) ? <p role="status" className={jobControlTone === "error" ? "text-sm text-rose-300" : "text-sm text-slate-300"}>{jobControlMessage}</p> : null}
+          {resultsPanel}
+          <div className="flex flex-wrap items-center gap-3">
+        {output === null && resultProducts.length === 0 ? null : (
+          <>
+            {onHandoverToSeo ? (
+              <button
+                className="flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2 font-semibold text-slate-950 shadow-sm transition-colors hover:bg-emerald-400 disabled:opacity-50"
+                disabled={isRunning || isHandingOver || resultProducts.length === 0}
+                type="button"
+                onClick={() => void handleHandover()}
+              >
+                {isHandingOver ? (
+                  <>
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-950 border-r-transparent" />
+                    <span>Đang xử lý SEO ({resultProducts.length} SP)...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✨ Bàn giao sang SEO Review ({resultProducts.length})</span>
+                  </>
+                )}
+              </button>
+            ) : null}
+            <button className="rounded-lg border border-cyan-500 px-5 py-2 font-semibold text-cyan-300" type="button" onClick={handleDownload}>Tải JSON</button>
+            <button className="rounded-lg border border-slate-600 px-5 py-2 font-semibold text-slate-300 hover:border-rose-500 hover:text-rose-300 disabled:opacity-50" disabled={isRunning || isHandingOver} type="button" onClick={resetCrawlerOutput}>Xóa kết quả</button>
+          </>
+        )}
 
-      {output === null && resultProducts.length === 0 ? null : (
-        <section className="space-y-4">
-          {output ? (
-            <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-              <div className="grid gap-3 sm:grid-cols-4">
-                <p><span className="block text-xs text-slate-400">Products</span>{Math.max(output.statistics.products, seoHandoffSummary.totalProducts)}</p>
-                <p><span className="block text-xs text-slate-400">Source variants</span>{resultProducts.length > 0 ? output.statistics.sourceVariants : "—"}</p>
-                <p><span className="block text-xs text-slate-400">Final variants</span>{resultProducts.length > 0 ? output.statistics.finalVariants : "—"}</p>
-                <p><span className="block text-xs text-slate-400">Errors</span>{output.errors.length}</p>
-              </div>
-              {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 || (seoHandoffSummary.skippedExistingPipeline ?? 0) > 0 ? (
-                <p className="text-sm text-amber-200">
-                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify ?? 0} đã có trên Shopify · {seoHandoffSummary.skippedExistingPipeline ?? 0} đang có trong SEO Queue/Review, không bàn giao lại · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
-                </p>
-              ) : null}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
-                <p>
-                  SEO Queue: <strong className="text-emerald-300">{seoHandoffSummary.handedOver}/{seoHandoffSummary.totalProducts} đã bàn giao</strong>
-                  {seoHandoffSummary.pending > 0 ? <> · <strong className="text-cyan-300">{seoHandoffSummary.pending} đang chuẩn bị</strong></> : null}
-                  {seoHandoffSummary.notHandedOver > 0 ? <> · <strong className="text-rose-300">{seoHandoffSummary.notHandedOver} chưa bàn giao</strong></> : null}
-                </p>
-                <button
-                  className="rounded border border-cyan-700 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:border-cyan-500 hover:text-white"
-                  type="button"
-                  onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)}
-                >
-                  Mở SEO Queue →
-                </button>
-              </div>
+          </div>
+          {historyPanel}
+        </>}
+        agents={agentPanel}
+        diagnostics={<>
+          <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+            <h2 className="font-semibold text-slate-100">Cache & dữ liệu tạm</h2>
+            <p className="text-sm text-slate-400">Chỉ dùng khi cần làm mới dữ liệu crawl. Xóa cache không xóa sản phẩm trên Shopify và không thay thế thao tác mở cào lại ASIN.</p>
+            <div className="flex flex-wrap items-center gap-3">
+        {amazonCrawlerJobs ? (
+          <>
+            <label className="flex items-center gap-2 text-sm text-slate-300">ASIN (ZIP hiện tại)
+              <input className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-2 font-mono text-slate-100" maxLength={10} value={cacheAsin} onChange={(event) => setCacheAsin(event.target.value.toUpperCase())} />
+            </label>
+            <button className="rounded-lg border border-amber-500 px-4 py-2 font-semibold text-amber-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache || cacheAsin.trim().length !== 10} type="button" onClick={() => void handleInvalidateProductCache()}>{isInvalidatingCache ? "Đang làm mới..." : "Xóa cache ASIN"}</button>
+            <button className="rounded-lg border border-slate-600 px-4 py-2 font-semibold text-slate-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache} type="button" onClick={() => void handleClearTemporaryData()}>{isClearingTemporaryData ? "Đang dọn..." : "Dọn dữ liệu tạm"}</button>
+          </>
+        ) : null}
+        <button className="rounded-lg border border-rose-500 px-5 py-2 font-semibold text-rose-300 disabled:opacity-50" disabled={isRunning || coordinatorActiveJob !== undefined || isMaintainingCache} type="button" onClick={() => void handleClearCache()}>{isClearingCache ? "Đang xóa cache..." : "Xóa toàn bộ cache"}</button>
             </div>
-          ) : (
-            <p className="rounded-xl border border-cyan-800 bg-cyan-950/20 p-3 text-sm text-cyan-200">
-              Product sẽ xuất hiện tại đây ngay khi từng nhóm split hoàn tất; chuẩn hóa và Shopify tiếp tục chạy ở server.
-            </p>
-          )}
-          {resultProducts.length === 0 ? (
-            <p className="rounded-xl border border-slate-700 p-6 text-slate-400">Không có sản phẩm hợp lệ trong kết quả crawl.</p>
-          ) : (
-            <div className="grid items-start gap-5 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]">
-              <aside className="max-h-[70vh] space-y-2 overflow-auto rounded-xl border border-slate-700 bg-slate-950/40 p-3">
-                <div className="flex items-center justify-between px-2 pb-2">
-                  <h2 className="text-sm font-semibold text-slate-200">Tất cả sản phẩm</h2>
-                  {onHandoverToSeo ? (
-                    <button
-                      className="rounded bg-emerald-500 hover:bg-emerald-400 px-2 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50 transition-colors"
-                      disabled={isRunning || isHandingOver}
-                      type="button"
-                      onClick={() => void handleHandover()}
-                      title="Bàn giao toàn bộ sản phẩm sang SEO Review"
-                    >
-                      {isHandingOver ? "Đang xử lý..." : "Bàn giao SEO ➔"}
-                    </button>
-                  ) : null}
-                </div>
-                {resultProducts.map((product) => {
-                  const isSelected = product.id === selectedProduct?.id;
-                  const mediaUrl = firstProductMediaUrl(product);
-                  const handoffState = crawlerSeoHandoffState(product.pipeline);
-                  return (
-                    <button
-                      key={product.id}
-                      className={`grid w-full grid-cols-[3.5rem_1fr] gap-3 rounded-lg border p-2 text-left ${isSelected ? "border-cyan-400 bg-cyan-950/40" : "border-slate-800 bg-slate-900/60 hover:border-slate-600"}`}
-                      type="button"
-                      onClick={() => handleSelectProduct(product.id)}
-                    >
-                      {mediaUrl ? <img alt="" className="h-14 w-14 rounded-md bg-white object-contain" src={mediaUrl} /> : <span className="flex h-14 w-14 items-center justify-center rounded-md bg-slate-800 text-xs text-slate-500">No image</span>}
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold text-slate-100">{product.title}</span>
-                        <span className="mt-1 block text-xs text-slate-400">{product.splitContext.attribute && product.splitContext.value ? `${product.splitContext.attribute}: ${product.splitContext.value}` : product.parentAsin}</span>
-                        <span className="mt-1 block text-xs text-slate-300">{product.sourceVariants.length} source · {product.variants.length} final</span>
-                        <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
-                          {product.customization ? <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-200">Customize</span> : null}
-                          {product.preset ? <span className="rounded bg-cyan-900/60 px-1.5 py-0.5 text-cyan-200">{product.preset}</span> : null}
-                          <span className={`rounded px-1.5 py-0.5 ${handoffState === "handed_over" ? "bg-emerald-900/60 text-emerald-200" : handoffState === "not_handed_over" ? "bg-rose-900/60 text-rose-200" : "bg-blue-900/60 text-blue-200"}`}>{crawlerSeoHandoffLabel(product.pipeline)}</span>
-                          {product.warnings.length ? <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200">{product.warnings.length} warning</span> : null}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </aside>
-
-              {selectedProduct === null ? (
-                <div className="rounded-xl border border-slate-700 p-8 text-center text-slate-400">Chọn một sản phẩm để xem chi tiết.</div>
+            {cacheMessage ? <p role="status" className="text-sm text-amber-200">{cacheMessage}</p> : null}
+          </section>
+          {output ? <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+            <button className="text-sm text-cyan-300" type="button" onClick={toggleCrawlerBatchJsonOpen}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} JSON kỹ thuật của phiên cào</button>
+            {isBatchJsonOpen ? <pre className="mt-3 max-h-[32rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs text-slate-300">{JSON.stringify(output, null, 2)}</pre> : null}
+          </section> : null}
+          <AmazonCrawlerDeadLetterPanel controller={amazonCrawlerJobs} isActive={workspaceSection === "diagnostics"} />
+          <CrawlerObservability controller={amazonCrawlerJobs} isActive={workspaceSection === "diagnostics"}
+            jobId={selectedProduct?.diagnostics.jobId ?? activeJobId ?? lastJobId ?? undefined}
+            requestId={selectedProduct?.diagnostics.familyRequestId ?? selectedProduct?.diagnostics.requestId} />
+        </>}
+      />
+      {editingImageProfile ? (
+        <CrawlerDialog title="Cấu hình xử lý ảnh" isOpen={isImageProfileEditorOpen} onClose={() => setIsImageProfileEditorOpen(false)}><div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-semibold text-cyan-200">Image profile · {editingImageProfile.slug}</h2>
+            <span className="text-xs text-slate-500">Revision {editingImageProfile.revision}</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="grid gap-1 text-sm">Tên<input className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.name} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, name: event.target.value })} /></label>
+            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.enabled} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, enabled: event.target.checked })} /> Bật xử lý ảnh</label>
+            <label className="grid gap-2 text-sm">
+              Logo PNG/JPEG/WebP
+              {editingImageProfile.logoUrl ? (
+                <span className="flex h-24 items-center justify-center overflow-hidden rounded-lg border border-slate-700 bg-white/90 p-2">
+                  <img alt={`Logo hiện tại của ${editingImageProfile.name}`} className="max-h-full max-w-full object-contain" src={editingImageProfile.logoUrl} />
+                </span>
               ) : (
-                <article className="min-w-0 space-y-5 rounded-xl border border-slate-700 bg-slate-950/30 p-4 sm:p-5">
-                  <div className="grid gap-5 xl:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
-                    <div>
-                      {activeMediaUrl ? (
-                        <img alt={selectedProduct.title} className="aspect-square w-full rounded-xl bg-white object-contain" src={activeMediaUrl} />
-                      ) : (
-                        <div className="flex aspect-square items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">Không có ảnh</div>
-                      )}
-                      {firstMediaUrl && selectedProduct.media.length > 1 ? (
-                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                          {selectedProduct.media.map((media) => (
-                            <button key={media.url} className={`shrink-0 rounded-md border p-1 ${activeMediaUrl === media.url ? "border-cyan-400" : "border-slate-700"}`} type="button" onClick={() => setCrawlerSelectedMediaUrl(media.url)}>
-                              {media.kind === "image" ? <img alt="" className="h-14 w-14 bg-white object-contain" src={media.url} /> : <span className="flex h-14 w-14 items-center justify-center text-xs">Video</span>}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="min-w-0">
-                      <h3 className="text-xl font-bold text-slate-100">{selectedProduct.title}</h3>
-                      <p className="mt-2 font-mono text-xs text-cyan-300">ASIN gốc: {selectedProduct.parentAsin}</p>
-                      <dl className="mt-4 grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2">
-                        <div><dt className="text-slate-500">Matrix</dt><dd>{selectedProduct.variantMatrix.discoveredCount}/{selectedProduct.variantMatrix.expectedCount} · {selectedProduct.variantMatrix.complete ? "Complete" : "Incomplete"}</dd></div>
-                        <div><dt className="text-slate-500">Preset</dt><dd>{selectedProduct.preset ?? "—"}</dd></div>
-                        <div><dt className="text-slate-500">SEO Queue</dt><dd className={crawlerSeoHandoffState(selectedProduct.pipeline) === "handed_over" ? "text-emerald-300" : undefined}>{crawlerSeoHandoffLabel(selectedProduct.pipeline)}</dd></div>
-                        <div><dt className="text-slate-500">Xử lý ảnh</dt><dd>Tiếp tục tự động sau SEO theo profile đã chọn</dd></div>
-                      </dl>
-                      <a className="mt-4 inline-block text-sm font-semibold text-cyan-300 hover:text-cyan-200" href={selectedProduct.canonicalUrl} rel="noreferrer" target="_blank">Mở trên Amazon ↗</a>
-                      <button className="ml-4 mt-4 text-sm font-semibold text-emerald-300 hover:text-emerald-200" type="button" onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)}>Mở SEO Queue ↗</button>
-                      {selectedProduct.sourceVariants.some((variant) => variant.diagnostics?.fetchMode === "failed") ? (
-                        <p className="mt-3 rounded-lg border border-rose-800 bg-rose-950/30 p-3 text-sm text-rose-200">
-                          Amazon: Không tải được trang ASIN con {selectedProduct.sourceVariants.filter((variant) => variant.diagnostics?.fetchMode === "failed").map((variant) => variant.asin).join(", ")}. Kiểm tra CAPTCHA hoặc kết nối proxy rồi cào lại.
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 border-b border-slate-700 pb-3">
-                    {(["overview", "source", "final", "customize", "json"] as const).map((tab) => (
-                      <button key={tab} className={`rounded-lg px-3 py-2 text-sm ${activeTab === tab ? "bg-cyan-400 text-slate-950" : "bg-slate-800 text-slate-300"}`} type="button" onClick={() => setCrawlerActiveTab(tab)}>
-                        {{ overview: "Thông tin", source: "Source variants", final: "Final variants", customize: "Customize", json: "Product JSON" }[tab]}
-                      </button>
-                    ))}
-                  </div>
-
-                  {activeTab === "overview" ? (
-                    <div className="space-y-4 text-sm">
-                      {selectedProduct.description ? <p className="whitespace-pre-wrap text-slate-300">{selectedProduct.description}</p> : null}
-                      {selectedProduct.bulletPoints.length ? <ul className="list-disc space-y-1 pl-5 text-slate-300">{selectedProduct.bulletPoints.map((point) => <li key={point}>{point}</li>)}</ul> : null}
-                      <p className="text-slate-400">Categories: {selectedProduct.categories.join(" / ") || "—"}</p>
-                      {Object.keys(selectedProduct.productDetails).length ? <dl className="grid gap-2 rounded-lg border border-slate-800 p-3 sm:grid-cols-2">{Object.entries(selectedProduct.productDetails).map(([name, value]) => <div key={name}><dt className="text-slate-500">{name}</dt><dd>{value}</dd></div>)}</dl> : null}
-                      {selectedProduct.warnings.map((warning) => <p key={warning} className="rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-amber-200">⚠ {warning}</p>)}
-                    </div>
-                  ) : null}
-                  {activeTab === "source" ? (
-                    <div className="space-y-2">{selectedProduct.sourceVariants.map((variant) => <div key={variant.asin} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{variant.asin}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}{variant.priceInference.isInferred ? " · inferred" : ""}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p>{variant.diagnostics ? <p className="mt-1 text-xs text-slate-500">Fetch: {variant.diagnostics.fetchMode} · {variant.diagnostics.attempts} attempts{variant.diagnostics.captchaEncountered ? " · CAPTCHA" : ""}</p> : null}{variant.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-300">⚠ {warning}</p>)}{variant.diagnostics?.fetchTrace ? <details className="mt-2"><summary className="cursor-pointer text-xs font-semibold text-cyan-300">Fetch debug</summary><pre className="mt-2 max-h-72 overflow-auto rounded bg-slate-950 p-3 text-[11px] text-slate-300">{JSON.stringify(variant.diagnostics.fetchTrace, null, 2)}</pre></details> : null}</div>)}</div>
-                  ) : null}
-                  {activeTab === "final" ? (
-                    <div className="max-h-[42rem] space-y-2 overflow-auto pr-1">{selectedProduct.variants.map((variant) => <div key={variant.id} className="rounded-lg border border-slate-800 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong className="break-all">{variant.sku}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}</span></div><p className="mt-1 text-slate-300">{optionLabel(variant.options)}</p><p className="mt-1 text-xs text-slate-500">Source: {variant.sourceAsin ?? "preset"} · Base: {variant.price && variant.surcharge ? `$${(variant.price.amount - variant.surcharge.amount).toFixed(2)}` : moneyLabel(variant.price?.raw, variant.price?.amount)} · Surcharge: {moneyLabel(variant.surcharge?.raw, variant.surcharge?.amount)}</p></div>)}</div>
-                  ) : null}
-                  {activeTab === "customize" ? (
-                    selectedProduct.customization ? <div className="space-y-4"><div className="rounded-lg border border-violet-800 bg-violet-950/20 p-3 text-sm"><p className="font-semibold text-violet-200">Paid groups đã chuyển thành variants: {selectedProduct.customization.pricing.paidOptionGroups.length}</p>{selectedProduct.customization.pricing.paidOptionGroups.map((group) => <p key={group.id} className="mt-1 text-slate-300">{group.label}: {group.options.map((option) => `${option.label} (${moneyLabel(option.price.raw, option.price.amount)})`).join(" · ")}</p>)}</div><p className="text-sm text-slate-400">Controls còn lại: {selectedProduct.customization.optionGroups.length + selectedProduct.customization.textInputs.length + selectedProduct.customization.imageInputs.length + selectedProduct.customization.fontGroups.length + selectedProduct.customization.colorGroups.length}</p><pre className="max-h-[36rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs text-slate-300">{JSON.stringify(selectedProduct.customization, null, 2)}</pre></div> : <p className="text-sm text-slate-400">Sản phẩm này không có Amazon Customize.</p>
-                  ) : null}
-                  {activeTab === "json" ? <pre className="max-h-[42rem] overflow-auto rounded-lg bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(selectedProduct, null, 2)}</pre> : null}
-                </article>
+                <span className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-700 text-xs text-slate-500">Chưa có logo</span>
               )}
-            </div>
-          )}
-          {output?.errors.map((crawlError) => <div key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-700 p-3 text-rose-200">
-            <p>{crawlError.source}: {crawlError.code === "WORKER_INTERRUPTED" ? "Family bị gián đoạn khi worker khởi động lại; dữ liệu đã lấy vẫn được giữ." : crawlError.stage ? `Quá thời gian xử lý ở bước ${crawlError.stage}.` : crawlError.message}</p>
-            {crawlError.stage ? <details className="mt-2"><summary className="cursor-pointer text-xs">Chi tiết timeout</summary><pre className="mt-2 overflow-auto text-xs">{JSON.stringify({ stage: crawlError.stage, attempt: crawlError.attempt, route: crawlError.route, profile: crawlError.profile, elapsedMs: crawlError.elapsedMs, isRetryable: crawlError.isRetryable, retryAfter: crawlError.retryAfter }, null, 2)}</pre></details> : null}
-          </div>)}
-          {output?.status === "partial" ? <button className="rounded-lg border border-amber-600 px-3 py-2 text-sm font-semibold text-amber-200 disabled:opacity-50" disabled={isRetryingSync} type="button" onClick={() => void handleRetrySyncs()}>{isRetryingSync ? "Đang retry..." : "Retry Shopify lỗi"}</button> : null}
-          {syncMessage ? <p className="text-sm text-amber-200">{syncMessage}</p> : null}
-          {output ? <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerBatchJsonOpen}>{isBatchJsonOpen ? "Ẩn" : "Hiện"} Raw JSON toàn batch</button> : null}
-          {isBatchJsonOpen && output ? <pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-cyan-100">{JSON.stringify(output, null, 2)}</pre> : null}
-        </section>
-      )}
-
+              <input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfileLogo(event.target.files?.[0])} />
+            </label>
+            <label className="grid gap-1 text-sm">Ảnh thử preview<input accept="image/png,image/jpeg,image/webp" className="text-xs" type="file" onChange={(event) => void handleImageProfilePreview(event.target.files?.[0])} /></label>
+            <NumberSetting label="Random pixels" min={0} max={10000} value={editingImageProfile.randomPixels} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, randomPixels: value })} />
+            <NumberSetting label="Pixel delta" min={1} max={20} value={editingImageProfile.pixelDelta} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, pixelDelta: value })} />
+            <NumberSetting label="JPEG quality" min={70} max={98} value={editingImageProfile.jpegQuality} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, jpegQuality: value })} />
+            <NumberSetting label="Output width" min={100} max={4000} value={editingImageProfile.output.width} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, width: value } })} />
+            <NumberSetting label="Output height" min={100} max={4000} value={editingImageProfile.output.height} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, height: value } })} />
+            <label className="grid gap-1 text-sm">Fit<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.output.fit} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, fit: event.target.value === "cover" ? "cover" : "contain" } })}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
+            <label className="grid gap-1 text-sm">Background<input className="h-10 rounded border border-slate-700 bg-slate-900" type="color" value={editingImageProfile.output.background} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, output: { ...editingImageProfile.output, background: event.target.value } })} /></label>
+            <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={editingImageProfile.logo.enabled} disabled={!editingImageProfile.hasLogo} type="checkbox" onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, enabled: event.target.checked } })} /> Bật logo {editingImageProfile.hasLogo ? "" : "(chưa có file)"}</label>
+            <label className="grid gap-1 text-sm">Vị trí logo<select className="rounded border border-slate-700 bg-slate-900 px-3 py-2" value={editingImageProfile.logo.position} onChange={(event) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, position: event.target.value as ImageProcessingProfile["logo"]["position"] } })}><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label>
+            <NumberSetting label="Logo max %" min={1} max={100} value={editingImageProfile.logo.maxPercent} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, maxPercent: value } })} />
+            <NumberSetting label="Logo padding" min={0} max={4000} value={editingImageProfile.logo.padding} onChange={(value) => setEditingImageProfile({ ...editingImageProfile, logo: { ...editingImageProfile.logo, padding: value } })} />
+          </div>
+        {imageProfilePreview ? <img alt="Image processing preview" className="max-h-80 rounded-lg border border-slate-700 object-contain" src={imageProfilePreview} /> : null}
+          <div className="flex gap-2">
+            <button className="rounded bg-cyan-500 px-4 py-2 font-semibold text-slate-950" type="button" onClick={() => void handleSaveImageProfile()}>Lưu profile</button>
+            <button className="rounded border border-rose-700 px-4 py-2 text-rose-300 disabled:opacity-40" disabled={editingImageProfile.slug === "default"} type="button" onClick={() => void handleDeleteImageProfile()}>Xóa profile</button>
+          </div>
+          {imageProfileMessage ? <p className="text-sm text-amber-200">{imageProfileMessage}</p> : null}
+        </div></CrawlerDialog>
+      ) : null}
       <AddStoreModal
         isOpen={isAddStoreOpen || isEditStoreOpen}
         editStoreId={isEditStoreOpen ? activeStoreId : null}
@@ -3304,6 +3403,6 @@ export function AmazonCrawlerPage({
           });
         }}
       />
-    </div>
+    </>
   );
 }
