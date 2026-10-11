@@ -15,6 +15,7 @@ import { executeConnectionTest } from "./operations/connection-test";
 import { executeProductsGet, executeProductsList } from "./operations/products";
 import { executeProductMediaPage } from "./operations/product-media";
 import { executeProductMetafieldPage } from "./operations/product-metafield-page";
+import { executeProductPublishAll, previewProductPublishAll } from "./operations/publications";
 import {
   executeProductsBulkUpdate,
   executeProductsCreate,
@@ -49,6 +50,7 @@ import type { GatewayErrorCode, GatewayRequest, GatewayResponse, StoreConfig } f
 
 const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "products.create",
+  "products.publishAll",
   "products.update",
   "products.bulkUpdate",
   "products.delete",
@@ -440,6 +442,9 @@ export class GatewayDispatcher {
     requestId?: string,
   ): Promise<unknown> {
     switch (operation) {
+      case "products.publishAll":
+        if (mode === "preview") return previewProductPublishAll(payload);
+        return executeProductPublishAll(store, this.graphqlClient, payload);
       case "products.create":
         return executeProductsCreate(store, this.graphqlClient, payload, mode, requestId);
       case "products.update":

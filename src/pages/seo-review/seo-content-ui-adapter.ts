@@ -457,6 +457,7 @@ export function adaptAmazonCrawlerReviewToViewModel(
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
     sourceCrawlProduct: product as unknown as CrawlProduct,
     shopifySyncStatus: item.syncStatus,
+    salesChannelPublication: item.publication,
     shopifyAdminUrl: product.pipeline?.shopify.adminUrl,
     shopifySyncError: item.syncError || undefined,
     shopifySyncedAt: item.syncStatus === "synced" ? updatedAt : undefined,

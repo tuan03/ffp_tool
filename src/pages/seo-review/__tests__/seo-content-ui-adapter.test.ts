@@ -55,6 +55,7 @@ test("adaptAmazonCrawlerReviewToViewModel: preserves durable review and sync sta
     storeId: "capozen",
     decision: "approved",
     syncStatus: "queued",
+    publication: { status: "partial", channels: [{ id: "1", name: "Online Store", published: true }] },
     version: 3,
     readyAt: "2026-09-25T10:00:00Z",
     updatedAt: "2026-09-25T10:01:00Z",
@@ -88,6 +89,7 @@ test("adaptAmazonCrawlerReviewToViewModel: preserves durable review and sync sta
 
   assert.equal(viewModel.reviewDecision, "approved");
   assert.equal(viewModel.shopifySyncStatus, "queued");
+  assert.deepEqual(viewModel.salesChannelPublication, review.publication);
   assert.equal(viewModel.isSyncing, true);
   assert.equal(viewModel.coordinatorReview?.version, 3);
   assert.equal(viewModel.coordinatorReview?.target.productType, "Rug");

@@ -47,6 +47,21 @@ test("new crawl migrates the old default ZIP to 90001", async () => {
   await startCrawlerJob({ runAmazonCrawler: fakeRunner, urls: ["B012345678"] });
   assert.equal(getCrawlerSessionState().settings.amazonZip, "90001");
 });
+
+test("auto sync preferences are isolated by store and snapshotted in new jobs", async () => {
+  clearCrawlerSession();
+  updateCrawlerSetting("storeId", "sample-a");
+  assert.equal(getCrawlerSessionState().settings.autoSyncAfterSeo, true);
+  updateCrawlerSetting("autoSyncAfterSeo", false);
+  updateCrawlerSetting("storeId", "sample-b");
+  assert.equal(getCrawlerSessionState().settings.autoSyncAfterSeo, true);
+  updateCrawlerSetting("storeId", "sample-a");
+  assert.equal(getCrawlerSessionState().settings.autoSyncAfterSeo, false);
+  await startCrawlerJob({ runAmazonCrawler: async ({ input }) => {
+    assert.equal(input.autoSyncAfterSeo, false);
+    return amazonCrawlerMockOutput;
+  }, urls: ["B012345678"] });
+});
 test("crawler session subscription notifies listeners on state changes", () => {
   clearCrawlerSession();
   let notificationCount = 0;

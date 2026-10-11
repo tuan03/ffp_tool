@@ -1,4 +1,6 @@
 import type {
+  ShopifyProductsPublishAllInput,
+  ShopifyProductsPublishAllResponse,
   ModuleApiConfig,
   ModuleApiDependencies,
   ModuleApiRunner,
@@ -76,6 +78,7 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
 ]);
 
 const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
+  "products.publishAll",
   "connection.test",
   "products.list",
   "products.get",
@@ -658,6 +661,7 @@ const defaultRunner = createModuleApiRunner();
 /**
  * Executes real Shopify API operations via backend HTTP Gateway.
  */
+export async function runModuleApi(input: ShopifyProductsPublishAllInput): Promise<ShopifyProductsPublishAllResponse>;
 export async function runModuleApi(input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
 export async function runModuleApi(input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
 export async function runModuleApi(input: ShopifyProductsGetInput): Promise<ShopifyProductsGetResponse>;

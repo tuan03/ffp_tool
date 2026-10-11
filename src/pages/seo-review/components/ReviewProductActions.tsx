@@ -18,8 +18,8 @@ export function ReviewProductActions(props: ReviewProductActionsProps): React.JS
     {props.onView && <button type="button" aria-label="Xem chi tiết sản phẩm" onClick={() => props.onView?.(product)} className={button + " border-slate-700 text-slate-200"}>Xem</button>}
     {actions.canEdit && <button type="button" onClick={() => props.onEdit(product)} className={button + " border-slate-700 text-slate-300"}>Sửa</button>}
     {canStartReviewSync(product) && props.onSync && <button type="button" onClick={() => props.onSync?.(product.id)}
-      className={button + " border-cyan-600 bg-cyan-950 text-cyan-200"}>{actions.canRetry ? "Thử lại Sync" : "Sync Shopify"}</button>}
-    {product.shopifySyncStatus === "synced" && product.shopifyAdminUrl && <a href={product.shopifyAdminUrl} target="_blank" rel="noopener noreferrer"
+      className={button + " border-cyan-600 bg-cyan-950 text-cyan-200"}>{actions.canRetry ? product.shopifySyncError?.startsWith("SHOPIFY_PUBLICATION_INCOMPLETE:") ? "Thử lại publish kênh" : "Thử lại Sync" : "Sync Shopify"}</button>}
+    {(product.shopifySyncStatus === "synced" || product.shopifySyncError?.startsWith("SHOPIFY_PUBLICATION_INCOMPLETE:")) && product.shopifyAdminUrl && <a href={product.shopifyAdminUrl} target="_blank" rel="noopener noreferrer"
       className={button + " border-teal-800 text-teal-300"}>Mở Shopify ↗</a>}
     {actions.canArchive && props.onArchive && <button type="button" title="Giữ nguyên SEO, ảnh, backup và lịch sử sync; không xóa sản phẩm Shopify."
       onClick={() => props.onArchive?.(product.id)} className={button + " border-slate-700 text-slate-400"}>{product.reviewDecision === "pending" ? "Bỏ khỏi danh sách" : "Lưu trữ"}</button>}

@@ -28,6 +28,7 @@ import {
   createModuleApiRunner,
   resolveShopifyProductForSync,
   type ShopifyFilesStageBinaryResponse,
+  type ShopifyProductsPublishAllResponse,
 } from "../src/modules/module-api";
 import {
   fromCustomizationNormalizerProduct,
@@ -54,7 +55,8 @@ interface PipelineClaim {
   readonly seoSourceRevision?: string;
   readonly isRecovery?: boolean;
   readonly attempt: number;
-  readonly stage?: "prepare" | "sync";
+  readonly stage?: "prepare" | "sync" | "publish";
+  readonly shopifyResult?: ShopifySyncProductResult;
   readonly externalSeo?: { readonly jobId: string; readonly provider?: "custom_gpt" | "codex_mcp" } | null;
   readonly inputAsin: string;
   readonly product: CrawlProduct;
@@ -474,7 +476,7 @@ async function processClaim(
   const throwIfCancelled = (): void => {
     if (cancellationController.signal.aborted) throw new PipelineCancelledError();
   };
-  const isSyncStage = claim.stage === "sync";
+  const isSyncStage = claim.stage === "sync" || claim.stage === "publish";
   const targetStore = typeof claim.settings.storeId === "string" ? claim.settings.storeId : storeId;
   const gptBase = new URL("/api/v1/gpt-seo/admin/", gatewayUrl);
   async function gptRequest<T>(route: string, body?: unknown): Promise<T> {
@@ -665,6 +667,28 @@ async function processClaim(
       timeoutMs: 180_000,
       gatewayAuthToken: env.GATEWAY_AUTH_TOKEN,
     });
+    const publishChannels = async (productId: string): Promise<ShopifyProductsPublishAllResponse["data"]> => {
+      try {
+        const response = await runner({ storeId: effectiveProxyStoreId, operation: "products.publishAll", mode: "apply",
+          requestId: `pipeline-publication-${claim.id}-r${claim.review?.syncGeneration ?? 0}-a${claim.review?.publicationAttempt ?? 0}`,
+          payload: { productId } });
+        return response.data;
+      } catch {
+        // Product data is already checkpointed. Never replay its write to repair publication.
+        return { status: "failed", channels: [], error: "Không thể publish Sales Channels. Kiểm tra read_publications/write_publications và kết nối Shopify." };
+      }
+    };
+    if (claim.stage === "publish") {
+      const saved = claim.shopifyResult;
+      const productId = saved?.productId;
+      if (!saved?.success || !productId || !claim.existingShopify) throw new Error("Publication retry requires an existing Shopify checkpoint.");
+      const publication = await publishChannels(productId);
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
+        workerId, storeId: claimStoreId, normalizedChecksum: claim.existingShopify.normalizedChecksum,
+        normalizedProduct: claim.product, shopify: { ...saved, publication },
+      });
+      return;
+    }
     const reconciliationWarnings: string[] = [];
     let lastSyncedChecksum: string | undefined;
     if (isSyncStage) {
@@ -1063,6 +1087,8 @@ async function processClaim(
     }
 
     throwIfCancelled();
+    const publication = existingProductId ? await publishChannels(existingProductId)
+      : { status: "failed", channels: [], error: "Missing Shopify product checkpoint." };
     await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/complete`, {
       workerId,
       storeId: claimStoreId,
@@ -1070,6 +1096,7 @@ async function processClaim(
       normalizedProduct: shopifyProduct,
       shopify: {
         ...syncResult,
+        publication,
         seo: seoSummary,
         imageProcessing: imageProcessingSummary,
         noOp: isNoOp,

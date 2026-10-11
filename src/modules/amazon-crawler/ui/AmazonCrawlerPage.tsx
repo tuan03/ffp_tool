@@ -1368,7 +1368,7 @@ export function AmazonCrawlerPage({
 
   async function handleStart(): Promise<void> {
     const sources = [...urls];
-    const jobSettings = { ...settings };
+    const jobSettings = { ...settings, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true };
     await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
       allowedSources,
       existingShopifyAsins,
@@ -2530,6 +2530,16 @@ export function AmazonCrawlerPage({
                 <summary className="cursor-pointer text-sm font-medium text-slate-200">Collection, loại sản phẩm & định giá
                   <span className="mt-1 block text-xs font-normal text-slate-400">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
                 </summary>
+                <label className="my-4 flex items-start gap-3 rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-3 text-sm text-slate-200">
+                  <input type="checkbox" className="mt-1" checked={settings.autoSyncAfterSeo ?? true}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      updateSetting("autoSyncAfterSeo", enabled);
+                    }} />
+                  <span>Tự sync sau Codex SEO
+                    <span className="mt-1 block text-xs text-slate-400">Chờ SEO và ảnh hoàn tất, tự sync và bật các Sales Channels được phép. Áp dụng cho job mới của store này; SEO Review vẫn giữ để theo dõi.</span>
+                  </span>
+                </label>
                 <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
       <section className="min-w-0 space-y-4 [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">

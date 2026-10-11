@@ -3,6 +3,7 @@ export type ShopifyOperation =
   | "products.list"
   | "products.get"
   | "products.create"
+  | "products.publishAll"
   | "products.update"
   | "products.bulkUpdate"
   | "products.delete"
@@ -1038,6 +1039,7 @@ export interface ShopifyStoresGetResponse {
 
 // Discriminated Unions
 export type ShopifyApiInput =
+  | ShopifyProductsPublishAllInput
   | ShopifyConnectionTestInput
   | ShopifyProductsListInput
   | ShopifyProductsGetInput
@@ -1067,6 +1069,7 @@ export type ShopifyApiInput =
   | ShopifyStoresGetInput;
 
 export type ShopifyApiResponse =
+  | ShopifyProductsPublishAllResponse
   | ShopifyConnectionTestResponse
   | ShopifyProductsListResponse
   | ShopifyProductsGetResponse
@@ -1101,6 +1104,7 @@ export type ShopifyApiResponseFor<TOperation extends ShopifyOperation> = Extract
 >;
 
 export interface ModuleApiRunner {
+  (input: ShopifyProductsPublishAllInput): Promise<ShopifyProductsPublishAllResponse>;
   (input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
   (input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
   (input: ShopifyProductsGetInput): Promise<ShopifyProductsGetResponse>;
@@ -1128,5 +1132,24 @@ export interface ModuleApiRunner {
   (input: ShopifyStoresListInput): Promise<ShopifyStoresListResponse>;
   (input: ShopifyStoresGetInput): Promise<ShopifyStoresGetResponse>;
   (input: ShopifyApiInput): Promise<ShopifyApiResponse>;
+}
+
+export interface ShopifyProductsPublishAllInput {
+  readonly storeId: string;
+  readonly operation: "products.publishAll";
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly payload: { readonly productId: string };
+}
+
+export interface ShopifyProductsPublishAllResponse {
+  readonly storeId: string;
+  readonly operation: "products.publishAll";
+  readonly success: true;
+  readonly data: {
+    readonly status: "completed" | "partial" | "failed";
+    readonly channels: readonly { readonly id: string; readonly name: string; readonly published: boolean; readonly error?: string }[];
+    readonly error?: string;
+  };
 }
 

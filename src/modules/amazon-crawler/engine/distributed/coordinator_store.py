@@ -937,6 +937,10 @@ class CoordinatorStore(CoordinatorObservability):
         if len(raw_urls) > 200:
             raise ValueError("A job may contain at most 200 inputs.")
         settings = CrawlSettings.from_api(payload).api_dict()
+        if "autoSyncAfterSeo" in payload:
+            if not isinstance(payload["autoSyncAfterSeo"], bool):
+                raise ValueError("autoSyncAfterSeo must be boolean.")
+            settings["autoSyncAfterSeo"] = payload["autoSyncAfterSeo"]
         raw_existing_shopify_asins = payload.get("existingShopifyAsins") or []
         if not isinstance(raw_existing_shopify_asins, list) or len(raw_existing_shopify_asins) > 200:
             raise ValueError("existingShopifyAsins must be an array of at most 200 ASINs.")
@@ -2295,7 +2299,8 @@ class CoordinatorStore(CoordinatorObservability):
                     ),
                     "attempt": item.attempt_count,
                     "isRecovery": bool(pipeline_result.get("recoverySyncGeneration")),
-                    "stage": "sync" if is_sync_claim else "prepare",
+                    "stage": ("publish" if review.get("publicationOnly") else "sync") if is_sync_claim else "prepare",
+                    "shopifyResult": pipeline_result if is_sync_claim else None,
                     "externalSeo": pipeline_result.get("externalSeo"),
                     "inputAsin": task.asin,
                     "product": item.normalized_payload if is_sync_claim else item.raw_payload,
@@ -2411,11 +2416,19 @@ class CoordinatorStore(CoordinatorObservability):
                 return False
             current["seo"] = seo_summary
             current["imageProcessing"] = image_summary
+            job = session.get(CrawlJob, item.job_id)
+            settings = dict(job.settings or {}) if job is not None else {}
+            auto_sync = (
+                settings.get("autoSyncAfterSeo") is True
+                and seo_summary.get("engine") == "codex_mcp"
+                and seo_summary.get("status") == "completed"
+            )
             current["review"] = {
                 **review_summary,
                 "syncGeneration": int(current.get("recoverySyncGeneration") or 0),
-                "decision": "pending",
-                "syncStatus": "idle",
+                "decision": "approved" if auto_sync else "pending",
+                "approvalSource": "automatic_policy" if auto_sync else None,
+                "syncStatus": "queued" if auto_sync else "idle",
                 "version": 1,
                 "rejectionReason": None,
                 "syncError": None,
@@ -2424,7 +2437,7 @@ class CoordinatorStore(CoordinatorObservability):
             }
             item.normalized_payload = normalized_payload
             item.shopify_result = current
-            item.status = "waiting_review"
+            item.status = "sync_queued" if auto_sync else "waiting_review"
             item.claimed_by = None
             item.claim_expires_at = None
             item.next_attempt_at = None
@@ -2434,6 +2447,10 @@ class CoordinatorStore(CoordinatorObservability):
                 "sourceKey": item.source_key,
                 "review": current["review"],
             })
+            if auto_sync:
+                self._event(session, item.job_id, "product_review_sync_queued", {
+                    "productItemId": item.id, "source": "automatic_policy", "storeId": settings.get("storeId"),
+                })
             self._refresh_job(session, item.job_id)
             return True
 
@@ -2444,7 +2461,7 @@ class CoordinatorStore(CoordinatorObservability):
         is_busy = sync_status in {"queued", "syncing"} or item.status in {"sync_queued", "syncing", "shopify_writing", "reconciliation_required"}
         is_archived = bool(review.get("archivedAt"))
         can_change = not is_busy and not is_archived and sync_status != "synced"
-        return {"canEdit": can_change, "canDecide": can_change,
+        return {"canEdit": can_change and not review.get("publicationOnly"), "canDecide": can_change and not review.get("publicationOnly"),
                 "canSync": can_change and review.get("decision") == "approved" and sync_status == "idle",
                 "canArchive": not is_busy and not is_archived,
                 "canRetry": can_change and review.get("decision") == "approved" and sync_status == "failed",
@@ -2470,6 +2487,7 @@ class CoordinatorStore(CoordinatorObservability):
             "version": int(review.get("version") or 1),
             "rejectionReason": review.get("rejectionReason"),
             "syncError": review.get("syncError"),
+            "publication": pipeline_result.get("publication"),
             "readyAt": review.get("readyAt"),
             "updatedAt": review.get("updatedAt"),
             "target": {
@@ -2524,7 +2542,8 @@ class CoordinatorStore(CoordinatorObservability):
                                           selected_decision, sync_status, review["syncError"].as_string(),
                                           func.coalesce(product["media"][0]["processedUrl"].as_string(),
                                                         product["media"][0]["url"].as_string(), raw["media"][0]["url"].as_string(), ""),
-                                          product["media"][0]["processedFileToken"].as_string(), archived_at, review_stage, is_busy)
+                                          product["media"][0]["processedFileToken"].as_string(), archived_at, review_stage, is_busy,
+                                          review["publicationOnly"].as_boolean())
                                    .join(CrawlJob).where(*conditions)
                                    .order_by(CrawlProductItem.updated_at.desc(), CrawlProductItem.id.desc())
                                    .offset(offset).limit(limit)).all()
@@ -2532,8 +2551,8 @@ class CoordinatorStore(CoordinatorObservability):
                       "title": row[3], "handle": row[4], "asin": row[5], "decision": row[6], "syncStatus": row[7],
                       "syncError": row[8], "thumbnailUrl": row[9], "thumbnailToken": row[10],
                       "archivedAt": row[11] or None, "stage": row[12],
-                      "actions": {"canEdit": not row[13] and not row[11] and row[7] != "synced",
-                                  "canDecide": not row[13] and not row[11] and row[7] != "synced",
+                      "actions": {"canEdit": not row[13] and not row[11] and row[7] != "synced" and not row[14],
+                                  "canDecide": not row[13] and not row[11] and row[7] != "synced" and not row[14],
                                   "canSync": not row[13] and not row[11] and row[6] == "approved" and row[7] == "idle",
                                   "canArchive": not row[13] and not row[11],
                                   "canRetry": not row[13] and not row[11] and row[6] == "approved" and row[7] == "failed",
@@ -2690,7 +2709,7 @@ class CoordinatorStore(CoordinatorObservability):
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if review.get("publicationOnly") or review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
             field_map = {
@@ -2761,7 +2780,7 @@ class CoordinatorStore(CoordinatorObservability):
             review = dict(pipeline_result.get("review") or {})
             if not review or int(review.get("version") or 1) != expected_version:
                 return {"conflict": True}
-            if review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
+            if review.get("publicationOnly") or review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
                 return {"locked": True}
             review.update({
                 "decision": decision,
@@ -2797,6 +2816,10 @@ class CoordinatorStore(CoordinatorObservability):
             if item.status == "reconciliation_required" and not reconcile:
                 return {"reconciliationRequired": True}
             current_sync_status = str(review.get("syncStatus") or "idle")
+            publication = pipeline_result.get("publication") or {}
+            if pipeline_result.get("success") and pipeline_result.get("productId") and publication.get("status") in {"partial", "failed"}:
+                review["publicationOnly"] = True
+                review["publicationAttempt"] = int(review.get("publicationAttempt") or 0) + 1
             if current_sync_status == "synced" and not reconcile:
                 return {"alreadySynced": True}
             if str(review.get("syncStatus") or "idle") in {"queued", "syncing"}:
@@ -2853,6 +2876,8 @@ class CoordinatorStore(CoordinatorObservability):
                     continue
                 if str(review.get("syncStatus") or "idle") not in {"idle", "failed"}:
                     continue
+                if review.get("publicationOnly"):
+                    review["publicationAttempt"] = int(review.get("publicationAttempt") or 0) + 1
                 review.update({"syncStatus": "queued", "syncError": None, "updatedAt": utc_iso(utc_now())})
                 pipeline_result["review"] = review
                 item.shopify_result = pipeline_result
@@ -3200,8 +3225,24 @@ class CoordinatorStore(CoordinatorObservability):
                 })
                 pipeline_result["review"] = review
             pipeline_result.update(shopify_result)
+            publication = shopify_result.get("publication") or {}
+            publication_incomplete = publication.get("status") in {"partial", "failed"}
+            if publication_incomplete and review:
+                failed_channels = [str(channel.get("name") or channel.get("id") or "")
+                                   for channel in publication.get("channels", []) if not channel.get("published")]
+                review.update({
+                    "syncStatus": "failed",
+                    "syncError": "SHOPIFY_PUBLICATION_INCOMPLETE: Đã sync dữ liệu, publish Sales Channels chưa đầy đủ. "
+                                 + ("Kênh lỗi: " + ", ".join(failed_channels) + ". " if failed_channels else "")
+                                 + "Kiểm tra quyền read_publications/write_publications. Thử lại chỉ publish kênh, không tạo lại sản phẩm.",
+                    "publicationOnly": True,
+                })
+                pipeline_result["review"] = review
+            elif review:
+                review["publicationOnly"] = False
+                pipeline_result["review"] = review
             item.shopify_result = pipeline_result
-            item.status = "completed"
+            item.status = "waiting_review" if publication_incomplete and review else "completed"
             item.last_error = None
             item.next_attempt_at = None
             item.claim_expires_at = None

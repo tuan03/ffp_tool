@@ -249,6 +249,17 @@ export function ProductDetailDrawer({
                 )}
                 <span className="text-xs font-semibold uppercase text-slate-400">| Trạng thái:</span>
                 <ReviewStatusBadge product={product} />
+                {product.salesChannelPublication && <details className="rounded-lg border border-slate-700 bg-slate-950 p-3 text-xs text-slate-300">
+                  <summary className="cursor-pointer">Sales Channels: {product.salesChannelPublication.channels.length > 0
+                    ? `${product.salesChannelPublication.channels.filter(channel => channel.published).length}/${product.salesChannelPublication.channels.length} đã bật`
+                    : "chưa tải được danh sách kênh"}</summary>
+                  <ul className="mt-2 space-y-1">
+                    {product.salesChannelPublication.channels.map(channel => <li key={channel.id} className={channel.published ? "text-teal-300" : "text-amber-300"}>
+                      {channel.name}: {channel.published ? "Đã bật" : "Chưa bật"}
+                    </li>)}
+                  </ul>
+                  {product.salesChannelPublication.error && <p className="mt-2 text-amber-300">{product.salesChannelPublication.error}</p>}
+                </details>}
 
                 {/* Shopify Store Sync Badge */}
                 {product.shopifySyncStatus === "queued" && (

@@ -230,7 +230,13 @@ export function updateCrawlerSetting<K extends keyof AmazonCrawlerSettings>(
   value: AmazonCrawlerSettings[K],
 ): void {
   updateCrawlerSession((prev) => ({
-    settings: { ...prev.settings, [key]: value },
+    settings: {
+      ...prev.settings, [key]: value,
+      ...(key === "storeId" && typeof value === "string"
+        ? { autoSyncAfterSeo: prev.settings.autoSyncByStore?.[value.trim().toLowerCase()] ?? true } : {}),
+      ...(key === "autoSyncAfterSeo" && typeof value === "boolean"
+        ? { autoSyncByStore: { ...prev.settings.autoSyncByStore, [(prev.settings.storeId ?? "").trim().toLowerCase()]: value } } : {}),
+    },
   }));
 }
 

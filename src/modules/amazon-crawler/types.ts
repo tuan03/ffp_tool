@@ -46,6 +46,8 @@ export interface AmazonCrawlerSettings {
   jobTimeoutSeconds?: number;
   maxMatrixVariants: number;
   storeId?: string;
+  autoSyncAfterSeo?: boolean;
+  autoSyncByStore?: Readonly<Record<string, boolean>>;
   priceAddition?: number;
   discountPercent?: number;
   collectionId?: string;
@@ -740,6 +742,11 @@ export interface AmazonCrawlerReviewTarget {
 }
 
 export interface AmazonCrawlerReviewItem {
+  readonly publication?: {
+    readonly status: "completed" | "partial" | "failed";
+    readonly channels: readonly { readonly id: string; readonly name: string; readonly published: boolean; readonly error?: string }[];
+    readonly error?: string;
+  } | null;
   readonly id: string;
   readonly jobId: string;
   readonly sourceKey: string;

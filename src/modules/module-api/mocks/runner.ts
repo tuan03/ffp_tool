@@ -1,4 +1,6 @@
 import type {
+  ShopifyProductsPublishAllInput,
+  ShopifyProductsPublishAllResponse,
   ShopifyApiInput,
   ShopifyApiResponse,
   ShopifyCollection,
@@ -157,6 +159,7 @@ function paginateItems<T>(
   };
 }
 
+export async function runMockModuleApi(input: ShopifyProductsPublishAllInput): Promise<ShopifyProductsPublishAllResponse>;
 export async function runMockModuleApi(input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
 export async function runMockModuleApi(input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
 export async function runMockModuleApi(input: ShopifyProductsGetInput): Promise<ShopifyProductsGetResponse>;
@@ -1128,6 +1131,11 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
           removedCount: input.payload.productIdsToRemove?.length ?? 0,
         },
       };
+    }
+
+    case "products.publishAll": {
+      return { storeId: effectiveStoreId, operation: "products.publishAll", success: true,
+        data: { status: "completed", channels: [{ id: "gid://shopify/Publication/1", name: "Online Store", published: true }] } };
     }
 
     case "stores.list": {

@@ -131,6 +131,8 @@ export type {
   ShopifyProductsGetInput,
   ShopifyProductsGetPayload,
   ShopifyProductsGetResponse,
+  ShopifyProductsPublishAllInput,
+  ShopifyProductsPublishAllResponse,
   ShopifyProductsListData,
   ShopifyProductsListInput,
   ShopifyProductsListPayload,

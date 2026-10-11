@@ -104,6 +104,11 @@ export interface SeoProductUiViewModel {
   readonly shopifySyncStatus?: ShopifySyncStatus;
   readonly shopifyAdminUrl?: string;
   readonly shopifySyncError?: string;
+  readonly salesChannelPublication?: {
+    readonly status: "completed" | "partial" | "failed";
+    readonly channels: readonly { readonly id: string; readonly name: string; readonly published: boolean; readonly error?: string }[];
+    readonly error?: string;
+  } | null;
   readonly shopifySyncedAt?: number;
   readonly sourceShopifyUpdatedAt?: string;
 
