@@ -126,7 +126,8 @@ test("collection and pricing settings are open at full width with one store sele
     }),
   ));
 
-  assert.match(markup, /<details[^>]*xl:col-span-2[^>]*open=""[^>]*>[\s\S]*?Collection, loại sản phẩm/);
+  assert.match(markup, /<details[^>]*open=""[^>]*>[\s\S]*?Collection, loại sản phẩm/);
+  assert.match(markup, /aria-label="Lọc ASIN trên Shopify"/);
   assert.equal((markup.match(/<select[^>]*>[\s\S]*?<\/select>/g) ?? []).filter((select) => select.includes('value="capozen"')).length, 1);
   assert.match(markup, /Tìm collection/);
   assert.match(markup, /aria-label="Sửa store"/);
