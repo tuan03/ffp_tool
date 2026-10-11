@@ -13,18 +13,20 @@ test("crawler variants use their own ASIN before the product or family ASIN", ()
       { price: 14, options: { Size: "L" } },
     ],
   });
-  assert.deepEqual(product.variants?.map(variant => variant.sku), [
-    "AMZ-B011111111", "AMZ-B022222222", "AMZ-B012345678",
-  ]);
+  assert.ok(product.variants?.[0].sku?.startsWith("AMZ-B011111111-SIZE-S-"));
+  assert.ok(product.variants?.[1].sku?.startsWith("AMZ-B022222222-SIZE-M-"));
+  assert.ok(product.variants?.[2].sku?.startsWith("AMZ-B012345678-SIZE-L-"));
   assert.deepEqual(product.variants?.map(variant => variant.price), ["10.00", "12.00", "14.00"]);
 });
 
-test("customized variants from the same Amazon product share the requested SKU", () => {
+test("customized variants from the same Amazon product have distinct stable SKUs", () => {
   const product = fromCustomizationNormalizerProduct({
     customization: { source: { asin: "B012345678" } },
     variants: [{ price: 10, options: { Print: "Yes" } }, { price: 12, options: { Print: "No" } }],
   });
-  assert.deepEqual(product.variants?.map(variant => variant.sku), ["AMZ-B012345678", "AMZ-B012345678"]);
+  assert.ok(product.variants?.[0].sku?.startsWith("AMZ-B012345678-PRINT-YES-"));
+  assert.ok(product.variants?.[1].sku?.startsWith("AMZ-B012345678-PRINT-NO-"));
+  assert.notEqual(product.variants?.[0].sku, product.variants?.[1].sku);
 });
 
 test("source variant ASIN supplies the SKU when product ASIN is missing", () => {
@@ -55,13 +57,17 @@ test("AMZ SKU survives projection of four axes without dropping variants", () =>
     variants: ["Yes", "No"].map(print => ({ price: 10, options: { Size: "S", Color: "Red", Print: print, Extra: "None" } })),
   });
   assert.equal(product.variants?.length, 2);
-  assert.ok(product.variants?.every(variant => variant.sku === "AMZ-B012345678" && variant.optionValues?.length === 3));
+  assert.ok(product.variants?.every(variant => variant.sku?.startsWith("AMZ-B012345678-") && variant.optionValues?.length === 3));
+  assert.notEqual(product.variants?.[0].sku, product.variants?.[1].sku);
 });
 
 test("create and update sync writes receive the generated AMZ SKU", async () => {
   const product = fromCustomizationNormalizerProduct({
     asin: "B012345678", parentAsin: "B087654321", title: "Sample",
-    variants: [{ sourceAsin: "B011111111", price: 10 }],
+    variants: [
+      { sourceAsin: "B011111111", price: 10, options: { Size: "M" } },
+      { sourceAsin: "B011111111", price: 12, options: { Size: "L" } },
+    ],
   });
   const dryRunGateway = createDryRunGateway();
   let creates = 0;
@@ -70,12 +76,14 @@ test("create and update sync writes receive the generated AMZ SKU", async () => 
     ...dryRunGateway,
     createProduct: async input => {
       creates += 1;
-      assert.equal(input.variants?.[0].sku, "AMZ-B011111111");
+      assert.deepEqual(input.variants?.map(variant => variant.sku), product.variants?.map(variant => variant.sku));
+      assert.equal(new Set(input.variants?.map(variant => variant.sku)).size, 2);
       return dryRunGateway.createProduct(input);
     },
     updateProduct: async input => {
       updates += 1;
-      assert.equal(input.variants?.[0].sku, "AMZ-B011111111");
+      assert.deepEqual(input.variants?.map(variant => variant.sku), product.variants?.map(variant => variant.sku));
+      assert.equal(new Set(input.variants?.map(variant => variant.sku)).size, 2);
       return { productId: input.productId, productHandle: "sample", createdVariantsCount: input.variants?.length ?? 0 };
     },
   };

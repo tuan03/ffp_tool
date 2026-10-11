@@ -1,4 +1,5 @@
 import { projectShopifyVariantOptions } from "./variant-options";
+import { assignAmazonVariantSkus } from "./variant-sku";
 import type {
   CrawlProduct,
   CustomizationAsset,
@@ -214,13 +215,13 @@ export function fromCustomizationNormalizerProduct(
     };
   }
 
-  const variants: ShopifyVariantInput[] = (product.variants || [])
+  const variantSources = (product.variants || [])
     .filter(isRecord)
     .flatMap((v) => {
       const priceStr = formatPrice(v.price, "");
       if (!priceStr) return [];
       const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
-      // Generated customization variants can share an ASIN; the family ID is not a SKU source.
+      // The family ID is not a SKU source. Options distinguish generated variants sharing an ASIN.
       const variantAsin = normalizeAsin(v.sourceAsin) ?? normalizeAsin(v.asin) ?? amazonAsin;
       const optionValues: Array<{ name: string; optionName: string }> = [];
 
@@ -233,17 +234,19 @@ export function fromCustomizationNormalizerProduct(
         }
       }
 
-      return [{
+      const variant: ShopifyVariantInput = {
         title: typeof v.title === "string" ? v.title : undefined,
         price: priceStr,
         compareAtPrice: compareAtPriceStr,
-        sku: variantAsin ? `AMZ-${variantAsin}` : typeof v.sku === "string" ? v.sku : undefined,
+        sku: typeof v.sku === "string" ? v.sku : undefined,
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
         mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
-      }];
+      };
+      return [{ asin: variantAsin, variant }];
     });
+  const variants = assignAmazonVariantSkus(variantSources);
 
   const productType =
     typeof options?.productType === "string" && options.productType.trim() !== ""
