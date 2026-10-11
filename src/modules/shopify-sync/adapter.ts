@@ -220,6 +220,8 @@ export function fromCustomizationNormalizerProduct(
       const priceStr = formatPrice(v.price, "");
       if (!priceStr) return [];
       const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
+      // Generated customization variants can share an ASIN; the family ID is not a SKU source.
+      const variantAsin = normalizeAsin(v.sourceAsin) ?? normalizeAsin(v.asin) ?? amazonAsin;
       const optionValues: Array<{ name: string; optionName: string }> = [];
 
       if (isRecord(v.options)) {
@@ -235,7 +237,7 @@ export function fromCustomizationNormalizerProduct(
         title: typeof v.title === "string" ? v.title : undefined,
         price: priceStr,
         compareAtPrice: compareAtPriceStr,
-        sku: typeof v.sku === "string" ? v.sku : undefined,
+        sku: variantAsin ? `AMZ-${variantAsin}` : typeof v.sku === "string" ? v.sku : undefined,
         barcode: typeof v.barcode === "string" ? v.barcode : undefined,
         inventoryTracked: false, // Default to Inventory not tracked
         optionValues: optionValues.length > 0 ? optionValues : undefined,
