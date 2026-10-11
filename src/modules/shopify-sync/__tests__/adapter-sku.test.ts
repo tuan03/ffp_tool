@@ -13,9 +13,9 @@ test("crawler variants use their own ASIN before the product or family ASIN", ()
       { price: 14, options: { Size: "L" } },
     ],
   });
-  assert.ok(product.variants?.[0].sku?.startsWith("AMZ-B011111111-SIZE-S-"));
-  assert.ok(product.variants?.[1].sku?.startsWith("AMZ-B022222222-SIZE-M-"));
-  assert.ok(product.variants?.[2].sku?.startsWith("AMZ-B012345678-SIZE-L-"));
+  assert.match(product.variants?.[0].sku ?? "", /^AMZ-B011111111-[A-F0-9]{8}$/);
+  assert.match(product.variants?.[1].sku ?? "", /^AMZ-B022222222-[A-F0-9]{8}$/);
+  assert.match(product.variants?.[2].sku ?? "", /^AMZ-B012345678-[A-F0-9]{8}$/);
   assert.deepEqual(product.variants?.map(variant => variant.price), ["10.00", "12.00", "14.00"]);
 });
 
@@ -24,8 +24,8 @@ test("customized variants from the same Amazon product have distinct stable SKUs
     customization: { source: { asin: "B012345678" } },
     variants: [{ price: 10, options: { Print: "Yes" } }, { price: 12, options: { Print: "No" } }],
   });
-  assert.ok(product.variants?.[0].sku?.startsWith("AMZ-B012345678-PRINT-YES-"));
-  assert.ok(product.variants?.[1].sku?.startsWith("AMZ-B012345678-PRINT-NO-"));
+  assert.match(product.variants?.[0].sku ?? "", /^AMZ-B012345678-[A-F0-9]{8}$/);
+  assert.match(product.variants?.[1].sku ?? "", /^AMZ-B012345678-[A-F0-9]{8}$/);
   assert.notEqual(product.variants?.[0].sku, product.variants?.[1].sku);
 });
 

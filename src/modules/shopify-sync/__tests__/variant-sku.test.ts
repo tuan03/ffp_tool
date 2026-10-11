@@ -16,7 +16,7 @@ test("SKU is independent of variant order, option key order, store, price, and t
   ] }, { vendor: "Store B" });
   assert.equal(original.variants?.[0].sku, reordered.variants?.[1].sku);
   assert.equal(original.variants?.[1].sku, reordered.variants?.[0].sku);
-  assert.equal(original.variants?.[0].sku, "AMZ-B012345678-COLOR-RED-SIZE-M-E1AC7664F1491975", "SKU format must not drift between releases");
+  assert.equal(original.variants?.[0].sku, "AMZ-B012345678-E1AC7664", "SKU format must not drift between releases");
 });
 
 test("arbitrary store option axes, Unicode, punctuation and long labels produce distinct bounded ASCII SKUs", () => {
@@ -28,7 +28,20 @@ test("arbitrary store option axes, Unicode, punctuation and long labels produce 
   ] });
   const skus = product.variants?.map(variant => variant.sku) ?? [];
   assert.equal(new Set(skus).size, 4);
-  assert.ok(skus.every(sku => sku !== undefined && /^AMZ-B012345678-[A-Z0-9-]+$/.test(sku) && sku.length <= 80));
+  assert.ok(skus.every(sku => sku !== undefined && /^AMZ-B012345678-[A-F0-9]{8}$/.test(sku) && sku.length === 23));
+});
+
+test("short code collisions expand deterministically without renaming unrelated variants", () => {
+  // These canonical option tuples share the first eight hex characters, not the full digest.
+  const variants = ["Choice 65742", "Choice 89622", "Unrelated"].map(Size => ({ price: 10, options: { Size } }));
+  const product = fromCustomizationNormalizerProduct({ asin, variants });
+  const reordered = fromCustomizationNormalizerProduct({ asin, variants: [...variants].reverse() });
+  assert.equal(product.variants?.[0].sku, "AMZ-B012345678-F373E889E079");
+  assert.equal(product.variants?.[1].sku, "AMZ-B012345678-F373E8895711");
+  assert.deepEqual(product.variants?.map(variant => variant.sku), reordered.variants?.map(variant => variant.sku).reverse());
+  const unrelated = fromCustomizationNormalizerProduct({ asin, variants: [variants[0], variants[2]] });
+  assert.equal(product.variants?.[2].sku, unrelated.variants?.[1].sku);
+  assert.equal(new Set(product.variants?.map(variant => variant.sku)).size, 3);
 });
 
 test("adding a punctuation-colliding choice does not change existing multi-variant SKUs", () => {

@@ -18,7 +18,7 @@ function hashOptionSignature(signature: string): string {
   return hash.toString(16).padStart(16, "0").toUpperCase();
 }
 
-function optionSuffix(variant: ShopifyVariantInput): string {
+function optionDigest(variant: ShopifyVariantInput): string {
   const selections = (variant.optionValues ?? []).map(option => [
     option.optionName.normalize("NFC").trim(), option.name.normalize("NFC").trim(),
   ]);
@@ -28,13 +28,7 @@ function optionSuffix(variant: ShopifyVariantInput): string {
   }
   // Code-unit sorting is locale independent; source object/list ordering is not identity.
   selections.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
-  const signature = JSON.stringify(selections);
-  const label = selections.flat().join("-").normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "D").toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-    .slice(0, 40).replace(/-+$/g, "") || "VARIANT";
-  // Always include the digest: adding a new choice with the same slug cannot rename an existing SKU.
-  return `${label}-${hashOptionSignature(signature)}`;
+  return hashOptionSignature(JSON.stringify(selections));
 }
 
 export function assignAmazonVariantSkus(sources: readonly AmazonVariantSkuSource[]): ShopifyVariantInput[] {
@@ -42,14 +36,30 @@ export function assignAmazonVariantSkus(sources: readonly AmazonVariantSkuSource
   for (const { asin } of sources) {
     if (asin) asinCounts.set(asin, (asinCounts.get(asin) ?? 0) + 1);
   }
-  const assignedSkus = new Set<string>();
-  return sources.map(({ asin, variant }) => {
-    if (!asin) return variant;
+  const candidates = sources.map(({ asin, variant }) => {
+    if (!asin) return { variant, baseSku: undefined, digest: undefined };
     const hasOptions = (variant.optionValues?.length ?? 0) > 0;
     if (sources.length > 1 && !hasOptions && (asinCounts.get(asin) ?? 0) > 1) {
       invalidSku("Variants sharing an ASIN need option selections to distinguish them.");
     }
-    const sku = `AMZ-${asin}${sources.length > 1 && hasOptions ? `-${optionSuffix(variant)}` : ""}`;
+    return { variant, baseSku: `AMZ-${asin}`, digest: sources.length > 1 && hasOptions ? optionDigest(variant) : undefined };
+  });
+  const codeLengths = [8, 12, 16] as const;
+  const candidateCounts = new Map<string, number>();
+  for (const { baseSku, digest } of candidates) {
+    if (!baseSku || !digest) continue;
+    for (const length of codeLengths) {
+      const sku = `${baseSku}-${digest.slice(0, length)}`;
+      candidateCounts.set(sku, (candidateCounts.get(sku) ?? 0) + 1);
+    }
+  }
+  const assignedSkus = new Set<string>();
+  return candidates.map(({ variant, baseSku, digest }) => {
+    if (!baseSku) return variant;
+    // Resolve the complete batch, not list position: collision handling is order independent.
+    const codeLength = digest ? codeLengths.find(length => candidateCounts.get(`${baseSku}-${digest.slice(0, length)}`) === 1) : undefined;
+    if (digest && codeLength === undefined) invalidSku("Duplicate variant identity or full digest collision; correct source options before sync.");
+    const sku = digest ? `${baseSku}-${digest.slice(0, codeLength)}` : baseSku;
     if (assignedSkus.has(sku)) invalidSku("Duplicate variant identity or SKU collision; correct the source options before sync.");
     assignedSkus.add(sku);
     return { ...variant, sku };
