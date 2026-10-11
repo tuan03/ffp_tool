@@ -828,6 +828,11 @@ async function processClaim(
     const preflightInput = prepareShopifySyncProduct(fromCustomizationNormalizerProduct(shopifyProduct, {
       vendor: storeVendor, productType: customProductType, amazonParentAsin: claim.inputAsin,
     }));
+    // A SKU policy change must not be skipped merely because the crawl payload is unchanged.
+    finalChecksum = checksum({
+      sourceChecksum: finalChecksum,
+      variantSkus: preflightInput.variants?.map(variant => variant.sku) ?? [],
+    });
     if (preflightInput.options?.length === 3) {
       finalChecksum = checksum({ sourceChecksum: finalChecksum, shopifyOptionProjectionVersion: 1 });
     }
