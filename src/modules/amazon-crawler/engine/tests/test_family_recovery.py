@@ -6,6 +6,7 @@ import json
 import hashlib
 import unittest
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -21,7 +22,7 @@ from engine.tests.coordinator_test_support import create_coordinator_test_schema
 from engine.distributed.shopify_family_verification import verify_shopify_family
 from engine.distributed.protocol import utc_now
 from engine.distributed.coordinator_server import create_coordinator_app
-from engine.distributed.shopify_family_verification import gateway_read
+from engine.distributed.shopify_family_verification import gateway_read, verify_operator_cleared_seo
 
 
 class MixedFamilyRecoveryTests(unittest.TestCase):
@@ -119,6 +120,65 @@ class MixedFamilyRecoveryTests(unittest.TestCase):
         with self.sessions() as session:
             self.assertEqual(session.get(CrawlProductItem, "003").status, "received")
             self.assertEqual(session.get(CrawlProductItem, "002").status, "waiting_review")
+
+    def test_recovery_detects_queue_clear_before_worker_observes_cancellation(self):
+        for action in ("retry", "recrawl"):
+            with self.subTest(action=action):
+                with self.sessions.begin() as session:
+                    candidate = session.get(CrawlProductItem, "003")
+                    candidate.status = "retry_wait"
+                    candidate.last_error = None
+                    candidate.shopify_result = {"externalSeo": {"jobId": "cancelled-seo"}}
+                verified = Mock(return_value=True)
+                result = self.store.recover_cleared_family(
+                    "store-a", "B0PARENT01", action, actor="test", reason="Recover immediately after clearing",
+                    verify_shopify=Mock(return_value={"missingProductIds": set(), "existingAsins": {"B0CHILD001"}}),
+                    verify_seo_cleared=verified,
+                )
+                self.assertEqual(result["recovered"] if action == "retry" else result["releasedAsins"], 1)
+                verified.assert_called_once_with("store-a", "cancelled-seo", "amazon:B0PARENT01:color:003")
+
+    def test_live_seo_job_is_not_recovered_even_when_item_is_parked(self):
+        with self.sessions.begin() as session:
+            candidate = session.get(CrawlProductItem, "003")
+            candidate.status = "retry_wait"
+            candidate.last_error = None
+            candidate.shopify_result = {"externalSeo": {"jobId": "live-seo"}}
+        with self.assertRaisesRegex(ValueError, "No eligible products"):
+            self.store.recover_cleared_family(
+                "store-a", "B0PARENT01", "retry", actor="test", reason="Do not duplicate live SEO",
+                verify_shopify=Mock(return_value={"missingProductIds": set(), "existingAsins": {"B0CHILD001"}}),
+                verify_seo_cleared=Mock(return_value=False),
+            )
+
+    def test_queue_verification_failure_rolls_back_entire_family(self):
+        with self.sessions.begin() as session:
+            candidate = session.get(CrawlProductItem, "002")
+            candidate.status = "retry_wait"
+            candidate.shopify_result = {"externalSeo": {"jobId": "unavailable-seo"}}
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            self.store.recover_cleared_family(
+                "store-a", "B0PARENT01", "recrawl", actor="test", reason="Verify before releasing family",
+                verify_shopify=Mock(return_value={"missingProductIds": set(), "existingAsins": {"B0CHILD001"}}),
+                verify_seo_cleared=Mock(side_effect=ValueError("SEO unavailable")),
+            )
+        with self.sessions() as session:
+            self.assertEqual(session.get(CrawlProductItem, "003").status, "failed")
+
+    def test_parked_cancelled_item_with_worker_owner_blocks_entire_recovery(self):
+        with self.sessions.begin() as session:
+            candidate = session.get(CrawlProductItem, "002")
+            candidate.status = "seo"
+            candidate.claimed_by = "active-worker"
+            candidate.shopify_result = {"externalSeo": {"jobId": "cancelled-seo"}}
+        with self.assertRaisesRegex(ValueError, "pipeline claim"):
+            self.store.recover_cleared_family(
+                "store-a", "B0PARENT01", "recrawl", actor="test", reason="Wait for cancellation acknowledgement",
+                verify_shopify=Mock(return_value={"missingProductIds": set(), "existingAsins": {"B0CHILD001"}}),
+                verify_seo_cleared=Mock(return_value=True),
+            )
+        with self.sessions() as session:
+            self.assertEqual(session.get(CrawlProductItem, "003").status, "failed")
 
     def test_other_store_cannot_recover_this_family(self):
         with self.assertRaises(ValueError):
@@ -291,6 +351,33 @@ class MixedFamilyRecoveryTests(unittest.TestCase):
 
 
 class ShopifyFamilyVerificationTests(unittest.TestCase):
+    def test_seo_verification_requires_exact_identity_and_operator_clear(self):
+        job = {"id": "seo-id", "storeId": "store-a", "sourceIdentity": "source-key",
+               "status": "CANCELLED", "cancellationReason": "OPERATOR_QUEUE_CLEAR"}
+        def read(payload):
+            response = Mock()
+            response.read.return_value = json.dumps(payload).encode()
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=False)
+            return patch("urllib.request.urlopen", return_value=response)
+        with read(job) as request:
+            self.assertTrue(verify_operator_cleared_seo("store-a", "seo-id", "source-key"))
+            url = urllib.parse.urlsplit(request.call_args.args[0].full_url)
+            self.assertEqual(url.path, "/api/v1/gpt-seo/admin/job")
+            self.assertEqual(urllib.parse.parse_qs(url.query), {"storeId": ["store-a"], "jobId": ["seo-id"]})
+        for changed in ({"storeId": "other-store"}, {"sourceIdentity": "other-source"}, {"id": "other-id"}):
+            with self.subTest(changed=changed), read({**job, **changed}):
+                with self.assertRaises(ValueError):
+                    verify_operator_cleared_seo("store-a", "seo-id", "source-key")
+        for changed in ({"status": "PENDING"}, {"cancellationReason": None}):
+            with self.subTest(changed=changed), read({**job, **changed}):
+                self.assertFalse(verify_operator_cleared_seo("store-a", "seo-id", "source-key"))
+
+    def test_seo_read_failure_does_not_prove_queue_clear(self):
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+            with self.assertRaises(ValueError):
+                verify_operator_cleared_seo("store-a", "seo-id", "source-key")
+
     def test_http_404_auth_and_rate_limit_never_mean_product_deleted(self):
         for status in [401, 403, 404, 429, 500]:
             with self.subTest(status=status), patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(

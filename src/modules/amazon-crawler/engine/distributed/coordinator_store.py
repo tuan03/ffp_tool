@@ -512,6 +512,7 @@ class CoordinatorStore(CoordinatorObservability):
     def recover_cleared_family(
         self, store_id: str, parent_asin: str, action: str, *, actor: str, reason: str,
         verify_shopify: Callable[[str, str, set[str], set[str]], dict[str, set[str]]] | None = None,
+        verify_seo_cleared: Callable[[str, str, str], bool] | None = None,
     ) -> dict[str, int]:
         normalized_store_id = store_id.strip()
         normalized_parent = parent_asin.strip().upper()
@@ -583,7 +584,17 @@ class CoordinatorStore(CoordinatorObservability):
                 was_deleted_on_shopify = bool(linked_ids) and linked_ids <= missing_ids
                 if aliases & existing_asins or (linked_ids and not was_deleted_on_shopify):
                     continue
-                if self._is_operator_cleared_seo_item(item) or (item.status in {"completed", "deleted"} and was_deleted_on_shopify):
+                is_queue_cleared = self._is_operator_cleared_seo_item(item)
+                external_seo = (item.shopify_result or {}).get("externalSeo") or {}
+                if (
+                    not is_queue_cleared and verify_seo_cleared is not None
+                    and item.status in {"received", "normalizing", "retry_wait", "seo", "failed"}
+                    and isinstance(external_seo, dict) and external_seo.get("jobId")
+                ):
+                    # Queue clear precedes the worker's next poll. Verify the
+                    # authoritative job before selecting the full recovery set.
+                    is_queue_cleared = verify_seo_cleared(normalized_store_id, str(external_seo["jobId"]), item.source_key)
+                if is_queue_cleared or (item.status in {"completed", "deleted"} and was_deleted_on_shopify):
                     review = (item.shopify_result or {}).get("review") or {}
                     # Older sync completion cleared the expiry but retained the
                     # owner. A confirmed synced terminal record with no lease
@@ -595,7 +606,7 @@ class CoordinatorStore(CoordinatorObservability):
                         and item.claim_expires_at is None
                     )
                     if (item.claimed_by and not has_legacy_sync_owner) or item.claim_expires_at or review.get("syncStatus") in {"queued", "syncing"}:
-                        raise ValueError("A selected product still has a pipeline claim.")
+                        raise ValueError("A selected product still has a pipeline claim. Wait for the worker to release it, then retry; no products were changed.")
                     operation = session.scalar(select(ShopifyOperationIdempotency).where(
                         ShopifyOperationIdempotency.store_id == normalized_store_id,
                         ShopifyOperationIdempotency.request_id == _shopify_sync_request_id(item.source_key),

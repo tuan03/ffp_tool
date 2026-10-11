@@ -2244,7 +2244,7 @@ export function AmazonCrawlerPage({
               </div>
               {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 || (seoHandoffSummary.skippedExistingPipeline ?? 0) > 0 ? (
                 <p className="text-sm text-amber-200">
-                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify ?? 0} đã có trên Shopify · {seoHandoffSummary.skippedExistingPipeline ?? 0} đang có trong SEO Queue/Review, không bàn giao lại · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
+                  {seoHandoffSummary.totalDetected} sản phẩm phát hiện · {seoHandoffSummary.skippedExistingShopify ?? 0} đã có trên Shopify · {seoHandoffSummary.skippedExistingPipeline ?? 0} có dữ liệu pipeline cũ, không bàn giao trùng (sản phẩm đã dọn queue cần phục hồi) · {seoHandoffSummary.totalProducts} sản phẩm mới được server nhận.
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">

@@ -6,6 +6,22 @@ import os
 import uuid
 import urllib.error
 import urllib.request
+import urllib.parse
+
+
+def verify_operator_cleared_seo(store_id: str, job_id: str, source_key: str) -> bool:
+    """Read server-owned cancellation evidence, never browser-supplied proof."""
+    gateway = os.environ.get("SHOPIFY_GATEWAY_URL") or f"http://127.0.0.1:{os.environ.get('GATEWAY_PORT', '3001')}/api/shopify"
+    endpoint = urllib.parse.urljoin(gateway, "/api/v1/gpt-seo/admin/job") + "?" + urllib.parse.urlencode({"storeId": store_id, "jobId": job_id})
+    request = urllib.request.Request(endpoint, headers={"x-gateway-key": os.environ.get("GATEWAY_AUTH_TOKEN", "")})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            job = json.load(response)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+        raise ValueError("Không xác minh được trạng thái SEO; chưa phục hồi dữ liệu. Hãy thử lại.") from error
+    if not isinstance(job, dict) or job.get("id") != job_id or job.get("storeId") != store_id or job.get("sourceIdentity") != source_key:
+        raise ValueError("SEO trả sai danh tính job; chưa phục hồi dữ liệu.")
+    return job.get("status") == "CANCELLED" and job.get("cancellationReason") == "OPERATOR_QUEUE_CLEAR"
 
 
 def gateway_read(store_id: str, operation: str, payload: dict) -> dict:
