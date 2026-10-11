@@ -49,7 +49,7 @@ export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: R
     }));
   }
 
-  return <main className="mx-auto max-w-7xl space-y-8">
+  return <main className="w-full min-w-0 space-y-8">
     <header className="space-y-3">
       <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-400">FFP Tool</p>
       <h1 className="text-3xl font-bold tracking-tight text-slate-100">Review Studio</h1>

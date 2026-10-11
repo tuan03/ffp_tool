@@ -20,6 +20,8 @@ test("crawler filter is independent and keeps per-store results until explicitly
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`${uiUrl}/amazon-crawler`, { waitUntil: "domcontentloaded" });
     await page.getByRole("navigation", { name: "Khu vực crawler" }).waitFor();
+    const mainBounds = await page.getByRole("main").boundingBox();
+    assert.ok(mainBounds && mainBounds.width >= 1400, "shared layout should use the available desktop width");
     assert.ok(await page.getByText(/^mock$/i).isVisible(), "Only exercise the isolated mock UI");
     const crawlInput = page.getByLabel("Amazon URLs hoặc ASIN, mỗi dòng một giá trị");
     await crawlInput.fill("B0MOCK1001\nB0MOCK1002");
@@ -35,6 +37,8 @@ test("crawler filter is independent and keeps per-store results until explicitly
     const missing = dialog.getByRole("list", { name: "Danh sách ASIN chưa có trên Shopify", exact: true });
     await missing.waitFor();
     assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
+    const resultBounds = await missing.getByText("B0MOCK1002", { exact: true }).boundingBox();
+    assert.ok(resultBounds && resultBounds.y + resultBounds.height < 900, "first missing result should be visible without scrolling the filter");
     const view = missing.getByRole("link", { name: "View Amazon B0MOCK1002", exact: true });
     assert.equal(await view.getAttribute("href"), "https://www.amazon.com/dp/B0MOCK1002");
     assert.equal(await view.getAttribute("target"), "_blank");
@@ -50,6 +54,7 @@ test("crawler filter is independent and keeps per-store results until explicitly
     await missing.getByRole("button", { name: "Sao chép B0MOCK1002", exact: true }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "B0MOCK1002");
     assert.equal(await page.getByRole("button", { name: "Đưa vào ô cào", exact: true }).count(), 0);
+    await dialog.locator("summary").filter({ hasText: "Đã có trên Shopify" }).click();
     assert.ok(await dialog.getByRole("region", { name: "ASIN đã có trên Shopify", exact: true }).getByText("B0MOCK1001", { exact: false }).isVisible());
     assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
     const downloadEvent = page.waitForEvent("download");

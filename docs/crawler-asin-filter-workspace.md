@@ -11,6 +11,12 @@ input and choose the relevant collection. Bulk copy and TXT download remain
 available. Matching still uses exact `custom.amazon_asin` values, including draft
 and archived Shopify products; family expansion and crawl preflight are unchanged.
 
+The panel keeps only its store, input, check action and missing-ASIN results
+visible by default. Existing Shopify matches are collapsed. Result lists scroll
+independently; there is no extra scrollbar around the whole panel. The shared
+application layout uses the available viewport width with small responsive gutters,
+including pages that previously imposed a second 1280-pixel content limit.
+
 Drafts and the last successful result are stored per store in browser localStorage
 (`ffp:crawler:asin-filter:v1:<encoded-store-id>`). Reload, workspace navigation,
 crawling, and switching stores do not clear the saved list. Editing the filter

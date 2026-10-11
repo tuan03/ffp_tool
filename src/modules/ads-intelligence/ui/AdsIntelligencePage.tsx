@@ -663,7 +663,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
   };
 
   return (
-    <div className="flex-1 bg-slate-950 p-4 sm:p-6 lg:p-8 text-slate-100 max-w-7xl mx-auto w-full space-y-5">
+    <div className="min-w-0 flex-1 bg-slate-950 py-4 text-slate-100 w-full space-y-5">
       {client.dataMode === "mock" && <p role="status" className="rounded border border-amber-600 p-3 text-amber-200">Chế độ dữ liệu mẫu — không phải số liệu kinh doanh thực.</p>}
       {/* 1. Header Command Bar */}
       <AdsHeader

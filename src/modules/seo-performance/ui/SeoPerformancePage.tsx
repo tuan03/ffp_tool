@@ -355,7 +355,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
   const selected = tab === "pages" ? pages : tab === "recommendations" ? recommendations : history;
 
   return (
-    <main className="mx-auto w-full min-w-0 max-w-7xl space-y-6 p-4 sm:p-6">
+    <main className="w-full min-w-0 space-y-6 py-4">
       {/* Top Header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>

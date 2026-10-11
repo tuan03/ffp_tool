@@ -52,7 +52,7 @@ export function AppLayout(): React.JSX.Element {
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
       {/* Top Application Navbar */}
       <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:px-5">
           <div className="flex w-full min-w-0 items-center gap-3 lg:w-auto lg:flex-1 lg:gap-6">
             <NavLink to="/amazon-crawler" className="flex shrink-0 items-center gap-2.5">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 text-xs font-bold text-slate-950 shadow-md shadow-cyan-500/20">
@@ -191,7 +191,7 @@ export function AppLayout(): React.JSX.Element {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="min-w-0 flex-1 w-full px-3 sm:px-4 lg:px-5 py-4">
         <Outlet />
       </main>
 

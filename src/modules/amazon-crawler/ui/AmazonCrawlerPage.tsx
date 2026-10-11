@@ -2892,7 +2892,7 @@ export function AmazonCrawlerPage({
       ) : null}
             </div>
           </section>
-          <div className="min-w-0 xl:sticky xl:top-24 xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto">
+          <div className="min-w-0 xl:sticky xl:top-24">
             <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins} />
           </div>
           </div>
