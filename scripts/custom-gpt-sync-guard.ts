@@ -19,6 +19,25 @@ export async function acquireCustomGptSync(input: CustomGptSyncGuardInput): Prom
   ) {
     return state.token;
   }
+  if (state && ["SYNCING", "UNKNOWN", "SYNCED"].includes(state.status)) {
+    throw new Error("SYNC_RECONCILIATION_REQUIRED: existing Shopify operation requires reconciliation");
+  }
   await input.saveApproval();
   return (await input.beginSync()).token;
+}
+
+/** Return true whenever a failed attempt still needs reconciliation, including release failure. */
+export async function finishFailedCustomGptSync(input: {
+  readonly hasStartedWrite: boolean;
+  readonly hasUnresolvedPriorWrite: boolean;
+  readonly finishSync: (status: "UNKNOWN" | "NOT_STARTED") => Promise<unknown>;
+}): Promise<boolean> {
+  const isUncertain = input.hasStartedWrite || input.hasUnresolvedPriorWrite;
+  try {
+    await input.finishSync(isUncertain ? "UNKNOWN" : "NOT_STARTED");
+    return isUncertain;
+  } catch {
+    // No proof of release: keep the caller fenced rather than offer a normal retry.
+    return true;
+  }
 }

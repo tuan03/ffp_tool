@@ -149,6 +149,8 @@ export interface ShopifySyncProductResult {
   readonly details?: ShopifyVersionConflictDetails | Record<string, unknown>;
   readonly conflictDetails?: ShopifyVersionConflictDetails;
   readonly reconciliationRequired?: boolean;
+  /** Only true when the publisher can prove that no product mutation occurred. */
+  readonly productWriteNotStarted?: boolean;
   readonly managedResources?: ShopifyManagedResources;
   readonly timings?: ShopifySyncTimings;
 }

@@ -21,6 +21,7 @@ export type { ShopifySyncRunner } from "./runtime";
 export {
   compactCustomizerConfigForMetafield,
   createDryRunGateway,
+  prepareShopifySyncProduct,
   replaceUrlsInObject,
   rollbackProductSync,
   runShopifySync,

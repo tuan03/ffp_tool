@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { getInitialSampleViewModels } from "../seo-content-ui-adapter";
-import { canStartReviewSync, isReviewSynced } from "../review-actions";
+import { canStartReviewSync, isReviewSynced, shouldReconcileReviewSync } from "../review-actions";
 import { prepareReviewSync } from "../prepare-review-sync";
 import { ReviewProductActions } from "../components/ReviewProductActions";
 import { ReviewStatusBadge } from "../components/ReviewStatusBadge";
@@ -25,6 +25,18 @@ test("pending Review exposes Sync directly and never exposes a manual approval b
     { ...pending, reviewActions: { canEdit: false, canDecide: false, canSync: false, canRetry: false, canArchive: false, canRevise: false, canReconcile: false } }]) {
     assert.equal(canStartReviewSync(locked), false);
   }
+});
+
+test("a failed uncertain crawler write routes to reconciliation rather than normal Retry", () => {
+  const sample = getInitialSampleViewModels()[0]; assert.ok(sample);
+  const failed = { ...sample, shopifySyncStatus: "failed" as const, reviewDecision: "approved" as const,
+    reviewActions: { canEdit: false, canDecide: false, canSync: false, canRetry: false, canArchive: false, canRevise: false, canReconcile: true } };
+  assert.equal(shouldReconcileReviewSync(failed), true);
+  assert.equal(canStartReviewSync(failed), false);
+  const html = renderToStaticMarkup(createElement(ReviewProductActions, { product: failed, onEdit: () => undefined, onApprove: () => undefined, onSync: () => undefined }));
+  assert.match(html, /Kiểm tra trạng thái Shopify/);
+  assert.doesNotMatch(html, /Thử lại Sync/);
+  assert.equal(shouldReconcileReviewSync({ ...failed, reviewActions: { ...failed.reviewActions, canReconcile: false, canRetry: true } }), false);
 });
 
 test("Sync persists approval internally before publish and stops if persistence fails", async () => {

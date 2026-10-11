@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
-import { acquireCustomGptSync } from "./custom-gpt-sync-guard";
+import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import { findExistingAmazonProducts } from "./pipeline-amazon-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
@@ -31,6 +31,7 @@ import {
 } from "../src/modules/module-api";
 import {
   fromCustomizationNormalizerProduct,
+  prepareShopifySyncProduct,
   syncSingleProduct,
   type ShopifyManagedResources,
   type ShopifySyncProductInput,
@@ -593,6 +594,16 @@ async function processClaim(
   }
 
   let hasStartedShopifyWrite = false;
+  let hasUnresolvedPriorWrite = false;
+  const settleFailedSyncPermit = async (): Promise<void> => {
+    if (!claim.externalSeo || !gptSyncToken) return;
+    hasUnresolvedPriorWrite = await finishFailedCustomGptSync({
+      hasStartedWrite: hasStartedShopifyWrite,
+      hasUnresolvedPriorWrite,
+      finishSync: status => gptRequest("finish-sync", { jobId: claim.externalSeo?.jobId, token: gptSyncToken, status }),
+    });
+    gptSyncToken = undefined;
+  };
   let isDrainingAfterWrite = false;
   const heartbeat = setInterval(() => {
     void postJson<{ status: string }>(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, {
@@ -813,6 +824,13 @@ async function processClaim(
       amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
       amazonParentAsin: claim.inputAsin,
     });
+    // Adapter projection/validation must finish before acquiring a permit or uploading files.
+    const preflightInput = prepareShopifySyncProduct(fromCustomizationNormalizerProduct(shopifyProduct, {
+      vendor: storeVendor, productType: customProductType, amazonParentAsin: claim.inputAsin,
+    }));
+    if (preflightInput.options?.length === 3) {
+      finalChecksum = checksum({ sourceChecksum: finalChecksum, shopifyOptionProjectionVersion: 1 });
+    }
     const isNoOp = Boolean(existingProductId && lastSyncedChecksum === finalChecksum);
     const parsedSyncGeneration = Number(claim.review?.syncGeneration ?? 0);
     const syncGeneration = Number.isSafeInteger(parsedSyncGeneration) && parsedSyncGeneration >= 0
@@ -827,7 +845,11 @@ async function processClaim(
       gptSyncToken = await acquireCustomGptSync({
         isApproved: claim.review?.decision === "approved", isCheckpointUnchanged: isNoOp,
         isExplicitReconciliation: syncGeneration > 0,
-        readState: () => gptRequest<{ token?: string; status: string } | null>(`sync-state?jobId=${encodeURIComponent(jobId)}`),
+        readState: async () => {
+          const state = await gptRequest<{ token?: string; status: string } | null>(`sync-state?jobId=${encodeURIComponent(jobId)}`);
+          hasUnresolvedPriorWrite = Boolean(state && ["UNKNOWN", "SYNCING"].includes(state.status));
+          return state;
+        },
         saveApproval: () => gptRequest("review-state", { jobId, state: { reviewDecision: "approved", updatedAt: Date.now() } }),
         beginSync: () => gptRequest<{ token: string }>("begin-sync", { jobId }),
       });
@@ -846,7 +868,8 @@ async function processClaim(
         if (cancellationController.signal.aborted || error instanceof PipelineCancelledError) throw error;
         timings.imageUploadMs = Date.now() - uploadStartedAt;
         timings.totalMs = Date.now() - pipelineStartedAt;
-        await failClaim(claim, workerId, error, { retryable: true, phase: "image_processing", timings });
+        await settleFailedSyncPermit();
+        await failClaim(claim, workerId, error, { retryable: !hasUnresolvedPriorWrite, reconciliationRequired: hasUnresolvedPriorWrite, phase: "image_processing", timings });
         return;
       }
       timings.imageUploadMs = Date.now() - uploadStartedAt;
@@ -934,6 +957,9 @@ async function processClaim(
         existingProductId,
         existingManagedResources,
       });
+      if (!syncResult.success && syncResult.productWriteNotStarted === true) {
+        hasStartedShopifyWrite = false;
+      }
     }
 
     if (!isNoOp && syncResult.success && syncResult.productId && collectionIds.length > 0) {
@@ -958,6 +984,7 @@ async function processClaim(
     }
 
       if (!syncResult.success) {
+        await settleFailedSyncPermit();
         const createdProductId = syncResult.productId;
         if (createdProductId) {
           try {
@@ -982,8 +1009,8 @@ async function processClaim(
         timings.shopifySyncMs = Date.now() - syncStartedAt;
         timings.totalMs = Date.now() - pipelineStartedAt;
         await failClaim(claim, workerId, new Error(syncResult.error || "Shopify sync failed."), {
-          retryable: !syncResult.reconciliationRequired,
-          reconciliationRequired: syncResult.reconciliationRequired,
+          retryable: !(syncResult.reconciliationRequired || hasUnresolvedPriorWrite),
+          reconciliationRequired: syncResult.reconciliationRequired || hasUnresolvedPriorWrite,
           phase: "shopify",
           timings,
           createdProductId,
@@ -1096,7 +1123,8 @@ async function processClaim(
       details?.reconciliationRequired === true ||
       errObj?.reconciliationRequired === true ||
       Boolean(extractedProductId);
-    const reconciliationRequired = isPartialWrite || /unknown write state|partial write|reconciliation/i.test(message);
+    await settleFailedSyncPermit();
+    const reconciliationRequired = hasUnresolvedPriorWrite || isPartialWrite || /unknown write state|partial write|reconciliation/i.test(message);
     if (extractedProductId) {
       try {
         await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
@@ -1123,7 +1151,7 @@ async function processClaim(
     });
   } finally {
     if (claim.externalSeo && gptSyncToken) {
-      await gptRequest("finish-sync", { jobId: claim.externalSeo.jobId, token: gptSyncToken, status: hasStartedShopifyWrite ? "UNKNOWN" : "NOT_STARTED" }).catch(() => {
+      await gptRequest("finish-sync", { jobId: claim.externalSeo.jobId, token: gptSyncToken, status: hasStartedShopifyWrite || hasUnresolvedPriorWrite ? "UNKNOWN" : "NOT_STARTED" }).catch(() => {
         console.warn("GPT SEO sync state requires reconciliation");
       });
     }

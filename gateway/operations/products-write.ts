@@ -411,6 +411,32 @@ async function resolveAvailableProductHandle(
   );
 }
 
+function collectRequestedOptionNames(product: Record<string, unknown>): Set<string> {
+  const names = new Set<string>();
+  if (Array.isArray(product.productOptions)) {
+    for (const option of product.productOptions) {
+      if (option && typeof option === "object" && typeof option.name === "string") names.add(option.name.trim());
+    }
+  }
+  if (Array.isArray(product.variants)) {
+    for (const variant of product.variants) {
+      if (!variant || typeof variant !== "object" || !Array.isArray(variant.optionValues)) continue;
+      for (const option of variant.optionValues) {
+        if (option && typeof option === "object" && typeof option.optionName === "string") names.add(option.optionName.trim());
+      }
+    }
+  }
+  names.delete("");
+  return names;
+}
+
+function requireSupportedOptionCount(names: ReadonlySet<string>): void {
+  if (names.size > 3) {
+    throw new GatewayError("Shopify products support at most three options. Normalize variant choices before sync.",
+      "SHOPIFY_INVALID_INPUT", 400, undefined, undefined, undefined, false, { productWriteNotStarted: true });
+  }
+}
+
 export async function executeProductsCreate(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
@@ -431,6 +457,7 @@ export async function executeProductsCreate(
   if (!title) {
     throw new GatewayError("Product title is required", "SHOPIFY_USER_ERROR", 400);
   }
+  requireSupportedOptionCount(collectRequestedOptionNames(productInput));
 
   if (Array.isArray(productInput.variants)) {
     for (const v of productInput.variants as readonly Record<string, unknown>[]) {
@@ -723,11 +750,17 @@ export async function executeProductsCreate(
   );
 
   if (raw.productCreate.userErrors && raw.productCreate.userErrors.length > 0) {
-    throw mapUserErrorsToGatewayError(raw.productCreate.userErrors);
+    const rejection = mapUserErrorsToGatewayError(raw.productCreate.userErrors);
+    if (raw.productCreate.product) {
+      throw new GatewayError(rejection.message, "SHOPIFY_PARTIAL_WRITE", 409, undefined, rejection, rejection.fields,
+        false, { createdProductId: raw.productCreate.product.id, reconciliationRequired: true }, true);
+    }
+    throw new GatewayError(rejection.message, rejection.code, rejection.httpStatus, undefined, rejection, rejection.fields,
+      false, { productWriteNotStarted: true });
   }
 
   if (!raw.productCreate.product) {
-    throw new GatewayError("Failed to create product; missing product data", "SHOPIFY_USER_ERROR", 400);
+    throw new GatewayError("Product creation returned no confirmed result; reconcile before retrying.", "SHOPIFY_UNKNOWN_WRITE_STATE", 409);
   }
 
   const product = mapProductNode(raw.productCreate.product);
@@ -948,6 +981,7 @@ export async function executeProductsUpdate(
   if (!productPatch) {
     throw new GatewayError("Product patch object is required", "SHOPIFY_USER_ERROR", 400);
   }
+  requireSupportedOptionCount(collectRequestedOptionNames(productPatch));
 
   const force = p.force === true || productPatch.force === true;
   const expectedUpdatedAt =
@@ -1125,6 +1159,11 @@ export async function executeProductsUpdate(
     existingOptionNames = new Set(
       state.node?.options?.map((option) => option.name.trim()).filter(Boolean) ?? [],
     );
+    const desiredOptionNames = collectRequestedOptionNames(productPatch);
+    // Shopify replaces the standalone default Title when creating real options.
+    const retainedOptionNames = existingOptionNames.size === 1 && existingOptionNames.has("Title") && !desiredOptionNames.has("Title")
+      ? [] : [...existingOptionNames];
+    requireSupportedOptionCount(new Set([...retainedOptionNames, ...desiredOptionNames]));
     existingVariantIds = state.node?.variants?.nodes?.map((variant) => variant.id) ?? [];
     if (requestedMediaIdsToDelete.length > 0) {
       existingMediaIds = requestedMediaIdsToDelete;

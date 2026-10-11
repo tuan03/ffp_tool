@@ -1,4 +1,5 @@
 import { buildAeoMetafields, validateAeoInput } from "./aeo-metafields";
+import { projectShopifyVariantOptions } from "./variant-options";
 import type {
   CreateProductInput,
   CreateProductOutput,
@@ -76,6 +77,15 @@ export function createDryRunGateway(): ShopifyGateway {
       };
     },
   };
+}
+
+/** Pure preflight shared by the service and workers, before uploads or write permits. */
+export function prepareShopifySyncProduct(product: ShopifySyncProductInput): ShopifySyncProductInput {
+  const prepared = projectShopifyVariantOptions(product);
+  requireAmazonAsin(prepared.amazonAsin, "custom.amazon_asin");
+  requireAmazonAsin(prepared.amazonParentAsin, "custom.amazon_parent_asin");
+  validateAeoInput(prepared.aeo);
+  return prepared;
 }
 
 export function replaceUrlsInObject(
@@ -248,6 +258,7 @@ export async function syncSingleProduct(
 
   let gateway: ShopifyGateway;
   let writtenProduct: CreateProductOutput | undefined;
+  let hasAttemptedProductWrite = false;
 
   if (options.gateway) {
     gateway = options.gateway;
@@ -272,12 +283,12 @@ export async function syncSingleProduct(
 
   try {
     throwIfCancelled();
+    product = prepareShopifySyncProduct(product);
     const amazonAsin = requireAmazonAsin(product.amazonAsin, "custom.amazon_asin");
     const amazonParentAsin = requireAmazonAsin(
       product.amazonParentAsin,
       "custom.amazon_parent_asin",
     );
-    validateAeoInput(product.aeo);
 
     // 1. Create Product & Media Gallery & Options/Variants
     const productWriteInput = {
@@ -302,6 +313,7 @@ export async function syncSingleProduct(
           throw new Error("ShopifyGateway does not support updating an existing product.");
         }
         const expectedUpdatedAt = options.sourceShopifyUpdatedAt ?? options.expectedUpdatedAt;
+        hasAttemptedProductWrite = true;
         writtenProduct = await gateway.updateProduct({
           productId: options.existingProductId,
           previousManagedResources: options.existingManagedResources,
@@ -311,6 +323,7 @@ export async function syncSingleProduct(
         });
       } else {
         throwIfCancelled();
+        hasAttemptedProductWrite = true;
         writtenProduct = await gateway.createProduct({
           ...productWriteInput,
           status: "ACTIVE",
@@ -627,7 +640,9 @@ export async function syncSingleProduct(
       details?.reconciliationRequired === true ||
       errObj?.reconciliationRequired === true;
 
+    const isWriteNotStarted = !hasAttemptedProductWrite || (!writtenProduct && !extractedProductId && !isPartialWrite && details?.productWriteNotStarted === true);
     const reconciliationRequired =
+      (!isWriteNotStarted && !isConflict) ||
       writtenProduct !== undefined ||
       isPartialWrite ||
       Boolean(extractedProductId);
@@ -648,6 +663,7 @@ export async function syncSingleProduct(
       details: details ?? (isConflict ? conflictDetails : undefined),
       conflictDetails,
       reconciliationRequired,
+      productWriteNotStarted: isWriteNotStarted,
       managedResources: writtenProduct?.managedResources ?? (details?.managedResources as ShopifyManagedResources | undefined),
       timings: getTimings(),
     };

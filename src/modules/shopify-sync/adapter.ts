@@ -1,3 +1,4 @@
+import { projectShopifyVariantOptions } from "./variant-options";
 import type {
   CrawlProduct,
   CustomizationAsset,
@@ -249,7 +250,7 @@ export function fromCustomizationNormalizerProduct(
       ? String(product.categories[product.categories.length - 1])
       : "Custom Product";
 
-  return {
+  return projectShopifyVariantOptions({
     id: product.id,
     sourceKey: typeof product.sourceKey === "string" ? product.sourceKey : product.id,
     amazonAsin,
@@ -268,7 +269,7 @@ export function fromCustomizationNormalizerProduct(
     variants: variants.length > 0 ? variants : undefined,
     customization: customizerInput,
     sourceUrl: product.canonicalUrl,
-  };
+  });
 }
 
 export function fromCustomizationNormalizerBatch(

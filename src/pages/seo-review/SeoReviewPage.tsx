@@ -29,7 +29,7 @@ import { SeoBatchToolbar } from "./components/SeoBatchToolbar";
 import { ShopifySyncErrorModal } from "./components/ShopifySyncErrorModal";
 import { VersionConflictModal } from "./components/VersionConflictModal";
 import { archiveSeoReviewProduct } from "./archive-review-product";
-import { canStartReviewSync, isReviewSynced, reviewActions, reviewStage } from "./review-actions";
+import { canStartReviewSync, isReviewSynced, reviewActions, reviewStage, shouldReconcileReviewSync } from "./review-actions";
 import { prepareReviewSync } from "./prepare-review-sync";
 import { emptySeoReviewCounts } from "../../shared/seo-review-list";
 import type { SeoReviewWorkspace } from "../../shared/seo-review-list";
@@ -898,7 +898,7 @@ export function SeoReviewPage({
         if (options?.force) {
           throw new Error("Sản phẩm Distributed Crawler phải được đối soát và đồng bộ qua Pipeline Worker.");
         }
-        const queuedReview = targetProduct.shopifySyncStatus === "synced"
+        const queuedReview = shouldReconcileReviewSync(targetProduct)
           ? await amazonCrawlerReviews.reconcile(coordinatorItemId)
           : await amazonCrawlerReviews.sync(coordinatorItemId);
         const queuedProduct = adaptAmazonCrawlerReviewToViewModel(

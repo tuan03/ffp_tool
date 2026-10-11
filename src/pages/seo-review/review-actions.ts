@@ -28,8 +28,12 @@ export function canStartReviewSync(product: SeoProductUiViewModel): boolean {
 export function isReviewSynced(product: SeoProductUiViewModel): boolean {
   return product.shopifySyncStatus === "synced" || product.backendPublish?.state === "SUCCEEDED";
 }
+export function shouldReconcileReviewSync(product: SeoProductUiViewModel): boolean {
+  return product.shopifySyncStatus === "synced" || product.reviewActions?.canReconcile === true;
+}
 export function reviewErrorMessage(error: string | undefined): string {
   if (!error) return "Mở chi tiết để kiểm tra lỗi đồng bộ.";
+  if (error.includes("SHOPIFY_OPTION_PROJECTION_INVALID")) return "Không thể gộp các lựa chọn an toàn. Kiểm tra tên và tổ hợp biến thể trước khi Sync; không có sản phẩm mới được ghi.";
   if (error.includes("STALE_SOURCE")) return "Nguồn Shopify đã thay đổi. Cần đối chiếu và tạo bản SEO mới; không gửi lại bản cũ.";
   if (/UNCERTAIN|RECONCILIATION_REQUIRED|CONTENT_CONFLICT/.test(error)) return "Chưa xác định được kết quả ghi Shopify. Cần đối chiếu trước khi thử lại hoặc lưu trữ.";
   if (error.includes("REVIEW_ARCHIVED")) return "Bản Review đã lưu trữ, chỉ dùng để xem lịch sử.";
