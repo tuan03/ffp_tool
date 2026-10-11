@@ -188,6 +188,30 @@ class CoordinatorStore(CoordinatorObservability):
         self._review_mutation_lock = Lock()
 
     @staticmethod
+    def _store_vendor_key(store_id: str) -> str:
+        if not isinstance(store_id, str) or not store_id.strip() or len(store_id) > 200 or any(ord(c) < 32 for c in store_id):
+            raise ValueError("A valid storeId is required.")
+        return "vendor:" + hashlib.sha256(store_id.strip().encode("utf-8")).hexdigest()[:56]
+
+    def get_store_vendor(self, store_id: str) -> dict[str, Any]:
+        key = self._store_vendor_key(store_id)
+        with self.sessions() as session:
+            record = session.get(CoordinatorState, key)
+            return json.loads(record.value) if record else {"storeId": store_id.strip(), "vendor": None, "updatedAt": None}
+
+    def save_store_vendor(self, store_id: str, vendor: Any) -> dict[str, Any]:
+        key = self._store_vendor_key(store_id)
+        if not isinstance(vendor, str) or not vendor.strip() or len(vendor.strip()) > 255 or any(ord(c) < 32 or ord(c) == 127 for c in vendor):
+            raise ValueError("Vendor must contain 1-255 characters without control characters.")
+        value = {"storeId": store_id.strip(), "vendor": vendor.strip(), "updatedAt": utc_iso(utc_now())}
+        with self.sessions.begin() as session:
+            insert = postgres_insert if session.bind.dialect.name == "postgresql" else sqlite_insert
+            statement = insert(CoordinatorState).values(key=key, value=json.dumps(value, ensure_ascii=False))
+            session.execute(statement.on_conflict_do_update(index_elements=[CoordinatorState.key],
+                set_={"value": statement.excluded.value, "updated_at": utc_now()}))
+        return value
+
+    @staticmethod
     def _product_family_identity(product: dict[str, Any]) -> tuple[str, list[str]] | None:
         source_key = _source_key(product)
         source_key_parts = source_key.split(":", 3)
@@ -930,7 +954,7 @@ class CoordinatorStore(CoordinatorObservability):
             control.state = "active"
             control.updated_at = utc_now()
 
-    def create_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def create_job(self, payload: dict[str, Any], *, require_store_vendor: bool = False) -> dict[str, Any]:
         raw_urls = payload.get("urls")
         if not isinstance(raw_urls, list) or not raw_urls or not all(isinstance(value, str) for value in raw_urls):
             raise ValueError("urls must be a non-empty array of strings.")
@@ -974,6 +998,13 @@ class CoordinatorStore(CoordinatorObservability):
                 existing = session.scalar(select(CrawlJob).where(CrawlJob.external_request_id == external_request_id))
                 if existing is not None:
                     return self._job_snapshot(session, existing)
+            if require_store_vendor:
+                key = self._store_vendor_key(settings.get("storeId") or "")
+                record = session.get(CoordinatorState, key)
+                if record is None:
+                    raise ValueError("STORE_VENDOR_REQUIRED: Nhập và lưu Vendor Shopify cho store trước khi cào.")
+                settings["vendor"] = json.loads(record.value)["vendor"]
+                settings["vendorPolicyVersion"] = 1
             input_asins = []
             for source in raw_urls:
                 try:

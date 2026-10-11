@@ -40,6 +40,7 @@ import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
 import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
+import { CrawlerStoreVendorField } from "./components/CrawlerStoreVendorField";
 import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
@@ -256,6 +257,7 @@ export function AmazonCrawlerPage({
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   const [isClearingTemporaryData, setIsClearingTemporaryData] = useState(false);
   const [cacheAsin, setCacheAsin] = useState("");
+  const [storeVendor, setStoreVendor] = useState<{ storeId: string; vendor: string | null }>({ storeId: "", vendor: null });
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
   const [isHandingOver, setIsHandingOver] = useState(false);
   const [handoverError, setHandoverError] = useState<string | null>(null);
@@ -1196,6 +1198,7 @@ export function AmazonCrawlerPage({
   }, [availableStores, currentStoreId]);
 
   const activeStoreId = selectedStoreProfile?.storeId || settings.storeId || "capozen";
+  const hasSavedStoreVendor = storeVendor.storeId === activeStoreId && Boolean(storeVendor.vendor?.trim());
   const activeShopDomain = selectedStoreProfile?.shopDomain || `${activeStoreId}.myshopify.com`;
 
   const currentStoreProductTypes = useMemo(() => {
@@ -1366,8 +1369,12 @@ export function AmazonCrawlerPage({
   }
 
   async function handleStart(): Promise<void> {
+    if (!hasSavedStoreVendor) {
+      setAsinPreflightError("Nhập và lưu Vendor Shopify cho store trước khi cào.");
+      return;
+    }
     const sources = [...urls];
-    const jobSettings = { ...settings, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true };
+    const jobSettings = { ...settings, vendor: storeVendor.vendor ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true };
     await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
       allowedSources,
       existingShopifyAsins,
@@ -1564,6 +1571,11 @@ export function AmazonCrawlerPage({
 
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
+    if (!hasSavedStoreVendor) {
+      setJobControlTone("error");
+      setJobControlMessage("Nhập và lưu Vendor Shopify cho store trước khi chạy lại.");
+      return;
+    }
     const sources = urls.length > 0 ? [...urls] : [...job.inputs];
     await checkBeforeCrawl(sources, settings.storeId || "capozen", async (
       allowedSources,
@@ -1575,6 +1587,7 @@ export function AmazonCrawlerPage({
       try {
         const replacement = await amazonCrawlerJobs.replace(job.jobId, {
           ...settings,
+          vendor: storeVendor.vendor ?? undefined,
           urls: allowedSources,
           existingShopifyAsins,
           refreshFamilyAsins,
@@ -2420,7 +2433,7 @@ export function AmazonCrawlerPage({
         />
       </label>
               <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED" || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0))} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>
+        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={!hasSavedStoreVendor || urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED" || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0))} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>
               </div>
 
           {coordinatorActiveJob ? (
@@ -2467,6 +2480,8 @@ export function AmazonCrawlerPage({
             <button type="button" aria-label="Thêm store" disabled={isRunning} onClick={() => setIsAddStoreOpen(true)} className="text-cyan-300 hover:text-cyan-200 disabled:opacity-50">Thêm store</button>
             <button type="button" aria-label="Xóa store" disabled={isRunning} onClick={() => setIsDeleteStoreOpen(true)} className="text-rose-300 hover:text-rose-200 disabled:opacity-50">Xóa store</button>
           </div>
+
+          <CrawlerStoreVendorField key={activeStoreId} storeId={activeStoreId} manager={amazonCrawlerJobs?.storeVendors} onReady={setStoreVendor} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-1 text-sm text-slate-300">

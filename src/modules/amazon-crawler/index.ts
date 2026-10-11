@@ -54,6 +54,8 @@ export type {
   AmazonCrawlerRunOptions,
   AmazonCrawlerRunner,
   AmazonCrawlerSettings,
+  AmazonCrawlerStoreVendor,
+  AmazonCrawlerStoreVendorManager,
   AmazonCrawlerSyncRetrier,
   AmazonFinalVariant,
   AmazonSourceVariant,

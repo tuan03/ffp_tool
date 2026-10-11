@@ -31,7 +31,16 @@ export function getAmazonCrawlerAgentReleaseLoader(
 
 export function getAmazonCrawlerJobController(environment: AppEnvironment, engineUrl: string): AmazonCrawlerJobController {
   if (environment !== "mock") return createAmazonCrawlerJobController({ engineUrl });
+  const vendors = new Map<string, string>();
   return {
+    storeVendors: {
+      get: async (storeId) => ({ storeId, vendor: vendors.get(storeId) ?? "Demo Brand", updatedAt: null }),
+      save: async (storeId, vendor) => {
+        if (!vendor.trim() || vendor.trim().length > 255 || /[\u0000-\u001f\u007f]/.test(vendor)) throw new Error("Invalid vendor.");
+        vendors.set(storeId, vendor.trim());
+        return { storeId, vendor: vendor.trim(), updatedAt: null };
+      },
+    },
     metrics: async (jobId) => ({ ...structuredClone(crawlerMockMetrics), jobId: jobId ?? null }),
     trace: async () => ({ events: [], nextCursor: null }),
     list: async () => [],

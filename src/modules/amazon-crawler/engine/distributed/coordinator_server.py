@@ -482,6 +482,22 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.get("/api/v1/store-vendors/{store_id}")
+    async def get_store_vendor(store_id: str, request: Request) -> dict[str, Any]:
+        require_operator_actor(request)
+        try:
+            return await asyncio.to_thread(store.get_store_vendor, store_id)
+        except ValueError as error:
+            raise HTTPException(422, detail=str(error)) from error
+
+    @app.put("/api/v1/store-vendors/{store_id}")
+    async def save_store_vendor(store_id: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+        require_operator_actor(request)
+        try:
+            return await asyncio.to_thread(store.save_store_vendor, store_id, payload.get("vendor"))
+        except ValueError as error:
+            raise HTTPException(422, detail=str(error)) from error
+
     @app.post("/api/v1/crawl-jobs", status_code=202)
     async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -490,7 +506,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             enriched_payload["imageProfileSlug"] = image_profile["slug"]
             enriched_payload["imageProfileRevision"] = image_profile["revision"]
             async with cache_maintenance_lock:
-                job = await asyncio.to_thread(store.create_job, enriched_payload)
+                job = await asyncio.to_thread(store.create_job, enriched_payload, require_store_vendor=True)
             await manager.broadcast({"type": "work_available"})
             return job
         except KeyError as error:
@@ -763,7 +779,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             enriched_payload["replacementOfJobId"] = job_id
             enriched_payload["schedulerPriority"] = 100
             async with cache_maintenance_lock:
-                replacement = await asyncio.to_thread(store.create_job, enriched_payload)
+                replacement = await asyncio.to_thread(store.create_job, enriched_payload, require_store_vendor=True)
         except KeyError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except ActiveJobExistsError as error:

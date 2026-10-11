@@ -46,6 +46,7 @@ export interface AmazonCrawlerSettings {
   jobTimeoutSeconds?: number;
   maxMatrixVariants: number;
   storeId?: string;
+  vendor?: string;
   autoSyncAfterSeo?: boolean;
   autoSyncByStore?: Readonly<Record<string, boolean>>;
   priceAddition?: number;
@@ -554,7 +555,19 @@ export interface AmazonCrawlerCancellationSummary {
   isExecutionConfirmed: boolean;
 }
 
+export interface AmazonCrawlerStoreVendor {
+  storeId: string;
+  vendor: string | null;
+  updatedAt: string | null;
+}
+
+export interface AmazonCrawlerStoreVendorManager {
+  get(storeId: string): Promise<AmazonCrawlerStoreVendor>;
+  save(storeId: string, vendor: string): Promise<AmazonCrawlerStoreVendor>;
+}
+
 export interface AmazonCrawlerJobController {
+  storeVendors?: AmazonCrawlerStoreVendorManager;
   metrics?(jobId?: string): Promise<AmazonCrawlerMetrics>;
   trace?(jobId: string, requestId: string, cursor?: string): Promise<AmazonCrawlerTracePage>;
   list(limit?: number): Promise<readonly AmazonCrawlerJobSnapshot[]>;

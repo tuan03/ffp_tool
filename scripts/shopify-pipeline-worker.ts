@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
+import { resolvePipelineVendor } from "./pipeline-vendor";
 import { findExistingAmazonProducts } from "./pipeline-amazon-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
@@ -727,7 +728,7 @@ async function processClaim(
         : undefined;
     }
 
-    const storeVendor = (claimStoreId.split("--")[0] || claimStoreId).trim().toUpperCase();
+      const storeVendor = resolvePipelineVendor(claim.settings, claimStoreId);
     let seoSummary: ReturnType<typeof createSeoContentPipelineSummary>;
     let imageProcessingSummary: {
       readonly status: "completed";

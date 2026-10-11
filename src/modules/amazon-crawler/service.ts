@@ -26,6 +26,7 @@ import type {
   AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerJobController,
+  AmazonCrawlerStoreVendor,
   AmazonCrawlerJobSummary,
   AmazonCrawlerSeoQueueHandoffSummary,
   AmazonCrawlerOutput,
@@ -79,7 +80,7 @@ export function createCrawlerOperatorFetch(options: {
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : String(input), base);
     if (target.origin !== base.origin || target.username || target.password
-      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys|asin-families)(\/|$)/.test(target.pathname)) {
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|store-vendors|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys|asin-families)(\/|$)/.test(target.pathname)) {
       throw new Error("Operator credential destination rejected.");
     }
     options.sessionSignal?.throwIfAborted();
@@ -1001,7 +1002,22 @@ export function createAmazonCrawlerJobController({
 }: AmazonCrawlerClientOptions): AmazonCrawlerJobController {
   const baseUrl = normalizeEngineUrl(engineUrl);
   const jobUrl = (jobId: string): string => `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`;
+  async function requestStoreVendor(storeId: string, vendor?: string): Promise<AmazonCrawlerStoreVendor> {
+    if (!storeId.trim() || (vendor !== undefined && (!vendor.trim() || vendor.trim().length > 255 || /[\u0000-\u001f\u007f]/.test(vendor)))) {
+      throw new AmazonCrawlerServiceError("Nhập Vendor hợp lệ, tối đa 255 ký tự.", "STORE_VENDOR_REQUIRED");
+    }
+    const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/store-vendors/${encodeURIComponent(storeId)}`, {
+      signal: AbortSignal.timeout(10_000), cache: "no-store",
+      ...(vendor === undefined ? {} : { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ vendor: vendor.trim() }) }),
+    }));
+    if (!isRecord(payload) || payload.storeId !== storeId || !(payload.vendor === null || typeof payload.vendor === "string")
+        || !(payload.updatedAt === null || typeof payload.updatedAt === "string")) {
+      throw new AmazonCrawlerServiceError("Không tải được Vendor của store.", "INVALID_ENGINE_RESPONSE");
+    }
+    return { storeId, vendor: payload.vendor, updatedAt: payload.updatedAt };
+  }
   return {
+    storeVendors: { get: (storeId) => requestStoreVendor(storeId), save: (storeId, vendor) => requestStoreVendor(storeId, vendor) },
     async metrics(jobId) {
       const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : "";
       const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/crawler-metrics${query}`, { signal: AbortSignal.timeout(10_000) }));

@@ -190,8 +190,9 @@ class DeadLetterOperatorRouteTests(unittest.TestCase):
                     operator_credentials=OperatorCredentials("operator", "fixture-secret"),
                 )
             with TestClient(app) as client:
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
                 self.assertEqual(client.get("/api/v1/dead-letter").status_code, 401)
-                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}, auth=("operator", "fixture-secret"))
+                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}, auth=("operator", "fixture-secret"))
                 self.assertEqual(created.status_code, 202)
                 app.state.store.register_client(client_hello(slots=1))
                 lease = app.state.store.lease_tasks("client-a", 1)[0]

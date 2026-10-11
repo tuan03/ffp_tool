@@ -38,6 +38,18 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
     const navigation = page.getByRole("navigation", { name: "Khu vực crawler" });
     const crawl = page.locator("#crawler-panel-crawl");
     const asinInput = crawl.getByLabel("Amazon URLs hoặc ASIN, mỗi dòng một giá trị");
+    const vendorInput = crawl.getByLabel("Vendor Shopify", { exact: true });
+    await vendorInput.waitFor();
+    await page.waitForFunction(() => !(document.getElementById("crawler-store-vendor") as HTMLInputElement | null)?.disabled);
+    await vendorInput.fill("Crawler Brand");
+    assert.equal(await crawl.getByRole("button", { name: /^Bắt đầu cào/ }).isDisabled(), true);
+    await crawl.getByRole("button", { name: "Lưu Vendor", exact: true }).click();
+    await crawl.getByText("Đã lưu cho store này. Thay đổi chỉ áp dụng cho job mới.").waitFor();
+    assert.equal(await vendorInput.inputValue(), "Crawler Brand");
+    await crawl.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("jeminise");
+    await page.waitForFunction(() => (document.getElementById("crawler-store-vendor") as HTMLInputElement | null)?.value === "Demo Brand");
+    await crawl.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("capozen");
+    await page.waitForFunction(() => (document.getElementById("crawler-store-vendor") as HTMLInputElement | null)?.value === "Crawler Brand");
     await asinInput.fill("B0MOCK1001\nB0MOCK1002");
     await crawl.getByLabel("Profile cào", { exact: true }).selectOption("preaurem");
     const settingsToggle = crawl.locator("summary").filter({ hasText: "Collection, loại sản phẩm" });

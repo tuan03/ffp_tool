@@ -4186,12 +4186,13 @@ class CoordinatorApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'work-available.sqlite3').as_posix()}")
             with TestClient(app) as client:
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
                 with client.websocket_connect("/api/v1/worker/connect") as agent:
                     agent.send_json(client_hello("wake-agent", slots=1))
                     self.assertEqual(agent.receive_json()["type"], "hello_ack")
                     agent.send_json({"type": "ready", "availableSlots": 1,
                                      "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
-                    self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).status_code, 202)
+                    self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}).status_code, 202)
                     self.assertEqual(agent.receive_json()["type"], "work_available")
                     agent.send_json({"type": "ready", "availableSlots": 1,
                                      "lastProcessedCommandSequence": 0, "appliedExecutionState": "RUNNING"})
@@ -4203,7 +4204,8 @@ class CoordinatorApiTests(unittest.TestCase):
                 database_url=f"sqlite:///{(Path(directory) / 'pause-release.sqlite3').as_posix()}"
             )
             with TestClient(app) as client:
-                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}).json()
                 with client.websocket_connect("/api/v1/worker/connect") as first_agent:
                     first_agent.send_json(client_hello("pause-agent-a", slots=1))
                     self.assertEqual(first_agent.receive_json()["type"], "hello_ack")
@@ -4285,7 +4287,8 @@ class CoordinatorApiTests(unittest.TestCase):
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
-                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}).json()
                 store = app.state.store
                 with store.sessions.begin() as session:
                     task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
@@ -4731,6 +4734,7 @@ class CoordinatorApiTests(unittest.TestCase):
             }
 
             with TestClient(app) as client:
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
                 preview = client.post(
                     "/api/v1/image-profiles/draft-profile/preview",
                     json={"dataUrl": data_url, "profile": draft},
@@ -4743,7 +4747,7 @@ class CoordinatorApiTests(unittest.TestCase):
                 logo = client.get("/api/v1/image-profiles/draft-profile/logo")
                 job = client.post(
                     "/api/v1/crawl-jobs",
-                    json={"urls": ["B0FR4MSS2H"], "imageProfileSlug": "draft-profile"},
+                    json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture", "imageProfileSlug": "draft-profile"},
                 ).json()
 
             self.assertEqual(preview.status_code, 200)
@@ -4781,11 +4785,12 @@ class CoordinatorApiTests(unittest.TestCase):
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
                 health = client.get("/api/v1/health").json()
                 self.assertEqual(health["status"], "ok")
                 self.assertEqual(health["apiVersion"], "v1")
                 self.assertEqual(health["workerProtocolVersion"], "5")
-                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}).json()
                 with client.websocket_connect("/api/v1/worker/connect") as websocket:
                     websocket.send_json(client_hello(slots=1))
                     websocket.receive_json()
@@ -4912,7 +4917,8 @@ class CoordinatorApiTests(unittest.TestCase):
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
-                client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]})
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
+                client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"})
                 with client.websocket_connect("/api/v1/worker/connect") as websocket:
                     websocket.send_json(client_hello(slots=1))
                     websocket.receive_json()
@@ -4948,7 +4954,8 @@ class CoordinatorApiTests(unittest.TestCase):
             database_path = Path(directory) / "coordinator.sqlite3"
             app = create_coordinator_app(database_url=f"sqlite:///{database_path.as_posix()}")
             with TestClient(app) as client:
-                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).json()
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
+                job = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}).json()
                 with client.websocket_connect("/api/v1/worker/connect") as websocket:
                     websocket.send_json(client_hello(slots=1))
                     self.assertEqual(websocket.receive_json()["type"], "hello_ack")

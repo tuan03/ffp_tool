@@ -24,7 +24,8 @@ class OperatorAuthorizationTests(unittest.TestCase):
                     operator_credentials=OperatorCredentials("operator", "fixture-secret"),
                 )
             with TestClient(app) as client:
-                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]},
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
+                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"},
                     auth=("operator", "fixture-secret"))
                 self.assertEqual(created.status_code, 202, created.text)
                 job_id = created.json()["id"]
@@ -61,6 +62,7 @@ class OperatorAuthorizationTests(unittest.TestCase):
                     operator_auth_disabled=True,
                 )
             with TestClient(app) as client:
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
                 discovery = client.get("/api/v1/operator/security")
                 self.assertEqual(discovery.status_code, 200)
                 self.assertEqual(discovery.json(), {"authRequired": False, "authProtocol": 1})
@@ -85,12 +87,12 @@ class OperatorAuthorizationTests(unittest.TestCase):
                     "allAgents": True, "reason": "public mode fixture command",
                 })
                 self.assertEqual(bulk.status_code, 202, bulk.text)
-                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]})
+                created = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"})
                 self.assertEqual(created.status_code, 202, created.text)
                 job_id = created.json()["id"]
                 canceled = client.post(f"/api/v1/crawl-jobs/{job_id}/cancel")
                 self.assertEqual(canceled.status_code, 200, canceled.text)
-                denied = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]},
+                denied = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"},
                     headers={"Origin": "https://untrusted.invalid"})
                 self.assertEqual(denied.status_code, 403)
                 self.assertEqual(client.get("/api/v1/agent-keys").status_code, 404)
@@ -115,13 +117,14 @@ class OperatorAuthorizationTests(unittest.TestCase):
                 app = create_coordinator_app(database_url=f"sqlite:///{(root / 'test.db').as_posix()}",
                     operator_credentials=OperatorCredentials("operator", "fixture-secret"))
             with TestClient(app) as client:
+                app.state.store.save_store_vendor("vendor-fixture", "Fixture Brand")
                 self.assertEqual(client.get("/api/v1/clients").status_code, 401)
                 self.assertEqual(client.get("/api/v1/clients", headers={"Authorization": "Bearer agent-secret", "X-Gateway-Key": "forged", "X-Operator-Id": "operator"}).status_code, 401)
                 self.assertEqual(client.get("/api/v1/clients", auth=("operator", "wrong")).status_code, 401)
                 self.assertEqual(client.get("/api/v1/clients?token=never-store", auth=("operator", "fixture-secret")).status_code, 200)
                 self.assertEqual(client.get("/api/v1/health").status_code, 200)
-                self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}).status_code, 401)
-                self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}, auth=("operator", "fixture-secret")).status_code, 202)
+                self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}).status_code, 401)
+                self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}, auth=("operator", "fixture-secret")).status_code, 202)
                 with app.state.store.sessions() as session:
                     audits = list(session.scalars(select(OperatorAudit).order_by(OperatorAudit.created_at)))
                     self.assertEqual(len(audits), 6)
@@ -129,12 +132,12 @@ class OperatorAuthorizationTests(unittest.TestCase):
                     self.assertNotIn("secret", repr([row.__dict__ for row in audits]))
                     self.assertNotIn("never-store", repr([row.__dict__ for row in audits]))
                 with patch.object(app.state.store, "create_job") as create_job:
-                    response = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]},
+                    response = client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"},
                         auth=("operator", "fixture-secret"), headers={"Origin": "https://untrusted.invalid"})
                     self.assertEqual(response.status_code, 403)
                     create_job.assert_not_called()
                 with patch.object(app.state.store.sessions, "begin", side_effect=OSError("fixture outage")), patch.object(app.state.store, "create_job") as create_job:
-                    self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"]}, auth=("operator", "fixture-secret")).status_code, 503)
+                    self.assertEqual(client.post("/api/v1/crawl-jobs", json={"urls": ["B0FR4MSS2H"], "storeId": "vendor-fixture"}, auth=("operator", "fixture-secret")).status_code, 503)
                     create_job.assert_not_called()
                 original_begin = app.state.store.sessions.begin
                 calls = 0
