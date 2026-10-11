@@ -58,6 +58,7 @@ class TrayApplication:
         self._activation = None
         self._last_render = 0.0
         self._is_exiting = False
+        self.wants_reconfigure = False
 
         self._pinterest_action_running = False
         self._lifecycle_action_running = False
@@ -476,6 +477,12 @@ class TrayApplication:
             loop = self._loop
             if loop is not None and loop.is_running():
                 loop.call_soon_threadsafe(self.agent.stop_and_discard_local_work)
+        elif action == "reconfigure":
+            self._request_reconfigure()
+        elif action == "check_update":
+            self._start_update_check()
+        elif action == "update":
+            self._update_agent(None, None)
         elif action == "exit":
             self._is_exiting = True
             self._stop_agent()
@@ -483,6 +490,25 @@ class TrayApplication:
                 self._icon.stop()
             if self._window is not None:
                 self._window.close()
+
+    def _request_reconfigure(self) -> None:
+        from .client_setup import disconnect_block_reason
+        loop = self._loop
+        def disconnect() -> None:
+            # Serialize with assignments/uploads on the agent's event loop: no UI race.
+            self.agent.set_paused(True)
+            reason = disconnect_block_reason(self.agent.status_snapshot())
+            if reason or self._lifecycle_action_running:
+                self._update_message = reason or "Agent đang cập nhật; chờ hoàn tất."
+                self._notify(self._update_message)
+                return
+            self.wants_reconfigure = True
+            self.agent.stop()
+            self._actions.put("exit")
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(disconnect)
+        else:
+            disconnect()
 
     def _poll_ui(self) -> None:
         if self._is_exiting or self._window is None:
@@ -531,6 +557,7 @@ class TrayApplication:
             )),
             pystray.MenuItem("Điều khiển Agent", pystray.Menu(
                 pystray.MenuItem("Tạm dừng / Tiếp tục nhận việc", self._toggle_pause),
+                pystray.MenuItem("Đổi kết nối / Cài đặt", lambda _icon, _item: self._actions.put("reconfigure")),
                 pystray.MenuItem("Dừng và xóa việc cục bộ", self._stop_local_work),
             )),
             pystray.MenuItem("Ứng dụng", pystray.Menu(
@@ -595,6 +622,8 @@ class TrayApplication:
                 self._activation.close()
             if self._thread is not None:
                 self._thread.join(timeout=15)
+                if self._thread.is_alive():
+                    self.wants_reconfigure = False
             if self._window is not None:
                 self._window.close()
                 self._window = None

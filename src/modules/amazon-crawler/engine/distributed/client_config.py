@@ -61,6 +61,10 @@ class AgentConfig:
             loaded = json.loads(configured_path.read_text(encoding="utf-8-sig"))
             if isinstance(loaded, dict):
                 payload = loaded
+        return cls.from_payload(payload, configured_path)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any], configured_path: Path) -> "AgentConfig":
         server_url = str(os.environ.get("AMAZON_COORDINATOR_URL") or payload.get("serverUrl") or "").strip().rstrip("/")
         if not server_url:
             raise ValueError("serverUrl is required in amazon-crawler-agent.json or AMAZON_COORDINATOR_URL.")

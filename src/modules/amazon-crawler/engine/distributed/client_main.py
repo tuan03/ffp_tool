@@ -6,6 +6,7 @@ from ..observability import redact
 
 import argparse
 import asyncio
+import gc
 from contextlib import contextmanager
 import json
 import multiprocessing
@@ -49,10 +50,99 @@ def _resolve_config_path(explicit_path: Path | None) -> Path | None:
     if explicit_path is not None:
         return explicit_path
     if bool(getattr(sys, "frozen", False)):
+        from .client_setup import read_setup_payload, server_setup_config_path, setup_config_path
+        saved_config = setup_config_path()
+        if saved_config.is_file():
+            try:
+                scoped = server_setup_config_path(str(read_setup_payload(saved_config).get("serverUrl") or ""))
+                if scoped.is_file():
+                    return scoped
+            except (ValueError, OSError):
+                pass
+            return saved_config
         portable_config = Path(sys.executable).resolve().parent / "agent.json"
         if portable_config.is_file():
             return portable_config
     return None
+
+
+def _run_desktop(arguments: argparse.Namespace) -> int:
+    from .client_config import AgentConfig
+    from .client_agent import DistributedCrawlerAgent
+    from .client_setup import read_setup_payload, save_setup_payload, server_setup_config_path, setup_config_path
+    from .client_connection_window import AgentConnectionWindow
+    from .client_tray import TrayApplication
+
+    source = _resolve_config_path(arguments.config) or Path(os.environ.get("AMAZON_CRAWLER_AGENT_CONFIG", "config/amazon-crawler-agent.json"))
+    target = setup_config_path()
+    error = ""
+    try:
+        original = read_setup_payload(source)
+    except (ValueError, OSError):
+        original = {}
+        error = "Không đọc được cấu hình cũ. Bạn có thể nhập lại; file cũ không bị xóa."
+    force_setup = False
+    while True:
+        config = None
+        try:
+            config = AgentConfig.from_payload(original, source)
+            # Opening an existing installation focuses its dashboard, not a second setup.
+            with AgentInstanceLock(config.data_directory):
+                pass
+        except AgentAlreadyRunningError:
+            from .client_activation import request_activation
+            request_activation(config.data_directory)
+            return 0
+        except (ValueError, OSError):
+            force_setup = True
+        if force_setup or original.get("autoConnect") is not True:
+            def prepare(payload: dict[str, object], key: str) -> None:
+                profile_path = server_setup_config_path(str(payload["serverUrl"]))
+                prepared = AgentConfig.from_payload(payload, profile_path)
+                proxy_path = str(payload.get("proxyConfigPath") or "").strip()
+                if proxy_path and prepared.proxy_config_path is None:
+                    raise FileNotFoundError()
+                with AgentInstanceLock(prepared.data_directory):
+                    if prepared.auth_mode == "key":
+                        from .client_credentials import store_credential, load_credential, enroll_agent
+                        from .client_store import ClientStore
+                        store = ClientStore(prepared.data_directory / "agent.sqlite3")
+                        if key:
+                            store_credential(store, prepared.server_url, key)
+                            enroll_agent(store, prepared.server_url, prepared.display_name)
+                        else:
+                            load_credential(store, prepared.server_url)
+                    save_setup_payload(profile_path, payload)
+                    save_setup_payload(target, payload)
+            connection_window = AgentConnectionWindow(original, prepare, error=error)
+            payload = connection_window.run()
+            del connection_window
+            # Finalize Tcl objects on the UI thread before starting crawler threads.
+            gc.collect()
+            if payload is None:
+                return 0
+            original = payload
+            source = server_setup_config_path(str(payload["serverUrl"]))
+            config = AgentConfig.from_payload(payload, source)
+        if config is None:
+            return 1
+        default_root = Path(sys.executable).parent if bool(getattr(sys, "frozen", False)) else config.data_directory
+        project_root = (arguments.project_root or default_root).resolve()
+        project_root.mkdir(parents=True, exist_ok=True)
+        try:
+            with AgentInstanceLock(config.data_directory):
+                agent = DistributedCrawlerAgent(project_root=project_root, config=config)
+                application = TrayApplication(agent, config.data_directory, start_minimized=arguments.start_minimized and not force_setup)
+                application.run()
+                if application.wants_reconfigure:
+                    force_setup = True
+                    error = "Đã ngắt kết nối an toàn. Chọn server và bấm Kết nối."
+                    continue
+        except AgentAlreadyRunningError:
+            from .client_activation import request_activation
+            request_activation(config.data_directory)
+            return 0
+        return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,6 +177,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("FFP Amazon Crawler restart command ID is invalid.", file=sys.stderr)
         return 2
     try:
+        interactive = (sys.platform == "win32" and not arguments.no_tray
+                       and not (arguments.start_minimized and arguments.config is not None)
+                       and not any((arguments.check_config, arguments.enroll, arguments.zip_update_probe,
+                                    arguments.restore_update_database, arguments.restart_command_id)))
+        if interactive:
+            return _run_desktop(arguments)
         config = AgentConfig.load(_resolve_config_path(arguments.config))
         default_project_root = (Path(sys.executable).parent if bool(getattr(sys, "frozen", False))
                                 else config.data_directory)

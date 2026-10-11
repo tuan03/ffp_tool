@@ -79,7 +79,7 @@ class AgentDashboardWindow:
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.title("FFP Agent — Công việc và trạng thái")
-        self.root.geometry("1100x780")
+        self.root.geometry("1000x700")
         self.root.minsize(860, 650)
         self.root.protocol("WM_DELETE_WINDOW", self.root.withdraw)
         self.root.bind("<Escape>", lambda _event: self.root.withdraw())
@@ -90,6 +90,7 @@ class AgentDashboardWindow:
         style.configure("Treeview", rowheight=28)
         style.configure("Title.TLabel", font=("Segoe UI", 15, "bold"))
         style.configure("Warning.TLabel", foreground="#9a3412")
+        style.configure("Metric.TLabel", font=("Segoe UI", 11, "bold"), foreground="#0e7490")
 
         shell = ttk.Frame(self.root, padding=16)
         shell.pack(fill="both", expand=True)
@@ -99,8 +100,17 @@ class AgentDashboardWindow:
         self.title.grid(row=0, column=0, sticky="w")
         self.connection = ttk.Label(shell, text="Đang khởi động…")
         self.connection.grid(row=1, column=0, sticky="w", pady=(5, 3))
-        self.counters = ttk.Label(shell, text="")
-        self.counters.grid(row=2, column=0, sticky="w", pady=(0, 5))
+        metrics = ttk.Frame(shell)
+        metrics.grid(row=2, column=0, sticky="ew", pady=(8, 12))
+        self.metrics = []
+        for column, caption in enumerate(("Công việc", "Chờ gửi", "Cách ly")):
+            metrics.columnconfigure(column, weight=1)
+            panel = ttk.LabelFrame(metrics, text=caption, padding=(12, 8))
+            panel.grid(row=0, column=column, sticky="ew", padx=(0, 8 if column < 2 else 0))
+            label = ttk.Label(panel, text="", style="Metric.TLabel", font=("Segoe UI", 11, "bold"))
+            label.pack(anchor="w")
+            self.metrics.append(label)
+        self.counters = self.metrics[0]
         self.warning = ttk.Label(shell, style="Warning.TLabel", wraplength=1000)
         self.warning.grid(row=3, column=0, sticky="w", pady=(0, 8))
 
@@ -111,7 +121,7 @@ class AgentDashboardWindow:
         info = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(work, text="Công việc")
         self.notebook.add(history, text="Lịch sử")
-        self.notebook.add(info, text="Thông tin agent")
+        self.notebook.add(info, text="Cài đặt")
         history.columnconfigure(0, weight=1)
         history.rowconfigure(0, weight=1)
         self.history_notebook = ttk.Notebook(history)
@@ -149,8 +159,10 @@ class AgentDashboardWindow:
         self.info = self._text(info, height=15, grid_row=0)
         self.copy_agent_button = ttk.Button(info, text="Sao chép ID agent", command=lambda: self._copy(str(self._snapshot().get("clientId", ""))))
         self.copy_agent_button.grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Button(info, text="Đổi kết nối / Chỉnh cấu hình", command=lambda: self._action("reconfigure")).grid(row=2, column=0, sticky="w", pady=6)
 
         details = ttk.LabelFrame(shell, text="Chi tiết công việc được chọn", padding=8)
+        self.details_panel = details
         details.grid(row=5, column=0, sticky="ew", pady=(10, 8))
         self.details = self._text(details, height=5)
         copy_buttons = ttk.Frame(details)
@@ -164,8 +176,16 @@ class AgentDashboardWindow:
         controls.grid(row=6, column=0, sticky="ew", pady=(4, 0))
         self.pause_button = ttk.Button(controls, text="Tạm ngưng nhận việc", command=lambda: self._action("pause"))
         self.pause_button.pack(side="left")
-        ttk.Button(controls, text="Dừng và loại bỏ việc local…", command=self.confirm_stop).pack(side="left", padx=8)
-        ttk.Button(controls, text="Mở thư mục dữ liệu", command=lambda: self._action("folder")).pack(side="left")
+        ttk.Button(controls, text="Ngắt kết nối / Cài đặt", command=lambda: self._action("reconfigure")).pack(side="left", padx=8)
+        more = ttk.Menubutton(controls, text="Thao tác khác ▾")
+        menu = tk.Menu(more, tearoff=False)
+        menu.add_command(label="Mở thư mục dữ liệu", command=lambda: self._action("folder"))
+        menu.add_command(label="Kiểm tra cập nhật", command=lambda: self._action("check_update"))
+        menu.add_command(label="Cập nhật và khởi động lại", command=lambda: self._action("update"))
+        menu.add_separator()
+        menu.add_command(label="Dừng và loại bỏ việc local…", command=self.confirm_stop)
+        more.configure(menu=menu)
+        more.pack(side="left")
         ttk.Button(controls, text="Thoát agent", command=lambda: self._action("exit")).pack(side="right")
         ttk.Label(shell, text="Đóng bằng X để tiếp tục chạy trong khay hệ thống.").grid(row=7, column=0, sticky="w", pady=(8, 0))
         self.root.bind("<Configure>", self._resize)
@@ -239,8 +259,10 @@ class AgentDashboardWindow:
     def _render_details(self) -> None:
         task = self._task_rows.get(self._selected_key)
         if not task:
+            self.details_panel.grid_remove()
             self._set_text(self.details, "Chọn một công việc để xem ASIN, tiến độ và các ID liên quan.")
             return
+        self.details_panel.grid()
         variants = task.get("activeVariants")
         active = ", ".join(str(asin) for asin in variants) if isinstance(variants, list) else ""
         self._set_text(self.details, "\n".join((
@@ -279,8 +301,11 @@ class AgentDashboardWindow:
             operating = "Đang làm việc" if snapshot.get("activeTasks") else "Sẵn sàng nhận việc"
         if _mapping(snapshot.get("storage")).get("blocked"):
             operating = "Tạm ngưng nhận việc do lưu trữ"
-        self.connection.configure(text=f"{connected}  •  {operating}")
-        self.counters.configure(text=f"Chạy: {snapshot.get('runningTasks', 0)}  |  Chờ: {snapshot.get('queuedTasks', 0)}  |  Slot: {snapshot.get('activeTasks', 0)}/{snapshot.get('maxConcurrentInputs', 0)}  |  Chờ gửi: {snapshot.get('pendingProducts', 0)} sản phẩm + {snapshot.get('pendingResults', 0)} kết quả  |  Cách ly: {snapshot.get('quarantinedUploads', 0)}")
+        self.connection.configure(text=f"{connected}  •  {operating}\n{snapshot.get('serverUrl', '')}",
+                                  foreground="#047857" if snapshot.get("isConnected") else "#b45309")
+        self.counters.configure(text=f"{snapshot.get('runningTasks', 0)} chạy · {snapshot.get('queuedTasks', 0)} chờ · {snapshot.get('activeTasks', 0)}/{snapshot.get('maxConcurrentInputs', 0)} slot")
+        self.metrics[1].configure(text=f"{snapshot.get('pendingProducts', 0)} sản phẩm · {snapshot.get('pendingResults', 0)} kết quả")
+        self.metrics[2].configure(text=f"{snapshot.get('quarantinedUploads', 0)} bản ghi")
         warnings = []
         if snapshot.get("updateMessage"):
             warnings.append(str(snapshot["updateMessage"]))
@@ -289,6 +314,10 @@ class AgentDashboardWindow:
             warnings.append(storage_warning)
         if snapshot.get("agentStopped"):
             warnings.append("Agent đã dừng do lỗi. Hãy thoát và mở lại agent; xem log trong thư mục dữ liệu.")
+        elif snapshot.get("connection") == "NEED_REAUTH":
+            warnings.append("Agent Key cần cấp lại. Mở Cài đặt để đăng ký khóa mới; dữ liệu chưa gửi được giữ nguyên.")
+        elif snapshot.get("lastError") and not snapshot.get("isConnected"):
+            warnings.append("Chưa kết nối được server. Kiểm tra URL, mạng và quyền của Agent; hệ thống sẽ thử lại.")
         if snapshot.get("waitingCaptcha"):
             warnings.append("Cần giải CAPTCHA trong cửa sổ trình duyệt; task sẽ tự tiếp tục.")
         elif snapshot.get("captchaDetected"):
@@ -328,6 +357,7 @@ class AgentDashboardWindow:
         self._set_text(self.info, "\n".join((
             f"Agent: {snapshot.get('displayName', '')}", f"ID: {snapshot.get('clientId', '')}",
             f"Phiên bản: {snapshot.get('agentVersion', '')}", f"Server: {snapshot.get('serverUrl', '')}",
+            f"Link đồng thời: đã chọn {snapshot.get('configuredMaxConcurrentInputs', '—')} · đang áp dụng {snapshot.get('maxConcurrentInputs', '—')} · cấu hình quản trị v{snapshot.get('agentConfigVersion', 0)}",
             f"Khởi động: {display_time(snapshot.get('startedAt'))}",
             f"Giới hạn: {json_limits(_mapping(snapshot.get('limits')))}",
             f"RAM agent và tiến trình con: {ram_text}" + (" (số đo chưa đầy đủ)" if ram is not None and not resources.get("isComplete") else ""),

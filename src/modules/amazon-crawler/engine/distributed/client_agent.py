@@ -141,6 +141,10 @@ class DistributedCrawlerAgent:
             "maxConcurrentInputs": config.max_concurrent_inputs,
             "limits": config.limits.apply({}),
         })
+        if self._agent_config_version == 0:
+            configured = self._agent_runtime_config.to_payload()
+            configured.update(maxConcurrentInputs=config.max_concurrent_inputs, limits=config.limits.apply({}))
+            self._agent_runtime_config = AgentRuntimeConfig.from_payload(configured)
         self.client_id = self.store.client_id()
         self._agent_key: str | None = None
         self._is_connected = False
@@ -275,6 +279,7 @@ class DistributedCrawlerAgent:
             "serverUrl": redact(self.config.server_url),
             "startedAt": self._started_at,
             "maxConcurrentInputs": self._agent_runtime_config.maxConcurrentInputs,
+            "configuredMaxConcurrentInputs": self.config.max_concurrent_inputs,
             "runningTasks": len(self.executing_task_ids & self.active.keys()),
             "queuedTasks": len(self.active.keys() - self.executing_task_ids),
             "releasingTasks": self._pause_release_count(),
