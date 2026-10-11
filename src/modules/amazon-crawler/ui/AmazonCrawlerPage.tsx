@@ -40,7 +40,7 @@ import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
 import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
-import { ShopifyAsinFilterDialog } from "./components/ShopifyAsinFilterDialog";
+import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
@@ -226,7 +226,6 @@ export function AmazonCrawlerPage({
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [isHistoryAllStores, setIsHistoryAllStores] = useState(false);
   const [isProductDetailsOpen, setIsProductDetailsOpen] = useState(false);
-  const [isAsinFilterOpen, setIsAsinFilterOpen] = useState(false);
   const session = useAmazonCrawlerSession();
   const {
     urlText,
@@ -2383,7 +2382,7 @@ export function AmazonCrawlerPage({
     <>
       <CrawlerWorkspace
         section={workspaceSection}
-        onSectionChange={(section) => { setWorkspaceSection(section); setIsProductDetailsOpen(false); setIsImageProfileEditorOpen(false); setIsAsinFilterOpen(false); }}
+        onSectionChange={(section) => { setWorkspaceSection(section); setIsProductDetailsOpen(false); setIsImageProfileEditorOpen(false); }}
         summary={<>
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-sm">
@@ -2404,7 +2403,8 @@ export function AmazonCrawlerPage({
 
         </>}
         crawl={<>
-          <section className="grid min-w-0 items-start gap-5 rounded-2xl border border-slate-800 bg-slate-900/30 p-4 sm:p-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]" aria-label="Tạo phiên cào">
+          <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <section className="grid min-w-0 items-start gap-5 rounded-2xl border border-slate-800 bg-slate-900/30 p-4 sm:p-5" aria-label="Tạo phiên cào">
             <div className="min-w-0 space-y-4">
       <label className="grid gap-2 text-sm font-medium text-slate-200">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị
@@ -2421,7 +2421,6 @@ export function AmazonCrawlerPage({
       </label>
               <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED" || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0))} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>
-        <button type="button" onClick={() => setIsAsinFilterOpen(true)} className="rounded-lg border border-cyan-700 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-950/40">Lọc ASIN trên Shopify</button>
               </div>
 
           {coordinatorActiveJob ? (
@@ -2526,7 +2525,7 @@ export function AmazonCrawlerPage({
       </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-200">{imageProfileMessage}</p> : null}
             </div>
-              <details className="min-w-0 rounded-xl border border-slate-700 bg-slate-950/40 p-4 xl:col-span-2" open>
+              <details className="min-w-0 rounded-xl border border-slate-700 bg-slate-950/40 p-4" open>
                 <summary className="cursor-pointer text-sm font-medium text-slate-200">Collection, loại sản phẩm & định giá
                   <span className="mt-1 block text-xs font-normal text-slate-400">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
                 </summary>
@@ -2858,7 +2857,7 @@ export function AmazonCrawlerPage({
         })()}
       </section></div>
               </details>
-            <div className="min-w-0 space-y-3 xl:col-span-2">
+            <div className="min-w-0 space-y-3">
       <button className="text-sm font-semibold text-cyan-300" type="button" onClick={toggleCrawlerAdvancedOpen}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
       </button>
@@ -2893,6 +2892,10 @@ export function AmazonCrawlerPage({
       ) : null}
             </div>
           </section>
+          <div className="min-w-0 xl:sticky xl:top-24 xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto">
+            <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins} />
+          </div>
+          </div>
       {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}
       {asinPreflightMatches.length > 0 ? (
         <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-200">
@@ -3113,16 +3116,6 @@ export function AmazonCrawlerPage({
             requestId={selectedProduct?.diagnostics.familyRequestId ?? selectedProduct?.diagnostics.requestId} />
         </>}
       />
-        <ShopifyAsinFilterDialog isOpen={isAsinFilterOpen} storeId={activeStoreId} initialText={urlText} filterShopifyAsins={filterShopifyAsins}
-          canApply={!isRunning && !isCheckingAsins && !isHydratingJob && coordinatorActiveJob === undefined}
-          onClose={() => setIsAsinFilterOpen(false)} onApply={(asins) => {
-            if (isRunning || isCheckingAsins || isHydratingJob || coordinatorActiveJob !== undefined) return;
-            if (urlText.trim() && !window.confirm("Thay danh sách ASIN hiện tại bằng danh sách chưa có trên Shopify? Thao tác này không bắt đầu cào.")) return;
-            setCrawlerUrlText(asins.join("\n"));
-            setAsinPreflightError(null);
-            setAsinPreflightMatches([]);
-            setIsAsinFilterOpen(false);
-          }} />
       {editingImageProfile ? (
         <CrawlerDialog title="Cấu hình xử lý ảnh" isOpen={isImageProfileEditorOpen} onClose={() => setIsImageProfileEditorOpen(false)}><div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">

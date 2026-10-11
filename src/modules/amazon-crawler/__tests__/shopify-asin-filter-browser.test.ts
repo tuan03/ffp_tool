@@ -5,14 +5,14 @@ import { chromium } from "playwright";
 
 const uiUrl = process.env.FFP_CRAWLER_UI_TEST_URL;
 
-test("crawler filters exact ASINs without starting jobs, preserves drafts and confirms replacement on desktop/mobile", {
+test("crawler filter is independent and keeps per-store results until explicitly cleared on desktop/mobile", {
   skip: !uiUrl, timeout: 60000,
 }, async () => {
   assert.ok(uiUrl);
   assert.ok(["127.0.0.1", "localhost"].includes(new URL(uiUrl).hostname));
   const browser = await chromium.launch({ headless: true, channel: process.env.FFP_CRAWLER_UI_BROWSER_CHANNEL || undefined });
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true, permissions: ["clipboard-read", "clipboard-write"] });
     await page.route("**/api/shopify", (route) => route.fulfill({ json: { success: true, data: {
       stores: [{ storeId: "capozen", shopDomain: "capozen.example.myshopify.com" }, { storeId: "new-store", shopDomain: "new-store.myshopify.com" }], collections: [],
     } } }));
@@ -23,20 +23,33 @@ test("crawler filters exact ASINs without starting jobs, preserves drafts and co
     assert.ok(await page.getByText(/^mock$/i).isVisible(), "Only exercise the isolated mock UI");
     const crawlInput = page.getByLabel("Amazon URLs hoặc ASIN, mỗi dòng một giá trị");
     await crawlInput.fill("B0MOCK1001\nB0MOCK1002");
-    const openButton = page.getByRole("button", { name: "Lọc ASIN trên Shopify", exact: true });
-    await openButton.click();
-    const dialog = page.getByRole("dialog", { name: "Lọc ASIN trên Shopify", exact: true });
+    const dialog = page.getByRole("region", { name: "Lọc ASIN trên Shopify", exact: true });
     await dialog.waitFor();
     const input = dialog.getByLabel("Danh sách ASIN cần lọc", { exact: true });
-    assert.equal(await input.inputValue(), "B0MOCK1001\nB0MOCK1002");
+    assert.equal(await input.inputValue(), "");
     await input.fill("b0mock1001, B0MOCK1002\nB0MOCK1001;bad");
     const checkButton = dialog.getByRole("button", { name: "Kiểm tra Shopify", exact: true });
     assert.equal(await checkButton.isDisabled(), true);
     await input.fill("b0mock1001, https://www.amazon.com/dp/B0MOCK1002\nB0MOCK1001");
     await checkButton.click();
-    const missing = dialog.getByLabel("Danh sách ASIN chưa có trên Shopify", { exact: true });
+    const missing = dialog.getByRole("list", { name: "Danh sách ASIN chưa có trên Shopify", exact: true });
     await missing.waitFor();
-    assert.equal(await missing.inputValue(), "B0MOCK1002");
+    assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
+    const view = missing.getByRole("link", { name: "View Amazon B0MOCK1002", exact: true });
+    assert.equal(await view.getAttribute("href"), "https://www.amazon.com/dp/B0MOCK1002");
+    assert.equal(await view.getAttribute("target"), "_blank");
+    assert.equal(await view.getAttribute("rel"), "noopener noreferrer");
+    await page.context().route("https://www.amazon.com/dp/B0MOCK1002", (route) => route.fulfill({ body: "Amazon ASIN fixture" }));
+    const popupEvent = page.waitForEvent("popup");
+    await view.click();
+    const popup = await popupEvent;
+    await popup.waitForLoadState("domcontentloaded");
+    assert.equal(popup.url(), "https://www.amazon.com/dp/B0MOCK1002");
+    await popup.close();
+    assert.ok(await missing.isVisible());
+    await missing.getByRole("button", { name: "Sao chép B0MOCK1002", exact: true }).click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "B0MOCK1002");
+    assert.equal(await page.getByRole("button", { name: "Đưa vào ô cào", exact: true }).count(), 0);
     assert.ok(await dialog.getByRole("region", { name: "ASIN đã có trên Shopify", exact: true }).getByText("B0MOCK1001", { exact: false }).isVisible());
     assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
     const downloadEvent = page.waitForEvent("download");
@@ -45,29 +58,34 @@ test("crawler filters exact ASINs without starting jobs, preserves drafts and co
     assert.equal(download.suggestedFilename(), "asin-chua-co-capozen.txt");
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await dialog.evaluate((element) => element.scrollWidth > element.clientWidth), false);
-    page.once("dialog", (confirmation) => confirmation.dismiss());
-    await dialog.getByRole("button", { name: "Đưa vào ô cào", exact: true }).click();
-    assert.equal(await dialog.isVisible(), true);
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
-    page.once("dialog", (confirmation) => confirmation.accept());
-    await dialog.getByRole("button", { name: "Đưa vào ô cào", exact: true }).click();
-    assert.equal(await dialog.isVisible(), false);
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1002");
-    assert.ok(await page.getByRole("button", { name: "Bắt đầu cào (1 link)", exact: true }).isVisible());
-    await openButton.click();
-    await input.fill("B0MOCK1001"); await checkButton.click();
+    await input.fill("B0MOCK1003");
+    assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
+    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await page.getByRole("button", { name: "Cào sản phẩm", exact: true }).click();
+    assert.ok(await missing.isVisible());
+    await page.reload({ waitUntil: "domcontentloaded" });
     await missing.waitFor();
-    assert.equal(await missing.inputValue(), "");
-    assert.equal(await dialog.getByRole("button", { name: "Đưa vào ô cào", exact: true }).count(), 0);
-    await input.fill("B0MOCK1002");
-    assert.equal(await missing.count(), 0);
-    await dialog.getByRole("button", { name: "Đóng", exact: true }).click();
+    assert.equal(await input.inputValue(), "B0MOCK1003");
+    assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
     await page.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("new-store");
-    await openButton.click();
     assert.ok(await dialog.getByText("new-store", { exact: true }).isVisible());
     assert.equal(await missing.count(), 0);
-    await page.keyboard.press("Escape");
-    assert.equal(await dialog.isVisible(), false);
+    assert.equal(await input.inputValue(), "");
+    await page.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("capozen");
+    await missing.waitFor();
+    assert.equal(await input.inputValue(), "B0MOCK1003");
+    page.once("dialog", (confirmation) => confirmation.dismiss());
+    await dialog.getByRole("button", { name: "Xóa danh sách", exact: true }).click();
+    assert.ok(await missing.isVisible());
+    page.once("dialog", (confirmation) => confirmation.accept());
+    await dialog.getByRole("button", { name: "Xóa danh sách", exact: true }).click();
+    assert.equal(await input.inputValue(), "");
+    assert.equal(await missing.count(), 0);
+    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await dialog.waitFor();
+    assert.equal(await missing.count(), 0);
+    assert.equal(await input.inputValue(), "");
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
@@ -88,6 +106,17 @@ test("real crawler filter fails closed on partial reads and ignores cancelled or
     let releaseResponse: (() => void) | undefined;
     let markDelayedRequest: (() => void) | undefined;
     let writeRequests = 0;
+    // Isolate operator discovery/polling from any configured local or production Coordinator.
+    await page.route("**/api/v1/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      return route.fulfill({ headers: { "access-control-allow-origin": "*" }, json:
+        path.endsWith("/security") ? { authRequired: false, authProtocol: 1 }
+          : path.endsWith("/clients") ? { clients: [] }
+            : path.endsWith("/crawl-jobs") ? { jobs: [] }
+              : path.endsWith("/image-profiles") ? { profiles: [] }
+                : { state: "OPEN" },
+      });
+    });
     await page.route("**/api/shopify", async (route) => {
       const request: unknown = route.request().postDataJSON();
       assert.ok(typeof request === "object" && request !== null && "operation" in request);
@@ -128,11 +157,10 @@ test("real crawler filter fails closed on partial reads and ignores cancelled or
     await page.goto(`${realUiUrl}/amazon-crawler`, { waitUntil: "domcontentloaded" });
     await page.getByRole("navigation", { name: "Khu vực crawler" }).waitFor();
     assert.equal(await page.getByText(/^mock$/i).count(), 0);
-    await page.getByRole("button", { name: "Lọc ASIN trên Shopify", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Lọc ASIN trên Shopify", exact: true });
+    const dialog = page.getByRole("region", { name: "Lọc ASIN trên Shopify", exact: true });
     const input = dialog.getByLabel("Danh sách ASIN cần lọc", { exact: true });
     const check = dialog.getByRole("button", { name: "Kiểm tra Shopify", exact: true });
-    const missing = dialog.getByLabel("Danh sách ASIN chưa có trên Shopify", { exact: true });
+    const missing = dialog.getByRole("list", { name: "Danh sách ASIN chưa có trên Shopify", exact: true });
     await input.fill("B0MOCK1001\nB0MOCK1002");
     await check.click();
     const unverified = dialog.getByLabel("Danh sách ASIN chưa xác minh", { exact: true });
@@ -161,7 +189,11 @@ test("real crawler filter fails closed on partial reads and ignores cancelled or
     scenario = "empty";
     await check.click();
     await missing.waitFor();
-    assert.equal(await missing.inputValue(), "B0MOCK1003");
+    assert.ok(await missing.getByText("B0MOCK1003", { exact: true }).isVisible());
+    scenario = "partial-error";
+    await check.click();
+    await unverified.waitFor();
+    assert.ok(await missing.getByText("B0MOCK1003", { exact: true }).isVisible(), "failed recheck retains the last complete snapshot");
     assert.equal(writeRequests, 0);
   } finally { await browser.close(); }
 });
