@@ -537,6 +537,17 @@ export interface AutoSeoHttpRequestOptions extends AutoSeoHandlerOptions {
   readonly maxBodyBytes?: number;
 }
 
+function rejectOversizedAutoSeoBody(req: http.IncomingMessage, res: http.ServerResponse, limit: number): void {
+  // Flush the error response before closing; destroying req first becomes a proxy 502.
+  res.statusCode = 413;
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Connection", "close");
+  res.end(JSON.stringify({ success: false, error: {
+    code: "AUTO_SEO_PAYLOAD_TOO_LARGE", message: `Auto SEO request exceeds the ${limit} byte limit. Split products into smaller batches.`,
+  } }));
+  req.resume();
+}
+
 export async function handleAutoSeoHttpRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -579,40 +590,18 @@ export async function handleAutoSeoHttpRequest(
     if (clHeader) {
       const cl = Number.parseInt(clHeader, 10);
       if (!Number.isNaN(cl) && cl > maxBodyBytes) {
-        req.destroy();
-        res.statusCode = 413;
-        res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify({
-            success: false,
-            error: {
-              code: "AUTO_SEO_INVALID_INPUT",
-              message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
-            },
-          }),
-        );
+        rejectOversizedAutoSeoBody(req, res, maxBodyBytes);
         return;
       }
     }
 
     const chunks: Buffer[] = [];
     let totalBytes = 0;
-    for await (const chunk of req) {
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
       const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
       totalBytes += buf.length;
       if (totalBytes > maxBodyBytes) {
-        req.destroy();
-        res.statusCode = 413;
-        res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify({
-            success: false,
-            error: {
-              code: "AUTO_SEO_INVALID_INPUT",
-              message: `Payload Too Large: request body exceeds ${maxBodyBytes} bytes limit`,
-            },
-          }),
-        );
+        rejectOversizedAutoSeoBody(req, res, maxBodyBytes);
         return;
       }
       chunks.push(buf);

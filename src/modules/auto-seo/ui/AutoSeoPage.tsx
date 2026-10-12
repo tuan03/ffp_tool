@@ -4,8 +4,10 @@ import { AppError } from "../../../shared/errors/app-error";
 import { buildSeoQueueUrl } from "../../../shared/seo-queue-navigation";
 import { notifyUser } from "../../../shared/utils";
 import { mapShopifyProductToAutoSeoCandidate } from "../shopify-adapter";
+import { runAutoSeoBackupBatches } from "../service";
 import type {
   AutoSeoClient,
+  AutoSeoBackupBatchProgress,
   AutoSeoCollectionOption,
   AutoSeoEligibilityResponse,
   AutoSeoHandoverHandler,
@@ -32,6 +34,7 @@ import {
   setAutoSeoVersionFilter,
   resetAutoSeoFilters,
   useAutoSeoSession,
+  getAutoSeoSessionState,
 } from "./auto-seo-session";
 import { selectNextAutoSeoBatch, selectSeoRevisionJobs } from "./smart-batch";
 import { AutoSeoOutputPanel } from "./components/AutoSeoOutputPanel";
@@ -98,6 +101,7 @@ export function AutoSeoPage({
   const [isLoadingEligibility, setIsLoadingEligibility] = useState(false);
   const [eligibility, setEligibility] = useState<AutoSeoEligibilityResponse | null>(null);
   const [isRunningAutoSeo, setIsRunningAutoSeo] = useState(false);
+  const [backupProgress, setBackupProgress] = useState<AutoSeoBackupBatchProgress | null>(null);
   const [isCreatingRevisions, setIsCreatingRevisions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -421,14 +425,9 @@ export function AutoSeoPage({
 
     setIsRunningAutoSeo(true);
     setErrorMessage(null);
+    setBackupProgress(null);
 
     try {
-      const hydratedProducts = await activeClient.hydrateSelectedProductsFresh(
-        selectedProductIds,
-        5,
-        selectedStoreId,
-      );
-
       const workflowId = `auto_seo_${Date.now()}`;
 
       const storeInfo = await activeClient.getStoreInfo(selectedStoreId);
@@ -436,31 +435,25 @@ export function AutoSeoPage({
         throw new AppError("Không thể xác định thông tin cửa hàng Shopify.", "AUTO_SEO_STORE_INFO_UNAVAILABLE");
       }
 
-      const backupResult = await activeClient.runAutoSeoBackup({
-        workflowId,
-        storeId: storeInfo.storeId,
-        shopDomain: storeInfo.shopDomain,
-        products: hydratedProducts,
+      const { backupResult, acceptedProducts } = await runAutoSeoBackupBatches({
+        client: activeClient, workflowId, storeId: storeInfo.storeId, shopDomain: storeInfo.shopDomain,
+        productIds: [...selectedProductIds], onProgress: setBackupProgress,
+        onCompletedProductIds: (ids) => {
+          const completed = new Set(ids);
+          setAutoSeoSelectedProductIds(getAutoSeoSessionState().selectedProductIds.filter(id => !completed.has(id)));
+          if (testSelectedProductIds !== undefined) setTestSelectedProductIds(current => current?.filter(id => !completed.has(id)));
+        },
       });
 
-      if (backupResult.downstreamStatus !== "SENT") {
-        throw new AppError(
-          `Auto SEO backup succeeded, but downstream handoff failed: ${backupResult.downstreamError || "Unknown downstream error"}`,
-          "AUTO_SEO_DOWNSTREAM_FAILED",
-        );
-      }
-
       await refreshEligibility(products, selectedStoreId || storeInfo.storeId);
-      const acceptedProductIds = backupResult.acceptedProductIds ?? hydratedProducts.map(product => product.id);
-      const acceptedProductIdSet = new Set(acceptedProductIds);
-      const acceptedProducts = hydratedProducts.filter(product => acceptedProductIdSet.has(product.id));
+      const acceptedProductIds = backupResult.acceptedProductIds ?? acceptedProducts.map(product => product.id);
       const acceptedCount = backupResult.acceptedCount ?? acceptedProducts.length;
       const skippedCount = backupResult.skippedCount ?? 0;
 
       if (acceptedCount === 0) {
         notifyUser({
           title: "Không có sản phẩm mới cần SEO",
-          message: `${skippedCount || hydratedProducts.length} sản phẩm đã được xử lý hoặc đang nằm trong hàng đợi.`,
+          message: `${skippedCount} sản phẩm đã được xử lý hoặc đang nằm trong hàng đợi.`,
           type: "success",
           url: "/auto-seo",
         });
@@ -533,6 +526,7 @@ export function AutoSeoPage({
     } catch (err) {
       const errText = err instanceof Error ? err.message : "Đã xảy ra lỗi khi chạy Auto SEO.";
       setErrorMessage(errText);
+      try { await refreshEligibility(products, selectedStoreId); } catch { /* Preserve the original batch failure. */ }
       notifyUser({
         title: "❌ Auto SEO thất bại",
         message: errText,
@@ -684,6 +678,10 @@ export function AutoSeoPage({
       </div>
 
       {/* Global Error Banner */}
+      {backupProgress ? <div role="status" aria-label="Tiến độ Auto SEO" className={`rounded-xl border p-3 text-sm ${backupProgress.phase === "failed" ? "border-amber-700 bg-amber-950/20 text-amber-200" : "border-cyan-800 bg-cyan-950/20 text-cyan-200"}`}>
+        <p>{backupProgress.phase === "loading" ? "Đang tải dữ liệu batch" : backupProgress.phase === "backup" ? "Đang backup và bàn giao" : backupProgress.phase === "completed" ? "Đã hoàn tất" : "Đã dừng; các batch thành công được giữ nguyên"} · {backupProgress.completedBatches} batch hoàn tất</p>
+        <p className="mt-1 text-xs">Tổng {backupProgress.total} · Đã tải {backupProgress.hydrated} · Backup {backupProgress.backedUp} · Bàn giao {backupProgress.handedOver} · Bỏ qua {backupProgress.skipped} · Chưa xác nhận {backupProgress.total - backupProgress.handedOver - backupProgress.skipped}</p>
+      </div> : null}
       {errorMessage && (
         <div className="rounded-xl border border-rose-800/80 bg-rose-950/40 p-4 text-xs text-rose-200 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">

@@ -1247,6 +1247,34 @@ test("27. getProductEligibility rejects malformed success payloads", async () =>
   }
 });
 
+test("runAutoSeoBackup explains oversized and gateway failure responses", async () => {
+  const runner = createTestRunner(async () => {
+    throw new Error("Module API runner must not be used for backup");
+  });
+  const client = createAutoSeoModuleApiClient(runner);
+  const originalFetch = globalThis.fetch;
+  const request = {
+    workflowId: "large-run", storeId: "jeminise-real", shopDomain: "store.myshopify.com", products: [],
+  };
+
+  try {
+    for (const [status, expected] of [
+      [413, "quá lớn"],
+      [502, "Gateway bị ngắt kết nối"],
+      [504, "Gateway bị ngắt kết nối"],
+    ] as const) {
+      globalThis.fetch = async () => new Response("<html>Proxy error</html>", { status });
+      await assert.rejects(client.runAutoSeoBackup(request), (error: unknown) => {
+        assert.ok(error instanceof AppError);
+        assert.match(error.message, new RegExp(expected));
+        return true;
+      });
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("28. createSeoRevision creates an instruction-free worker revision", async () => {
   const runner = createTestRunner(async () => {
     throw new Error("Module API runner must not be used for revisions");

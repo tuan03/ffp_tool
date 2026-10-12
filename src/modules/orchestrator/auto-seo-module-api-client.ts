@@ -737,7 +737,11 @@ export class AutoSeoModuleApiClient implements AutoSeoClient {
         const errorCode = typeof envelope?.error?.code === "string"
           ? envelope.error.code
           : "AUTO_SEO_BACKUP_FAILED";
-        const message = typeof envelope?.error?.message === "string"
+        const message = response.status === 413
+          ? "Batch Auto SEO quá lớn. Chia nhỏ dữ liệu sản phẩm rồi thử lại."
+          : response.status === 502 || response.status === 504
+          ? "Gateway bị ngắt kết nối hoặc hết thời gian xử lý. Các batch đã thành công được giữ nguyên; kiểm tra Queue trước khi thử phần còn lại."
+          : typeof envelope?.error?.message === "string"
           ? envelope.error.message
           : "Failed to execute Auto SEO backup";
         throw new AppError(message, errorCode);

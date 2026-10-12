@@ -11,6 +11,7 @@ export {
   hydrateSelectedProducts,
   mapWithConcurrency,
   runAutoSeo,
+  runAutoSeoBackupBatches,
 } from "./service";
 
 export {
@@ -23,6 +24,7 @@ export {
 
 export type {
   AutoSeoBackupRequest,
+  AutoSeoBackupBatchProgress,
   AutoSeoBackupResponse,
   AutoSeoEligibilityItem,
   AutoSeoEligibilityProductSummary,

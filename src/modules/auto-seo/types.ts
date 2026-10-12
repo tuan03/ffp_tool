@@ -132,6 +132,16 @@ export interface AutoSeoBackupRequest {
   readonly products: readonly ShopifyProductForAutoSeoUi[];
 }
 
+export interface AutoSeoBackupBatchProgress {
+  readonly total: number;
+  readonly hydrated: number;
+  readonly backedUp: number;
+  readonly handedOver: number;
+  readonly skipped: number;
+  readonly completedBatches: number;
+  readonly phase: "loading" | "backup" | "completed" | "failed";
+}
+
 export interface AutoSeoBackupResponse {
   readonly seoProvider?: "gemini" | "custom_gpt" | "codex_mcp";
   readonly workflowId: string;
