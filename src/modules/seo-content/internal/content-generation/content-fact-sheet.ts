@@ -47,11 +47,14 @@ export function buildContentFactSheet(
   const { source, productUnderstanding, shoppingContext } = context;
 
   const effectiveNiche = context.effectiveNiche ?? source.niche;
+  const trustedIdentityConfidence = productUnderstanding?.reviewRequired === true
+    ? undefined
+    : productUnderstanding?.confidence;
   const storeProfile = projectStoreContentProfile(
     source.storeProfile,
     productUnderstanding?.physicalProductIdentity,
     effectiveNiche,
-    productUnderstanding?.confidence,
+    trustedIdentityConfidence,
   );
 
   const personalizationSupported = detectPersonalizationEvidence(

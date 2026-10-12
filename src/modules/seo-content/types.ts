@@ -5,6 +5,7 @@ import type {
   SeoContentImageInput,
   SeoExecutionEnvelope,
   SeoProductDescriptionPolicy,
+  SeoProductTitleIdentityPolicy,
   SeoStoreProfile,
 } from "../../shared/seo-content-contract";
 
@@ -14,6 +15,7 @@ export type {
   SeoContentImageInput,
   SeoExecutionEnvelope,
   SeoProductDescriptionPolicy,
+  SeoProductTitleIdentityPolicy,
   SeoStoreProfile,
 };
 

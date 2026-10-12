@@ -27,6 +27,15 @@ export interface SeoProductDescriptionPolicy {
   readonly excludedTopics: readonly string[];
 }
 
+export interface SeoProductTitleIdentityPolicy {
+  readonly policyId: string;
+  readonly applicableProductTypes: readonly string[];
+  readonly physicalIdentityTerms: readonly string[];
+  readonly acceptedTitleTerms: readonly string[];
+  readonly preferredTitleTerm: string;
+  readonly minimumIdentityConfidence: number;
+}
+
 export interface SeoStoreProfile {
   readonly profileId: string;
   readonly profileVersion: string;
@@ -39,6 +48,7 @@ export interface SeoStoreProfile {
   readonly contentRules: readonly string[];
   readonly prohibitedClaims: readonly string[];
   readonly productDescriptionPolicy?: SeoProductDescriptionPolicy;
+  readonly productTitleIdentityPolicies?: readonly SeoProductTitleIdentityPolicy[];
   readonly seoConstraints: {
     readonly maxTitleCharacters: number;
     readonly maxDescriptionCharacters: number;

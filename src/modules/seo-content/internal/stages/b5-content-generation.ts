@@ -21,7 +21,10 @@ import { FallbackContentGenerator } from "../content-generation/fallback-content
 import { GoogleGenAIVertexContentGenerator } from "../product-understanding/gemini-content-generator";
 import { buildBeddingSeoDescription } from "../content-generation/heuristic-content-generator";
 import { extractVisionDesignConcept } from "../content-generation/heuristic-title-builder";
-import { sanitizeBeddingTitle } from "../store-profiles";
+import {
+  ensureProductIdentityInTitle,
+  sanitizeBeddingTitle,
+} from "../store-profiles";
 import { buildJsonLdSchema } from "../content-generation/json-ld-builder";
 import type {
   ContentConstraints,
@@ -169,11 +172,25 @@ export async function executeB5ContentGeneration(
     constraints.maxSeoTitleLength,
   );
 
-  let productSeoDescription: string;
   if (facts.storeProfile?.bedding) {
     productTitle = sanitizeBeddingTitle(productTitle);
     productSeoTitle = sanitizeBeddingTitle(productSeoTitle);
+  }
+  if (facts.storeProfile?.titleIdentity) {
+    productTitle = ensureProductIdentityInTitle(
+      productTitle,
+      facts.storeProfile.titleIdentity,
+      80,
+    );
+    productSeoTitle = ensureProductIdentityInTitle(
+      productSeoTitle,
+      facts.storeProfile.titleIdentity,
+      constraints.maxSeoTitleLength,
+    );
+  }
 
+  let productSeoDescription: string;
+  if (facts.storeProfile?.bedding) {
     const hasAllKeywords =
       draft.productSeoDescription.includes("Comforter") &&
       draft.productSeoDescription.includes("Quilt") &&

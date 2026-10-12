@@ -15,7 +15,10 @@ import {
   extractVisionDesignConcept,
 } from "./heuristic-title-builder";
 import { buildJsonLdSchema } from "./json-ld-builder";
-import { sanitizeBeddingTitle } from "../store-profiles";
+import {
+  ensureProductIdentityInTitle,
+  sanitizeBeddingTitle,
+} from "../store-profiles";
 
 const PLACEHOLDER_PATTERN =
   /^(unknown|none|n\/a|not applicable|unspecified|sample|test|sku.*)[\s.]*$/i;
@@ -340,6 +343,13 @@ export class HeuristicContentGenerator implements ContentGenerator {
     if (facts.storeProfile?.bedding) {
       productTitle = sanitizeBeddingTitle(productTitle);
     }
+    if (facts.storeProfile?.titleIdentity) {
+      productTitle = ensureProductIdentityInTitle(
+        productTitle,
+        facts.storeProfile.titleIdentity,
+        80,
+      );
+    }
 
     // 2. Build Intro
     const category = isMeaningfulText(facts.physicalProductIdentity)
@@ -512,6 +522,13 @@ export class HeuristicContentGenerator implements ContentGenerator {
     );
     if (facts.storeProfile?.bedding) {
       productSeoTitle = sanitizeBeddingTitle(productSeoTitle);
+    }
+    if (facts.storeProfile?.titleIdentity) {
+      productSeoTitle = ensureProductIdentityInTitle(
+        productSeoTitle,
+        facts.storeProfile.titleIdentity,
+        constraints.maxSeoTitleLength,
+      );
     }
 
     // 7. Build SEO Description (<= 160 chars)

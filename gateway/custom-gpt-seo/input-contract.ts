@@ -28,6 +28,15 @@ const catalogPolicySchema = z.object({
   requiredContentRules: z.array(z.string()),
 }).strict();
 
+const productTitleIdentityPolicySchema = z.object({
+  policyId: z.string().min(1),
+  applicableProductTypes: z.array(z.string().min(1)).min(1),
+  physicalIdentityTerms: z.array(z.string().min(1)).min(1),
+  acceptedTitleTerms: z.array(z.string().min(1)).min(1),
+  preferredTitleTerm: z.string().min(1),
+  minimumIdentityConfidence: z.number().min(0).max(1),
+}).strict();
+
 const storeProfileSchema = z.object({
   profileId: z.string().min(1),
   profileVersion: z.string().min(1),
@@ -43,6 +52,7 @@ const storeProfileSchema = z.object({
     mode: z.literal("visual-design-only"),
     excludedTopics: z.array(z.string().min(1)),
   }).strict().optional(),
+  productTitleIdentityPolicies: z.array(productTitleIdentityPolicySchema).optional(),
   seoConstraints: z.object({
     maxTitleCharacters: z.number().int().positive(),
     maxDescriptionCharacters: z.number().int().positive(),
