@@ -2422,7 +2422,7 @@ export function AmazonCrawlerPage({
       <label className="grid gap-2 text-sm font-medium text-slate-200">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị
         <textarea
-          className="min-h-40 rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-sm text-slate-100 outline-none focus:border-cyan-400"
+          className="min-h-32 rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-sm text-slate-100 outline-none focus:border-cyan-400"
           placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
           value={urlText}
           onChange={(event) => {
@@ -2468,9 +2468,11 @@ export function AmazonCrawlerPage({
             )}
           </div>
         )}
-          <label className="grid gap-2 text-sm text-slate-300">
+          <div role="group" aria-label="Store và Vendor" className="grid min-w-0 items-start gap-4 md:grid-cols-2">
+          <div className="min-w-0 space-y-2">
+          <label className="grid gap-1.5 text-sm text-slate-300">
             Store nhận sản phẩm
-            <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning} onChange={(event) => handleStoreChange(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-slate-100 disabled:opacity-50">
+            <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning} onChange={(event) => handleStoreChange(event.target.value)} className="min-w-0 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 disabled:opacity-50">
               {availableStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
             </select>
           </label>
@@ -2480,15 +2482,17 @@ export function AmazonCrawlerPage({
             <button type="button" aria-label="Thêm store" disabled={isRunning} onClick={() => setIsAddStoreOpen(true)} className="text-cyan-300 hover:text-cyan-200 disabled:opacity-50">Thêm store</button>
             <button type="button" aria-label="Xóa store" disabled={isRunning} onClick={() => setIsDeleteStoreOpen(true)} className="text-rose-300 hover:text-rose-200 disabled:opacity-50">Xóa store</button>
           </div>
+          </div>
 
           <CrawlerStoreVendorField key={activeStoreId} storeId={activeStoreId} manager={amazonCrawlerJobs?.storeVendors} onReady={setStoreVendor} />
+          </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-1 text-sm text-slate-300">
+      <div role="group" aria-label="Profile cào và xử lý ảnh" className="grid min-w-0 items-start gap-4 md:grid-cols-2">
+        <label className="grid min-w-0 gap-1.5 text-sm text-slate-300">
           Profile cào
           <select
             aria-label="Profile cào"
-            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            className="min-w-0 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
             value={settings.profileSlug}
             onChange={(event) => {
               const selectedProfile = event.target.value;
@@ -2509,20 +2513,12 @@ export function AmazonCrawlerPage({
             <option value="preaurem">Preaurem</option>
           </select>
         </label>
-        {settings.profileSlug === "jeminise" ? <label className="flex items-center gap-3 self-end rounded-lg border border-slate-700 p-2 text-sm text-slate-200">
-          <input
-            checked={settings.applyJeminisePreset}
-            disabled={settings.profileSlug !== "jeminise"}
-            type="checkbox"
-            onChange={(event) => updateSetting("applyJeminisePreset", event.target.checked)}
-          />
-          Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
-        </label> : null}
-        <label className="grid gap-1 text-sm text-slate-300">
+        <div className="min-w-0 space-y-2">
+        <label className="grid min-w-0 gap-1.5 text-sm text-slate-300">
           Xử lý ảnh
           <select
             aria-label="Profile xử lý ảnh"
-            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+            className="min-w-0 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
             value={settings.imageProfileSlug}
             onChange={(event) => {
               const slug = event.target.value;
@@ -2533,10 +2529,20 @@ export function AmazonCrawlerPage({
             {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
           </select>
         </label>
-        <div className="flex items-end gap-2">
-          <button className="rounded-lg border border-cyan-700 px-3 py-2 text-sm text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
-          <button className="rounded-lg border border-slate-700 px-3 py-2 text-sm" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="text-xs text-cyan-300 hover:text-cyan-200" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
+          <button className="text-xs text-slate-300 hover:text-white" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
         </div>
+        </div>
+        {settings.profileSlug === "jeminise" ? <label className="flex items-start gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 md:col-span-2">
+          <input className="mt-1 shrink-0"
+            checked={settings.applyJeminisePreset}
+            disabled={settings.profileSlug !== "jeminise"}
+            type="checkbox"
+            onChange={(event) => updateSetting("applyJeminisePreset", event.target.checked)}
+          />
+          Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
+        </label> : null}
       </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-200">{imageProfileMessage}</p> : null}
             </div>

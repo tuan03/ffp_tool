@@ -87,6 +87,9 @@ test("crawler page puts ASIN and start ahead of settings, agents and maintenance
   assert.match(markup, /id="crawler-panel-diagnostics"[^>]*hidden=""/);
   assert.match(markup, /Store nhận sản phẩm/);
   assert.match(markup, /Xử lý ảnh/);
+  assert.match(markup, /role="group" aria-label="Store và Vendor" class="[^"]*md:grid-cols-2/);
+  assert.match(markup, /role="group" aria-label="Profile cào và xử lý ảnh" class="[^"]*md:grid-cols-2/);
+  assert.match(markup, /class="[^"]*min-h-32[^"]*"[^>]*placeholder=/);
   clearCrawlerSession();
 });
 
