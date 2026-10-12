@@ -3,6 +3,7 @@ import {
   findExcludedLiterals,
   formatExcludedLiteralViolations,
 } from "../literal-text-guard";
+import { hasProductIdentityInTitle } from "../store-profiles";
 import { checkClaimGrounding } from "./claim-guard";
 import {
   ContentGenerationSchemaError,
@@ -212,6 +213,30 @@ export function validateFinalContent(
       result.productSeoDescription.length,
       constraints.maxSeoDescriptionLength,
     );
+  }
+
+  const titleIdentity = facts.storeProfile?.titleIdentity;
+  const titleIdentityConflict = facts.storeProfile?.titleIdentityConflict;
+  if (titleIdentityConflict) {
+    const violation = `Shopify product type ${JSON.stringify(titleIdentityConflict.productType)} conflicts with image-recognized product ${JSON.stringify(titleIdentityConflict.physicalProductIdentity)}`;
+    throw new ContentGroundingViolationError(
+      `Product identity requires manual review: ${violation}`,
+      [violation],
+    );
+  }
+  if (titleIdentity) {
+    const identityViolations = [
+      ["Product title", result.productTitle],
+      ["SEO title", result.productSeoTitle],
+    ].flatMap(([field, value]) => hasProductIdentityInTitle(value, titleIdentity)
+      ? []
+      : [`${field} must name the physical product using one of: ${titleIdentity.acceptedTerms.join(", ")}`]);
+    if (identityViolations.length > 0) {
+      throw new ContentGroundingViolationError(
+        `Product title identity policy violated: ${identityViolations.join("; ")}`,
+        identityViolations,
+      );
+    }
   }
 
   // 2. HTML safety check

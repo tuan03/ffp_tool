@@ -10,7 +10,7 @@ const SOURCE = {
   title: "FORBIDDEN TITLE",
   descriptionHtml: "FORBIDDEN DESCRIPTION",
   handle: "forbidden-handle",
-  productType: "FORBIDDEN PRODUCT TYPE",
+  productType: "Bedding",
   tags: ["FORBIDDEN TAG"],
   variants: [{ title: "FORBIDDEN VARIANT" }],
   images: [
@@ -20,7 +20,7 @@ const SOURCE = {
   ],
 };
 
-test("Auto SEO adapter projects exactly images, niche and storeProfile", () => {
+test("Auto SEO adapter preserves Shopify product type as catalog metadata", () => {
   const input = fromAutoSeoProduct(SOURCE, "bedding", TEST_STORE_PROFILE);
   assert.deepEqual(Object.keys(input).sort(), ["images", "niche", "storeProfile"]);
   assert.deepEqual(input.images.map((image) => image.url), [
@@ -30,7 +30,7 @@ test("Auto SEO adapter projects exactly images, niche and storeProfile", () => {
   assert.equal(input.images[0]?.id, "hero");
   assert.match(input.images[1]?.id ?? "", /^image-[a-f0-9]{8}$/);
   assert.equal(fromAutoSeoProduct(SOURCE, "bedding", TEST_STORE_PROFILE).images[1]?.id, input.images[1]?.id);
-  assert.equal(input.niche, "bedding");
+  assert.equal(input.niche, "Bedding");
   assert.equal(JSON.stringify(input).includes("FORBIDDEN"), false);
 });
 

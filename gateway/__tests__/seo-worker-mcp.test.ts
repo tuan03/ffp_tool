@@ -95,6 +95,8 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     assert.match(JSON.stringify(contracts), /productSeoTitle/);
     assert.match(JSON.stringify(contracts), /customizationSampleTexts/);
     assert.match(JSON.stringify(contracts), /personalization:customizable/);
+    assert.match(JSON.stringify(contracts), /must name the physical product/i);
+    assert.match(JSON.stringify(contracts), /must never replace the product type/i);
     const status = await client.callTool({ name: "worker_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.match(JSON.stringify(status), /demo/);

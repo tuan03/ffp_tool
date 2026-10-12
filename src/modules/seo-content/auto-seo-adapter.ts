@@ -110,8 +110,9 @@ export function fromAutoSeoProduct(
   niche: string,
   storeProfile: SeoStoreProfile,
 ): SeoContentInput {
-  // Image pixels are the sole product-specific evidence. Ignore title,
-  // description, handle, variants, tags, product type and old alt text.
+  // Image pixels are the sole product-specific evidence. Shopify product type is
+  // retained only as catalog metadata for narrowly scoped policies. Ignore title,
+  // description, handle, variants, tags and old alt text.
   const images: SeoContentImageInput[] = [];
   const seenUrls = new Set<string>();
 
@@ -157,7 +158,9 @@ export function fromAutoSeoProduct(
 
   return {
     images,
-    niche: niche.trim() || storeProfile.niche,
+    niche: typeof product.productType === "string" && product.productType.trim()
+      ? product.productType.trim()
+      : niche.trim() || storeProfile.niche,
     storeProfile,
   };
 }

@@ -29,11 +29,11 @@ const CONSTRAINTS = {
   preserveExistingHandle: false,
 } as const;
 
-function createFacts(confidence: number): ContentFactSheet {
+function createFacts(confidence: number, productType = "Bedding"): ContentFactSheet {
   return {
     originalTitle: "bedding set - Viking warrior with raven shield",
     originalDescription: "Viking warrior with raven shield. Bold runic lettering. VALHALLA",
-    niche: "Bedding & Home Decor",
+    niche: productType,
     physicalProductIdentity: "bedding set",
     typographyVisibleTexts: ["VALHALLA"],
     typographyStyleSummary: "bold runic lettering",
@@ -45,7 +45,7 @@ function createFacts(confidence: number): ContentFactSheet {
     storeProfile: projectStoreContentProfile(
       JEMINISE_BEDDING_PROFILE,
       "bedding set",
-      "Bedding & Home Decor",
+      productType,
       confidence,
     ),
   };
@@ -65,10 +65,13 @@ test("Jeminise bedding policy activates all three offerings only for grounded hi
   const wrongIdentity = projectStoreContentProfile(
     JEMINISE_BEDDING_PROFILE,
     "wall art",
-    "Bedding & Home Decor",
+    "Bedding",
     0.99,
   );
   assert.equal(wrongIdentity.bedding, undefined);
+
+  const blanket = createFacts(0.92, "Blanket").storeProfile;
+  assert.equal(blanket?.bedding, undefined);
 });
 
 test("Jeminise heuristic description stays focused on visible design", async () => {
@@ -99,7 +102,7 @@ test("Gemini receives the Jeminise visual-design-only description policy", async
       capturedPrompt = options.prompt;
       return {
         rawText: JSON.stringify({
-          productTitle: "Viking Warrior Quilt Bedding Set",
+          productTitle: "Viking Warrior Raven Artwork",
           intro: "A grounded Viking warrior bedding design.",
           bullets: [
             { label: "Design", text: "Viking warrior and raven artwork." },
@@ -107,7 +110,7 @@ test("Gemini receives the Jeminise visual-design-only description policy", async
           ],
           guidance: ["Machine wash cold on gentle cycle."],
           closing: "A design-led bedroom centerpiece.",
-          productSeoTitle: "Viking Warrior Quilt Bedding Set",
+          productSeoTitle: "Viking Warrior Raven Artwork",
           productSeoDescription: buildBeddingSeoDescription("Viking Warrior Quilt Bedding Set", "Viking warrior", 160),
           aeo_quick_summary: "Viking bedding available as a Comforter, Quilt, or Duvet Cover in microfiber.",
           aeo_faq: [
@@ -128,8 +131,11 @@ test("Gemini receives the Jeminise visual-design-only description policy", async
   assert.match(capturedPrompt, /<STORE_PRODUCT_OFFERING>/);
   assert.match(capturedPrompt, /Comforter: Plush all-season warmth/);
   assert.match(capturedPrompt, /<PRODUCT_DESCRIPTION_POLICY>/);
+  assert.match(capturedPrompt, /<PRODUCT_TITLE_IDENTITY_POLICY>/);
   assert.match(capturedPrompt, /visual-design-only/);
   assert.doesNotMatch(capturedPrompt, /variantLabel|variantSummary|Variant \/ Style/);
+  assert.equal(draft.productTitle, "Viking Warrior Raven Bedding");
+  assert.equal(draft.productSeoTitle, "Viking Warrior Raven Bedding");
   assert.equal(draft.styleOptions, undefined);
 });
 

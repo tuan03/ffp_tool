@@ -2,7 +2,7 @@ import type { SeoStoreProfile } from "../../types";
 
 export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
   profileId: "jeminise-bedding",
-  profileVersion: "2.1.0",
+  profileVersion: "2.2.0",
   storeId: "jeminise",
   storeName: "Jeminise",
   locale: "en-US",
@@ -28,6 +28,31 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
       "Comforter, Quilt, Duvet Cover, Blanket, and other product formats",
     ]),
   }),
+  productTitleIdentityPolicies: Object.freeze([
+    {
+      policyId: "jeminise-bedding-title-identity-v1",
+      applicableProductTypes: Object.freeze(["Bedding"]),
+      physicalIdentityTerms: Object.freeze([
+        "bedding",
+        "bedding set",
+        "bed cover",
+        "comforter",
+        "quilt",
+        "duvet cover",
+      ]),
+      acceptedTitleTerms: Object.freeze(["Bedding", "Bedding Set"]),
+      preferredTitleTerm: "Bedding",
+      minimumIdentityConfidence: 0.8,
+    },
+    {
+      policyId: "jeminise-blanket-title-identity-v1",
+      applicableProductTypes: Object.freeze(["Blanket"]),
+      physicalIdentityTerms: Object.freeze(["blanket", "throw", "fleece blanket"]),
+      acceptedTitleTerms: Object.freeze(["Blanket", "Throw Blanket"]),
+      preferredTitleTerm: "Blanket",
+      minimumIdentityConfidence: 0.8,
+    },
+  ]),
   seoConstraints: Object.freeze({
     maxTitleCharacters: 70,
     maxDescriptionCharacters: 160,
@@ -61,7 +86,9 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
       "care: Machine washable: machine wash cold on gentle cycle, tumble dry low heat",
     ]),
     requiredContentRules: Object.freeze([
-      "Do NOT force Comforter, Quilt, or Duvet Cover into the product title; title must focus on artwork and variant.",
+      "Product title and SEO title must name the physical product as Bedding while describing the visible design.",
+      "Artwork, Art, Design, Pattern, Image, or Illustration must never replace the physical product identity in a title.",
+      "Do NOT force Comforter, Quilt, or Duvet Cover into the product title.",
       "The Shopify product description must focus exclusively on the visible design and its distinctive aesthetic appeal.",
       "Do not include materials, sizes, care, construction, or product-format comparisons in the Shopify product description.",
     ]),

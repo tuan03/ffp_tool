@@ -603,12 +603,12 @@ test("18a. runSeoContent hands Capozen products to the V2 contract with its rug 
       workflowId: "wf-capozen-profile",
       storeId: "capozen",
       shopDomain: "capozen.myshopify.com",
-      products: [createMockProduct({ id: "p1" })],
+      products: [createMockProduct({ id: "p1", productType: "Rug" })],
     },
     {
       runner: async (input) => {
         assert.deepEqual(Object.keys(input).sort(), ["images", "niche", "storeProfile"]);
-        assert.equal(input.niche, "Rugs & Doormats");
+        assert.equal(input.niche, "Rug");
         assert.equal(input.storeProfile.profileId, "capozen-rugs");
         return {
           productTitle: "Image-grounded rug",
