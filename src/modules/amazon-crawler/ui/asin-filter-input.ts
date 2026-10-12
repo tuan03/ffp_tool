@@ -23,3 +23,9 @@ export function parseAsinFilterInput(text: string): AsinFilterInput {
   });
   return { asins: [...uniqueAsins], duplicateCount, invalidEntries };
 }
+
+export function appendAsinToCrawlerInput(text: string, asin: string): string {
+  const normalized = asin.trim().toUpperCase();
+  if (!/^[A-Z0-9]{10}$/.test(normalized) || parseAsinFilterInput(text).asins.includes(normalized)) return text;
+  return text.trim() ? `${text.trimEnd()}\n${normalized}` : normalized;
+}

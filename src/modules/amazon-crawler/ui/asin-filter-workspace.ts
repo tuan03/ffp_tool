@@ -13,7 +13,7 @@ export interface AsinFilterWorkspace {
   readonly inputText: string;
   readonly snapshot: AsinFilterSnapshot | null;
   readonly progress?: {
-    readonly rows: Readonly<Record<string, { readonly copied?: boolean; readonly viewed?: boolean }>>;
+    readonly rows: Readonly<Record<string, { readonly copied?: boolean; readonly viewed?: boolean; readonly selected?: boolean }>>;
     readonly lastAsin?: string;
   };
 }
@@ -22,7 +22,7 @@ const asinSchema = z.string().regex(/^[A-Z0-9]{10}$/);
 const workspaceSchema = z.object({
   inputText: z.string().max(500000),
   progress: z.object({
-    rows: z.record(asinSchema, z.object({ copied: z.boolean().optional(), viewed: z.boolean().optional() }))
+    rows: z.record(asinSchema, z.object({ copied: z.boolean().optional(), viewed: z.boolean().optional(), selected: z.boolean().optional() }))
       .refine((rows) => Object.keys(rows).length <= SHOPIFY_ASIN_FILTER_LIMIT),
     lastAsin: asinSchema.optional(),
   }).optional(),
@@ -56,7 +56,7 @@ export function retainAsinFilterProgress(workspace: AsinFilterWorkspace): AsinFi
   return { ...workspace, progress: { rows, ...(lastAsin && missing.has(lastAsin) ? { lastAsin } : {}) } };
 }
 
-export function markAsinFilterRow(workspace: AsinFilterWorkspace, asin: string, action: "copied" | "viewed"): AsinFilterWorkspace {
+export function markAsinFilterRow(workspace: AsinFilterWorkspace, asin: string, action: "copied" | "viewed" | "selected"): AsinFilterWorkspace {
   if (!workspace.snapshot?.result.missingAsins.includes(asin)) return workspace;
   const retained = retainAsinFilterProgress(workspace);
   return { ...retained, progress: {

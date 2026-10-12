@@ -42,7 +42,9 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
     await vendorInput.waitFor();
     await page.waitForFunction(() => !(document.getElementById("crawler-store-vendor") as HTMLInputElement | null)?.disabled);
     await vendorInput.fill("Crawler Brand");
-    assert.equal(await crawl.getByRole("button", { name: /^Bắt đầu cào/ }).isDisabled(), true);
+    assert.equal(await crawl.getByRole("button", { name: /^Bắt đầu cào/ }).count(), 2);
+    assert.equal(await crawl.getByRole("button", { name: /^Bắt đầu cào/ }).first().isDisabled(), true);
+    assert.equal(await crawl.getByRole("button", { name: /^Bắt đầu cào/ }).last().isDisabled(), true);
     await crawl.getByRole("button", { name: "Lưu Vendor", exact: true }).click();
     await crawl.getByText("Đã lưu cho store này. Thay đổi chỉ áp dụng cho job mới.").waitFor();
     assert.equal(await vendorInput.inputValue(), "Crawler Brand");

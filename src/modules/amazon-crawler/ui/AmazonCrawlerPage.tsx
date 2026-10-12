@@ -42,6 +42,7 @@ import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
 import { CrawlerStoreVendorField } from "./components/CrawlerStoreVendorField";
 import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
+import { appendAsinToCrawlerInput } from "./asin-filter-input";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
@@ -2391,6 +2392,21 @@ export function AmazonCrawlerPage({
     </>
   );
 
+  const isStartDisabled = !hasSavedStoreVendor || urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale
+    || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED"
+    || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0));
+  const startCrawlButton = <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
+    disabled={isStartDisabled} type="button" onClick={() => void handleStart()}>
+    {isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}
+  </button>;
+
+  function handleSelectFilterAsin(asin: string): void {
+    if (isRunning || isCheckingAsins) return;
+    setCrawlerUrlText(appendAsinToCrawlerInput(urlText, asin));
+    setAsinPreflightError(null);
+    setAsinPreflightMatches([]);
+  }
+
   return (
     <>
       <CrawlerWorkspace
@@ -2433,7 +2449,7 @@ export function AmazonCrawlerPage({
         />
       </label>
               <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50" disabled={!hasSavedStoreVendor || urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED" || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0))} type="button" onClick={() => void handleStart()}>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>
+        {startCrawlButton}
               </div>
 
           {coordinatorActiveJob ? (
@@ -2912,9 +2928,13 @@ export function AmazonCrawlerPage({
         </div>
       ) : null}
             </div>
+            <div aria-label="Bắt đầu sau thiết lập" className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-4">
+              {startCrawlButton}
+            </div>
           </section>
           <div className="min-w-0 xl:sticky xl:top-24">
-            <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins} />
+            <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
+              onSelectAsin={handleSelectFilterAsin} isSelectionDisabled={isRunning || isCheckingAsins} />
           </div>
           </div>
       {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-200">{asinPreflightError}</p> : null}

@@ -90,6 +90,8 @@ test("crawler page puts ASIN and start ahead of settings, agents and maintenance
   assert.match(markup, /role="group" aria-label="Store và Vendor" class="[^"]*md:grid-cols-2/);
   assert.match(markup, /role="group" aria-label="Profile cào và xử lý ảnh" class="[^"]*md:grid-cols-2/);
   assert.match(markup, /class="[^"]*min-h-32[^"]*"[^>]*placeholder=/);
+  assert.equal((markup.match(/>Bắt đầu cào \(0 link\)<\/button>/g) ?? []).length, 2);
+  assert.ok(markup.lastIndexOf("Bắt đầu cào (0 link)") > markup.indexOf("Collection, loại sản phẩm"));
   clearCrawlerSession();
 });
 

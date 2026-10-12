@@ -10,6 +10,8 @@ import type { AsinFilterWorkspace } from "../asin-filter-workspace";
 interface ShopifyAsinFilterPanelProps {
   readonly storeId: string;
   readonly filterShopifyAsins: ShopifyAsinFilter;
+  readonly onSelectAsin: (asin: string) => void;
+  readonly isSelectionDisabled: boolean;
 }
 
 type FilterState =
@@ -18,7 +20,7 @@ type FilterState =
   | { readonly status: "unverified"; readonly message: string };
 
 // Parent keys this workspace by store: drafts and in-flight reads must never cross stores.
-export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins }: ShopifyAsinFilterPanelProps): React.JSX.Element {
+export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAsin, isSelectionDisabled }: ShopifyAsinFilterPanelProps): React.JSX.Element {
   const [workspace, setWorkspace] = useState<AsinFilterWorkspace>(() => {
     try { return readAsinFilterWorkspace(window.localStorage, storeId); }
     catch { return { inputText: "", snapshot: null }; }
@@ -83,15 +85,14 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins }: ShopifyA
     }
   }
 
-  function handleMarkRow(asin: string, action: "copied" | "viewed"): void {
+  function handleMarkRow(asin: string, action: "selected" | "viewed"): void {
     setWorkspace((current) => markAsinFilterRow(current, asin, action));
   }
 
-  async function handleCopy(text: string, asin?: string): Promise<void> {
+  async function handleCopy(text: string): Promise<void> {
     if (!navigator.clipboard) { window.prompt("Sao chép danh sách ASIN chưa có:", text); setCopyMessage("Đã mở danh sách để bạn sao chép."); return; }
     try {
       await navigator.clipboard.writeText(text);
-      if (asin) handleMarkRow(asin, "copied");
       setCopyMessage("Đã sao chép ASIN.");
     }
     catch { setCopyMessage("Trình duyệt không cho sao chép tự động. Bạn có thể chọn văn bản ASIN để sao chép hoặc tải TXT."); }
@@ -156,19 +157,22 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins }: ShopifyA
                 {verifiedResult.missingAsins.map((asin) => {
                   const row = workspace.progress?.rows[asin];
                   const isLatest = workspace.progress?.lastAsin === asin;
-                  const hasAction = row?.copied || row?.viewed;
+                  const hasAction = row?.copied || row?.viewed || row?.selected;
                   return <li key={asin} data-asin-row={asin} aria-current={isLatest ? "true" : undefined}
                     className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 ${isLatest ? "border-cyan-400 bg-cyan-950/40" : hasAction ? "border-emerald-900 bg-emerald-950/20" : "border-slate-800 bg-slate-950"}`}>
                   <div className="min-w-0">
                     <span className="font-mono text-sm text-slate-100">{asin}</span>
                     {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px]">
                       {row?.copied ? <span className="text-emerald-300">✓ Đã copy</span> : null}
+                      {row?.selected ? <span className="text-emerald-300">✓ Đã chọn cào</span> : null}
                       {row?.viewed ? <span className="text-emerald-300">✓ Đã xem</span> : null}
                       {isLatest ? <span className="text-cyan-300">Gần nhất</span> : null}
                     </div> : null}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button type="button" aria-label={`Sao chép ${asin}`} onClick={() => void handleCopy(asin, asin)} className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-200">Copy</button>
+                    <button type="button" aria-label={`Chọn cào ${asin}`} disabled={isSelectionDisabled}
+                      onClick={() => { onSelectAsin(asin); handleMarkRow(asin, "selected"); setCopyMessage(`Đã thêm ${asin} vào ô cào. Chọn collection rồi bấm Bắt đầu cào.`); }}
+                      className="rounded border border-cyan-700 bg-cyan-950/30 px-2 py-1 text-xs text-cyan-200 disabled:opacity-50">Cào</button>
                     <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
                       onClick={() => handleMarkRow(asin, "viewed")} onAuxClick={(event) => { if (event.button === 1) handleMarkRow(asin, "viewed"); }}
                       className="rounded border border-cyan-800 px-2 py-1 text-xs text-cyan-200">View ↗</a>

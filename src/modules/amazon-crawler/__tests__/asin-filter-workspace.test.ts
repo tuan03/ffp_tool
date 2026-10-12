@@ -74,3 +74,11 @@ test("rechecking keeps marks for remaining missing ASINs and removes obsolete pr
   assert.deepEqual(refreshed.progress, { rows: {} });
   assert.equal(marked.progress?.lastAsin, "B0MOCK1002", "pruning does not mutate the original workspace");
 });
+
+test("selected crawl marks persist without claiming the product has actually crawled", () => {
+  const storage = createStorage();
+  const selected = markAsinFilterRow(workspace, "B0MOCK1002", "selected");
+  assert.deepEqual(selected.progress, { rows: { B0MOCK1002: { selected: true } }, lastAsin: "B0MOCK1002" });
+  writeAsinFilterWorkspace(storage, "store-a", selected);
+  assert.deepEqual(readAsinFilterWorkspace(storage, "store-a"), selected);
+});
