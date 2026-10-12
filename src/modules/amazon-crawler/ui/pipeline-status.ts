@@ -67,3 +67,26 @@ export function resolveCrawlerSeoHandoffSummary(
   const localSummary = summarizeCrawlerSeoHandoffs(products);
   return { totalProducts: products.length, ...localSummary };
 }
+
+export function resolveInlineCrawlerHandoff(input: {
+  readonly completedJobId: string | null;
+  readonly dismissedJobId: string | null;
+  readonly isBusy: boolean;
+  readonly storeId: string;
+  readonly resultStoreId: string;
+  readonly summary: AmazonCrawlerSeoQueueHandoffSummary;
+}): { readonly label: string; readonly tone: "success" | "warning" } | null {
+  if (!input.completedJobId || input.isBusy || input.completedJobId === input.dismissedJobId
+      || input.storeId.toLowerCase() !== input.resultStoreId.toLowerCase()) return null;
+  const summary = input.summary;
+  const hasSkips = (summary.skippedExistingShopify ?? 0) > 0 || (summary.skippedExistingPipeline ?? 0) > 0;
+  const details = [summary.totalProducts > 0
+    ? `Đã bàn giao ${summary.handedOver}/${summary.totalProducts} sản phẩm sang SEO Queue`
+    : hasSkips ? "Không có sản phẩm mới" : "Chưa có sản phẩm bàn giao SEO Queue"];
+  if (summary.pending > 0) details.push(`${summary.pending} chờ bàn giao`);
+  if (summary.notHandedOver > 0) details.push(`${summary.notHandedOver} chưa bàn giao`);
+  if ((summary.skippedExistingShopify ?? 0) > 0) details.push(`${summary.skippedExistingShopify} đã có Shopify`);
+  if ((summary.skippedExistingPipeline ?? 0) > 0) details.push(`${summary.skippedExistingPipeline} giữ dữ liệu cũ`);
+  return { label: details.join(" · "), tone: summary.pending > 0 || summary.notHandedOver > 0
+    || (summary.totalProducts === 0 && !hasSkips) ? "warning" : "success" };
+}

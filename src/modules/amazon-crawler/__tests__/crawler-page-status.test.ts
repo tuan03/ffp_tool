@@ -60,6 +60,8 @@ test("crawler page stops at SEO Queue handoff after restoring a downstream job",
   assert.doesNotMatch(markup, /Chờ kiểm duyệt SEO|Shopify:|Proxy Shopify|SEO fallback/);
   assert.match(markup, /Xử lý ảnh/);
   assert.match(markup, /Tiếp tục tự động sau SEO theo profile đã chọn/);
+  assert.equal((markup.match(/aria-label="Kết quả bàn giao phiên vừa cào"/g) ?? []).length, 2);
+  assert.match(markup, /Đã bàn giao 1\/1 sản phẩm sang SEO Queue/);
   assert.match(markup, />Tải Agent cho Windows</);
   assert.match(markup, /https:\/\/github\.com\/tuan03\/ffp_tool\/releases\/latest/);
   clearCrawlerSession();
@@ -92,6 +94,25 @@ test("crawler page puts ASIN and start ahead of settings, agents and maintenance
   assert.match(markup, /class="[^"]*min-h-32[^"]*"[^>]*placeholder=/);
   assert.equal((markup.match(/>Bắt đầu cào \(0 link\)<\/button>/g) ?? []).length, 2);
   assert.ok(markup.lastIndexOf("Bắt đầu cào (0 link)") > markup.indexOf("Collection, loại sản phẩm"));
+  clearCrawlerSession();
+});
+
+test("start buttons show durable eighteen-product handoff even without loaded cards", () => {
+  clearCrawlerSession();
+  hydrateCrawlerSessionFromJob({ jobId: "job-empty-cards", status: "review_pending", products: [],
+    output: { ...amazonCrawlerMockOutput, jobId: "job-empty-cards", products: [],
+      seoQueueHandoff: { totalProducts: 18, handedOver: 18, pending: 0, notHandedOver: 0 },
+    },
+  });
+  const markup = renderToStaticMarkup(createElement(MemoryRouter, null,
+    createElement(AmazonCrawlerPage, {
+      clearAmazonCrawlerCache: async () => ({ removedFiles: 0, removedBytes: 0 }),
+      loadAmazonCrawlerAgentRelease: async () => amazonCrawlerMockAgentRelease,
+      loadAmazonCrawlerClients: async () => [], runAmazonCrawler: async () => amazonCrawlerMockOutput,
+    }),
+  ));
+  assert.equal((markup.match(/aria-label="Kết quả bàn giao phiên vừa cào"/g) ?? []).length, 2);
+  assert.match(markup, /Đã bàn giao 18\/18 sản phẩm sang SEO Queue/);
   clearCrawlerSession();
 });
 

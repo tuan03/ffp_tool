@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "../types";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
+import { resolveCrawlerSeoHandoffSummary, resolveInlineCrawlerHandoff } from "./pipeline-status";
 import { notifyUser } from "../../../shared/utils";
 
 export type ResultTab = "overview" | "source" | "final" | "customize" | "json";
@@ -381,14 +382,24 @@ export async function startCrawlerJob({
     persistSession(sessionState);
     notifyListeners();
 
-    notifyUser({
-      title: "⚡ Distributed Crawler: Hoàn tất cào sản phẩm!",
-      message: `Đã cào thành công ${crawlerOutput.products.length} sản phẩm từ Amazon. Bạn có thể kiểm tra và chuyển tiếp sang SEO Review.`,
-      type: "success",
-      sound: "chime",
-      url: "/amazon-crawler",
-      tag: `crawler-finished-${crawlerOutput.jobId}`,
-    });
+    if (crawlerOutput.status !== "cancelled") {
+      const summary = resolveCrawlerSeoHandoffSummary(crawlerOutput.products, crawlerOutput.seoQueueHandoff);
+      const completion = resolveInlineCrawlerHandoff({
+        completedJobId: crawlerOutput.jobId, dismissedJobId: null, isBusy: false,
+        storeId: crawlerOutput.settings.storeId || "capozen", resultStoreId: crawlerOutput.settings.storeId || "capozen",
+        summary,
+      });
+      const hasWarnings = completion?.tone !== "success" || crawlerOutput.errors.length > 0;
+      notifyUser({
+        title: hasWarnings ? "⚡ Distributed Crawler: Phiên cào đã kết thúc" : summary.totalProducts > 0
+          ? "⚡ Distributed Crawler: Đã bàn giao SEO Queue" : "⚡ Distributed Crawler: Đã kiểm tra ASIN",
+        message: `${completion?.label ?? "Phiên cào đã kết thúc."}${crawlerOutput.errors.length > 0 ? ` · ${crawlerOutput.errors.length} lỗi crawl` : ""}`,
+        type: hasWarnings ? "warning" : "success",
+        sound: "chime",
+        url: "/amazon-crawler",
+        tag: `crawler-finished-${crawlerOutput.jobId}`,
+      });
+    }
 
     return crawlerOutput;
   } catch (caught: unknown) {

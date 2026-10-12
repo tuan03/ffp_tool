@@ -27,6 +27,22 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const input = { ...DEFAULT_AMAZON_CRAWLER_SETTINGS, urls: ["B0MOCK0001"] };
 
+test("runner retains the durable handoff count when result cards are still empty", async () => {
+  const handoff = { totalProducts: 18, handedOver: 18, pending: 0, notHandedOver: 0 };
+  const run = createAmazonCrawlerRunner({ engineUrl: "http://coordinator.test", pollIntervalMs: 0,
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "agent", displayName: "Agent", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (init?.method === "POST") return jsonResponse({ id: "job-18", status: "queued" }, 202);
+      if (url.endsWith("/results")) return jsonResponse({ ...amazonCrawlerMockOutput, jobId: "job-18", products: [] });
+      return jsonResponse({ id: "job-18", status: "review_pending", progress: { completed: 1, total: 1 }, seoQueueHandoff: handoff });
+    },
+  });
+  const output = await run({ input });
+  assert.deepEqual(output.seoQueueHandoff, handoff);
+  assert.equal(output.products.length, 0);
+});
+
 test("default settings match the four-proxy concurrency profile", () => {
   assert.deepEqual(
     {

@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { amazonCrawlerMockOutput } from "../mocks/data";
 import type { AmazonCrawlerProgress, AmazonCrawlerRunner } from "../types";
+import { subscribeToNotifications } from "../../../shared/utils";
+import type { AppNotification } from "../../../shared/utils";
 import {
   abortCrawlerJob,
   clearCrawlerSession,
@@ -20,6 +22,36 @@ import {
   toggleCrawlerBatchJsonOpen,
   updateCrawlerSetting,
 } from "../ui/crawler-session";
+
+test("completion toast uses server handoff counts instead of the empty result card list", async () => {
+  clearCrawlerSession();
+  const notifications: AppNotification[] = [];
+  const unsubscribe = subscribeToNotifications((notification) => notifications.push(notification));
+  try {
+    await startCrawlerJob({ urls: ["B0MOCK0001"], runAmazonCrawler: async () => ({ ...amazonCrawlerMockOutput,
+      jobId: "job-18", status: "review_pending", products: [],
+      seoQueueHandoff: { totalProducts: 18, handedOver: 18, pending: 0, notHandedOver: 0 },
+    }) });
+    const completed = notifications.find((notification) => notification.type === "success");
+    assert.ok(completed);
+    assert.match(completed.message, /18\/18 sản phẩm sang SEO Queue/);
+    assert.doesNotMatch(completed.message, /thành công 0 sản phẩm/);
+  } finally { unsubscribe(); clearCrawlerSession(); }
+});
+
+test("partial handoff completion uses a warning rather than an all-success toast", async () => {
+  clearCrawlerSession();
+  const notifications: AppNotification[] = [];
+  const unsubscribe = subscribeToNotifications((notification) => notifications.push(notification));
+  try {
+    await startCrawlerJob({ urls: ["B0MOCK0001"], runAmazonCrawler: async () => ({ ...amazonCrawlerMockOutput,
+      jobId: "job-partial", status: "partial", products: [],
+      seoQueueHandoff: { totalProducts: 18, handedOver: 16, pending: 0, notHandedOver: 2 },
+    }) });
+    assert.equal(notifications.at(-1)?.type, "warning");
+    assert.match(notifications.at(-1)?.message ?? "", /16\/18.*2 chưa bàn giao/);
+  } finally { unsubscribe(); clearCrawlerSession(); }
+});
 
 test("crawler session tracks urlText and setting updates", () => {
   clearCrawlerSession();

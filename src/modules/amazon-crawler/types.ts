@@ -466,6 +466,8 @@ export interface AmazonCrawlerOutput {
   completedAt: string;
   settings: AmazonCrawlerSettings;
   products: AmazonCrawlerProduct[];
+  /** Durable server counts remain available before SEO/Review cards are loaded. */
+  seoQueueHandoff?: AmazonCrawlerSeoQueueHandoffSummary;
   errors: AmazonCrawlerError[];
   completedAsins?: string[];
   failedAsins?: string[];

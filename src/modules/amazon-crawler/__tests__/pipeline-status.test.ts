@@ -6,8 +6,30 @@ import {
   crawlerSeoHandoffLabel,
   crawlerSeoHandoffState,
   resolveCrawlerSeoHandoffSummary,
+  resolveInlineCrawlerHandoff,
   summarizeCrawlerSeoHandoffs,
 } from "../ui/pipeline-status";
+
+test("inline handoff hides the previous result on start and shows only the new completed job", () => {
+  const input = { completedJobId: "old", dismissedJobId: null, isBusy: false, storeId: "store-a", resultStoreId: "store-a",
+    summary: { totalProducts: 6, handedOver: 6, pending: 0, notHandedOver: 0 } };
+  assert.equal(resolveInlineCrawlerHandoff(input)?.label, "Đã bàn giao 6/6 sản phẩm sang SEO Queue");
+  assert.equal(resolveInlineCrawlerHandoff({ ...input, isBusy: true }), null);
+  assert.equal(resolveInlineCrawlerHandoff({ ...input, dismissedJobId: "old" }), null);
+  assert.equal(resolveInlineCrawlerHandoff({ ...input, completedJobId: null }), null);
+  assert.equal(resolveInlineCrawlerHandoff({ ...input, resultStoreId: "other-store" }), null);
+  assert.equal(resolveInlineCrawlerHandoff({ ...input, completedJobId: "new", dismissedJobId: "old" })?.tone, "success");
+});
+
+test("inline handoff reports partial transfer and skips without a misleading zero-over-zero success", () => {
+  const input = { completedJobId: "new", dismissedJobId: null, isBusy: false, storeId: "store-a", resultStoreId: "store-a" };
+  const partial = resolveInlineCrawlerHandoff({ ...input, summary: { totalProducts: 6, handedOver: 3, pending: 2, notHandedOver: 1 } });
+  assert.equal(partial?.tone, "warning");
+  assert.match(partial?.label ?? "", /3\/6.*2 chờ bàn giao.*1 chưa bàn giao/);
+  const skipped = resolveInlineCrawlerHandoff({ ...input, summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0, skippedExistingShopify: 4, skippedExistingPipeline: 10 } });
+  assert.match(skipped?.label ?? "", /Không có sản phẩm mới.*4 đã có Shopify.*10 giữ dữ liệu cũ/);
+  assert.doesNotMatch(skipped?.label ?? "", /0\/0/);
+});
 
 function pipeline(overrides: Partial<ProductPipelineMetadata> = {}): ProductPipelineMetadata {
   return {

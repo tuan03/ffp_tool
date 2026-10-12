@@ -410,6 +410,7 @@ interface CoordinatorSnapshot {
   status: AmazonCrawlerJobSnapshot["status"];
   executionState: AmazonCrawlerJobExecutionState;
   progress: AmazonCrawlerProgress;
+  seoQueueHandoff?: AmazonCrawlerSeoQueueHandoffSummary;
 }
 
 function readSnapshot(value: unknown): CoordinatorSnapshot {
@@ -430,6 +431,7 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
     id: value.id,
     status,
     executionState,
+    ...(isRecord(value.seoQueueHandoff) ? { seoQueueHandoff: readSeoQueueHandoff(value.seoQueueHandoff) } : {}),
     progress: {
       phase: typeof value.progress.phase === "string" ? value.progress.phase as AmazonCrawlerProgress["phase"] : (isTerminal ? "export" : "product"),
       completed,
@@ -964,7 +966,8 @@ export function createAmazonCrawlerRunner({
         onProgress?.(snapshot.progress);
         if (snapshot.status === "review_pending" || snapshot.status === "completed" || snapshot.status === "partial") {
           const resultResponse = await fetchImplementation(`${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}/results`, { signal });
-          return await readJson(resultResponse) as AmazonCrawlerOutput;
+          const result = await readJson(resultResponse) as AmazonCrawlerOutput;
+          return { ...result, ...(snapshot.seoQueueHandoff ? { seoQueueHandoff: snapshot.seoQueueHandoff } : {}) };
         }
         if (snapshot.status === "cancelled") {
           throw new DOMException("The crawler job was cancelled.", "AbortError");
@@ -1638,6 +1641,7 @@ export function createAmazonCrawlerJobLoader({
           };
         }
 
+        if (output && jobSnapshot.seoQueueHandoff) output = { ...output, seoQueueHandoff: jobSnapshot.seoQueueHandoff };
         return {
           jobId: targetJobId,
           status: jobSnapshot.status,

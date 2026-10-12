@@ -76,6 +76,7 @@ import {
   crawlerSeoHandoffLabel,
   crawlerSeoHandoffState,
   resolveCrawlerSeoHandoffSummary,
+  resolveInlineCrawlerHandoff,
 } from "./pipeline-status";
 import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
@@ -248,6 +249,7 @@ export function AmazonCrawlerPage({
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const preflightInFlight = useRef(false);
   const [isCheckingAsins, setIsCheckingAsins] = useState(false);
+  const [dismissedHandoffJobId, setDismissedHandoffJobId] = useState<string | null>(null);
   const [asinPreflightError, setAsinPreflightError] = useState<string | null>(null);
   const [asinPreflightMatches, setAsinPreflightMatches] = useState<readonly AmazonAsinPreflightMatch[]>([]);
   const [asinPreflightFamilies, setAsinPreflightFamilies] = useState<readonly AmazonAsinFamilyPreflight[]>([]);
@@ -386,8 +388,8 @@ export function AmazonCrawlerPage({
   );
   const resultProducts = output?.products ?? liveProducts;
   const durableSeoHandoffSummary = lastJobId
-    ? jobs.find((job) => job.jobId === lastJobId)?.seoQueueHandoff
-    : undefined;
+    ? jobs.find((job) => job.jobId === lastJobId)?.seoQueueHandoff ?? output?.seoQueueHandoff
+    : output?.seoQueueHandoff;
   const seoHandoffSummary = useMemo(
     () => resolveCrawlerSeoHandoffSummary(resultProducts, durableSeoHandoffSummary),
     [durableSeoHandoffSummary, resultProducts],
@@ -1332,6 +1334,7 @@ export function AmazonCrawlerPage({
   ): Promise<void> {
     if (preflightInFlight.current) return;
     preflightInFlight.current = true;
+    setDismissedHandoffJobId(lastJobId);
     setIsCheckingAsins(true);
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
@@ -2395,10 +2398,23 @@ export function AmazonCrawlerPage({
   const isStartDisabled = !hasSavedStoreVendor || urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale
     || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED"
     || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0));
-  const startCrawlButton = <button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
+  const inlineHandoff = resolveInlineCrawlerHandoff({
+    completedJobId: output && output.status !== "cancelled" ? lastJobId : null,
+    dismissedJobId: dismissedHandoffJobId,
+    isBusy: isRunning || isCheckingAsins || activeJobId !== null,
+    storeId: activeStoreId,
+    resultStoreId: output?.settings.storeId || "capozen",
+    summary: seoHandoffSummary,
+  });
+  const startCrawlButton = <><button className="rounded-lg bg-cyan-400 px-5 py-2 font-semibold text-slate-950 disabled:opacity-50"
     disabled={isStartDisabled} type="button" onClick={() => void handleStart()}>
     {isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}
-  </button>;
+  </button>
+    {inlineHandoff ? <p role="status" aria-label="Kết quả bàn giao phiên vừa cào"
+      className={`min-w-0 text-xs leading-relaxed ${inlineHandoff.tone === "success" ? "text-emerald-300" : "text-amber-300"}`}>
+      <span aria-hidden="true">{inlineHandoff.tone === "success" ? "✓ " : "! "}</span>{inlineHandoff.label}
+    </p> : null}
+  </>;
 
   function handleSelectFilterAsin(asin: string): void {
     if (isRunning || isCheckingAsins) return;
