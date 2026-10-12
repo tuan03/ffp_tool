@@ -51,8 +51,11 @@ test("crawler filter is independent and keeps per-store results until explicitly
     assert.equal(popup.url(), "https://www.amazon.com/dp/B0MOCK1002");
     await popup.close();
     assert.ok(await missing.isVisible());
+    assert.ok(await missing.getByText("✓ Đã xem", { exact: true }).isVisible());
+    assert.equal(await missing.locator('[data-asin-row="B0MOCK1002"]').getAttribute("aria-current"), "true");
     await missing.getByRole("button", { name: "Sao chép B0MOCK1002", exact: true }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "B0MOCK1002");
+    assert.ok(await missing.getByText("✓ Đã copy", { exact: true }).isVisible());
     assert.equal(await page.getByRole("button", { name: "Đưa vào ô cào", exact: true }).count(), 0);
     await dialog.locator("summary").filter({ hasText: "Đã có trên Shopify" }).click();
     assert.ok(await dialog.getByRole("region", { name: "ASIN đã có trên Shopify", exact: true }).getByText("B0MOCK1001", { exact: false }).isVisible());
@@ -72,6 +75,8 @@ test("crawler filter is independent and keeps per-store results until explicitly
     await missing.waitFor();
     assert.equal(await input.inputValue(), "B0MOCK1003");
     assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
+    assert.ok(await missing.getByText("✓ Đã copy", { exact: true }).isVisible());
+    assert.ok(await missing.getByText("✓ Đã xem", { exact: true }).isVisible());
     await page.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("new-store");
     assert.ok(await dialog.getByText("new-store", { exact: true }).isVisible());
     assert.equal(await missing.count(), 0);

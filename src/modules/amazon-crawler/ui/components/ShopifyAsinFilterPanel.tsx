@@ -4,7 +4,7 @@ import { AmazonCrawlerServiceError } from "../../service";
 import { SHOPIFY_ASIN_FILTER_LIMIT } from "../../types";
 import type { ShopifyAsinFilter, ShopifyAsinFilterProgress } from "../../types";
 import { parseAsinFilterInput } from "../asin-filter-input";
-import { readAsinFilterWorkspace, writeAsinFilterWorkspace } from "../asin-filter-workspace";
+import { markAsinFilterRow, readAsinFilterWorkspace, retainAsinFilterProgress, writeAsinFilterWorkspace } from "../asin-filter-workspace";
 import type { AsinFilterWorkspace } from "../asin-filter-workspace";
 
 interface ShopifyAsinFilterPanelProps {
@@ -73,7 +73,7 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins }: ShopifyA
         onProgress: (progress) => { if (version === requestVersion.current) setFilterState({ status: "checking", progress }); },
       });
       if (version !== requestVersion.current || controller.signal.aborted) return;
-      setWorkspace({ inputText, snapshot: { result, inputText, checkedAt: new Date().toISOString() } });
+      setWorkspace((current) => retainAsinFilterProgress({ ...current, inputText, snapshot: { result, inputText, checkedAt: new Date().toISOString() } }));
       setFilterState({ status: "idle" });
     } catch (error: unknown) {
       if (version !== requestVersion.current) return;
@@ -83,9 +83,17 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins }: ShopifyA
     }
   }
 
-  async function handleCopy(text: string): Promise<void> {
+  function handleMarkRow(asin: string, action: "copied" | "viewed"): void {
+    setWorkspace((current) => markAsinFilterRow(current, asin, action));
+  }
+
+  async function handleCopy(text: string, asin?: string): Promise<void> {
     if (!navigator.clipboard) { window.prompt("Sao chép danh sách ASIN chưa có:", text); setCopyMessage("Đã mở danh sách để bạn sao chép."); return; }
-    try { await navigator.clipboard.writeText(text); setCopyMessage("Đã sao chép ASIN."); }
+    try {
+      await navigator.clipboard.writeText(text);
+      if (asin) handleMarkRow(asin, "copied");
+      setCopyMessage("Đã sao chép ASIN.");
+    }
     catch { setCopyMessage("Trình duyệt không cho sao chép tự động. Bạn có thể chọn văn bản ASIN để sao chép hoặc tải TXT."); }
   }
 
@@ -145,13 +153,28 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins }: ShopifyA
           <div className="grid min-w-0 gap-3">
             <section aria-label="ASIN chưa có trên Shopify" className="min-w-0 space-y-2">
               <ul aria-label="Danh sách ASIN chưa có trên Shopify" className="max-h-60 space-y-1.5 overflow-y-auto">
-                {verifiedResult.missingAsins.map((asin) => <li key={asin} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2">
-                  <span className="font-mono text-sm text-slate-100">{asin}</span>
-                  <div className="flex items-center gap-2">
-                    <button type="button" aria-label={`Sao chép ${asin}`} onClick={() => void handleCopy(asin)} className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-200">Copy</button>
-                    <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer" className="rounded border border-cyan-800 px-2 py-1 text-xs text-cyan-200">View ↗</a>
+                {verifiedResult.missingAsins.map((asin) => {
+                  const row = workspace.progress?.rows[asin];
+                  const isLatest = workspace.progress?.lastAsin === asin;
+                  const hasAction = row?.copied || row?.viewed;
+                  return <li key={asin} data-asin-row={asin} aria-current={isLatest ? "true" : undefined}
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 ${isLatest ? "border-cyan-400 bg-cyan-950/40" : hasAction ? "border-emerald-900 bg-emerald-950/20" : "border-slate-800 bg-slate-950"}`}>
+                  <div className="min-w-0">
+                    <span className="font-mono text-sm text-slate-100">{asin}</span>
+                    {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px]">
+                      {row?.copied ? <span className="text-emerald-300">✓ Đã copy</span> : null}
+                      {row?.viewed ? <span className="text-emerald-300">✓ Đã xem</span> : null}
+                      {isLatest ? <span className="text-cyan-300">Gần nhất</span> : null}
+                    </div> : null}
                   </div>
-                </li>)}
+                  <div className="flex items-center gap-2">
+                    <button type="button" aria-label={`Sao chép ${asin}`} onClick={() => void handleCopy(asin, asin)} className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-200">Copy</button>
+                    <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
+                      onClick={() => handleMarkRow(asin, "viewed")} onAuxClick={(event) => { if (event.button === 1) handleMarkRow(asin, "viewed"); }}
+                      className="rounded border border-cyan-800 px-2 py-1 text-xs text-cyan-200">View ↗</a>
+                  </div>
+                </li>;
+                })}
               </ul>
               {verifiedResult.missingAsins.length === 0 ? <p className="text-xs text-slate-400">Tất cả ASIN đã tồn tại trong store này.</p> : <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => void handleCopy(verifiedResult.missingAsins.join("\n"))} className="rounded-lg border border-slate-700 px-3 py-2 text-xs">Sao chép ASIN chưa có</button>
