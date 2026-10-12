@@ -54,14 +54,14 @@ test("crawler filter is independent and keeps per-store results until explicitly
     assert.ok(await missing.getByText("✓ Đã xem", { exact: true }).isVisible());
     assert.equal(await missing.locator('[data-asin-row="B0MOCK1002"]').getAttribute("aria-current"), "true");
     await missing.getByRole("button", { name: "Chọn cào B0MOCK1002", exact: true }).click();
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
+    assert.equal(await crawlInput.inputValue(), "B0MOCK1002");
     await missing.getByRole("button", { name: "Chọn cào B0MOCK1002", exact: true }).click();
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002", "selection must not add duplicates");
+    assert.equal(await crawlInput.inputValue(), "B0MOCK1002", "selection must replace previous input and not add duplicates");
     assert.ok(await missing.getByText("✓ Đã chọn cào", { exact: true }).isVisible());
     assert.equal(await page.getByRole("button", { name: "Đưa vào ô cào", exact: true }).count(), 0);
     await dialog.locator("summary").filter({ hasText: "Đã có trên Shopify" }).click();
     assert.ok(await dialog.getByRole("region", { name: "ASIN đã có trên Shopify", exact: true }).getByText("B0MOCK1001", { exact: false }).isVisible());
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
+    assert.equal(await crawlInput.inputValue(), "B0MOCK1002");
     const downloadEvent = page.waitForEvent("download");
     await dialog.getByRole("button", { name: "Tải TXT", exact: true }).click();
     const download = await downloadEvent;
@@ -93,7 +93,7 @@ test("crawler filter is independent and keeps per-store results until explicitly
     await dialog.getByRole("button", { name: "Xóa danh sách", exact: true }).click();
     assert.equal(await input.inputValue(), "");
     assert.equal(await missing.count(), 0);
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1002");
+    assert.equal(await crawlInput.inputValue(), "B0MOCK1002");
     await page.reload({ waitUntil: "domcontentloaded" });
     await dialog.waitFor();
     assert.equal(await missing.count(), 0);

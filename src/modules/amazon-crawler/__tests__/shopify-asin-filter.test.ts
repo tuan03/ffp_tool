@@ -3,18 +3,19 @@ import test from "node:test";
 
 import { createShopifyAsinFilter } from "../service";
 import { getShopifyAsinFilter } from "../runtime";
-import { appendAsinToCrawlerInput, parseAsinFilterInput } from "../ui/asin-filter-input";
+import { replaceCrawlerInputWithAsin, parseAsinFilterInput } from "../ui/asin-filter-input";
 
 const existingAsin = "B0EXIST001";
 const missingAsin = "B0MISSING1";
 
-test("selecting a filtered ASIN appends without erasing drafts or duplicating Amazon URLs", () => {
-  assert.equal(appendAsinToCrawlerInput("", "b0missing1"), missingAsin);
-  assert.equal(appendAsinToCrawlerInput("B0EXIST001\nunfinished input", missingAsin), "B0EXIST001\nunfinished input\nB0MISSING1");
+test("selecting a filtered ASIN replaces the entire crawler draft with exactly that ASIN", () => {
+  assert.equal(replaceCrawlerInputWithAsin("", "b0missing1"), missingAsin);
+  assert.equal(replaceCrawlerInputWithAsin("B0EXIST001\nunfinished input", missingAsin), missingAsin);
   const existingUrl = "https://www.amazon.com/dp/B0MISSING1?ref=test";
-  assert.equal(appendAsinToCrawlerInput(existingUrl, missingAsin), existingUrl);
-  assert.equal(appendAsinToCrawlerInput("b0missing1", missingAsin), "b0missing1");
-  assert.equal(appendAsinToCrawlerInput(existingUrl, "invalid"), existingUrl);
+  assert.equal(replaceCrawlerInputWithAsin(existingUrl, missingAsin), missingAsin);
+  assert.equal(replaceCrawlerInputWithAsin("b0missing1", missingAsin), missingAsin);
+  assert.equal(replaceCrawlerInputWithAsin(missingAsin, "B0EXIST001"), existingAsin);
+  assert.equal(replaceCrawlerInputWithAsin(existingUrl, "invalid"), existingUrl);
 });
 function pageResponse({ hasNextPage = false, cursor = null, value = existingAsin, status = "ACTIVE" }: {
   hasNextPage?: boolean; cursor?: string | null; value?: string | null; status?: string;

@@ -42,7 +42,7 @@ import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
 import { CrawlerStoreVendorField } from "./components/CrawlerStoreVendorField";
 import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
-import { appendAsinToCrawlerInput } from "./asin-filter-input";
+import { replaceCrawlerInputWithAsin } from "./asin-filter-input";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
@@ -2418,7 +2418,7 @@ export function AmazonCrawlerPage({
 
   function handleSelectFilterAsin(asin: string): void {
     if (isRunning || isCheckingAsins) return;
-    setCrawlerUrlText(appendAsinToCrawlerInput(urlText, asin));
+    setCrawlerUrlText(replaceCrawlerInputWithAsin(urlText, asin));
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
   }

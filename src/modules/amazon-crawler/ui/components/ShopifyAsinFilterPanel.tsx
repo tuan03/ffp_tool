@@ -171,7 +171,7 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                   </div>
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label={`Chọn cào ${asin}`} disabled={isSelectionDisabled}
-                      onClick={() => { onSelectAsin(asin); handleMarkRow(asin, "selected"); setCopyMessage(`Đã thêm ${asin} vào ô cào. Chọn collection rồi bấm Bắt đầu cào.`); }}
+                      onClick={() => { onSelectAsin(asin); handleMarkRow(asin, "selected"); setCopyMessage(`Ô cào hiện chỉ có ${asin}. Chọn collection rồi bấm Bắt đầu cào.`); }}
                       className="rounded border border-cyan-700 bg-cyan-950/30 px-2 py-1 text-xs text-cyan-200 disabled:opacity-50">Cào</button>
                     <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
                       onClick={() => handleMarkRow(asin, "viewed")} onAuxClick={(event) => { if (event.button === 1) handleMarkRow(asin, "viewed"); }}
