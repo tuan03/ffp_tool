@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findExistingAmazonProducts } from "./pipeline-amazon-duplicates.ts";
+import { findExistingAmazonProducts, verifyAmazonAsinSearchable } from "./pipeline-amazon-duplicates.ts";
+
+test("verified stores can reuse the metafield capability check across product lookups", async () => {
+  let definitionQueries = 0;
+  const query = async (document) => {
+    if (document.includes("metafieldDefinition")) {
+      definitionQueries += 1;
+      return { definition: { capabilities: { adminFilterable: { status: "FILTERABLE" } } } };
+    }
+    return { products: { nodes: [], pageInfo: { hasNextPage: false } } };
+  };
+
+  await verifyAmazonAsinSearchable(query);
+  await findExistingAmazonProducts({ product: { asin: "B0CHILD001" }, query, isSearchabilityVerified: true });
+  await findExistingAmazonProducts({ product: { asin: "B0CHILD002" }, query, isSearchabilityVerified: true });
+
+  assert.equal(definitionQueries, 1);
+});
 
 test("checks exact child ASINs even when the family parent differs", async () => {
   const queries = [];

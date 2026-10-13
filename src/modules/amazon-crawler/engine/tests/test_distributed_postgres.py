@@ -8,7 +8,7 @@ from datetime import timedelta
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 
-from engine.distributed.coordinator_models import ArchivedTaskAttempt, TaskAttempt, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import ArchivedTaskAttempt, CrawlProductItem, TaskAttempt, create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.coordinator_migrations import migrate_coordinator
 from engine.distributed.protocol import utc_now
@@ -20,6 +20,50 @@ POSTGRES_TEST_URL = os.environ.get("TEST_AMAZON_COORDINATOR_DATABASE_URL", "").s
 
 @unittest.skipUnless(POSTGRES_TEST_URL, "TEST_AMAZON_COORDINATOR_DATABASE_URL is not configured")
 class PostgreSqlCoordinatorIntegrationTests(unittest.TestCase):
+    def test_finished_external_seo_wakes_parked_pipeline_item(self) -> None:
+        schema = f"crawler_seo_wake_test_{uuid.uuid4().hex}"
+        admin_engine = create_engine(POSTGRES_TEST_URL, pool_pre_ping=True)
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+
+        test_url = make_url(POSTGRES_TEST_URL).update_query_dict({"options": f"-csearch_path={schema}"})
+        engine = create_database_engine(test_url.render_as_string(hide_password=False))
+        try:
+            migrate_coordinator(engine)
+            with engine.begin() as connection:
+                connection.execute(text("CREATE TABLE gpt_jobs (id TEXT PRIMARY KEY, status TEXT NOT NULL)"))
+            store = CoordinatorStore(create_session_factory(engine))
+            job = store.create_job({"urls": ["B0WAKESEO1"], "storeId": "store-1"})
+            store.register_client({"clientId": "seo-wake-agent", "displayName": "SEO wake agent",
+                                   "availableSlots": 1, "maxConcurrentInputs": 1})
+            lease = store.lease_tasks("seo-wake-agent", 1)[0]
+            product = {"id": "product", "sourceKey": "amazon:wake", "title": "Rug", "media": [], "variants": []}
+            store.accept_product(lease["taskId"], "seo-wake-agent", lease["leaseId"], "amazon:wake", "checksum", {
+                "jobId": job["id"], "product": product, "productChecksum": "checksum",
+            })
+            claim = store.claim_product_items(worker_id="pipeline-1", store_id="store-1", limit=1)[0]
+            self.assertTrue(store.mark_product_seo(
+                claim["id"], worker_id="pipeline-1", normalized_payload=product,
+                seo_summary={"status": "running", "assetsNormalized": 0},
+            ))
+            self.assertTrue(store.defer_external_seo(
+                claim["id"], worker_id="pipeline-1", external_job_id="gpt-ready", provider="codex_mcp",
+            ))
+            with engine.begin() as connection:
+                connection.execute(text("INSERT INTO gpt_jobs(id,status) VALUES ('gpt-ready','REVIEW_READY')"))
+
+            resumed = store.claim_product_items(worker_id="pipeline-2", store_id="store-1", limit=1)
+
+            self.assertEqual([item["id"] for item in resumed], [claim["id"]])
+            self.assertEqual(resumed[0]["product"], product)
+            with store.sessions() as session:
+                self.assertEqual(session.get(CrawlProductItem, claim["id"]).status, "seo")
+        finally:
+            engine.dispose()
+            with admin_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            admin_engine.dispose()
+
     def test_job_and_lease_persist_in_isolated_postgres_schema(self) -> None:
         schema = f"crawler_test_{uuid.uuid4().hex}"
         admin_engine = create_engine(POSTGRES_TEST_URL, pool_pre_ping=True)

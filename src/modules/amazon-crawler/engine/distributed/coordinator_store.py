@@ -86,6 +86,7 @@ TEMPORARY_CLEANUP_GENERATION_KEY = "agent_temporary_cleanup_generation"
 NEGATIVE_CACHE_PREFIX = "amazon-negative:"
 CLIENT_RATE_COOLDOWN_PREFIX = f"{NEGATIVE_CACHE_PREFIX}client-rate:"
 CAPTCHA_COOLDOWN_KEY = "amazon-captcha-cooldown"
+EXTERNAL_SEO_RECOVERY_DELAY = timedelta(minutes=15)
 
 
 def _bounded_progress(payload: Any) -> dict[str, Any]:
@@ -204,6 +205,7 @@ class CoordinatorStore(CoordinatorObservability):
         self._product_claim_lock = Lock()
         self._job_creation_lock = Lock()
         self._review_mutation_lock = Lock()
+        self._external_seo_wake_after = 0.0
 
     @staticmethod
     def _store_vendor_key(store_id: str) -> str:
@@ -2263,6 +2265,10 @@ class CoordinatorStore(CoordinatorObservability):
         count = max(1, min(20, int(limit)))
         claimed: list[dict[str, Any]] = []
         with self._product_claim_lock, self.sessions.begin() as session:
+            monotonic_now = time.monotonic()
+            if monotonic_now >= self._external_seo_wake_after:
+                self._external_seo_wake_after = monotonic_now + 1.0
+                self._wake_finished_external_seo(session, now)
             claim_lane = case(
                 (CrawlProductItem.status == "received", 0),
                 (CrawlProductItem.status == "sync_queued", 1),
@@ -2310,6 +2316,7 @@ class CoordinatorStore(CoordinatorObservability):
                 effective_store = str(job_settings.get("storeId") or "").strip() or store_id
                 pipeline_result = dict(item.shopify_result or {})
                 review = dict(pipeline_result.get("review") or {})
+                external_seo = pipeline_result.get("externalSeo")
                 is_sync_claim = _is_shopify_sync_candidate(item)
                 if is_sync_claim:
                     if dialect_name == "postgresql":
@@ -2349,7 +2356,7 @@ class CoordinatorStore(CoordinatorObservability):
                         operation.payload_hash = item.checksum
                         operation.state = "pending"
                         operation.response_payload = {"itemId": item.id, "sourceKey": item.source_key}
-                item.status = "syncing" if is_sync_claim else "normalizing"
+                item.status = "syncing" if is_sync_claim else ("seo" if external_seo else "normalizing")
                 item.claimed_by = worker_id
                 item.claim_expires_at = claim_until
                 if not pipeline_result.get("externalSeo"):
@@ -2378,7 +2385,8 @@ class CoordinatorStore(CoordinatorObservability):
                     "shopifyResult": pipeline_result if is_sync_claim else None,
                     "externalSeo": pipeline_result.get("externalSeo"),
                     "inputAsin": task.asin,
-                    "product": item.normalized_payload if is_sync_claim else item.raw_payload,
+                    "product": (item.normalized_payload or item.raw_payload) if (is_sync_claim or external_seo) else item.raw_payload,
+                    "assetsNormalized": int((pipeline_result.get("seo") or {}).get("assetsNormalized") or 0),
                     "settings": job_settings,
                     "review": review if is_sync_claim else None,
                     "existingShopify": None if link is None else {
@@ -2388,13 +2396,39 @@ class CoordinatorStore(CoordinatorObservability):
                         "managedResources": link.managed_resources,
                     },
                 })
-                self._event(session, item.job_id, "product_sync_claimed" if is_sync_claim else "product_normalizing", {
+                claim_event = "product_sync_claimed" if is_sync_claim else (
+                    "product_seo_resumed" if external_seo else "product_normalizing"
+                )
+                self._event(session, item.job_id, claim_event, {
                     "productItemId": item.id,
                     "sourceKey": item.source_key,
                     "attempt": item.attempt_count,
                 })
                 self._refresh_job(session, item.job_id)
         return claimed
+
+    @staticmethod
+    def _wake_finished_external_seo(session: Any, now: datetime) -> int:
+        """Wake parked crawler items when their shared PostgreSQL SEO job is terminal.
+
+        The fallback timer remains for recovery, but completed jobs no longer wait for
+        that timer or consume a pipeline claim merely to discover they are pending.
+        """
+        bind = session.get_bind()
+        if bind.dialect.name != "postgresql" or bind.dialect.driver == "pysqlite":
+            return 0
+        if session.scalar(text("SELECT to_regclass('gpt_jobs')")) is None:
+            return 0
+        result = session.execute(text("""
+            UPDATE crawl_product_items AS item
+            SET next_attempt_at = :now
+            FROM gpt_jobs AS seo_job
+            WHERE item.status = 'retry_wait'
+              AND item.next_attempt_at > :now
+              AND item.shopify_result->'externalSeo'->>'jobId' = seo_job.id
+              AND seo_job.status IN ('REVIEW_READY', 'FAILED', 'CANCELLED')
+        """), {"now": now})
+        return int(result.rowcount or 0)
 
     def skip_existing_shopify_product(
         self, item_id: str, *, worker_id: str, matches: list[dict[str, Any]],
@@ -2461,7 +2495,7 @@ class CoordinatorStore(CoordinatorObservability):
                 "seo": {"status": "pending", "engine": provider},
             }
             item.status = "retry_wait"
-            item.next_attempt_at = utc_now() + timedelta(seconds=60)
+            item.next_attempt_at = utc_now() + EXTERNAL_SEO_RECOVERY_DELAY
             item.claimed_by = None
             item.claim_expires_at = None
             self._refresh_job(session, item.job_id)
