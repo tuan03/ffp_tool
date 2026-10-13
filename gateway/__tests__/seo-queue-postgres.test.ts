@@ -9,7 +9,7 @@ import { Pool } from "pg";
 
 import { PostgresCustomGptQueue } from "../custom-gpt-seo/postgres-queue";
 import { migrateSeoQueue } from "../custom-gpt-seo/postgres-migration";
-import { translateQueueSql } from "../custom-gpt-seo/postgres-database";
+import { getQueueSchemaSql, translateQueueSql } from "../custom-gpt-seo/postgres-database";
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import { initAutoSeoDbSchema, INSERT_AUTO_SEO_BACKUP_SQL } from "../auto-seo-db";
 import { upsertSeoReviewItem } from "../seo-review-db";
@@ -26,6 +26,12 @@ const integrationTest = databaseUrl ? test : test.skip;
 test("queue SQL binds values and rejects unsafe schema identifiers", () => {
   assert.equal(translateQueueSql("SELECT payload FROM gpt_jobs WHERE rowid>? AND COALESCE(json_extract(payload,'$.nextAttemptAt'),0)<=?", "test_schema"), "SELECT payload FROM \"test_schema\".gpt_jobs WHERE queue_order>$1 AND COALESCE((payload::jsonb->>'nextAttemptAt')::bigint,0)<=$2");
   assert.throws(() => translateQueueSql("SELECT * FROM gpt_jobs", 'public"; DROP SCHEMA public'), /Invalid/);
+});
+
+test("queue schema indexes Auto SEO source identities", () => {
+  const schemaSql = getQueueSchemaSql("test_schema");
+  assert.match(schemaSql, /gpt_source_identity_idx/);
+  assert.match(schemaSql, /payload::jsonb->>'sourceIdentity'/);
 });
 
 test("production migration opt-in still rejects unrelated databases and users", () => {

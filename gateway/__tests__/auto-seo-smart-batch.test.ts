@@ -675,3 +675,40 @@ test("clearing Auto SEO Queue allows the unchanged product to be dispatched agai
     assert.deepEqual(duplicate.skippedProducts, [{ productId: product.id, reason: "ACTIVE_DUPLICATE" }]);
   } finally { db.close(); }
 });
+
+test("authoritative retry checks preload queue jobs once for the complete batch", async context => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const products = ["100", "101", "102"].map(productId => createProduct({ id: `gid://shopify/Product/${productId}` }));
+  const request = { workflowId: "initial", storeId: "capozen", shopDomain: "capozen.myshopify.com", products };
+  const runner = async () => ({ success: true, provider: "codex_mcp" as const, processedCount: products.length });
+  await handleAutoSeoRun(request, { db, seoContentRunner: runner });
+
+  const queue = new CustomGptQueue(db);
+  let bulkCalls = 0;
+  let singleCalls = 0;
+  const queueWithBulk = Object.assign(queue, {
+    async findLatestSourceJobs(storeId: string, source: string, productIds: readonly string[]) {
+      bulkCalls++;
+      assert.equal(storeId, "capozen");
+      assert.equal(source, "auto_seo");
+      assert.deepEqual(productIds, ["100", "101", "102"]);
+      return new Map();
+    },
+  });
+  context.mock.method(queue, "findLatestSourceJob", () => {
+    singleCalls++;
+    return null;
+  });
+
+  try {
+    const retry = await handleAutoSeoRun({ ...request, workflowId: "retry" }, {
+      db,
+      queue: queueWithBulk,
+      seoContentRunner: runner,
+    });
+    assert.equal(retry.acceptedCount, 0);
+    assert.equal(bulkCalls, 1);
+    assert.equal(singleCalls, 0);
+  } finally { db.close(); }
+});

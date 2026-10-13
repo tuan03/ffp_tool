@@ -281,15 +281,6 @@ export async function handleAutoSeoRun(
   const runner = options?.seoContentRunner ?? runSeoContent;
   const selectedSettings = options?.seoContentRunner ? undefined : (await getCustomGptRuntime().queue.settings(request.storeId));
   const queue = options?.queue ?? (!options?.seoContentRunner ? getCustomGptRuntime().queue : undefined);
-  const resolveSentBackup: AutoSeoPostgresInsertOptions["resolveSentBackup"] = queue
-    ? async record => {
-      const job = await queue.findLatestSourceJob(record.storeId, "auto_seo", record.productId.replace(/^gid:\/\/shopify\/Product\//, ""));
-      const hasPendingReview = db
-        ? Boolean(db.prepare("SELECT 1 FROM seo_review_items WHERE store_id=? AND product_id=? AND deleted_at IS NULL AND review_status='pending' LIMIT 1").get(record.storeId, record.productId))
-        : (await (options?.eligibilityReviewRepository ?? getAutoSeoReviewRepository()).findPendingByStoreAndProductIds(record.storeId, [record.productId])).length > 0;
-      return getAutoSeoSentBackupDisposition(job, hasPendingReview);
-    }
-    : undefined;
 
   let backupIds: string[] = [];
   const acceptedProducts: AutoSeoProductPayload[] = [];
@@ -304,6 +295,27 @@ export async function handleAutoSeoRun(
       seoInputSha256: calculateAutoSeoInputHash(product),
     };
   });
+  const resolveSentBackup: AutoSeoPostgresInsertOptions["resolveSentBackup"] = queue
+    ? await (async () => {
+      const sourceIdentities = records.map(record => record.productId.replace(/^gid:\/\/shopify\/Product\//, ""));
+      const jobs = queue.findLatestSourceJobs
+        ? await queue.findLatestSourceJobs(request.storeId, "auto_seo", sourceIdentities)
+        : new Map(await Promise.all(sourceIdentities.map(async sourceIdentity => [
+          sourceIdentity,
+          await queue.findLatestSourceJob(request.storeId, "auto_seo", sourceIdentity),
+        ] as const)));
+      const pendingReviewProductIds = db
+        ? new Set(records.filter(record => Boolean(db.prepare("SELECT 1 FROM seo_review_items WHERE store_id=? AND product_id=? AND deleted_at IS NULL AND review_status='pending' LIMIT 1").get(record.storeId, record.productId))).map(record => record.productId))
+        : new Set((await (options?.eligibilityReviewRepository ?? getAutoSeoReviewRepository()).findPendingByStoreAndProductIds(
+          request.storeId,
+          records.map(record => record.productId),
+        )).map(review => review.productId));
+      return async (record: AutoSeoPostgresBackupInput) => getAutoSeoSentBackupDisposition(
+        jobs.get(record.productId.replace(/^gid:\/\/shopify\/Product\//, "")) ?? null,
+        pendingReviewProductIds.has(record.productId),
+      );
+    })()
+    : undefined;
   let acceptedRecords: readonly AutoSeoPostgresBackupInput[] = [];
 
   if (db) {
