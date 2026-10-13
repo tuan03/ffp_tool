@@ -65,7 +65,9 @@ test("worker metrics isolate stores, bound windows and distinguish missing denom
     assert.equal(measured.averageProcessingMs, 120000); assert.equal(measured.leaseExpirations, 1); assert.equal(measured.quotaFailures, 1);
     assert.equal(measured.staleSourceRejections, 1); assert.equal(measured.queueDepth, 1);
     assert.equal((await metrics.report("other", 24)).successfulJobs, 0);
-    now = issued.expiresAt + 1;
+    await pg.query("UPDATE seo_worker_tokens SET is_permanent=false WHERE id=$1", [issued.tokenId]);
+    const expiresAt = Number((await pg.query<{ expires_at: number }>("SELECT expires_at FROM seo_worker_tokens WHERE id=$1", [issued.tokenId])).rows[0].expires_at);
+    now = expiresAt + 1;
     assert.equal((await metrics.report("demo", 24)).tokenExpirations, 1);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await pg.close(); }
 });

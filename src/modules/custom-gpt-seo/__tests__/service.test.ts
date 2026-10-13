@@ -65,7 +65,7 @@ test("Agent Access client scopes tokens to store, disables cache and includes mu
     assert.equal(init?.cache, "no-store");
     assert.equal(new Headers(init?.headers).get("x-ffp-agent"), "1");
     assert.deepEqual(JSON.parse(String(init?.body)), { workerId: "laptop" });
-    return new Response(JSON.stringify({ token: "test-only", tokenId: "id", expiresAt: 100 }));
+    return new Response(JSON.stringify({ token: "test-only", tokenId: "id", expiresAt: null, isPermanent: true, allStores: true }));
   });
   assert.equal((await client.createAgentToken("store one", "laptop")).tokenId, "id");
   const mock = createMockCustomGptClient();

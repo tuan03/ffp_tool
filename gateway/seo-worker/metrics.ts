@@ -40,7 +40,7 @@ export class SeoWorkerMetrics {
         FROM seo_worker_successes s JOIN gpt_jobs j ON j.id=s.job_id WHERE j.store_id=$1 AND j.provider='codex_mcp'
         AND s.completed_at >= $2 AND s.completed_at < $3 GROUP BY bucket`, [storeId, start, end, bucketHours * 3600000])).rows;
       const events = (await sql.query("SELECT kind,count(*) AS count FROM seo_worker_metric_events WHERE store_id=$1 AND occurred_at >= $2 AND occurred_at < $3 GROUP BY kind", [storeId, start, end])).rows;
-      const tokens = (await sql.query("SELECT count(*) AS count FROM seo_worker_tokens WHERE store_id=$1 AND expires_at >= $2 AND expires_at < $3 AND (revoked_at IS NULL OR revoked_at >= expires_at)", [storeId, start, end])).rows[0];
+      const tokens = (await sql.query("SELECT count(*) AS count FROM seo_worker_tokens WHERE store_id=$1 AND NOT is_permanent AND expires_at >= $2 AND expires_at < $3 AND (revoked_at IS NULL OR revoked_at >= expires_at)", [storeId, start, end])).rows[0];
       const coverage = (await sql.query("SELECT started_at FROM seo_worker_metric_coverage WHERE id=true")).rows[0];
       const eventCount = (kind: string): number => Number(events.find(row => row.kind === kind)?.count ?? 0);
       const counts = Object.fromEntries(states.map(row => [String(row.state), Number(row.count)]));

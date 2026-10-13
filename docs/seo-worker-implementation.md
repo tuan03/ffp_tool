@@ -233,7 +233,7 @@ The rebuilt preview ZIP has SHA-256
 
 ## Defaults and operational constraints
 
-- Token: 24 hours; claim denied with less than ten minutes remaining.
+- Agent Access token: permanent until revoked and valid for every current or future store; job leases remain short and heartbeat-fenced.
 - Lease: ten minutes; heartbeat: sixty seconds; recovery: sixty seconds.
 - No-progress deadline: thirty minutes, not extended by heartbeat alone.
 - Attempts: at most five; retry starts at thirty seconds with bounded jitter,

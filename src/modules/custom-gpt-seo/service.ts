@@ -143,7 +143,7 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     publishReview: (storeId: string, jobId: string, reviewUpdatedAt: number, requestId: string) => agentRequest<SeoPublishReceipt>("publish", storeId, { jobId, reviewUpdatedAt, requestId }),
     agentAccess: (storeId: string, offset = 0) => agentRequest<AgentAccessPage>(`tokens?offset=${offset}`, storeId),
     agentRuns: (storeId: string, offset = 0) => agentRequest<AgentRunPage>(`runs?offset=${offset}`, storeId),
-    createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: number }>("tokens", storeId, { workerId }),
+    createAgentToken: (storeId: string, workerId: string) => agentRequest<{ token: string; tokenId: string; expiresAt: null; isPermanent: true; allStores: true }>("tokens", storeId, { workerId }),
     revokeAgentToken: (storeId: string, tokenId: string) => agentRequest<{ revoked: true }>("revoke", storeId, { tokenId }),
     deleteAgentToken: (storeId: string, tokenId: string) => agentRequest<{ deleted: true }>("delete-token", storeId, { tokenId }),
     enableClaims: (storeId: string, allStores = false) => agentRequest<{ enabled: boolean }>("enable-claims", storeId, { allStores }),

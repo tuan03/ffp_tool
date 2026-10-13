@@ -53,7 +53,7 @@ async function execute(operation: () => Promise<unknown>, observe: (code: string
       STALE_SOURCE: "Stop. Shopify source changed; request operator reassessment, not a forced submission.",
       STALE_LEASE: "Stop mutations for this lease. Read run_status and resume safely.",
       REPAIR_LIMIT_REACHED: "Report a non-retryable validation failure for operator review.",
-      TOKEN_EXPIRING_SOON: "Pause the run and ask the operator for a new token for this same machine.",
+      TOKEN_EXPIRING_SOON: "This legacy expiring credential must be replaced by a permanent Agent Access token.",
     };
     return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: { code,
       ...(error instanceof SeoWorkerError && error.reasons ? { reasons: error.reasons } : {}),
@@ -64,7 +64,7 @@ async function execute(operation: () => Promise<unknown>, observe: (code: string
 export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow: WorkerWorkflow, token: string,
   performance: () => PerformanceService | undefined = () => undefined): McpServer {
   const safe = (operation: () => Promise<unknown>): Promise<CallToolResult> => execute(operation, code => repository.metrics.record(token, code));
-  const server = new McpServer({ name: "ffp-seo-worker", version: "1.2.0" }, { instructions: "Ask which store if the user has not specified one. Read worker_status.storeIds for authorized stores. Use worker_select_store when needed, then verify worker_status.storeId matches the requested store. Never switch during active work; process stores sequentially and register a new Queue session after switching. For SEO Performance audits, use the performance/evidence/recommendation tools without registering a run or claiming a job. Save proposals only with current snapshotId and rulesVersion. Missing data is not zero traffic. Never approve or publish. The following instructions apply only to requested Queue processing: " + WORKER_INSTRUCTIONS });
+  const server = new McpServer({ name: "ffp-seo-worker", version: "1.2.0" }, { instructions: "Ask which store if the user has not specified one. Agent Access tokens are permanent and can select any store. Use worker_select_store when needed, then verify worker_status.storeId matches the requested store. Never switch during active work; process stores sequentially and register a new Queue session after switching. For SEO Performance audits, use the performance/evidence/recommendation tools without registering a run or claiming a job. Save proposals only with current snapshotId and rulesVersion. Missing data is not zero traffic. Never approve or publish. The following instructions apply only to requested Queue processing: " + WORKER_INSTRUCTIONS });
   server.registerResource("worker-contracts", "ffp://seo-worker/contracts", { mimeType: "application/json", description: "Current common rules and schemas; job context adds store-specific rules." }, async uri => {
     await repository.identify(token);
     return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(getWorkerContracts()) }] };
@@ -94,7 +94,7 @@ export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow:
   for (const name of ["job_release", "job_report_failure"]) server.registerTool(name, { description: "Release work with a stable error code and explicit retry decision.", inputSchema: { ...mutation, code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/), retryable: z.boolean() }, annotations: write }, input => safe(() => repository.release(token, input.lease, input)));
   registerPerformanceTools(server, "", "", performance, () => repository.identify(token));
   server.registerTool("worker_select_store", {
-    description: "Select an authorized store from worker_status.storeIds. Read worker_status first and pass its storeId as expectedStoreId. Finish any active run first; existing sessions are fenced. Register a fresh session for Queue work after switching. Always verify worker_status after selection. No approval or publication.",
+    description: "Select any store. Read worker_status first and pass its storeId as expectedStoreId. Finish any active run first; existing sessions are fenced. Register a fresh session for Queue work after switching. Always verify worker_status after selection. No approval or publication.",
     inputSchema: { storeId: label, expectedStoreId: label, requestId: label }, annotations: write,
   }, input => safe(() => repository.selectStore(token, input.storeId, input.expectedStoreId, input.requestId)));
   return server;

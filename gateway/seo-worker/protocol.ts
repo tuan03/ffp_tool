@@ -1,6 +1,5 @@
 export const WORKER_DEFAULTS = {
   leaseMs: 10 * 60_000,
-  tokenMs: 24 * 60 * 60_000,
   heartbeatMs: 60_000,
   recoveryMs: 60_000,
   idleMs: 30 * 60_000,
@@ -61,6 +60,7 @@ export interface WorkerPrincipal {
   readonly tokenId: string;
   readonly storeId: string;
   readonly workerId: string;
-  readonly expiresAt: number;
+  readonly expiresAt: number | null;
   readonly storeIds: readonly string[];
+  readonly allStores: boolean;
 }

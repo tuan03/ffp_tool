@@ -40,15 +40,16 @@ export class SeoWorkerRepository {
   async listAccess(storeId: string, offset: number): Promise<AgentAccessPage> {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new SeoWorkerError("INVALID_OFFSET");
     return this.database.transaction(async sql => {
-      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE deleted_at IS NULL AND (store_id=$1 OR store_ids @> jsonb_build_array($1::text))", [storeId])).rows[0].total);
-      const rows = (await sql.query(`SELECT t.id,t.store_id,t.store_ids,t.worker_id,t.created_by,t.expires_at,t.revoked_at,t.last_used_at,
+      const total = Number((await sql.query("SELECT count(*) AS total FROM seo_worker_tokens WHERE deleted_at IS NULL AND (all_stores OR store_id=$1 OR store_ids @> jsonb_build_array($1::text))", [storeId])).rows[0].total);
+      const rows = (await sql.query(`SELECT t.id,t.store_id,t.store_ids,t.worker_id,t.created_by,t.expires_at,t.is_permanent,t.all_stores,t.revoked_at,t.last_used_at,
         (SELECT w.job_id FROM seo_worker_jobs w WHERE w.token_id=t.id AND w.lease_id IS NOT NULL LIMIT 1) AS job_id
-        FROM seo_worker_tokens t WHERE t.deleted_at IS NULL AND (t.store_id=$1 OR t.store_ids @> jsonb_build_array($1::text)) ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
+        FROM seo_worker_tokens t WHERE t.deleted_at IS NULL AND (t.all_stores OR t.store_id=$1 OR t.store_ids @> jsonb_build_array($1::text)) ORDER BY t.created_at DESC,t.id LIMIT 50 OFFSET $2`, [storeId, offset])).rows;
       const mode = (await sql.query("SELECT enabled FROM seo_worker_stores WHERE store_id=$1", [storeId])).rows[0];
       return { total, nextOffset: offset + rows.length < total ? offset + rows.length : null, claimsEnabled: mode?.enabled === true,
         tokens: rows.map(row => ({ id: String(row.id), workerId: String(row.worker_id), createdBy: String(row.created_by),
-          storeIds: [...new Set([String(row.store_id), ...(Array.isArray(row.store_ids) ? row.store_ids.filter((value): value is string => typeof value === "string") : [])])],
-          expiresAt: Number(row.expires_at), revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
+          storeIds: row.all_stores === true ? [] : [...new Set([String(row.store_id), ...(Array.isArray(row.store_ids) ? row.store_ids.filter((value): value is string => typeof value === "string") : [])])],
+          expiresAt: row.is_permanent === true ? null : Number(row.expires_at), isPermanent: row.is_permanent === true,
+          allStores: row.all_stores === true, revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
           lastSeenAt: row.last_used_at === null ? null : Number(row.last_used_at), jobId: row.job_id === null ? null : String(row.job_id) })) };
     });
   }
@@ -63,29 +64,31 @@ export class SeoWorkerRepository {
     });
   }
 
-  async issueToken(input: { storeId: string; workerId: string; createdBy: string; storeIds?: readonly string[] }): Promise<{ token: string; tokenId: string; expiresAt: number }> {
-    const storeIds = [...new Set([input.storeId, ...(input.storeIds ?? [])])];
-    for (const value of [input.storeId, input.workerId, input.createdBy, ...storeIds]) requireLabel(value);
+  async issueToken(input: { storeId: string; workerId: string; createdBy: string }): Promise<{ token: string; tokenId: string; expiresAt: null; isPermanent: true; allStores: true }> {
+    for (const value of [input.storeId, input.workerId, input.createdBy]) requireLabel(value);
     const token = `ffp_worker_${randomBytes(32).toString("base64url")}`;
     const tokenId = randomUUID();
-    const expiresAt = this.now() + WORKER_DEFAULTS.tokenMs;
+    const compatibilityExpiry = this.now() + 24 * 60 * 60_000;
     await this.database.transaction(async sql => {
-      await sql.query(`INSERT INTO seo_worker_tokens(id,store_id,worker_id,token_hash,created_by,created_at,expires_at,store_ids)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [tokenId, input.storeId, input.workerId, digest(token), input.createdBy, this.now(), expiresAt, JSON.stringify(storeIds)]);
+      await sql.query(`INSERT INTO seo_worker_tokens(id,store_id,worker_id,token_hash,created_by,created_at,expires_at,store_ids,is_permanent,all_stores)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'[]'::jsonb,true,true)`, [tokenId, input.storeId, input.workerId, digest(token), input.createdBy, this.now(), compatibilityExpiry]);
     });
-    return { token, tokenId, expiresAt };
+    return { token, tokenId, expiresAt: null, isPermanent: true, allStores: true };
   }
 
   private async authenticate(sql: WorkerSql, token: string): Promise<WorkerPrincipal> {
     const row = (await sql.query("SELECT * FROM seo_worker_tokens WHERE token_hash=$1 FOR UPDATE", [digest(token)])).rows[0];
     if (!row) throw new SeoWorkerError("INVALID_TOKEN");
     if (row.revoked_at !== null) throw new SeoWorkerError("TOKEN_REVOKED");
-    if (Number(row.expires_at) <= this.now()) throw new SeoWorkerError("TOKEN_EXPIRED");
+    const isPermanent = row.is_permanent === true;
+    if (!isPermanent && Number(row.expires_at) <= this.now()) throw new SeoWorkerError("TOKEN_EXPIRED");
     await sql.query("UPDATE seo_worker_tokens SET last_used_at=$2 WHERE id=$1", [row.id, this.now()]);
     const storeIds = [...new Set([String(row.store_id), ...(Array.isArray(row.store_ids) ? row.store_ids.filter((value): value is string => typeof value === "string") : [])])];
     const storeId = String(row.selected_store_id ?? row.store_id);
-    if (!storeIds.includes(storeId)) throw new SeoWorkerError("STORE_NOT_AUTHORIZED");
-    return { tokenId: String(row.id), storeId, storeIds, workerId: String(row.worker_id), expiresAt: Number(row.expires_at) };
+    const allStores = row.all_stores === true;
+    if (!allStores && !storeIds.includes(storeId)) throw new SeoWorkerError("STORE_NOT_AUTHORIZED");
+    return { tokenId: String(row.id), storeId, storeIds: allStores ? [] : storeIds, allStores,
+      workerId: String(row.worker_id), expiresAt: isPermanent ? null : Number(row.expires_at) };
   }
 
   async identify(token: string): Promise<WorkerPrincipal> {
@@ -96,7 +99,7 @@ export class SeoWorkerRepository {
     requireLabel(storeId);
     return this.database.transaction(async sql => {
       const principal = await this.authenticate(sql, token);
-      if (!principal.storeIds.includes(storeId)) throw new SeoWorkerError("STORE_NOT_AUTHORIZED");
+      if (!principal.allStores && !principal.storeIds.includes(storeId)) throw new SeoWorkerError("STORE_NOT_AUTHORIZED");
       return this.idempotent(sql, `${principal.tokenId}:select-store`, requestId, { storeId, expectedStoreId }, async () => {
         if (principal.storeId !== expectedStoreId) throw new SeoWorkerError("STORE_SELECTION_CHANGED");
         if (storeId === principal.storeId) return principal;
@@ -252,7 +255,7 @@ export class SeoWorkerRepository {
   async register(token: string, requestId: string): Promise<{ sessionId: string }> {
     return this.database.transaction(async sql => {
       const principal = await this.authenticate(sql, token);
-      return this.idempotent(sql, `${principal.tokenId}:register`, requestId, principal.storeIds.length > 1 ? { storeId: principal.storeId } : {}, async () => {
+      return this.idempotent(sql, `${principal.tokenId}:register`, requestId, principal.allStores || principal.storeIds.length > 1 ? { storeId: principal.storeId } : {}, async () => {
         const existing = (await sql.query("SELECT id FROM seo_worker_sessions WHERE store_id=$1 AND worker_id=$2 AND active FOR UPDATE", [principal.storeId, principal.workerId])).rows[0];
         if (existing) {
           for (const lease of (await sql.query("SELECT * FROM seo_worker_jobs WHERE session_id=$1 AND lease_id IS NOT NULL FOR UPDATE", [existing.id])).rows) {
@@ -416,7 +419,7 @@ export class SeoWorkerRepository {
       if (run.session_id !== sessionId) throw new SeoWorkerError("STALE_SESSION");
       return this.idempotent(sql, `${sessionId}:claim`, requestId, { runId }, async () => {
         if (run.state !== "RUNNING") return { lease: null, stopReason: String(run.stop_reason || "RUN_NOT_RUNNING") };
-        if (principal.expiresAt - this.now() < WORKER_DEFAULTS.leaseMs) throw new SeoWorkerError("TOKEN_EXPIRING_SOON");
+        if (principal.expiresAt !== null && principal.expiresAt - this.now() < WORKER_DEFAULTS.leaseMs) throw new SeoWorkerError("TOKEN_EXPIRING_SOON");
         const existing = (await sql.query("SELECT * FROM seo_worker_jobs WHERE store_id=$1 AND worker_id=$2 AND lease_id IS NOT NULL", [principal.storeId, principal.workerId])).rows[0];
         if (existing) throw new SeoWorkerError("LEASE_ALREADY_ACTIVE");
         const candidate = (await sql.query(`SELECT w.* FROM seo_worker_jobs w JOIN gpt_jobs j ON j.id=w.job_id
@@ -435,7 +438,9 @@ export class SeoWorkerRepository {
         const updated = (await sql.query(`UPDATE seo_worker_jobs SET state='LEASED',attempt_count=attempt_count+1,
           repair_count=0,lease_version=lease_version+1,lease_id=$2,session_id=$3,run_id=$4,token_id=$5,
           expires_at=$6,last_progress_at=$7,updated_at=$7,retry_at=NULL,last_error_code=NULL,worker_id=$8 WHERE job_id=$1 RETURNING *`,
-        [candidate.job_id, leaseId, sessionId, runId, principal.tokenId, Math.min(this.now() + WORKER_DEFAULTS.leaseMs, principal.expiresAt), this.now(), principal.workerId])).rows[0];
+        [candidate.job_id, leaseId, sessionId, runId, principal.tokenId, principal.expiresAt === null
+          ? this.now() + WORKER_DEFAULTS.leaseMs
+          : Math.min(this.now() + WORKER_DEFAULTS.leaseMs, principal.expiresAt), this.now(), principal.workerId])).rows[0];
         await sql.query(`INSERT INTO seo_worker_attempts(id,job_id,session_id,run_id,lease_version,started_at)
           VALUES ($1,$2,$3,$4,$5,$6)`, [randomUUID(), candidate.job_id, sessionId, runId, updated.lease_version, this.now()]);
         await this.projectStatus(sql, String(candidate.job_id), "IN_PROGRESS");
@@ -459,7 +464,8 @@ export class SeoWorkerRepository {
       await this.assertLease(sql, principal, lease);
       const renew = async (): Promise<WorkerLease> => {
       const updated = (await sql.query("UPDATE seo_worker_jobs SET expires_at=LEAST($2,last_progress_at+$3),updated_at=$4 WHERE job_id=$1 RETURNING *",
-        [lease.jobId, Math.min(this.now() + WORKER_DEFAULTS.leaseMs, principal.expiresAt), WORKER_DEFAULTS.idleMs, this.now()])).rows[0];
+        [lease.jobId, principal.expiresAt === null ? this.now() + WORKER_DEFAULTS.leaseMs
+          : Math.min(this.now() + WORKER_DEFAULTS.leaseMs, principal.expiresAt), WORKER_DEFAULTS.idleMs, this.now()])).rows[0];
       return leaseOutput(updated);
       };
       return requestId ? this.idempotent(sql, `${principal.tokenId}:heartbeat`, requestId, { lease }, renew) : renew();
@@ -580,7 +586,7 @@ export class SeoWorkerRepository {
 
   async revoke(storeId: string, tokenId: string): Promise<void> {
     await this.database.transaction(async sql => {
-      const token = (await sql.query("UPDATE seo_worker_tokens SET revoked_at=$3 WHERE id=$1 AND (store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id", [tokenId, storeId, this.now()])).rows[0];
+      const token = (await sql.query("UPDATE seo_worker_tokens SET revoked_at=$3 WHERE id=$1 AND (all_stores OR store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id", [tokenId, storeId, this.now()])).rows[0];
       if (!token) throw new SeoWorkerError("TOKEN_NOT_FOUND");
       for (const row of (await sql.query("SELECT * FROM seo_worker_jobs WHERE token_id=$1 AND lease_id IS NOT NULL FOR UPDATE", [tokenId])).rows) await this.endLease(sql, row, "TOKEN_REVOKED", true);
       await sql.query("UPDATE seo_worker_runs SET state='PARTIAL',stop_reason='TOKEN_REVOKED',updated_at=$2 WHERE state='RUNNING' AND session_id IN (SELECT id FROM seo_worker_sessions WHERE token_id=$1)", [tokenId, this.now()]);
@@ -592,7 +598,7 @@ export class SeoWorkerRepository {
     await this.database.transaction(async sql => {
       const token = (await sql.query(`UPDATE seo_worker_tokens SET deleted_at=$3
         WHERE id=$1 AND deleted_at IS NULL AND revoked_at IS NOT NULL
-        AND (store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id`, [tokenId, storeId, this.now()])).rows[0];
+        AND (all_stores OR store_id=$2 OR store_ids @> jsonb_build_array($2::text)) RETURNING id`, [tokenId, storeId, this.now()])).rows[0];
       if (!token) throw new SeoWorkerError("REVOKED_TOKEN_NOT_FOUND");
     });
   }
@@ -600,7 +606,7 @@ export class SeoWorkerRepository {
   private async recoverInTransaction(sql: WorkerSql): Promise<number> {
     await this.reconcileInTransaction(sql);
     const rows = (await sql.query(`SELECT w.* FROM seo_worker_jobs w JOIN seo_worker_tokens t ON t.id=w.token_id
-      WHERE w.lease_id IS NOT NULL AND (w.expires_at<=$1 OR w.last_progress_at<=$2 OR t.expires_at<=$1 OR t.revoked_at IS NOT NULL)
+      WHERE w.lease_id IS NOT NULL AND (w.expires_at<=$1 OR w.last_progress_at<=$2 OR (NOT t.is_permanent AND t.expires_at<=$1) OR t.revoked_at IS NOT NULL)
       FOR UPDATE OF w`, [this.now(), this.now() - WORKER_DEFAULTS.idleMs])).rows;
     for (const row of rows) await this.endLease(sql, row, "LEASE_EXPIRED", true);
     const ready = (await sql.query("UPDATE seo_worker_jobs SET state='READY',retry_at=NULL,updated_at=$1 WHERE state='RETRY_WAIT' AND retry_at<=$1 RETURNING job_id", [this.now()])).rows;

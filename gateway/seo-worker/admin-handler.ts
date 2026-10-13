@@ -89,7 +89,7 @@ export async function handleSeoAgentHttp(req: IncomingMessage, res: ServerRespon
       const body = await readBody(req);
       if (url.pathname === "/api/seo-agent/tokens") {
         const input = z.object({ workerId: z.string().trim().min(1).max(100).regex(/^[\p{L}\p{N} ._-]+$/u) }).strict().parse(body);
-        send(res, 201, await repository.issueToken({ storeId, storeIds: options.listStoreIds?.(), workerId: input.workerId, createdBy: options.operator })); return;
+        send(res, 201, await repository.issueToken({ storeId, workerId: input.workerId, createdBy: options.operator })); return;
       }
       if (url.pathname === "/api/seo-agent/revoke") {
         const input = z.object({ tokenId: z.string().uuid() }).strict().parse(body);

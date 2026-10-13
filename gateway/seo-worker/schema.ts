@@ -16,11 +16,15 @@ export function getSeoWorkerSchemaSql(schema: string): string {
       token_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
       created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL,
       revoked_at BIGINT, last_used_at BIGINT,
+      is_permanent BOOLEAN NOT NULL DEFAULT true,
+      all_stores BOOLEAN NOT NULL DEFAULT true,
       CHECK (expires_at > created_at)
     );
     ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS store_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS selected_store_id TEXT;
     ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
+    ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS is_permanent BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE ${prefix}seo_worker_tokens ADD COLUMN IF NOT EXISTS all_stores BOOLEAN NOT NULL DEFAULT true;
     CREATE TABLE IF NOT EXISTS ${prefix}seo_worker_sessions (
       id TEXT PRIMARY KEY, token_id TEXT NOT NULL REFERENCES ${prefix}seo_worker_tokens(id),
       store_id TEXT NOT NULL, worker_id TEXT NOT NULL, active BOOLEAN NOT NULL,

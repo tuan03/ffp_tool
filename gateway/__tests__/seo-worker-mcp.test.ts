@@ -42,7 +42,7 @@ test("MCP reports allowlisted identity reasons without leaking rejected analysis
   } finally { await client.close(); await server.close(); }
 });
 
-test("operator token issuance grants registry stores only and retains authentication/CSRF checks", async () => {
+test("operator token issuance grants permanent all-store access and retains authentication/CSRF checks", async () => {
   const pg = await PGlite.create();
   await pg.exec(getQueueSchemaSql("public"));
   const repository = new SeoWorkerRepository({ transaction: operation => pg.transaction(tx => operation({ query: async (sql, values) => ({ rows: (await tx.query<Record<string, unknown>>(sql, values)).rows }) })) });
@@ -61,9 +61,12 @@ test("operator token issuance grants registry stores only and retains authentica
     const response = await fetch(url, { method: "POST", headers, body: JSON.stringify({ workerId: "machine" }) });
     assert.equal(response.status, 201);
     const issued = z.object({ token: z.string(), tokenId: z.string() }).parse(await response.json());
-    assert.deepEqual((await repository.identify(issued.token)).storeIds, ["demo", "second"]);
-    assert.deepEqual((await repository.listAccess("second", 0)).tokens[0].storeIds, ["demo", "second"]);
-    assert.equal((await repository.listAccess("injected", 0)).total, 0);
+    const principal = await repository.identify(issued.token);
+    assert.equal(principal.allStores, true);
+    assert.equal(principal.expiresAt, null);
+    assert.deepEqual(principal.storeIds, []);
+    assert.equal((await repository.listAccess("second", 0)).tokens[0].allStores, true);
+    assert.equal((await repository.listAccess("injected", 0)).total, 1);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await pg.close(); }
 });
 
@@ -88,9 +91,6 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     assert.match(JSON.stringify(disabled), /SEO_PERFORMANCE_DISABLED/);
     assert.ok(tools.every(tool => !/publish|approve|sync|sql|configure/.test(tool.name)));
     assert.ok(tools.filter(tool => tool.name !== "worker_select_store").every(tool => !Object.hasOwn(tool.inputSchema.properties ?? {}, "storeId")));
-    const forbiddenStore = await client.callTool({ name: "worker_select_store", arguments: { storeId: "other", expectedStoreId: "demo", requestId: "denied-store" } });
-    assert.equal(forbiddenStore.isError, true);
-    assert.match(JSON.stringify(forbiddenStore), /STORE_NOT_AUTHORIZED/);
     const contracts = await client.readResource({ uri: "ffp://seo-worker/contracts" });
     assert.match(JSON.stringify(contracts), /productSeoTitle/);
     assert.match(JSON.stringify(contracts), /customizationSampleTexts/);
@@ -100,6 +100,7 @@ test("worker MCP exposes no publish/admin capabilities and rechecks token on eve
     const status = await client.callTool({ name: "worker_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.match(JSON.stringify(status), /demo/);
+    assert.match(JSON.stringify(status), /allStores.*true/);
     const enqueue = createTestEnqueue({ storeId: "demo", productId: "123", input: { images: [{ id: "front", url: "https://cdn.shopify.com/front.png" }], niche: "blankets" } });
     const job = { id: "context-job", storeId: "demo", source: "auto_seo", sourceIdentity: "123", status: "PENDING", input: enqueue.input, execution: enqueue.execution, original: enqueue.execution.originalSnapshot, settings: { provider: "codex_mcp" }, checkpoints: {} };
     await pg.query("INSERT INTO gpt_jobs(id,store_id,dedup,status,payload,created_at,provider) VALUES ('context-job','demo','context','PENDING',$1,1,'codex_mcp')", [JSON.stringify(job)]);
@@ -148,7 +149,7 @@ test("stateless worker HTTP supports helper JSON calls and rejects revoked crede
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /application\/json/);
     assert.match(await response.text(), /http-worker/);
-    await pg.query("UPDATE seo_worker_tokens SET created_at=0,expires_at=1 WHERE id=$1", [token.tokenId]);
+    await pg.query("UPDATE seo_worker_tokens SET created_at=0,expires_at=1,is_permanent=false WHERE id=$1", [token.tokenId]);
     assert.equal((await invoke()).status, 401);
     assert.equal((await pg.query<{ kind: string }>("SELECT kind FROM seo_worker_metric_events WHERE store_id='demo'")).rows[0].kind, "TOKEN_EXPIRED");
     await repository.revoke("demo", token.tokenId);

@@ -95,7 +95,9 @@ export interface AgentAccessToken {
   readonly storeIds?: readonly string[];
   readonly workerId: string;
   readonly createdBy: string;
-  readonly expiresAt: number;
+  readonly expiresAt: number | null;
+  readonly isPermanent: boolean;
+  readonly allStores: boolean;
   readonly revokedAt: number | null;
   readonly lastSeenAt: number | null;
   readonly jobId: string | null;

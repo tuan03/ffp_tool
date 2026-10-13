@@ -50,7 +50,7 @@ export function createMockCustomGptClient(): CustomGptClient {
     publishReview: async (_storeId, jobId) => ({ id: `mock-${jobId}`, jobId, state: "SUCCEEDED", errorCode: null, seoVersion: 1 }),
     agentAccess: async () => ({ tokens: [], total: 0, nextOffset: null, claimsEnabled: false }),
     agentRuns: async () => ({ runs: [], total: 0, nextOffset: null }),
-    createAgentToken: async () => ({ token: "mock-not-a-credential", tokenId: "mock-token", expiresAt: 0 }),
+    createAgentToken: async () => ({ token: "mock-not-a-credential", tokenId: "mock-token", expiresAt: null, isPermanent: true, allStores: true }),
     revokeAgentToken: async () => ({ revoked: true }),
     deleteAgentToken: async () => ({ deleted: true }),
     enableClaims: async () => ({ enabled: true }),

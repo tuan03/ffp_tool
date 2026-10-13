@@ -12,7 +12,6 @@ test("worker identity uses the Shopify product ID across source types, never tit
 
 test("worker retry is bounded and run targets count successful drafts only", () => {
   assert.equal(WORKER_DEFAULTS.leaseMs, 600_000);
-  assert.equal(WORKER_DEFAULTS.tokenMs, 86_400_000);
   assert.equal(getRetryDelay(1, 0), 30_000);
   assert.equal(getRetryDelay(5, 1), 600_000);
   assert.equal(Number.isSafeInteger(getRetryDelay(1, 0.123456789)), true);

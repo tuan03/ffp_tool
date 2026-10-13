@@ -39,6 +39,31 @@ async function fixture() {
   return { pg, repository, enqueue, worker, deliver, advance: (ms: number) => { now += ms; } };
 }
 
+test("additive migration upgrades existing Agent Access tokens to permanent all-store access", async () => {
+  const pg = await PGlite.create();
+  try {
+    await pg.exec(`
+      CREATE TABLE gpt_jobs (id TEXT PRIMARY KEY);
+      CREATE TABLE seo_worker_tokens (
+        id TEXT PRIMARY KEY, store_id TEXT NOT NULL, worker_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
+        created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL,
+        revoked_at BIGINT, last_used_at BIGINT,
+        CHECK (expires_at > created_at)
+      );
+      INSERT INTO seo_worker_tokens(id,store_id,worker_id,token_hash,created_by,created_at,expires_at)
+      VALUES ('existing','store-a','connected-machine','hash','operator',1,2);
+    `);
+    await pg.exec(getSeoWorkerSchemaSql("public"));
+    const row = (await pg.query<{ is_permanent: boolean; all_stores: boolean }>(
+      "SELECT is_permanent,all_stores FROM seo_worker_tokens WHERE id='existing'",
+    )).rows[0];
+    assert.deepEqual(row, { is_permanent: true, all_stores: true });
+  } finally {
+    await pg.close();
+  }
+});
+
 test("cutover rehydrates eligible V1 jobs, clears checkpoints and preserves completed review history", async () => {
   const f = await fixture();
   const legacy = {
@@ -81,14 +106,14 @@ test("cutover fails with explicit migration errors for active jobs and unknown p
   }
 });
 
-test("multi-store credentials switch only while idle, fence old sessions and revoke all grants", async () => {
+test("permanent credentials can switch to any store only while idle and revoke globally", async () => {
   const f = await fixture();
   const repo = f.repository;
   try {
-    const issued = await repo.issueToken({ storeId: "store-a", storeIds: ["store-a", "store-b"], workerId: "multi", createdBy: "operator" });
-    assert.deepEqual((await repo.identify(issued.token)).storeIds, ["store-a", "store-b"]);
+    const issued = await repo.issueToken({ storeId: "store-a", workerId: "multi", createdBy: "operator" });
+    assert.equal((await repo.identify(issued.token)).allStores, true);
+    assert.deepEqual((await repo.identify(issued.token)).storeIds, []);
     assert.equal((await repo.listAccess("store-b", 0)).total, 1);
-    await assert.rejects(repo.selectStore(issued.token, "store-c", "store-a", "denied"), /STORE_NOT_AUTHORIZED/);
     const old = await repo.register(issued.token, "register-a");
     const selected = await repo.selectStore(issued.token, "store-b", "store-a", "switch");
     assert.equal(selected.storeId, "store-b");
@@ -114,10 +139,11 @@ test("multi-store credentials switch only while idle, fence old sessions and rev
     await assert.rejects(repo.identify(issued.token), /TOKEN_REVOKED/);
     await assert.rejects(repo.selectStore(issued.token, "store-a", "store-b", "revoked"), /TOKEN_REVOKED/);
     const legacy = await repo.issueToken({ storeId: "store-a", workerId: "legacy", createdBy: "operator" });
-    await f.pg.query("UPDATE seo_worker_tokens SET store_ids='[]' WHERE id=$1", [legacy.tokenId]);
+    await f.pg.query("UPDATE seo_worker_tokens SET store_ids='[]',all_stores=false,is_permanent=false WHERE id=$1", [legacy.tokenId]);
     assert.deepEqual((await repo.identify(legacy.token)).storeIds, ["store-a"]);
+    assert.equal((await repo.identify(legacy.token)).allStores, false);
     await assert.rejects(repo.selectStore(legacy.token, "store-b", "store-a", "legacy-denied"), /STORE_NOT_AUTHORIZED/);
-    f.advance(WORKER_DEFAULTS.tokenMs);
+    f.advance(24 * 60 * 60_000);
     await assert.rejects(repo.selectStore(legacy.token, "store-a", "store-a", "expired"), /TOKEN_EXPIRED/);
   } finally { await f.pg.close(); }
 });
@@ -147,11 +173,12 @@ test("worker core uses the existing PostgreSQL queue and preserves lease, token 
     await repo.enableStore("store-a");
     const a = await f.worker("a", 1);
     const b = await f.worker("b", 2);
-    await t.test("only token hashes are persisted and token lifetime is 24 hours", async () => {
-      const rows = (await pg.query<{ token_hash: string; created_at: number; expires_at: number }>("SELECT * FROM seo_worker_tokens WHERE id=$1", [a.tokenId])).rows;
+    await t.test("only token hashes are persisted and tokens are permanent for every store", async () => {
+      const rows = (await pg.query<{ token_hash: string; is_permanent: boolean; all_stores: boolean }>("SELECT * FROM seo_worker_tokens WHERE id=$1", [a.tokenId])).rows;
       assert.equal(JSON.stringify(rows).includes(a.token), false);
-      assert.equal(Number(rows[0].expires_at) - Number(rows[0].created_at), WORKER_DEFAULTS.tokenMs);
-      assert.equal((await repo.identify(a.token)).storeId, "store-a");
+      assert.equal(rows[0].is_permanent, true);
+      assert.equal(rows[0].all_stores, true);
+      assert.equal((await repo.identify(a.token)).expiresAt, null);
       await assert.rejects(repo.identify("wrong"), /INVALID_TOKEN/);
     });
     const first = await repo.claim(a.token, a.sessionId, a.run.id, "claim");
@@ -203,10 +230,11 @@ test("worker core uses the existing PostgreSQL queue and preserves lease, token 
       await assert.rejects(repo.heartbeat(b.token, claim.lease), /TOKEN_REVOKED/);
       assert.equal((await pg.query("SELECT * FROM seo_worker_jobs WHERE token_id=$1 AND lease_id IS NOT NULL", [b.tokenId])).rows.length, 0);
     });
-    await t.test("tokens cannot inspect another store's run", async () => {
+    await t.test("tokens cannot inspect another store's run but can be revoked from any store", async () => {
       const other = await f.worker("a", 1, "store-b");
       await assert.rejects(repo.runStatus(other.token, a.run.id), /RUN_NOT_FOUND/);
-      await assert.rejects(repo.revoke("store-b", a.tokenId), /TOKEN_NOT_FOUND/);
+      await repo.revoke("store-b", a.tokenId);
+      await assert.rejects(repo.identify(a.token), /TOKEN_REVOKED/);
     });
   } finally { await pg.close(); }
 });
@@ -375,27 +403,30 @@ test("heartbeat cannot keep a silent worker alive forever and expiry blocks new 
     f.advance(60_000);
     await assert.rejects(f.repository.heartbeat(worker.token, claimed.lease), /STALE_LEASE/);
     await f.repository.recover();
-    f.advance(WORKER_DEFAULTS.tokenMs - 30 * 60_000 - 9 * 60_000);
+    await f.pg.query("UPDATE seo_worker_tokens SET is_permanent=false WHERE id=$1", [worker.tokenId]);
+    f.advance(24 * 60 * 60_000 - 30 * 60_000 - 9 * 60_000);
     await assert.rejects(f.repository.claim(worker.token, worker.sessionId, worker.run.id, "late"), /TOKEN_EXPIRING_SOON/);
     f.advance(9 * 60_000);
     await assert.rejects(f.repository.identify(worker.token), /TOKEN_EXPIRED/);
   } finally { await f.pg.close(); }
 });
 
-test("operator lists are store scoped, paginated and never disclose credential hashes", async () => {
+test("operator lists permanent global tokens without disclosing credential hashes", async () => {
   const f = await fixture();
   try {
     const machine = await f.worker("machine-a");
     const other = await f.worker("machine-b", 2, "store-b");
     const page = await f.repository.listAccess("store-a", 0);
-    assert.equal(page.total, 1);
-    assert.equal(page.tokens[0]?.workerId, "machine-a");
+    assert.equal(page.total, 2);
+    assert.deepEqual(page.tokens.map(token => token.workerId).sort(), ["machine-a", "machine-b"]);
+    assert.equal(page.tokens.every(token => token.isPermanent && token.allStores && token.expiresAt === null), true);
     assert.equal(JSON.stringify(page).includes("token_hash"), false);
     assert.equal(JSON.stringify(page).includes(other.token), false);
     assert.equal((await f.repository.listAccess("store-a", 50)).tokens.length, 0);
     assert.equal((await f.repository.listRuns("store-a", 0)).runs.length, 1);
     await assert.rejects(f.repository.listAccess("store-a", -1), /INVALID_OFFSET/);
-    await assert.rejects(f.repository.revoke("store-a", other.tokenId), /TOKEN_NOT_FOUND/);
+    await f.repository.revoke("store-a", other.tokenId);
+    await f.repository.deleteRevokedToken("store-a", other.tokenId);
     await assert.rejects(f.repository.deleteRevokedToken("store-a", machine.tokenId), /REVOKED_TOKEN_NOT_FOUND/);
     await f.repository.revoke("store-a", machine.tokenId);
     assert.equal((await f.repository.listAccess("store-a", 0)).total, 1);

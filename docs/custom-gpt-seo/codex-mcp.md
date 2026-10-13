@@ -8,20 +8,19 @@ Performance audit/proposal tools below, scoped to their store and worker. Existi
 unexpired tokens also work after upgrade; no additional permission selection,
 Google credential on the worker, or second MCP installation is needed.
 
-New tokens created in Agent Access grant every store currently registered in FFP.
-The grant list is a snapshot at issuance, not a wildcard: new stores require a new
-token/login, not another installation. Existing tokens keep their previous store
-scope. The lifetime remains 24 hours. `worker_status.storeIds` lists the grants;
-`storeId` is the selected store. `worker_select_store` requires a fresh requestId,
-the target storeId and expectedStoreId from worker_status. It refuses unauthorized
-stores, concurrent stale selections and switching during an active run/lease.
+Tokens created in Agent Access are permanent until revoked and can select every
+current or future FFP store. Existing non-revoked tokens are upgraded to the same
+policy by the additive database migration. `worker_status.allStores` reports this
+policy and `storeId` is the selected store. `worker_select_store` requires a fresh
+requestId, the target storeId and expectedStoreId from worker_status. It refuses
+concurrent stale selections and switching during an active run/lease.
 Finish existing work first, select, verify status and register a new session for
 Queue work. Run history stays in its original store; partial runs can be resumed
 after selecting that store again. Audit tools need no Queue session.
 
 One token is for one machine/controller, processing stores sequentially. Do not
-share it between concurrent Codex sessions. Revoking it from any granted store
-revokes all its grants and leases. Each store still needs its own Queue cutover
+share it between concurrent Codex sessions. Revoking it from any store revokes
+the token and its leases everywhere. Each store still needs its own Queue cutover
 and Google property mapping. Issuing a multi-store token does not enable either.
 
 Google connection/property mapping must still be configured in FFP by an operator.
