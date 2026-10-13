@@ -86,6 +86,45 @@ integrationTest("PostgreSQL queue fences concurrent claims, preserves checkpoint
   }
 });
 
+integrationTest("PostgreSQL batch enqueue skips one active product without losing the other jobs", async () => {
+  assert.ok(databaseUrl);
+  const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;
+  const queue = new PostgresCustomGptQueue({ databaseUrl, schema });
+  try {
+    await queue.initialize();
+    await queue.configure("test-store", { provider: "codex_mcp", batchSize: 1 });
+    await queue.workers.enableStoreRaw("test-store");
+    await queue.enqueue(createTestEnqueue({
+      storeId: "test-store",
+      productId: "200",
+      sourceRevision: "v1",
+    }));
+
+    const batch = await queue.enqueueBatch([
+      createTestEnqueue({ storeId: "test-store", productId: "100", sourceRevision: "v1" }),
+      createTestEnqueue({
+        storeId: "test-store",
+        productId: "200",
+        sourceRevision: "v2",
+        input: { images: [{ id: "front", url: "https://cdn.shopify.com/changed.png" }] },
+      }),
+      createTestEnqueue({ storeId: "test-store", productId: "300", sourceRevision: "v1" }),
+    ]);
+
+    assert.deepEqual(batch.activeDuplicateSourceIdentities, ["200"]);
+    assert.deepEqual(batch.jobs.map(job => job.sourceIdentity), ["100", "300"]);
+    assert.deepEqual(
+      [...await queue.findActiveProductIds("test-store", ["100", "200", "300"])].sort(),
+      ["100", "200", "300"],
+    );
+  } finally {
+    await queue.close();
+    const cleanup = new Pool({ connectionString: databaseUrl });
+    try { await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
+    finally { await cleanup.end(); }
+  }
+});
+
 integrationTest("worker finalization commits a Review receipt and completes its run exactly once", async () => {
   assert.ok(databaseUrl);
   const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;

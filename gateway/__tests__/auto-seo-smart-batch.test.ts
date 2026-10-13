@@ -712,3 +712,62 @@ test("authoritative retry checks preload queue jobs once for the complete batch"
     assert.equal(singleCalls, 0);
   } finally { db.close(); }
 });
+
+test("authoritative retry excludes active worker products even when their backup previously failed", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const product = createProduct();
+  const request = { workflowId: "failed", storeId: "capozen", shopDomain: "capozen.myshopify.com", products: [product] };
+  await handleAutoSeoRun(request, { db, seoContentRunner: async () => ({ success: false, processedCount: 0, message: "temporary" }) });
+  let runnerCalls = 0;
+  const queue = Object.assign(new CustomGptQueue(db), {
+    async findActiveProductIds() { return new Set(["100"]); },
+    async findLatestSourceJobs() { return new Map(); },
+  });
+  try {
+    const retry = await handleAutoSeoRun({ ...request, workflowId: "retry-active" }, {
+      db,
+      queue,
+      seoContentRunner: async () => { runnerCalls++; return { success: true, processedCount: 1 }; },
+    });
+    assert.equal(runnerCalls, 0);
+    assert.equal(retry.acceptedCount, 0);
+    assert.deepEqual(retry.skippedProducts, [{ productId: product.id, reason: "ACTIVE_DUPLICATE" }]);
+  } finally { db.close(); }
+});
+
+test("dispatch-time worker collision skips only the conflicting product and preserves the rest of the batch", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const first = createProduct({ id: "gid://shopify/Product/200", handle: "first-product" });
+  const second = createProduct({ id: "gid://shopify/Product/100", handle: "second-product" });
+  try {
+    const result = await handleAutoSeoRun({
+      workflowId: "dispatch-collision",
+      storeId: "capozen",
+      shopDomain: "capozen.myshopify.com",
+      products: [first, second],
+    }, {
+      db,
+      seoContentRunner: async () => ({
+        success: true,
+        provider: "codex_mcp",
+        processedCount: 1,
+        dispatchStatus: "queued",
+        jobIds: ["new-job"],
+        skippedProductIds: [second.id],
+      }),
+    });
+
+    assert.deepEqual(result.acceptedProductIds, [first.id]);
+    assert.equal(result.acceptedCount, 1);
+    assert.deepEqual(result.skippedProducts, [{ productId: second.id, reason: "ACTIVE_DUPLICATE" }]);
+    const backups = (db.prepare(`SELECT product_id,downstream_status,downstream_error
+      FROM auto_seo_product_backups ORDER BY product_id`).all() as Array<Record<string, unknown>>)
+      .map(row => ({ ...row }));
+    assert.deepEqual(backups, [
+      { product_id: second.id, downstream_status: "FAILED", downstream_error: "ALREADY_IN_SEO_PIPELINE" },
+      { product_id: first.id, downstream_status: "SENT", downstream_error: null },
+    ]);
+  } finally { db.close(); }
+});

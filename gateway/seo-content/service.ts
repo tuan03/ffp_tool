@@ -6,8 +6,10 @@ import {
 import { runSeoContent as runServerSeoContent } from "../../src/modules/seo-content/server";
 import { getCustomGptRuntime } from "../custom-gpt-seo/runtime";
 import { SEO_WORKER_SCHEMA_VERSION } from "../custom-gpt-seo/input-contract";
-import type { GatewaySeoContentOptions, GatewaySeoContentRequest, SeoContentResult } from "./types";
 import { requireAutoSeoStoreProfile } from "./store-profile";
+
+import type { GptSeoEnqueue } from "../../src/modules/custom-gpt-seo";
+import type { GatewaySeoContentOptions, GatewaySeoContentRequest, SeoContentResult } from "./types";
 
 /**
  * Executes the real SEO Content Pipeline (B1 -> B6) for products handed off by Auto SEO.
@@ -29,11 +31,12 @@ export async function runSeoContent(
     const queue = getCustomGptRuntime().queue;
     const settings = options?.providerSettings ?? (await queue.settings(input.storeId));
     if (settings.provider === "custom_gpt" || settings.provider === "codex_mcp") {
-      const jobIds: string[] = [];
-      for (const product of input.products) {
+      const productsBySourceIdentity = new Map<string, string>();
+      const enqueues: readonly GptSeoEnqueue[] = input.products.map((product) => {
         const productId = product.id.replace(/^gid:\/\/shopify\/Product\//, "");
+        productsBySourceIdentity.set(productId, product.id);
         const seoInput = fromAutoSeoProduct(product, storeProfile.niche, storeProfile);
-        const job = await queue.enqueue({
+        return {
           input: seoInput,
           execution: {
             storeId: input.storeId,
@@ -47,17 +50,21 @@ export async function runSeoContent(
             originalSnapshot: product,
           },
           settings,
-        });
-        jobIds.push(job.id);
-      }
+        };
+      });
+      const batch = await queue.enqueueBatch(enqueues);
+      const skippedProductIds = batch.activeDuplicateSourceIdentities
+        .map(sourceIdentity => productsBySourceIdentity.get(sourceIdentity))
+        .filter((productId): productId is string => productId !== undefined);
       return {
         success: true,
         provider: settings.provider,
-        processedCount: 0,
-        message: `Queued ${input.products.length} products for ${settings.provider === "codex_mcp" ? "Codex MCP" : "Custom GPT"}`,
+        processedCount: batch.jobs.length,
+        message: `Queued ${batch.jobs.length}/${input.products.length} products for ${settings.provider === "codex_mcp" ? "Codex MCP" : "Custom GPT"}`,
         seoOutputs: [],
         dispatchStatus: "queued",
-        jobIds,
+        jobIds: batch.jobs.map(job => job.id),
+        skippedProductIds,
       };
     }
   }

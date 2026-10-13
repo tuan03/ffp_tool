@@ -84,6 +84,29 @@ export class PostgresCustomGptQueue implements SeoQueue {
   async enqueue(rawInput: GptSeoEnqueue): Promise<GptSeoJob> {
     return this.enqueueRevision(rawInput);
   }
+  async enqueueBatch(rawInputs: readonly GptSeoEnqueue[]): Promise<{
+    readonly jobs: readonly GptSeoJob[];
+    readonly activeDuplicateSourceIdentities: readonly string[];
+  }> {
+    return this.transaction(async () => {
+      const jobs: GptSeoJob[] = [];
+      const activeDuplicateSourceIdentities: string[] = [];
+      for (const rawInput of rawInputs) {
+        try {
+          jobs.push(await this.enqueueRevision(rawInput));
+        } catch (error) {
+          if (error instanceof SeoWorkerError && error.code === "ALREADY_IN_SEO_PIPELINE") {
+            activeDuplicateSourceIdentities.push(
+              rawInput.execution.sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, ""),
+            );
+            continue;
+          }
+          throw error;
+        }
+      }
+      return { jobs, activeDuplicateSourceIdentities };
+    });
+  }
   private async enqueueRevision(rawInput: GptSeoEnqueue, previousJobId?: string): Promise<GptSeoJob> {
     const input = normalizeSeoEnqueue(rawInput);
     const { execution } = input;
@@ -200,6 +223,15 @@ export class PostgresCustomGptQueue implements SeoQueue {
         ? { ...job, shopifySyncStatus: syncStatus as GptSeoJob["shopifySyncStatus"] }
         : job];
     }));
+  }
+  async findActiveProductIds(storeId: string, productIds: readonly string[]): Promise<ReadonlySet<string>> {
+    const normalizedIds = [...new Set(productIds.map(productId => productId.replace(/^gid:\/\/shopify\/Product\//, "")))]
+      .filter(productId => /^\d+$/.test(productId));
+    if (normalizedIds.length === 0) return new Set();
+    const rows = await this.db.prepare(`SELECT product_key FROM seo_worker_jobs
+      WHERE store_id=? AND product_key=ANY(?::text[]) AND pipeline_active=true`)
+      .all(storeId, normalizedIds.map(productId => `shopify:${productId}`));
+    return new Set(rows.map(row => String(row.product_key).replace(/^shopify:/, "")));
   }
   async findLatestSourceJob(storeId: string, source: string, sourceIdentity: string): Promise<GptSeoJob | null> {
     const normalizedIdentity = source === "auto_seo"

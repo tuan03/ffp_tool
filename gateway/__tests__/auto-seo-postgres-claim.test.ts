@@ -76,6 +76,33 @@ test("PostgreSQL evaluates cleared-job retries under the claim lock and preserve
     assert.deepEqual(active.skippedProducts, [{ productId: backup(2).productId, reason: "ACTIVE_DUPLICATE" }]);
   } finally { await repository.close(); }
 });
+
+test("PostgreSQL claim skips active pipelines even when the matching backup failed or is new", async context => {
+  const statuses = ["FAILED", undefined];
+  let statusIndex = 0;
+  const client = {
+    async query(statement: string) {
+      if (statement.includes("SELECT downstream_status")) {
+        const status = statuses[statusIndex++];
+        return { rows: status ? [{ downstream_status: status, workflow_id: "old-workflow" }] : [], rowCount: status ? 1 : 0 };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release() {},
+  };
+  context.mock.method(Pool.prototype, "connect", async () => client);
+  const repository = new AutoSeoPostgresRepository({ databaseUrl: "postgresql://ffp_tool:test@127.0.0.1:5432/ffp_tool" });
+  try {
+    const claim = await repository.claimEligibleBatch([backup(201), backup(202)], {
+      resolveSentBackup: async () => "ACTIVE_DUPLICATE",
+    });
+    assert.equal(claim.acceptedRecords.length, 0);
+    assert.deepEqual(claim.skippedProducts, [
+      { productId: "gid://shopify/Product/201", reason: "ACTIVE_DUPLICATE" },
+      { productId: "gid://shopify/Product/202", reason: "ACTIVE_DUPLICATE" },
+    ]);
+  } finally { await repository.close(); }
+});
 const integrationTest = databaseUrl ? test : test.skip;
 
 async function withRepositories(run: (first: AutoSeoPostgresRepository, second: AutoSeoPostgresRepository, schema: string) => Promise<void>): Promise<void> {

@@ -40,7 +40,10 @@ export interface AutoSeoPostgresInsertOptions {
   readonly onConflict?: "error" | "update";
   readonly gptSettingsJson?: string;
   /** Evaluated under the product claim lock, after NOT_SENT receipts have been excluded. */
-  readonly resolveSentBackup?: (record: AutoSeoPostgresBackupInput) => Promise<AutoSeoSentBackupDisposition>;
+  readonly resolveSentBackup?: (
+    record: AutoSeoPostgresBackupInput,
+    status: "SENT" | "FAILED" | undefined,
+  ) => Promise<AutoSeoSentBackupDisposition>;
 }
 
 export interface AutoSeoPostgresClaimResult {
@@ -259,12 +262,15 @@ export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
           skippedProducts.push({ productId: record.productId, reason: "ACTIVE_DUPLICATE" });
           continue;
         }
-        if (status === "SENT") {
-          const disposition = await options?.resolveSentBackup?.(record) ?? "UNCHANGED";
+        if (options?.resolveSentBackup) {
+          const disposition = await options.resolveSentBackup(record, status);
           if (disposition !== "RETRY") {
             skippedProducts.push({ productId: record.productId, reason: disposition });
             continue;
           }
+        } else if (status === "SENT") {
+          skippedProducts.push({ productId: record.productId, reason: "UNCHANGED" });
+          continue;
         }
         const onConflict = status === "FAILED" && matchingRecord.workflow_id === record.workflowId
           ? "update"

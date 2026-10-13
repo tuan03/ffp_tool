@@ -9,5 +9,6 @@ export type SeoQueue = {
     : never;
 } & {
   findLatestSourceJobs?: (storeId: string, source: string, productIds: readonly string[]) => Promise<ReadonlyMap<string, GptSeoJob>>;
+  findActiveProductIds?: (storeId: string, productIds: readonly string[]) => Promise<ReadonlySet<string>>;
   reviewList?: (query: SeoReviewListQuery) => Promise<SeoReviewListPage>;
 };

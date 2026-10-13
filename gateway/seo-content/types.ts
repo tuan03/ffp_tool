@@ -36,6 +36,8 @@ export interface SeoContentResult {
   readonly seoOutputs?: readonly unknown[];
   readonly dispatchStatus?: "queued" | "review_ready";
   readonly jobIds?: readonly string[];
+  /** Products already owned by another active worker pipeline at dispatch time. */
+  readonly skippedProductIds?: readonly string[];
 }
 
 import type { SeoContentInput as CoreSeoContentInput, SeoContentOutput, SeoStoreProfile } from "../../src/modules/seo-content";

@@ -304,16 +304,29 @@ export async function handleAutoSeoRun(
           sourceIdentity,
           await queue.findLatestSourceJob(request.storeId, "auto_seo", sourceIdentity),
         ] as const)));
+      const activeProductIds = queue.findActiveProductIds
+        ? await queue.findActiveProductIds(request.storeId, sourceIdentities)
+        : new Set<string>();
       const pendingReviewProductIds = db
         ? new Set(records.filter(record => Boolean(db.prepare("SELECT 1 FROM seo_review_items WHERE store_id=? AND product_id=? AND deleted_at IS NULL AND review_status='pending' LIMIT 1").get(record.storeId, record.productId))).map(record => record.productId))
         : new Set((await (options?.eligibilityReviewRepository ?? getAutoSeoReviewRepository()).findPendingByStoreAndProductIds(
           request.storeId,
           records.map(record => record.productId),
         )).map(review => review.productId));
-      return async (record: AutoSeoPostgresBackupInput) => getAutoSeoSentBackupDisposition(
-        jobs.get(record.productId.replace(/^gid:\/\/shopify\/Product\//, "")) ?? null,
-        pendingReviewProductIds.has(record.productId),
-      );
+      return async (
+        record: AutoSeoPostgresBackupInput,
+        status: "SENT" | "FAILED" | undefined,
+      ) => {
+        const sourceIdentity = record.productId.replace(/^gid:\/\/shopify\/Product\//, "");
+        if (activeProductIds.has(sourceIdentity) || pendingReviewProductIds.has(record.productId)) {
+          return "ACTIVE_DUPLICATE";
+        }
+        const job = jobs.get(sourceIdentity) ?? null;
+        if (status === "SENT") return getAutoSeoSentBackupDisposition(job, false);
+        if (job?.shopifySyncStatus === "SYNCED") return "UNCHANGED";
+        if (job && job.status !== "CANCELLED") return "ACTIVE_DUPLICATE";
+        return "RETRY";
+      };
     })()
     : undefined;
   let acceptedRecords: readonly AutoSeoPostgresBackupInput[] = [];
@@ -339,11 +352,16 @@ export async function handleAutoSeoRun(
         ) as { downstream_status: "NOT_SENT" | "SENT" | "FAILED" } | undefined;
         if (matchingRevision?.downstream_status === "NOT_SENT") {
           skippedProducts.push({ productId: product.id, reason: "ACTIVE_DUPLICATE" });
-        } else if (matchingRevision?.downstream_status === "SENT") {
+        } else if (resolveSentBackup) {
           const record = records.find(record => record.productId === product.id);
-          const disposition = record ? await resolveSentBackup?.(record) ?? "UNCHANGED" : "UNCHANGED";
+          const status = matchingRevision?.downstream_status === "SENT" || matchingRevision?.downstream_status === "FAILED"
+            ? matchingRevision.downstream_status
+            : undefined;
+          const disposition = record ? await resolveSentBackup(record, status) : "UNCHANGED";
           if (disposition === "RETRY") acceptedProducts.push(product);
           else skippedProducts.push({ productId: product.id, reason: disposition });
+        } else if (matchingRevision?.downstream_status === "SENT") {
+          skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
         } else {
           acceptedProducts.push(product);
         }
@@ -354,8 +372,12 @@ export async function handleAutoSeoRun(
           inputHashes,
         });
         backupIds = [...backupResult.backupIds];
-        const acceptedIds = new Set(acceptedProducts.map(product => product.id));
-        acceptedRecords = records.filter(record => acceptedIds.has(record.productId));
+        acceptedRecords = acceptedProducts.map((product, index) => {
+          const record = records.find(candidate => candidate.productId === product.id);
+          const backupId = backupIds[index];
+          if (!record || !backupId) throw new Error(`AUTO_SEO_BACKUP_INTEGRITY: ${product.id}`);
+          return { ...record, backupId };
+        });
       }
       if (backupIds.length > 0 && selectedSettings && selectedSettings.provider !== "gemini") {
         db.prepare("UPDATE auto_seo_product_backups SET gpt_settings_json=? WHERE workflow_id=? AND store_id=?").run(JSON.stringify(selectedSettings), request.workflowId, request.storeId);
@@ -385,6 +407,8 @@ export async function handleAutoSeoRun(
   let seoProvider: "gemini" | "custom_gpt" | "codex_mcp" | undefined;
   let reviewPersistedCount = 0;
   let seoDispatch: AutoSeoRunResult["seoDispatch"];
+  let confirmedProducts = acceptedProducts;
+  let activeDuplicateBackupIds: readonly string[] = [];
 
   if (acceptedProducts.length === 0) {
     return {
@@ -416,6 +440,20 @@ export async function handleAutoSeoRun(
 
     seoProvider = seoResult.provider;
     if (seoResult && seoResult.success === true) {
+      const dispatchedProductIds = new Set(dispatchedProducts.map(product => product.id));
+      const activeDuplicateProductIds = new Set(
+        (seoResult.skippedProductIds ?? []).filter(productId => dispatchedProductIds.has(productId)),
+      );
+      if (activeDuplicateProductIds.size > 0) {
+        confirmedProducts = acceptedProducts.filter(product => !activeDuplicateProductIds.has(product.id));
+        activeDuplicateBackupIds = acceptedRecords
+          .filter(record => activeDuplicateProductIds.has(record.productId))
+          .map(record => record.backupId);
+        skippedProducts.push(...[...activeDuplicateProductIds].map(productId => ({
+          productId,
+          reason: "ACTIVE_DUPLICATE" as const,
+        })));
+      }
       if (seoProvider === "custom_gpt" || seoProvider === "codex_mcp") {
         seoDispatch = {
           provider: seoProvider,
@@ -524,16 +562,33 @@ export async function handleAutoSeoRun(
 
   // Update backup rows with downstream status (failure does not roll back committed backups)
   try {
+    const activeDuplicateBackupIdSet = new Set(activeDuplicateBackupIds);
+    const confirmedBackupIds = backupIds.filter(backupId => !activeDuplicateBackupIdSet.has(backupId));
     if (db) {
-      updateDownstreamStatus(db, request.workflowId, backupIds, downstreamStatus, null, downstreamError);
+      updateDownstreamStatus(db, request.workflowId, confirmedBackupIds, downstreamStatus, null, downstreamError);
+      updateDownstreamStatus(
+        db,
+        request.workflowId,
+        activeDuplicateBackupIds,
+        "FAILED",
+        null,
+        "ALREADY_IN_SEO_PIPELINE",
+      );
     } else {
       if (!repository) throw new Error("Auto SEO backup repository is unavailable");
       await repository.updateDownstreamStatus(
         request.workflowId,
-        backupIds,
+        confirmedBackupIds,
         downstreamStatus,
         null,
         downstreamError,
+      );
+      await repository.updateDownstreamStatus(
+        request.workflowId,
+        activeDuplicateBackupIds,
+        "FAILED",
+        null,
+        "ALREADY_IN_SEO_PIPELINE",
       );
     }
   } catch (updateErr: unknown) {
@@ -552,8 +607,8 @@ export async function handleAutoSeoRun(
     downstreamHttpStatus: null,
     downstreamError,
     reviewPersistedCount,
-    acceptedProductIds: acceptedProducts.map(product => product.id),
-    acceptedCount: acceptedProducts.length,
+    acceptedProductIds: confirmedProducts.map(product => product.id),
+    acceptedCount: confirmedProducts.length,
     skippedProducts,
     skippedCount: skippedProducts.length,
     ...(seoDispatch ? { seoDispatch } : {}),
