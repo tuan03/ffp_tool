@@ -2254,7 +2254,7 @@ export function AmazonCrawlerPage({
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
                 <p>
                   SEO Queue: <strong className="text-emerald-300">{seoHandoffSummary.handedOver}/{seoHandoffSummary.totalProducts} đã bàn giao</strong>
-                  {seoHandoffSummary.pending > 0 ? <> · <strong className="text-cyan-300">{seoHandoffSummary.pending} đang chuẩn bị</strong></> : null}
+                  {seoHandoffSummary.pending > 0 ? <> · <strong className="text-cyan-300">{seoHandoffSummary.pending} đang chờ Pipeline</strong></> : null}
                   {seoHandoffSummary.notHandedOver > 0 ? <> · <strong className="text-rose-300">{seoHandoffSummary.notHandedOver} chưa bàn giao</strong></> : null}
                 </p>
               </div>

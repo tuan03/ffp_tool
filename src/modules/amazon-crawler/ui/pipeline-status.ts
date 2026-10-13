@@ -36,7 +36,7 @@ export function crawlerSeoHandoffState(
 
 export function crawlerSeoHandoffLabel(pipeline: ProductPipelineMetadata | undefined): string {
   const labels: Readonly<Record<CrawlerSeoHandoffState, string>> = {
-    pending: "Đang chuẩn bị bàn giao",
+    pending: "Đang chờ Pipeline bàn giao",
     handing_over: "Đang bàn giao SEO Queue",
     handed_over: "Đã bàn giao SEO Queue",
     not_handed_over: "Chưa bàn giao SEO Queue",

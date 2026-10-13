@@ -1847,6 +1847,53 @@ class CoordinatorStoreTests(unittest.TestCase):
         self.assertEqual(len(claimed), 2)
         self.assertEqual(self.store.get_job(str(job["id"]))["status"], "review_pending")
 
+    def test_new_product_claim_is_not_starved_by_due_external_seo_retries(self) -> None:
+        job = self.store.create_job({"urls": ["B0PRIORI12"], "storeId": "store-1"})
+        received_source = "amazon:B0PRIORI12:color:new"
+        received_lock_key = int.from_bytes(
+            hashlib.sha256(f"store-1\0{received_source}".encode("utf-8")).digest()[:8],
+            byteorder="big",
+            signed=True,
+        )
+        retry_sources: list[str] = []
+        candidate_index = 0
+        while len(retry_sources) < 12:
+            source_key = f"amazon:B0RETRY{candidate_index:04d}:color:pending"
+            lock_key = int.from_bytes(
+                hashlib.sha256(f"store-1\0{source_key}".encode("utf-8")).digest()[:8],
+                byteorder="big",
+                signed=True,
+            )
+            if lock_key < received_lock_key:
+                retry_sources.append(source_key)
+            candidate_index += 1
+
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.job_id == job["id"]))
+            task.status = "completed"
+            session.add(CrawlProductItem(
+                id="new-received-item", job_id=job["id"], task_id=task.id,
+                source_key=received_source, product_id="new-product",
+                client_id="client-a", lease_id="lease-a", checksum="new-checksum",
+                raw_payload={}, status="received",
+            ))
+            for index, source_key in enumerate(retry_sources):
+                session.add(CrawlProductItem(
+                    id=f"retry-item-{index}", job_id=job["id"], task_id=task.id,
+                    source_key=source_key, product_id=f"retry-product-{index}",
+                    client_id="client-a", lease_id="lease-a", checksum=f"retry-checksum-{index}",
+                    raw_payload={}, normalized_payload={"media": []}, status="retry_wait",
+                    shopify_result={"externalSeo": {"jobId": f"seo-job-{index}", "provider": "codex_mcp"}},
+                    next_attempt_at=utc_now() - timedelta(minutes=5),
+                ))
+
+        with patch.object(self.engine.dialect, "name", "postgresql"):
+            claimed = self.store.claim_product_items(
+                worker_id="pipeline-worker", store_id="store-1", limit=1,
+            )
+
+        self.assertEqual([item["id"] for item in claimed], ["new-received-item"])
+
     def test_archiving_handed_off_job_hides_history_without_deleting_pipeline_items(self) -> None:
         job = self.store.create_job({"urls": ["B0ARCHIVE1"], "storeId": "preaureum_dev"})
         with self.sessions.begin() as session:

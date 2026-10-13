@@ -178,6 +178,24 @@ def _shopify_sync_lock_key(store_id: str, source_key: str) -> int:
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
+def _is_shopify_sync_candidate(item: CrawlProductItem) -> bool:
+    pipeline_result = dict(item.shopify_result or {})
+    review = pipeline_result.get("review")
+    return item.status == "sync_queued" or (
+        item.status == "syncing" and isinstance(review, dict) and bool(review)
+    )
+
+
+def _product_claim_lane(item: CrawlProductItem) -> int:
+    if item.status == "received":
+        return 0
+    if _is_shopify_sync_candidate(item):
+        return 1
+    if item.status in {"normalizing", "seo", "image_processing", "syncing"}:
+        return 2
+    return 3
+
+
 class CoordinatorStore(CoordinatorObservability):
     ATTEMPT_HISTORY_RETENTION_DAYS = 7
 
@@ -2245,6 +2263,12 @@ class CoordinatorStore(CoordinatorObservability):
         count = max(1, min(20, int(limit)))
         claimed: list[dict[str, Any]] = []
         with self._product_claim_lock, self.sessions.begin() as session:
+            claim_lane = case(
+                (CrawlProductItem.status == "received", 0),
+                (CrawlProductItem.status == "sync_queued", 1),
+                (CrawlProductItem.status.in_(["normalizing", "seo", "image_processing", "syncing"]), 2),
+                else_=3,
+            )
             candidates = session.scalars(
                 select(CrawlProductItem)
                 .where(
@@ -2260,13 +2284,24 @@ class CoordinatorStore(CoordinatorObservability):
                         & (CrawlProductItem.claim_expires_at < now)
                     )
                 )
-                .order_by(CrawlProductItem.next_attempt_at.asc().nulls_first(), CrawlProductItem.created_at)
+                .order_by(
+                    claim_lane,
+                    CrawlProductItem.next_attempt_at.asc().nulls_first(),
+                    CrawlProductItem.created_at,
+                )
                 .limit(min(100, count * 10))
                 .with_for_update(skip_locked=True)
             ).all()
             dialect_name = session.get_bind().dialect.name
             if dialect_name == "postgresql":
-                candidates.sort(key=lambda candidate: _shopify_sync_lock_key(store_id, candidate.source_key))
+                indexed_candidates = list(enumerate(candidates))
+                indexed_candidates.sort(key=lambda entry: (
+                    _product_claim_lane(entry[1]),
+                    _shopify_sync_lock_key(store_id, entry[1].source_key)
+                    if _is_shopify_sync_candidate(entry[1])
+                    else entry[0],
+                ))
+                candidates = [candidate for _, candidate in indexed_candidates]
             for item in candidates:
                 if len(claimed) >= count:
                     break
@@ -2275,9 +2310,7 @@ class CoordinatorStore(CoordinatorObservability):
                 effective_store = str(job_settings.get("storeId") or "").strip() or store_id
                 pipeline_result = dict(item.shopify_result or {})
                 review = dict(pipeline_result.get("review") or {})
-                is_sync_claim = item.status == "sync_queued" or (
-                    item.status == "syncing" and bool(review)
-                )
+                is_sync_claim = _is_shopify_sync_candidate(item)
                 if is_sync_claim:
                     if dialect_name == "postgresql":
                         session.execute(
