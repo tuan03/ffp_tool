@@ -76,6 +76,7 @@ const executionSchema = z.object({
   shopifyUpdatedAt: z.string().min(1).optional(),
   providerId: z.string().min(1),
   pipelineVersion: z.string().min(1),
+  autoPublishAfterSeo: z.boolean().optional(),
   originalSnapshot: z.unknown(),
 }).strict();
 

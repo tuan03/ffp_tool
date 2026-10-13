@@ -125,6 +125,59 @@ integrationTest("PostgreSQL batch enqueue skips one active product without losin
   }
 });
 
+integrationTest("completed Codex Auto SEO atomically approves Review and queues Shopify publishing", async () => {
+  assert.ok(databaseUrl);
+  const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;
+  const queue = new PostgresCustomGptQueue({ databaseUrl, schema }, () => 1_000);
+  const pool = new Pool({ connectionString: databaseUrl });
+  try {
+    await queue.initialize();
+    await queue.configure("test-store", { provider: "codex_mcp", batchSize: 1 });
+    await queue.workers.enableStoreRaw("test-store");
+    const imageUrl = "https://cdn.shopify.com/s/files/1/test.jpg";
+    const job = await queue.enqueue(createTestEnqueue({
+      storeId: "test-store",
+      productId: "123",
+      sourceRevision: "2026-10-13T00:00:00.000Z",
+      autoPublishAfterSeo: true,
+      original: {
+        updatedAt: "2026-10-13T00:00:00.000Z",
+        images: [{ id: "gid://shopify/MediaImage/456", url: imageUrl }],
+      },
+      input: { images: [{ id: "front", url: imageUrl }] },
+    }));
+    await pool.query(`UPDATE "${schema}".gpt_jobs SET status='VALIDATING',
+      payload=(payload::jsonb || '{"status":"VALIDATING"}'::jsonb)::text WHERE id=$1`, [job.id]);
+
+    await queue.finish("test-store", job.id, {
+      output: {
+        productTitle: "Automatic title",
+        productDescription: "<p>Automatic description</p>",
+        productSeoTitle: "Automatic SEO title",
+        productSeoDescription: "Automatic SEO description",
+        images: [{ sourceUrl: imageUrl, alt: "Automatic image alt" }],
+        aeo_quick_summary: "A grounded automatic AEO summary for this product.",
+        aeo_faq: [{ question: "What is this?", answer: "A test product." }],
+        aeo_json_ld: "{\"@context\":\"https://schema.org\",\"@graph\":[{\"@type\":\"Product\"},{\"@type\":\"FAQPage\"}]}",
+      },
+      metadata: { engine: "codex_mcp" },
+    });
+
+    const review = await queue.reviewState("test-store", job.id);
+    assert.equal(review.reviewDecision, "approved");
+    assert.equal(review.approvalSource, "automatic_policy");
+    assert.equal(review.shopifySyncStatus, "syncing");
+    const publish = await queue.publisher.status("test-store", job.id);
+    assert.equal(publish.operation?.state, "QUEUED");
+    assert.equal(publish.operation?.fields.images?.[0]?.id, "gid://shopify/MediaImage/456");
+    assert.equal(publish.operation?.fields.metafields?.some(field => field.key === "aeo_suite_html"), true);
+  } finally {
+    await queue.close();
+    await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await pool.end();
+  }
+});
+
 integrationTest("worker finalization commits a Review receipt and completes its run exactly once", async () => {
   assert.ok(databaseUrl);
   const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;

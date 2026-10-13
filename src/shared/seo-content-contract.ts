@@ -72,5 +72,7 @@ export interface SeoExecutionEnvelope {
   readonly shopifyUpdatedAt?: string;
   readonly providerId: string;
   readonly pipelineVersion: string;
+  /** Server-owned handoff policy for durable Shopify publishing after SEO validation. */
+  readonly autoPublishAfterSeo?: boolean;
   readonly originalSnapshot: unknown;
 }

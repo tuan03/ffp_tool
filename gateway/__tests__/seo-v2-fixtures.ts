@@ -20,12 +20,14 @@ export function createTestExecution(input: Partial<SeoExecutionEnvelope> = {}): 
   return { storeId, source, sourceIdentity, providerId: input.providerId ?? "codex_mcp",
     pipelineVersion: input.pipelineVersion ?? "seo-worker-v2", originalSnapshot: input.originalSnapshot ?? { updatedAt: "v1" },
     ...(input.productId ? { productId: input.productId } : {}), ...(input.sourceRevision ? { sourceRevision: input.sourceRevision } : {}),
-    ...(input.shopifyUpdatedAt ? { shopifyUpdatedAt: input.shopifyUpdatedAt } : {}) };
+    ...(input.shopifyUpdatedAt ? { shopifyUpdatedAt: input.shopifyUpdatedAt } : {}),
+    ...(input.autoPublishAfterSeo !== undefined ? { autoPublishAfterSeo: input.autoPublishAfterSeo } : {}) };
 }
 
 export function createTestEnqueue(options: {
   readonly storeId?: string; readonly source?: "amazon" | "auto_seo"; readonly sourceIdentity?: string;
   readonly productId?: string; readonly sourceRevision?: string; readonly original?: unknown;
+  readonly autoPublishAfterSeo?: boolean;
   readonly input?: Partial<GptSeoInput> & Pick<GptSeoInput, "images">;
   readonly settings?: GptSeoEnqueue["settings"];
   readonly performanceRecommendationId?: string;
@@ -34,7 +36,9 @@ export function createTestEnqueue(options: {
   const sourceIdentity = options.sourceIdentity ?? options.productId ?? "123";
   return { input: createTestSeoInput(options.input, storeId), execution: createTestExecution({ storeId,
     source: options.source ?? "auto_seo", sourceIdentity, ...(options.productId ? { productId: options.productId } : {}),
-    ...(options.sourceRevision ? { sourceRevision: options.sourceRevision } : {}), originalSnapshot: options.original ?? { updatedAt: "v1" } }),
+    ...(options.sourceRevision ? { sourceRevision: options.sourceRevision } : {}),
+    ...(options.autoPublishAfterSeo !== undefined ? { autoPublishAfterSeo: options.autoPublishAfterSeo } : {}),
+    originalSnapshot: options.original ?? { updatedAt: "v1" } }),
     ...(options.settings ? { settings: options.settings } : {}),
     ...(options.performanceRecommendationId ? { performanceRecommendationId: options.performanceRecommendationId } : {}) };
 }

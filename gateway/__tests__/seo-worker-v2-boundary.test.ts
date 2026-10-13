@@ -35,6 +35,14 @@ test("V2 boundary accepts exactly images, niche and storeProfile and normalizes 
   assert.equal(normalized.execution.sourceIdentity, "123");
 });
 
+test("V2 boundary preserves the server-owned automatic publish policy", () => {
+  const normalized = normalizeSeoEnqueue({
+    ...enqueue,
+    execution: { ...enqueue.execution, autoPublishAfterSeo: true },
+  });
+  assert.equal(normalized.execution.autoPublishAfterSeo, true);
+});
+
 test("V2 boundary accepts a runtime store alias resolved from its registered Shopify domain", () => {
   const runtimeStoreId = "preaureum_dev";
   const runtimeProfile = resolveStoreProfile({

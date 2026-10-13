@@ -42,6 +42,7 @@ test("backup outbox enqueues from repository before acknowledging and preserves 
     assert.equal(queue.list("jeminise")[0]?.settings.provider, "custom_gpt");
     assert.equal(queue.list("jeminise")[0]?.settings.language, "en-US");
     assert.equal(queue.list("jeminise")[0]?.execution.productId, "123");
+    assert.equal(queue.list("jeminise")[0]?.execution.autoPublishAfterSeo, true);
     await recoverAutoSeoHandoffs(repository, queue);
     assert.equal(queue.list("jeminise").length, 1);
   } finally { queueDb.close(); }
@@ -74,7 +75,8 @@ test("outbox recovery reuses the direct Auto SEO job for the same source revisio
     const settings = queue.configure("jeminise", { provider: "codex_mcp", batchSize: 5 });
     const direct = queue.enqueue({ input: fromAutoSeoProduct(product, profile.niche, profile), execution: {
       storeId: "jeminise", productId: "123", source: "auto_seo", sourceIdentity: "123", sourceRevision: updatedAt,
-      shopifyUpdatedAt: updatedAt, providerId: "codex_mcp", pipelineVersion: "seo-content-input-v2", originalSnapshot: product,
+      shopifyUpdatedAt: updatedAt, providerId: "codex_mcp", pipelineVersion: "seo-content-input-v2",
+      autoPublishAfterSeo: true, originalSnapshot: product,
     }, settings });
     await recoverAutoSeoHandoffs({
       async findPendingBackups() { return [{ ...pendingBackup(), snapshotJson: JSON.stringify(product), shopifyUpdatedAt: updatedAt, gptSettingsJson: JSON.stringify(settings) }]; },
@@ -108,6 +110,7 @@ test("backup outbox preserves a Codex MCP provider snapshot", async () => {
     const queuedJob = queue.list("jeminise")[0];
     assert.equal(acknowledgedId, backup.backupId);
     assert.equal(queuedJob?.settings.provider, "codex_mcp");
+    assert.equal(queuedJob?.execution.autoPublishAfterSeo, true);
     assert.equal(queue.claim("jeminise", "codex-auto-seo", "codex_mcp", "codex_mcp:default").jobs[0]?.id, queuedJob?.id);
   } finally {
     queueDb.close();

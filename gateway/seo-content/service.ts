@@ -47,6 +47,7 @@ export async function runSeoContent(
             shopifyUpdatedAt: product.updatedAt,
             providerId: settings.provider,
             pipelineVersion: SEO_WORKER_SCHEMA_VERSION,
+            autoPublishAfterSeo: true,
             originalSnapshot: product,
           },
           settings,

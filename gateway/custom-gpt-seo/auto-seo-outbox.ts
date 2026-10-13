@@ -17,7 +17,8 @@ export async function recoverAutoSeoHandoffs(repository: Pick<AutoSeoBackupRepos
       const settings = JSON.parse(String(row.gptSettingsJson)) as GptSeoSettings;
       (await queue.enqueue({ input, execution: { storeId: row.storeId, productId: row.productId, source: "auto_seo",
         sourceIdentity: row.productId, sourceRevision: typeof product.updatedAt === "string" ? product.updatedAt : undefined, shopifyUpdatedAt: row.shopifyUpdatedAt ?? undefined,
-        providerId: settings.provider, pipelineVersion: SEO_WORKER_SCHEMA_VERSION, originalSnapshot: product }, settings }));
+        providerId: settings.provider, pipelineVersion: SEO_WORKER_SCHEMA_VERSION, autoPublishAfterSeo: true,
+        originalSnapshot: product }, settings }));
       await repository.acknowledgePendingHandoff(row.backupId);
     } catch (error: unknown) {
       await repository.failPendingHandoff(row.backupId, error instanceof AutoSeoStoreProfileError

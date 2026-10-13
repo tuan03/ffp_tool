@@ -13,6 +13,7 @@ import { SeoPublishRepository } from "../seo-worker/publish-repository";
 import { SeoRevisionRepository } from "../seo-worker/revision-repository";
 import { SeoCutoverRepository } from "../seo-worker/cutover";
 import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
+import { buildAutomaticSeoReview } from "../seo-worker/auto-publish-review";
 import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
 import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import { reviewListWhere, reviewStageSql } from "../review-list-query";
@@ -592,10 +593,27 @@ export class PostgresCustomGptQueue implements SeoQueue {
       if (worker?.run_id && (!worker.lease_id || Number(worker.expires_at) <= this.now())) throw new SeoWorkerError("STALE_LEASE");
       if (finalizerToken && job.finalizerToken !== finalizerToken) throw new Error("Stale finalizer lease");
       if (job.status !== "VALIDATING") throw new Error("Job is not validating");
+      const reviewUpdatedAt = this.now();
+      const automaticReview = job.source === "auto_seo" && job.settings.provider === "codex_mcp" &&
+        job.execution.autoPublishAfterSeo === true
+        ? buildAutomaticSeoReview(job, result, reviewUpdatedAt)
+        : null;
       (await this.write({ ...job, status: "REVIEW_READY", result, error: undefined }));
       // Review consumes job.result directly; the draft and its receipt commit together.
       (await this.db.prepare("INSERT INTO gpt_deliveries(job_id,payload,delivered) VALUES (?,?,1) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload,delivered=1").run(jobId, JSON.stringify(result)));
       (await this.audit(storeId, jobId, "REVIEW_READY"));
+      if (automaticReview) {
+        await this.db.prepare("INSERT INTO gpt_review_state(job_id,payload) VALUES (?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload")
+          .run(jobId, JSON.stringify(automaticReview));
+        const operation = await this.publisher.enqueue({
+          storeId,
+          jobId,
+          reviewUpdatedAt,
+          requestId: `auto-publish-${jobId}`,
+          operator: "automatic_policy",
+        });
+        await this.audit(storeId, jobId, `AUTO_PUBLISH_QUEUED:${operation.id}`);
+      }
     }));
   }
   async resetReviewReadyForAeoBackfill(storeId: string, provider: ExternalSeoProvider): Promise<{ readonly resetCount: number; readonly jobIds: readonly string[] }> {
