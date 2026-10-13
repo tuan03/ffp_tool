@@ -21,6 +21,8 @@ import {
   validateAutoSeoEligibilityRequest,
 } from "./auto-seo-eligibility";
 import { calculateAutoSeoInputHash } from "./auto-seo-input-hash";
+import { getAutoSeoSentBackupDisposition } from "./auto-seo-retry";
+import type { AutoSeoPostgresInsertOptions } from "./auto-seo-postgres-repository";
 import { isGatewayAuthorized, MAX_BODY_BYTES } from "./http-server";
 import { runSeoContent } from "./seo-content";
 import { AutoSeoStoreProfileError, requireAutoSeoStoreProfile } from "./seo-content/store-profile";
@@ -278,6 +280,16 @@ export async function handleAutoSeoRun(
   const repository = options?.backupRepository ?? (db ? undefined : getAutoSeoBackupRepository());
   const runner = options?.seoContentRunner ?? runSeoContent;
   const selectedSettings = options?.seoContentRunner ? undefined : (await getCustomGptRuntime().queue.settings(request.storeId));
+  const queue = options?.queue ?? (!options?.seoContentRunner ? getCustomGptRuntime().queue : undefined);
+  const resolveSentBackup: AutoSeoPostgresInsertOptions["resolveSentBackup"] = queue
+    ? async record => {
+      const job = await queue.findLatestSourceJob(record.storeId, "auto_seo", record.productId.replace(/^gid:\/\/shopify\/Product\//, ""));
+      const hasPendingReview = db
+        ? Boolean(db.prepare("SELECT 1 FROM seo_review_items WHERE store_id=? AND product_id=? AND deleted_at IS NULL AND review_status='pending' LIMIT 1").get(record.storeId, record.productId))
+        : (await (options?.eligibilityReviewRepository ?? getAutoSeoReviewRepository()).findPendingByStoreAndProductIds(record.storeId, [record.productId])).length > 0;
+      return getAutoSeoSentBackupDisposition(job, hasPendingReview);
+    }
+    : undefined;
 
   let backupIds: string[] = [];
   const acceptedProducts: AutoSeoProductPayload[] = [];
@@ -316,7 +328,10 @@ export async function handleAutoSeoRun(
         if (matchingRevision?.downstream_status === "NOT_SENT") {
           skippedProducts.push({ productId: product.id, reason: "ACTIVE_DUPLICATE" });
         } else if (matchingRevision?.downstream_status === "SENT") {
-          skippedProducts.push({ productId: product.id, reason: "UNCHANGED" });
+          const record = records.find(record => record.productId === product.id);
+          const disposition = record ? await resolveSentBackup?.(record) ?? "UNCHANGED" : "UNCHANGED";
+          if (disposition === "RETRY") acceptedProducts.push(product);
+          else skippedProducts.push({ productId: product.id, reason: disposition });
         } else {
           acceptedProducts.push(product);
         }
@@ -343,6 +358,7 @@ export async function handleAutoSeoRun(
     const claim = await repository.claimEligibleBatch(records, {
       onConflict: request.onConflict === "update" || options?.onConflict === "update" ? "update" : "error",
       ...(selectedSettings && selectedSettings.provider !== "gemini" ? { gptSettingsJson: JSON.stringify(selectedSettings) } : {}),
+      resolveSentBackup,
     });
     acceptedRecords = claim.acceptedRecords;
     backupIds = acceptedRecords.map(record => record.backupId);

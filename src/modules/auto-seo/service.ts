@@ -30,7 +30,7 @@ export async function runAutoSeoBackupBatches(input: {
   const skippedProducts: AutoSeoSkippedProduct[] = [];
   let seoProvider: AutoSeoBackupResponse["seoProvider"];
   let reviewPersistedCount = 0;
-  let progress: AutoSeoBackupBatchProgress = { total: productIds.length, hydrated: 0, backedUp: 0, handedOver: 0, skipped: 0, completedBatches: 0, phase: "loading" };
+  let progress: AutoSeoBackupBatchProgress = { total: productIds.length, hydrated: 0, backedUp: 0, handedOver: 0, skipped: 0, alreadyQueued: 0, unchanged: 0, completedBatches: 0, phase: "loading" };
   const report = (change: Partial<AutoSeoBackupBatchProgress>): void => {
     progress = { ...progress, ...change }; input.onProgress?.(progress);
   };
@@ -81,7 +81,10 @@ export async function runAutoSeoBackupBatches(input: {
         backupIds.push(...result.backupIds);
         skippedProducts.push(...(result.skippedProducts ?? []));
         reviewPersistedCount += result.reviewPersistedCount ?? 0;
-        report({ handedOver: progress.handedOver + acceptedIds.length, skipped: progress.skipped + skippedCount, completedBatches: progress.completedBatches + 1 });
+        const alreadyQueued = (result.skippedProducts ?? []).filter(product => product.reason === "ACTIVE_DUPLICATE").length;
+        report({ handedOver: progress.handedOver + acceptedIds.length, skipped: progress.skipped + skippedCount,
+          alreadyQueued: progress.alreadyQueued + alreadyQueued, unchanged: progress.unchanged + skippedCount - alreadyQueued,
+          completedBatches: progress.completedBatches + 1 });
         input.onCompletedProductIds?.(batch.map(product => product.id));
         if (seoProvider && result.seoProvider && seoProvider !== result.seoProvider) {
           throw new AppError("Provider SEO thay đổi giữa các batch; đã dừng phần còn lại.", "AUTO_SEO_BATCH_PROVIDER_CHANGED");

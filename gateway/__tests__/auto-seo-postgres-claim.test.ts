@@ -6,6 +6,9 @@ import { Pool } from "pg";
 
 import { AutoSeoPostgresRepository } from "../auto-seo-postgres-repository";
 import type { AutoSeoPostgresBackupInput } from "../auto-seo-postgres-repository";
+import { handleAutoSeoRun } from "../auto-seo-handler";
+import { PostgresCustomGptQueue } from "../custom-gpt-seo/postgres-queue";
+import { createTestEnqueue } from "./seo-v2-fixtures";
 
 function backup(index: number, overrides: Partial<AutoSeoPostgresBackupInput> = {}): AutoSeoPostgresBackupInput {
   return {
@@ -51,15 +54,37 @@ test("Auto SEO claims send PostgreSQL-safe, unambiguous lock keys for every prod
 });
 
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
+
+test("PostgreSQL evaluates cleared-job retries under the claim lock and preserves active receipts", async context => {
+  const statements: string[] = [];
+  const client = {
+    async query(statement: string) {
+      statements.push(statement);
+      return { rows: statement.includes("SELECT downstream_status") ? [{ downstream_status: "SENT", workflow_id: "original" }] : [], rowCount: 1 };
+    },
+    release() {},
+  };
+  context.mock.method(Pool.prototype, "connect", async () => client);
+  const repository = new AutoSeoPostgresRepository({ databaseUrl: "postgresql://ffp_tool:test@127.0.0.1:5432/ffp_tool" });
+  try {
+    const retried = await repository.claimEligibleBatch([backup(1)], { resolveSentBackup: async () => {
+      assert.ok(statements.some(statement => statement.includes("pg_advisory_xact_lock")));
+      return "RETRY";
+    } });
+    assert.equal(retried.acceptedRecords.length, 1);
+    const active = await repository.claimEligibleBatch([backup(2)], { resolveSentBackup: async () => "ACTIVE_DUPLICATE" });
+    assert.deepEqual(active.skippedProducts, [{ productId: backup(2).productId, reason: "ACTIVE_DUPLICATE" }]);
+  } finally { await repository.close(); }
+});
 const integrationTest = databaseUrl ? test : test.skip;
 
-async function withRepositories(run: (first: AutoSeoPostgresRepository, second: AutoSeoPostgresRepository) => Promise<void>): Promise<void> {
+async function withRepositories(run: (first: AutoSeoPostgresRepository, second: AutoSeoPostgresRepository, schema: string) => Promise<void>): Promise<void> {
   assert.ok(databaseUrl);
   const schema = `auto_seo_claim_test_${randomUUID().replaceAll("-", "")}`;
   const first = new AutoSeoPostgresRepository({ databaseUrl, schema });
   const second = new AutoSeoPostgresRepository({ databaseUrl, schema });
   const cleanup = new Pool({ connectionString: databaseUrl });
-  try { await first.initializeSchema(); await run(first, second); }
+  try { await first.initializeSchema(); await run(first, second, schema); }
   finally {
     await first.close(); await second.close();
     try { await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
@@ -95,5 +120,48 @@ integrationTest("concurrent reversed Auto SEO batches claim each product only on
     for (const record of accepted) await first.updateDownstreamStatus(record.workflowId, [record.backupId], "FAILED", null, "Retry fixture");
     const retry = await first.claimEligibleBatch(accepted.map(record => ({ ...record, backupId: record.backupId + "-retry", workflowId: "retry-workflow" })));
     assert.equal(retry.acceptedRecords.length, 2);
+  });
+});
+
+integrationTest("concurrent retries of a cleared SENT receipt create only one new handoff", async () => {
+  await withRepositories(async (first, second) => {
+    const original = backup(10);
+    await first.claimEligibleBatch([original]);
+    await first.updateDownstreamStatus(original.workflowId, [original.backupId], "SENT");
+    await first.failPendingHandoff(original.backupId, "Late recovery failure");
+    assert.equal((await first.findByBackupId(original.backupId))?.downstreamStatus, "SENT");
+    const retries = await Promise.all([first, second].map((repository, index) => repository.claimEligibleBatch([
+      { ...original, backupId: `retry-${index}`, workflowId: `retry-${index}` },
+    ], { resolveSentBackup: async () => "RETRY" })));
+    assert.equal(retries.flatMap(value => value.acceptedRecords).length, 1);
+    assert.equal(retries.flatMap(value => value.skippedProducts).length, 1);
+    assert.equal((await first.findByBackupId(original.backupId))?.downstreamStatus, "SENT");
+  });
+});
+
+integrationTest("PostgreSQL Auto SEO and the worker queue support clear then retry without duplicate active jobs", async () => {
+  await withRepositories(async (repository, _second, schema) => {
+    assert.ok(databaseUrl);
+    const queue = new PostgresCustomGptQueue({ databaseUrl, schema });
+    try {
+      await queue.initialize();
+      await queue.workers.enableStore("test-store");
+      const product = { id: "gid://shopify/Product/10", title: "Fixture", handle: "fixture", updatedAt: "2026-10-01T00:00:00Z",
+        images: [{ id: "front", url: "https://example.com/front.jpg" }] };
+      const options = { backupRepository: repository, queue,
+        eligibilityReviewRepository: { async findPendingByStoreAndProductIds() { return []; } },
+        seoContentRunner: async () => {
+          await queue.enqueue(createTestEnqueue({ storeId: "test-store", productId: "10", original: product, sourceRevision: product.updatedAt }));
+          return { success: true, processedCount: 0, provider: "codex_mcp" as const };
+        },
+      };
+      const request = { workflowId: "first", storeId: "test-store", shopDomain: "test.myshopify.com", products: [product] };
+      assert.equal((await handleAutoSeoRun(request, options)).acceptedCount, 1);
+      assert.equal((await queue.clearQueue("test-store")).cleared, 1);
+      assert.equal((await handleAutoSeoRun({ ...request, workflowId: "retry" }, options)).acceptedCount, 1);
+      assert.equal((await queue.list("test-store")).length, 1);
+      assert.deepEqual((await handleAutoSeoRun({ ...request, workflowId: "duplicate" }, options)).skippedProducts,
+        [{ productId: product.id, reason: "ACTIVE_DUPLICATE" }]);
+    } finally { await queue.close(); }
   });
 });

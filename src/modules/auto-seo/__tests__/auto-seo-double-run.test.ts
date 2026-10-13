@@ -56,11 +56,11 @@ function makeRun(backendRunsSeo: boolean): {
   return { run: toolbar.props.onRunAutoSeo as () => Promise<void>, counts, navigations };
 }
 
-test("real Auto SEO UI calls backend once and navigates without frontend SEO or handover", async () => {
+test("real Auto SEO UI calls backend once and stays on its result without frontend SEO or handover", async () => {
   const flow = makeRun(true);
   await flow.run();
   assert.deepEqual(flow.counts, { backup: 1, frontend: 0, handover: 0 });
-  assert.deepEqual(flow.navigations, ["/seo-review?storeId=capozen"]);
+  assert.deepEqual(flow.navigations, []);
 });
 
 test("mock Auto SEO UI retains its frontend SEO and handover flow", async () => {

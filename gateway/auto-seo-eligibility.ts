@@ -5,6 +5,7 @@ import type { SeoQueue } from "./custom-gpt-seo/queue-contract";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { AutoSeoBackupRepository } from "./auto-seo-backup-repository";
 import type { AutoSeoPostgresReviewRepository } from "./auto-seo-review-postgres";
+import { getAutoSeoSentBackupDisposition } from "./auto-seo-retry";
 
 const MAX_ELIGIBILITY_PRODUCTS = 5_000;
 const SQLITE_QUERY_CHUNK_SIZE = 400;
@@ -280,7 +281,7 @@ function buildAutoSeoEligibility(
     if (
       queueJob?.status === "CANCELLED" &&
       queueJob.cancellationReason === "OPERATOR_QUEUE_CLEAR" &&
-      isSameRevision(product.updatedAt, queueJobUpdatedAt(queueJob))
+      getAutoSeoSentBackupDisposition(queueJob, reviewByProduct.has(product.productId)) === "RETRY"
     ) {
       return { productId: product.productId, state: "retry", reason: "QUEUE_CLEARED" };
     }

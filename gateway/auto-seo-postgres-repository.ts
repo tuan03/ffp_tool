@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import { getAutoSeoPostgresSchemaSql } from "./auto-seo-postgres-schema";
 import type { AutoSeoBackupRepository } from "./auto-seo-backup-repository";
+import type { AutoSeoSentBackupDisposition } from "./auto-seo-retry";
 
 export interface AutoSeoPostgresBackupInput {
   readonly backupId: string;
@@ -38,6 +39,8 @@ export interface AutoSeoPostgresRepositoryOptions {
 export interface AutoSeoPostgresInsertOptions {
   readonly onConflict?: "error" | "update";
   readonly gptSettingsJson?: string;
+  /** Evaluated under the product claim lock, after NOT_SENT receipts have been excluded. */
+  readonly resolveSentBackup?: (record: AutoSeoPostgresBackupInput) => Promise<AutoSeoSentBackupDisposition>;
 }
 
 export interface AutoSeoPostgresClaimResult {
@@ -257,8 +260,11 @@ export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
           continue;
         }
         if (status === "SENT") {
-          skippedProducts.push({ productId: record.productId, reason: "UNCHANGED" });
-          continue;
+          const disposition = await options?.resolveSentBackup?.(record) ?? "UNCHANGED";
+          if (disposition !== "RETRY") {
+            skippedProducts.push({ productId: record.productId, reason: disposition });
+            continue;
+          }
         }
         const onConflict = status === "FAILED" && matchingRecord.workflow_id === record.workflowId
           ? "update"
@@ -369,7 +375,7 @@ export class AutoSeoPostgresRepository implements AutoSeoBackupRepository {
   }
 
   public async failPendingHandoff(backupId: string, error: string): Promise<void> {
-    await this.pool.query(`UPDATE ${this.schema}.auto_seo_product_backups SET downstream_status='FAILED', downstream_error=$1 WHERE backup_id=$2`, [error, backupId]);
+    await this.pool.query(`UPDATE ${this.schema}.auto_seo_product_backups SET downstream_status='FAILED', downstream_error=$1 WHERE backup_id=$2 AND downstream_status='NOT_SENT'`, [error, backupId]);
   }
 
   public async close(): Promise<void> {

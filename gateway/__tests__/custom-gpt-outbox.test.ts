@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { recoverAutoSeoHandoffs } from "../custom-gpt-seo/auto-seo-outbox";
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import type { AutoSeoPostgresBackup } from "../auto-seo-postgres-repository";
+import { fromAutoSeoProduct } from "../../src/modules/seo-content";
+import { createTestStoreProfile } from "./seo-v2-fixtures";
 
 function pendingBackup(): AutoSeoPostgresBackup {
   return {
@@ -59,6 +61,28 @@ test("failed handoff marks backup failed", async () => {
     assert.equal(failedId, backup.backupId);
     assert.equal(queue.list("jeminise").length, 0);
   } finally { queueDb.close(); }
+});
+
+test("outbox recovery reuses the direct Auto SEO job for the same source revision", async () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    const queue = new CustomGptQueue(db);
+    const updatedAt = "2026-10-01T00:00:00Z";
+    const product = { id: "gid://shopify/Product/123", title: "Fixture", handle: "fixture", updatedAt,
+      images: [{ id: "front", url: "https://example.com/front.jpg" }] };
+    const profile = createTestStoreProfile();
+    const settings = queue.configure("jeminise", { provider: "codex_mcp", batchSize: 5 });
+    const direct = queue.enqueue({ input: fromAutoSeoProduct(product, profile.niche, profile), execution: {
+      storeId: "jeminise", productId: "123", source: "auto_seo", sourceIdentity: "123", sourceRevision: updatedAt,
+      shopifyUpdatedAt: updatedAt, providerId: "codex_mcp", pipelineVersion: "seo-content-input-v2", originalSnapshot: product,
+    }, settings });
+    await recoverAutoSeoHandoffs({
+      async findPendingBackups() { return [{ ...pendingBackup(), snapshotJson: JSON.stringify(product), shopifyUpdatedAt: updatedAt, gptSettingsJson: JSON.stringify(settings) }]; },
+      async acknowledgePendingHandoff() {},
+      async failPendingHandoff() { assert.fail("must reuse direct handoff"); },
+    }, queue, () => profile);
+    assert.deepEqual(queue.list("jeminise").map(job => job.id), [direct.id]);
+  } finally { db.close(); }
 });
 
 test("backup outbox preserves a Codex MCP provider snapshot", async () => {

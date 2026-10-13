@@ -116,3 +116,20 @@ test("a lost response stops further batches without confirming the uncertain bat
   assert.equal(calls, 2);
   assert.equal(completed.length, 50);
 });
+
+test("batch progress separates unchanged products from existing Queue or Review jobs", async () => {
+  let progress: AutoSeoBackupBatchProgress | undefined;
+  await runAutoSeoBackupBatches({
+    workflowId: "counts", storeId: "store-a", shopDomain: "store-a.myshopify.com", productIds: ["same", "queued"],
+    onProgress: value => { progress = value; },
+    client: {
+      async hydrateSelectedProductsFresh(ids) { return ids.map(id => product(id)); },
+      async runAutoSeoBackup(request) { return { workflowId: request.workflowId, backedUpCount: 0, backupIds: [],
+        downstreamStatus: "SENT", acceptedProductIds: [], skippedCount: 2,
+        skippedProducts: [{ productId: "same", reason: "UNCHANGED" }, { productId: "queued", reason: "ACTIVE_DUPLICATE" }] }; },
+    },
+  });
+  assert.equal(progress?.alreadyQueued, 1);
+  assert.equal(progress?.unchanged, 1);
+  assert.equal(progress?.handedOver, 0);
+});

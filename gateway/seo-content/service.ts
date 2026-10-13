@@ -5,6 +5,7 @@ import {
 } from "../../src/modules/seo-content";
 import { runSeoContent as runServerSeoContent } from "../../src/modules/seo-content/server";
 import { getCustomGptRuntime } from "../custom-gpt-seo/runtime";
+import { SEO_WORKER_SCHEMA_VERSION } from "../custom-gpt-seo/input-contract";
 import type { GatewaySeoContentOptions, GatewaySeoContentRequest, SeoContentResult } from "./types";
 import { requireAutoSeoStoreProfile } from "./store-profile";
 
@@ -42,7 +43,7 @@ export async function runSeoContent(
             sourceRevision: product.updatedAt,
             shopifyUpdatedAt: product.updatedAt,
             providerId: settings.provider,
-            pipelineVersion: "seo-content-input-v2",
+            pipelineVersion: SEO_WORKER_SCHEMA_VERSION,
             originalSnapshot: product,
           },
           settings,

@@ -138,6 +138,8 @@ export interface AutoSeoBackupBatchProgress {
   readonly backedUp: number;
   readonly handedOver: number;
   readonly skipped: number;
+  readonly alreadyQueued: number;
+  readonly unchanged: number;
   readonly completedBatches: number;
   readonly phase: "loading" | "backup" | "completed" | "failed";
 }

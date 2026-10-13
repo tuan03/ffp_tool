@@ -653,3 +653,25 @@ test("concurrent identical submissions dispatch once and report an active duplic
   assert.equal(runnerCalls, 1);
   db.close();
 });
+
+test("clearing Auto SEO Queue allows the unchanged product to be dispatched again without losing backups", async () => {
+  const db = new DatabaseSync(":memory:");
+  initAutoSeoDbSchema(db);
+  const queue = new CustomGptQueue(db);
+  const product = createProduct();
+  const options = { db, queue, seoContentRunner: async () => {
+    queue.enqueue(createTestEnqueue({ storeId: "capozen", productId: "100", original: product }));
+    return { success: true, provider: "codex_mcp" as const, processedCount: 0 };
+  } };
+  const request = { workflowId: "before-clear", storeId: "capozen", shopDomain: "capozen.myshopify.com", products: [product] };
+  try {
+    assert.equal((await handleAutoSeoRun(request, options)).acceptedCount, 1);
+    assert.equal(queue.clearQueue("capozen").cleared, 1);
+    const retry = await handleAutoSeoRun({ ...request, workflowId: "after-clear" }, options);
+    assert.equal(retry.acceptedCount, 1);
+    assert.equal(queue.list("capozen").length, 1);
+    assert.equal(db.prepare("SELECT COUNT(*) AS total FROM auto_seo_product_backups").get()?.total, 2);
+    const duplicate = await handleAutoSeoRun({ ...request, workflowId: "already-queued" }, options);
+    assert.deepEqual(duplicate.skippedProducts, [{ productId: product.id, reason: "ACTIVE_DUPLICATE" }]);
+  } finally { db.close(); }
+});
