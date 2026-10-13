@@ -5,7 +5,7 @@ import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import { resolvePipelineVendor } from "./pipeline-vendor";
-import { findExistingAmazonProducts } from "./pipeline-amazon-duplicates";
+import { findExistingAmazonProducts, verifyAmazonAsinSearchable } from "./pipeline-amazon-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
 import { bindExternalSeoProduct } from "../src/modules/seo-content";
@@ -73,6 +73,7 @@ interface PipelineClaim {
     readonly syncGeneration?: number;
     readonly [key: string]: unknown;
   } | null;
+  readonly assetsNormalized?: number;
   readonly settings: {
     readonly imageProfileSlug?: string;
     readonly imageProfileRevision?: string | null;
@@ -134,6 +135,23 @@ if (env.SHOPIFY_PROXY_CONFIG || env.AMAZON_CRAWLER_PROXY_CONFIG) {
 const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
 const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 8)));
+const amazonAsinSearchabilityChecks = new Map<string, Promise<void>>();
+
+async function ensureAmazonAsinSearchable(targetStore: string): Promise<void> {
+  const existingCheck = amazonAsinSearchabilityChecks.get(targetStore);
+  if (existingCheck) return existingCheck;
+  const { storeConfig } = getPipelineStoreProfile(targetStore);
+  if (!storeConfig) throw new Error(`STORE_REQUIRED:${targetStore}`);
+  const check = verifyAmazonAsinSearchable(<T>(document: string, variables?: Record<string, unknown>) =>
+    duplicateCheckClient.query<T>(storeConfig, document, variables));
+  amazonAsinSearchabilityChecks.set(targetStore, check);
+  try {
+    await check;
+  } catch (error: unknown) {
+    amazonAsinSearchabilityChecks.delete(targetStore);
+    throw error;
+  }
+}
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
@@ -496,9 +514,30 @@ async function processClaim(
   let gptSyncToken: string | undefined;
   let externalSeoExecution: SeoContentDetailedOutput | undefined;
   let baseNormalizedProduct = claim.product;
-  let assetsNormalized = Number(claim.review?.assetsNormalized ?? 0);
+  let assetsNormalized = Number(claim.review?.assetsNormalized ?? claim.assetsNormalized ?? 0);
   if (!isSyncStage) {
-    if (!claim.externalSeo && !claim.isRecovery && claim.sourceKey.startsWith("amazon:")) {
+    if (claim.externalSeo) {
+      try {
+        if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
+        const externalJob = await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`);
+        if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
+          await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
+          return;
+        }
+        if (externalJob.status !== "REVIEW_READY") {
+          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/external-seo`, {
+            workerId,
+            externalJobId: externalJob.id,
+            provider: externalJob.settings.provider,
+          });
+          return;
+        }
+        externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
+      } catch (error) {
+        await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
+        return;
+      }
+    } else if (!claim.isRecovery && claim.sourceKey.startsWith("amazon:")) {
       const duplicateCheckHeartbeat = setInterval(() => {
         void postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, { workerId })
           .then((response: unknown) => {
@@ -508,8 +547,10 @@ async function processClaim(
       try {
         const { storeConfig } = getPipelineStoreProfile(targetStore);
         if (!storeConfig) throw new Error(`STORE_REQUIRED:${targetStore}`);
+        await ensureAmazonAsinSearchable(targetStore);
         const matches = await findExistingAmazonProducts({
           product: claim.product,
+          isSearchabilityVerified: true,
           query: <T>(document: string, variables?: Record<string, unknown>) =>
             duplicateCheckClient.query<T>(storeConfig, document, variables),
         });
@@ -527,45 +568,44 @@ async function processClaim(
         clearInterval(duplicateCheckHeartbeat);
       }
     }
-    const blockers = productBlockers(claim.product);
-    if (blockers.length > 0) {
-      await failClaim(claim, workerId, new Error(blockers.join(" ")), {
-        phase: "normalization",
-        timings: { totalMs: Date.now() - pipelineStartedAt },
-      });
-      return;
-    }
+    if (!claim.externalSeo) {
+      const blockers = productBlockers(claim.product);
+      if (blockers.length > 0) {
+        await failClaim(claim, workerId, new Error(blockers.join(" ")), {
+          phase: "normalization",
+          timings: { totalMs: Date.now() - pipelineStartedAt },
+        });
+        return;
+      }
 
-    let normalization: ReturnType<typeof normalizeCustomizationProduct>;
-    const normalizationStartedAt = Date.now();
-    try {
-      normalization = normalizeCustomizationProduct(claim.product);
-    } catch (error: unknown) {
+      let normalization: ReturnType<typeof normalizeCustomizationProduct>;
+      const normalizationStartedAt = Date.now();
+      try {
+        normalization = normalizeCustomizationProduct(claim.product);
+      } catch (error: unknown) {
+        timings.normalizationMs = Date.now() - normalizationStartedAt;
+        timings.totalMs = Date.now() - pipelineStartedAt;
+        await failClaim(claim, workerId, error, { phase: "normalization", timings });
+        return;
+      }
       timings.normalizationMs = Date.now() - normalizationStartedAt;
-      timings.totalMs = Date.now() - pipelineStartedAt;
-      await failClaim(claim, workerId, error, { phase: "normalization", timings });
-      return;
-    }
-    timings.normalizationMs = Date.now() - normalizationStartedAt;
-    logPhase(claim.sourceKey, "normalization", timings.normalizationMs);
-    baseNormalizedProduct = {
-      ...normalization.normalizedProduct,
-      sourceKey: claim.sourceKey,
-    };
-    assetsNormalized = normalization.assetsNormalized;
-    await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/seo`, {
-      workerId,
-      normalizedProduct: baseNormalizedProduct,
-      seo: { status: "running" },
-    });
-    try {
-      if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
-      const { storeProfile } = getPipelineStoreProfile(targetStore);
-      if (!storeProfile) throw new Error(`STORE_PROFILE_REQUIRED:${targetStore}`);
-      if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
-      const externalJob = claim.externalSeo
-        ? await gptRequest<GptSeoJob>(`job?jobId=${encodeURIComponent(claim.externalSeo.jobId)}`)
-        : await gptRequest<GptSeoJob>("enqueue", {
+      logPhase(claim.sourceKey, "normalization", timings.normalizationMs);
+      baseNormalizedProduct = {
+        ...normalization.normalizedProduct,
+        sourceKey: claim.sourceKey,
+      };
+      assetsNormalized = normalization.assetsNormalized;
+      await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/seo`, {
+        workerId,
+        normalizedProduct: baseNormalizedProduct,
+        seo: { status: "running", assetsNormalized },
+      });
+      try {
+        if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
+        const { storeProfile } = getPipelineStoreProfile(targetStore);
+        if (!storeProfile) throw new Error(`STORE_PROFILE_REQUIRED:${targetStore}`);
+        if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
+        const externalJob = await gptRequest<GptSeoJob>("enqueue", {
             provider: "codex_mcp",
             source: "amazon",
             sourceIdentity: claim.sourceKey,
@@ -573,26 +613,27 @@ async function processClaim(
             ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
             input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
             original: baseNormalizedProduct,
-          });
-      if (!claim.externalSeo && externalJob.settings.provider !== "codex_mcp") {
-        throw new Error("CRAWLER_CODEX_PROVIDER_MISMATCH");
-      }
-      if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
-        await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
-        return;
-      }
-      if (externalJob.status !== "REVIEW_READY") {
-        await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/external-seo`, {
-          workerId,
-          externalJobId: externalJob.id,
-          provider: externalJob.settings.provider,
         });
+        if (externalJob.settings.provider !== "codex_mcp") {
+          throw new Error("CRAWLER_CODEX_PROVIDER_MISMATCH");
+        }
+        if (externalJob.status === "CANCELLED" || externalJob.status === "FAILED") {
+          await failClaim(claim, workerId, new Error(`GPT SEO job ${externalJob.status.toLowerCase()}: ${externalJob.error || "operator action required"}`), { retryable: false, phase: "seo", timings });
+          return;
+        }
+        if (externalJob.status !== "REVIEW_READY") {
+          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/external-seo`, {
+            workerId,
+            externalJobId: externalJob.id,
+            provider: externalJob.settings.provider,
+          });
+          return;
+        }
+        externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
+      } catch (error) {
+        await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
         return;
       }
-      externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
-    } catch (error) {
-      await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
-      return;
     }
   }
 

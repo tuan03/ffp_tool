@@ -16,15 +16,9 @@ interface SearchResponse {
   };
 }
 
-export async function findExistingAmazonProducts({ product, query }: {
-  readonly product: AmazonProductIdentity;
-  readonly query: <T>(document: string, variables?: Record<string, unknown>) => Promise<T>;
-}): Promise<readonly ExistingAmazonProduct[]> {
-  const asins = [...new Set([product.asin, ...(product.sourceVariants ?? []).map(variant =>
-    variant !== null && typeof variant === "object" && "asin" in variant ? variant.asin : undefined)]
-    .filter((asin): asin is string => typeof asin === "string" && /^[A-Z0-9]{10}$/.test(asin)
-      && (asin === product.asin || asin !== product.parentAsin)))];
-  if (asins.length === 0) throw new Error("AMAZON_EXACT_ASIN_REQUIRED");
+export async function verifyAmazonAsinSearchable(
+  query: <T>(document: string, variables?: Record<string, unknown>) => Promise<T>,
+): Promise<void> {
   const definitions = await query<{ readonly definition: {
     readonly capabilities: { readonly adminFilterable: { readonly status: string } };
   } | null }>(`query { definition: metafieldDefinition(identifier: {
@@ -33,6 +27,19 @@ export async function findExistingAmazonProducts({ product, query }: {
   if (definitions.definition?.capabilities.adminFilterable.status !== "FILTERABLE") {
     throw new Error("AMAZON_ASIN_NOT_SEARCHABLE: Cannot verify Shopify duplicates before SEO handoff.");
   }
+}
+
+export async function findExistingAmazonProducts({ product, query, isSearchabilityVerified = false }: {
+  readonly product: AmazonProductIdentity;
+  readonly query: <T>(document: string, variables?: Record<string, unknown>) => Promise<T>;
+  readonly isSearchabilityVerified?: boolean;
+}): Promise<readonly ExistingAmazonProduct[]> {
+  const asins = [...new Set([product.asin, ...(product.sourceVariants ?? []).map(variant =>
+    variant !== null && typeof variant === "object" && "asin" in variant ? variant.asin : undefined)]
+    .filter((asin): asin is string => typeof asin === "string" && /^[A-Z0-9]{10}$/.test(asin)
+      && (asin === product.asin || asin !== product.parentAsin)))];
+  if (asins.length === 0) throw new Error("AMAZON_EXACT_ASIN_REQUIRED");
+  if (!isSearchabilityVerified) await verifyAmazonAsinSearchable(query);
   const matches: ExistingAmazonProduct[] = [];
   // Exact child identities are authoritative; family metadata can be stale.
   for (const asin of asins) {

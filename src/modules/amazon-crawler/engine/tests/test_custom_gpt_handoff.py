@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +26,15 @@ class CustomGptHandoffTests(unittest.TestCase):
             self.assertTrue(store.defer_external_seo(
                 claim["id"], worker_id="worker", external_job_id="gpt-job", provider="codex_mcp",
             ))
+            with store.sessions() as session:
+                parked = session.get(CrawlProductItem, claim["id"])
+                recovery_at = parked.next_attempt_at
+                self.assertIsNotNone(recovery_at)
+                if recovery_at is not None:
+                    self.assertGreater(
+                        recovery_at.replace(tzinfo=timezone.utc),
+                        datetime.now(timezone.utc) + timedelta(minutes=14),
+                    )
             self.assertEqual(store.claim_product_items(worker_id="other", store_id="capozen", limit=1), [])
             self.assertFalse(store.defer_external_seo(
                 claim["id"], worker_id="worker", external_job_id="different", provider="codex_mcp",
@@ -37,7 +46,7 @@ class CustomGptHandoffTests(unittest.TestCase):
                 parked.next_attempt_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
             resumed = store.claim_product_items(worker_id="worker", store_id="capozen", limit=1)[0]
             self.assertEqual(resumed["externalSeo"], {"jobId": "gpt-job", "provider": "codex_mcp"})
-            self.assertTrue(store.mark_product_seo(claim["id"], worker_id="worker", normalized_payload=product, seo_summary={"status": "running"}))
+            self.assertEqual(resumed["product"], product)
             self.assertFalse(store.mark_product_review_ready(
                 claim["id"], worker_id="worker", normalized_payload=product,
                 seo_summary={"engine": "codex_mcp"}, image_summary={}, review_summary={"storeId": "capozen"},
