@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 BEDDING_PRESET_ID = "jeminise_bedding_v3"
-BLANKET_PRESET_ID = "jeminise_blanket_v1"
+BLANKET_PRESET_ID = "jeminise_blanket_v2"
 PRESET_ID = BEDDING_PRESET_ID
 
 # Standardized Bedding Option Names & Values matching Jeminise store
@@ -81,20 +81,20 @@ BLANKET_MATERIALS: list[dict[str, Any]] = [
         "name": "Fleece",
         "code": "FL",
         "sizes": [
-            ('40" x 30"', "4030", Decimal("24.90")),
-            ('50" x 40"', "5040", Decimal("34.90")),
-            ('60" x 50"', "6050", Decimal("44.90")),
-            ('80" x 60"', "8060", Decimal("54.90")),
+            ('40" x 30"', "4030", Decimal("26.90")),
+            ('50" x 40"', "5040", Decimal("36.90")),
+            ('60" x 50"', "6050", Decimal("46.90")),
+            ('80" x 60"', "8060", Decimal("56.90")),
         ],
     },
     {
         "name": "Sherpa",
         "code": "SH",
         "sizes": [
-            ('40" x 30"', "4030", Decimal("39.90")),
-            ('50" x 40"', "5040", Decimal("44.90")),
-            ('60" x 50"', "6050", Decimal("54.90")),
-            ('80" x 60"', "8060", Decimal("69.90")),
+            ('40" x 30"', "4030", Decimal("41.90")),
+            ('50" x 40"', "5040", Decimal("51.90")),
+            ('60" x 50"', "6050", Decimal("66.90")),
+            ('80" x 60"', "8060", Decimal("76.90")),
         ],
     },
 ]

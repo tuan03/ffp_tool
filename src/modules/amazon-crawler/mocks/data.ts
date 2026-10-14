@@ -70,20 +70,20 @@ export function createJeminiseBlanketMockVariants(): AmazonFinalVariant[] {
       name: "Fleece",
       code: "FL",
       sizes: [
-        ['40" x 30"', "4030", 24.9],
-        ['50" x 40"', "5040", 34.9],
-        ['60" x 50"', "6050", 44.9],
-        ['80" x 60"', "8060", 54.9],
+        ['40" x 30"', "4030", 26.9],
+        ['50" x 40"', "5040", 36.9],
+        ['60" x 50"', "6050", 46.9],
+        ['80" x 60"', "8060", 56.9],
       ] as const,
     },
     {
       name: "Sherpa",
       code: "SH",
       sizes: [
-        ['40" x 30"', "4030", 39.9],
-        ['50" x 40"', "5040", 44.9],
-        ['60" x 50"', "6050", 54.9],
-        ['80" x 60"', "8060", 69.9],
+        ['40" x 30"', "4030", 41.9],
+        ['50" x 40"', "5040", 51.9],
+        ['60" x 50"', "6050", 66.9],
+        ['80" x 60"', "8060", 76.9],
       ] as const,
     },
   ] as const;
@@ -91,13 +91,13 @@ export function createJeminiseBlanketMockVariants(): AmazonFinalVariant[] {
   for (const material of materials) {
     for (const [sizeName, sizeCode, price] of material.sizes) {
       variants.push({
-        id: `jeminise_blanket_v1:${material.code}:${sizeCode}`,
+        id: `jeminise_blanket_v2:${material.code}:${sizeCode}`,
         sku: `AMZ-MOCK-BL-${material.code}-${sizeCode}`,
         sourceAsin: null,
         options: { "Material": material.name, "Size": sizeName },
         price: { raw: `$${price.toFixed(2)}`, amount: price, currency: "USD" },
         surcharge: null,
-        metadata: { preset: "jeminise_blanket_v1" },
+        metadata: { preset: "jeminise_blanket_v2" },
       });
     }
   }
