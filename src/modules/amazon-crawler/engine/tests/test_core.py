@@ -1253,14 +1253,14 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(variants), 47)
         self.assertEqual(len({variant["sku"] for variant in variants}), 47)
         # Verify standardized option names matching store
-        self.assertEqual(set(variants[0]["options"].keys()), {"Bedding Type", "Size", "Set Options"})
+        self.assertEqual(list(variants[0]["options"].keys()), ["Bedding Type", "Size", "Set Options"])
         # Verify sample values
         option_types = {v["options"]["Bedding Type"] for v in variants}
         self.assertEqual(option_types, {"Duvet Cover", "Quilt", "Comforter"})
         pillow_options = {v["options"]["Set Options"] for v in variants}
         self.assertIn("No Pillowcases", pillow_options)
         self.assertIn("2 Pillowcases + 1 Sheet", pillow_options)
-        # Verify Comforter sizes are standardized to inches
+        # Keep the established Jeminise storefront labels instead of Amazon's inch aliases.
         comforter_sizes = {
             v["options"]["Size"]
             for v in variants
@@ -1268,7 +1268,7 @@ class CoreTests(unittest.TestCase):
         }
         self.assertEqual(
             comforter_sizes,
-            {'Twin (68" x 86")', 'Full (79" x 90")', 'Queen (90" x 90")', 'King (90" x 104")'}
+            {"Twin (173 x 218 cm)", "Full (200 x 230 cm)", "Queen (228 x 228 cm)", "King (228 x 264 cm)"}
         )
 
     def test_jeminise_blanket_preset_is_exactly_8_variants(self) -> None:

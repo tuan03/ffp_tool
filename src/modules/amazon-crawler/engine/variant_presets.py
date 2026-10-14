@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from typing import Any
 
-BEDDING_PRESET_ID = "jeminise_bedding_v2"
+BEDDING_PRESET_ID = "jeminise_bedding_v3"
 BLANKET_PRESET_ID = "jeminise_blanket_v1"
 PRESET_ID = BEDDING_PRESET_ID
 
@@ -56,10 +56,10 @@ BEDDING_TYPES: list[dict[str, Any]] = [
             "P4": Decimal("25"),
         },
         "sizes": [
-            ('Twin (68" x 86")', "TW", Decimal("64.90")),
-            ('Full (79" x 90")', "FU", Decimal("79.90")),
-            ('Queen (90" x 90")', "QU", Decimal("94.90")),
-            ('King (90" x 104")', "KI", Decimal("109.90")),
+            ("Twin (173 x 218 cm)", "TW", Decimal("64.90")),
+            ("Full (200 x 230 cm)", "FU", Decimal("79.90")),
+            ("Queen (228 x 228 cm)", "QU", Decimal("94.90")),
+            ("King (228 x 264 cm)", "KI", Decimal("109.90")),
         ],
     },
 ]

@@ -43,6 +43,58 @@ test("invalid variant ASIN falls back to a valid product ASIN", () => {
   assert.equal(product.variants?.[0].sku, "AMZ-B012345678");
 });
 
+test("Jeminise bedding preset restores option order after JSONB reorders object keys", () => {
+  const product = fromCustomizationNormalizerProduct({
+    asin: "B012345678",
+    preset: "jeminise_bedding_v3",
+    variants: [{
+      price: 64.9,
+      options: {
+        Size: "Twin (173 x 218 cm)",
+        "Set Options": "No Pillowcases",
+        "Bedding Type": "Comforter",
+      },
+    }],
+  });
+
+  assert.deepEqual(product.variants?.[0].optionValues, [
+    { optionName: "Bedding Type", name: "Comforter" },
+    { optionName: "Size", name: "Twin (173 x 218 cm)" },
+    { optionName: "Set Options", name: "No Pillowcases" },
+  ]);
+});
+
+test("legacy Jeminise bedding preset normalizes Comforter size labels", () => {
+  const legacySizes = [
+    'Twin (68" x 86")',
+    'Full (79" x 90")',
+    'Queen (90" x 90")',
+    'King (90" x 104")',
+  ];
+  const product = fromCustomizationNormalizerProduct({
+    asin: "B012345678",
+    preset: "jeminise_bedding_v2",
+    variants: legacySizes.map((size) => ({
+      price: 64.9,
+      options: {
+        Size: size,
+        "Set Options": "No Pillowcases",
+        "Bedding Type": "Comforter",
+      },
+    })),
+  });
+
+  assert.deepEqual(
+    product.variants?.map((variant) => variant.optionValues?.[1].name),
+    ["Twin (173 x 218 cm)", "Full (200 x 230 cm)", "Queen (228 x 228 cm)", "King (228 x 264 cm)"],
+  );
+  assert.ok(product.variants?.every((variant) =>
+    variant.optionValues?.[0].optionName === "Bedding Type" &&
+    variant.optionValues[1].optionName === "Size" &&
+    variant.optionValues[2].optionName === "Set Options"
+  ));
+});
+
 test("missing or invalid ASIN preserves existing SKU without using the family ASIN", () => {
   const product = fromCustomizationNormalizerProduct({
     asin: "invalid", parentAsin: "B087654321",

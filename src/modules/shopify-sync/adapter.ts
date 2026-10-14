@@ -59,6 +59,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const JEMINISE_BEDDING_PRESETS = new Set(["jeminise_bedding_v2", "jeminise_bedding_v3"]);
+const JEMINISE_BEDDING_OPTION_ORDER = ["Bedding Type", "Size", "Set Options"] as const;
+const LEGACY_COMFORTER_SIZES: Readonly<Record<string, string>> = {
+  'Twin (68" x 86")': "Twin (173 x 218 cm)",
+  'Full (79" x 90")': "Full (200 x 230 cm)",
+  'Queen (90" x 90")': "Queen (228 x 228 cm)",
+  'King (90" x 104")': "King (228 x 264 cm)",
+};
+
+function orderedVariantOptions(
+  product: CrawlProduct,
+  variantOptions: Readonly<Record<string, unknown>>,
+): readonly (readonly [string, unknown])[] {
+  const entries = Object.entries(variantOptions);
+  if (typeof product.preset !== "string" || !JEMINISE_BEDDING_PRESETS.has(product.preset)) {
+    return entries;
+  }
+
+  const orderedNames = new Set<string>(JEMINISE_BEDDING_OPTION_ORDER);
+  return [
+    ...JEMINISE_BEDDING_OPTION_ORDER.flatMap((optionName) =>
+      Object.prototype.hasOwnProperty.call(variantOptions, optionName)
+        ? [[optionName, variantOptions[optionName]] as const]
+        : [],
+    ),
+    ...entries.filter(([optionName]) => !orderedNames.has(optionName)),
+  ];
+}
+
+function normalizeJeminiseBeddingOptionValue(
+  product: CrawlProduct,
+  variantOptions: Readonly<Record<string, unknown>>,
+  optionName: string,
+  optionValue: unknown,
+): string {
+  const value = String(optionValue);
+  if (
+    product.preset === "jeminise_bedding_v2" &&
+    variantOptions["Bedding Type"] === "Comforter" &&
+    optionName === "Size"
+  ) {
+    return LEGACY_COMFORTER_SIZES[value] ?? value;
+  }
+  return value;
+}
+
 function parseAeoFaq(value: unknown): readonly ShopifyAeoFaqItem[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const faq: ShopifyAeoFaqItem[] = [];
@@ -226,10 +272,10 @@ export function fromCustomizationNormalizerProduct(
       const optionValues: Array<{ name: string; optionName: string }> = [];
 
       if (isRecord(v.options)) {
-        for (const [optName, optVal] of Object.entries(v.options)) {
+        for (const [optName, optVal] of orderedVariantOptions(product, v.options)) {
           optionValues.push({
             optionName: optName,
-            name: String(optVal),
+            name: normalizeJeminiseBeddingOptionValue(product, v.options, optName, optVal),
           });
         }
       }
