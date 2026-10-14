@@ -1285,11 +1285,22 @@ class CoreTests(unittest.TestCase):
         skus = [v["sku"] for v in variants]
         self.assertIn("AMZ-B0BB96K6H8-BL-FL-4030", skus)
         self.assertIn("AMZ-B0BB96K6H8-BL-SH-8060", skus)
-        # Verify prices match sample
-        fleece_4030 = next(v for v in variants if v["sku"] == "AMZ-B0BB96K6H8-BL-FL-4030")
-        self.assertEqual(fleece_4030["price"]["amount"], 24.90)
-        sherpa_8060 = next(v for v in variants if v["sku"] == "AMZ-B0BB96K6H8-BL-SH-8060")
-        self.assertEqual(sherpa_8060["price"]["amount"], 69.90)
+        # Keep crawler output aligned with the canonical Jeminise Shopify catalog prices.
+        prices = {
+            (variant["options"]["Material"], variant["options"]["Size"]): variant["price"]["amount"]
+            for variant in variants
+        }
+        self.assertEqual(prices, {
+            ("Fleece", '40" x 30"'): 26.90,
+            ("Fleece", '50" x 40"'): 36.90,
+            ("Fleece", '60" x 50"'): 46.90,
+            ("Fleece", '80" x 60"'): 56.90,
+            ("Sherpa", '40" x 30"'): 41.90,
+            ("Sherpa", '50" x 40"'): 51.90,
+            ("Sherpa", '60" x 50"'): 66.90,
+            ("Sherpa", '80" x 60"'): 76.90,
+        })
+        self.assertTrue(all(variant["metadata"]["preset"] == "jeminise_blanket_v2" for variant in variants))
 
     def test_jeminise_preset_dispatch_by_product_type_and_title(self) -> None:
         # 1. Product type Blanket -> 8 variants
