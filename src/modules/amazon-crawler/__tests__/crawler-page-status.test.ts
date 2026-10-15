@@ -157,6 +157,11 @@ test("collection and pricing settings always stay open with one store selector",
 
   assert.match(markup, /<section aria-label="Collection, loại sản phẩm &amp; định giá"/);
   assert.match(markup, /Kiểm tra ASIN trên Shopify/);
+  assert.match(markup, /<aside aria-label="Kiểm tra ASIN trên Shopify"/);
+  assert.doesNotMatch(markup, /aria-haspopup="dialog"[^>]*>[^<]*Kiểm tra ASIN trên Shopify/);
+  for (const dialog of markup.matchAll(/<dialog\b[^>]*>[\s\S]*?<\/dialog>/g)) {
+    assert.doesNotMatch(dialog[0], /Kiểm tra ASIN trên Shopify/);
+  }
   assert.match(markup, /aria-label="Lọc ASIN trên Shopify"/);
   assert.equal((markup.match(/<select[^>]*>[\s\S]*?<\/select>/g) ?? []).filter((select) => select.includes('value="capozen"')).length, 1);
   assert.match(markup, /Tìm collection/);

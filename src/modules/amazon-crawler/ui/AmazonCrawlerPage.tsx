@@ -229,7 +229,6 @@ export function AmazonCrawlerPage({
 }: AmazonCrawlerPageProps): React.JSX.Element {
   const navigate = useNavigate();
   const [workspaceSection, setWorkspaceSection] = useState<CrawlerWorkspaceSection>("crawl");
-  const [isAsinFilterOpen, setIsAsinFilterOpen] = useState(false);
   const [pendingFilterAsin, setPendingFilterAsin] = useState<string | null>(null);
   const pendingAsinResolver = useRef<((isSelected: boolean) => void) | null>(null);
   const crawlerInputRef = useRef<HTMLTextAreaElement>(null);
@@ -2447,13 +2446,12 @@ export function AmazonCrawlerPage({
     setCrawlerUrlText(replaceCrawlerInputWithAsin(urlText, asin));
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
-    setIsAsinFilterOpen(false);
     setPendingFilterAsin(null);
   }
 
   async function handleSelectFilterAsin(asin: string): Promise<boolean> {
     if (isRunning || isCheckingAsins) return false;
-    if (urlText.trim() && urlText.trim().toUpperCase() !== asin.toUpperCase()) {
+    if (urls.length > 1) {
       setPendingFilterAsin(asin);
       return new Promise<boolean>(resolve => {
         pendingAsinResolver.current?.(false);
@@ -2497,7 +2495,9 @@ export function AmazonCrawlerPage({
 
         </>}
         crawl={<>
-          <section className="grid min-w-0 items-start gap-5 pb-4 xl:grid-cols-2" aria-label="Tạo phiên cào">
+          <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
+          <div className="min-w-0 space-y-5">
+          <section className="grid min-w-0 items-start gap-5 pb-4 2xl:grid-cols-2" aria-label="Tạo phiên cào">
             <div className="min-w-0 space-y-4">
       <label className="grid gap-2 text-sm font-medium text-slate-900">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị
@@ -2523,7 +2523,6 @@ export function AmazonCrawlerPage({
                 <summary className="cursor-pointer font-medium">{inputAnalysis.invalidEntries.length} dòng cần sửa</summary>
                 <ul className="mt-2 max-h-32 space-y-1 overflow-auto break-all">{inputAnalysis.invalidEntries.map((entry) => <li key={entry.line}>Dòng {entry.line}: {entry.value}</li>)}</ul>
               </details> : null}
-              <button type="button" aria-haspopup="dialog" onClick={() => setIsAsinFilterOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"><AppIcon name="search" />Kiểm tra ASIN trên Shopify</button>
 
           {coordinatorActiveJob ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -2635,13 +2634,13 @@ export function AmazonCrawlerPage({
       </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-700">{imageProfileMessage}</p> : null}
             </div>
-              <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 border-t border-slate-200 pt-5 xl:col-span-2">
+              <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 border-t border-slate-200 pt-5 2xl:col-span-2">
                 <h2 className="text-base font-semibold tracking-tight text-slate-900">Collection, loại sản phẩm & định giá
                   <span className="mt-1 block text-xs font-normal text-slate-600">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
                 </h2>
                 <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
-      <section className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
-        <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2">
+      <section className="grid min-w-0 items-start gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
+        <div className="flex flex-wrap items-center justify-between gap-3 2xl:col-span-2">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-slate-900 tracking-tight">
               Áp dụng cho store: {activeStoreId}
@@ -2671,7 +2670,7 @@ export function AmazonCrawlerPage({
 
         {/* Row 1: Collection & Product Type */}
         <div className="contents">
-          <div className="min-w-0 lg:row-span-2">
+          <div className="min-w-0 2xl:row-span-2">
           <CrawlerCollectionPicker key={activeStoreId} collections={availableCollections} selectedIds={activeCollectionIds}
             isLoading={isLoadingCollections} onToggle={toggleCollection} onSelectAll={handleSelectAllCollections} onClear={handleClearCollections} />
           </div>
@@ -2937,7 +2936,7 @@ export function AmazonCrawlerPage({
           const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
 
           return (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-2.5 text-xs text-slate-600 lg:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-2.5 text-xs text-slate-600 2xl:col-span-2">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-slate-700">
                   Ví dụ gốc $20.00:
@@ -2968,7 +2967,7 @@ export function AmazonCrawlerPage({
                   </span>
                 </label>
               </section>
-            <div className="min-w-0 space-y-3 xl:col-span-2">
+            <div className="min-w-0 space-y-3 2xl:col-span-2">
       <button aria-expanded={isAdvancedOpen} className="min-h-9 text-sm font-medium text-slate-600 hover:text-slate-900" type="button" onClick={toggleCrawlerAdvancedOpen}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
       </button>
@@ -3003,10 +3002,6 @@ export function AmazonCrawlerPage({
       ) : null}
             </div>
           </section>
-          <CrawlerDialog title="Kiểm tra ASIN trên Shopify" isOpen={isAsinFilterOpen} onClose={() => setIsAsinFilterOpen(false)}>
-            <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
-              onSelectAsin={handleSelectFilterAsin} isSelectionDisabled={isRunning || isCheckingAsins} />
-          </CrawlerDialog>
           <CrawlerDialog title="Thay danh sách cào?" isOpen={pendingFilterAsin !== null} onClose={() => handleResolveFilterAsin(false)}>
             <p className="text-sm leading-6 text-slate-600">Danh sách hiện tại có {urls.length} dòng. Dùng ASIN {pendingFilterAsin} sẽ thay toàn bộ danh sách này. Collection và giá vẫn giữ nguyên; thao tác này chưa bắt đầu cào.</p>
             <div className="mt-5 flex justify-end gap-3">
@@ -3090,18 +3085,24 @@ export function AmazonCrawlerPage({
         </div>
       )}
           <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
-            <div className="w-full min-w-0 text-xs text-slate-600 lg:w-auto lg:flex-1">
+            <div className="w-full min-w-0 text-xs text-slate-600 2xl:w-auto 2xl:flex-1">
               <p className="mb-1 font-medium text-slate-900">{activeStoreId} · {inputAnalysis.validCount} ASIN · {activeCollectionIds.length} collection · {settings.productType || "Loại gốc Amazon"}</p>
               <div id="crawler-start-readiness" aria-label="Điều kiện bắt đầu cào" role="status">{startBlockers.length > 0 ? startBlockers.join(" ") : "Sẵn sàng. Hệ thống sẽ kiểm tra ASIN trước khi tạo phiên."}</div>
               {inlineHandoff ? <p role="status" aria-label="Kết quả bàn giao phiên vừa cào" className={`mt-1 text-xs leading-5 ${inlineHandoff.tone === "success" ? "text-emerald-700" : "text-amber-700"}`}>{inlineHandoff.label}</p> : null}
             </div>
-            <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
+            <div className="flex w-full flex-wrap items-center gap-3 2xl:w-auto">
               {!hasSavedStoreVendor ? <button type="button" className="min-h-9 text-sm text-blue-700" onClick={() => document.getElementById("crawler-store-vendor")?.focus()}>Nhập Vendor</button> : null}
               <button type="button" className="min-h-9 text-sm text-slate-600 hover:text-slate-900" onClick={() => setWorkspaceSection("results")}>{progress ? `${progress.completed}/${progress.total} link · ` : ""}Phiên & kết quả →</button>
               {startCrawlButton}
             </div>
           </div>
           {error ? <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+          </div>
+          <aside aria-label="Kiểm tra ASIN trên Shopify" className="min-w-0 xl:sticky xl:top-20 xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto">
+            <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
+              onSelectAsin={handleSelectFilterAsin} isSelectionDisabled={isRunning || isCheckingAsins} />
+          </aside>
+          </div>
         </>}
         results={<>
           <div className="flex flex-wrap items-center justify-between gap-3">

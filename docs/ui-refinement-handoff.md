@@ -4,9 +4,9 @@
 
 - Applied the Taste redesign audit to the existing React/Tailwind UI, retaining the white background and blue action accent.
 - Collection, product type and pricing are **always expanded**, per the operator's explicit correction. Only technical crawler settings remain collapsible.
-- Crawler input and everyday store/vendor/profile controls share the first row. Collection selection sits beside product type and pricing; the optional Shopify ASIN checker opens in a native dialog without unmounting its draft or in-flight reads.
+- Crawler input and everyday store/vendor/profile controls remain in the main form. Following operator feedback, the Shopify ASIN checker is always visible beside the form on desktop, with its own scrollable results, rather than inside a dialog. Collection, product type and pricing remain expanded.
 - Local input analysis counts unique valid ASINs, duplicate entries and invalid lines. Explicit deduplication preserves original URLs and invalid lines. Invalid input blocks Start; authoritative server preflight is unchanged.
-- One sticky Start bar identifies the target store, input/collection counts and all unmet prerequisites. Replacing a non-empty input batch with one filter result requires confirmation; choosing an ASIN does not start a crawl.
+- One sticky Start bar identifies the target store, input/collection counts and all unmet prerequisites. Replacing a multi-line input batch with one filter result requires confirmation; switching from one ASIN to the next takes one click. Choosing an ASIN does not start a crawl or dismiss the checker.
 - A separate, mounted “Phiên & kết quả” panel separates session history/progress from configuration. Crawl completion, SEO handoff and Shopify synchronization remain distinct states.
 - Auto SEO adds an actionable empty state, keyboard-operable product titles and a selection-only action bar. SEO Review removes redundant status badges without changing immutable publish destinations. Queue shows refresh time; Ads groups source failures into expandable details. Review Studio tabs preserve both mounted workflows and their independent stores. Customizer gives more space to preview and keeps save/navigation actions accessible while scrolling.
 - Typography below 12px was raised to 12px across existing UI components. Desktop sidebar preference remains unchanged; small screens use a dismissible navigation drawer.
@@ -43,7 +43,7 @@
 ## Local Docker delivery
 
 - Rebuilt and recreated **only** the `client` service in the existing `ffp-crawler-staging` compose project using its current local override. Frontend is healthy at `http://localhost:3011/amazon-crawler`.
-- Authenticated, read-only browser verification returned HTTP 200, white canvas, always-expanded collection/pricing, one Start action, working checker dismissal and mobile navigation, zero runtime errors and zero business writes.
+- Authenticated, read-only browser verification returned HTTP 200, white canvas, always-expanded collection/pricing, one Start action, visible inline checker and mobile navigation, zero runtime errors and zero business writes.
 - Server/database container IDs and start times were checked before and after deployment and are unchanged. No jobs were submitted, stopped or modified during verification.
 - Previous frontend image is retained locally as `ffp-tool-client:before-refinement-d0491e5`. No Docker volume was removed.
 - Production verification log: `.cache/ui-round-two-deployment.log`. Credentials are read in memory from the existing client container, not printed or committed.
@@ -60,3 +60,34 @@
 - Ads/SEO performance integration configuration errors remain real errors. The UI does not substitute mock data or change credentials.
 - Native confirmations for existing destructive business actions remain intact. This pass does not replace all legacy overlays or change their execution policies.
 - No push or merge into `main` is authorized or performed.
+
+## Follow-up — persistent ASIN checker
+
+### Summary
+
+- Restored the checker as an always-visible desktop side column for checking 50–100 ASINs once and selecting successive individual crawls. The result list remains scrollable and mounted; selecting an ASIN does not dismiss it or discard per-store drafts, results and action history.
+- Switching between individual ASINs is one click. Confirmation remains only when replacing a multi-line crawl input. Collection/type/pricing stay expanded, and the sticky Start bar stays within the form column rather than covering the checker.
+
+### Changed files
+
+- `src/modules/amazon-crawler/ui/AmazonCrawlerPage.tsx`: inline checker, responsive column sizing and single-ASIN selection flow.
+- Crawler page/browser tests: assert inline rendering, multi-line replacement safety, store persistence and repeated selection from both 50- and 100-ASIN results.
+- `src/shared/__tests__/dialog-focus-browser.test.ts`, `scripts/ui-redesign-smoke.mjs`: target the named navigation aside because the page now has a second aside.
+
+### Verification
+
+- Focused crawler input/page tests: nine passed.
+- `npm test`: tooling phase passed (76 passed, one skipped); web phase passed (1,081 passed, 14 skipped). The same MCP user identity failure appeared in Gateway; its workers remained open, so only this test process tree was stopped at 120 seconds. Full-suite status is not passing; engine tests were not rerun for this UI-only follow-up.
+- `npm run typecheck` and `npm run build:mock`: passed.
+- Browser suite with `--test-concurrency=1`: four passed, one real-service fixture skipped. An earlier concurrent run timed out the focus test under test-suite load; its isolated and sequential reruns passed without changing behavior or timeout thresholds.
+- Route smoke: 36 desktop route/viewport combinations passed; 390px crawler workflow checks also passed.
+- Production `npm run build` passed with the existing `VITE_APP_ENV=production` and local installer URL. Only Docker `client` was rebuilt/recreated; authenticated verification on port 3011 returned HTTP 200 and confirmed the checker beside the form, white background, expanded pricing, zero runtime errors and no business writes. Backend/database IDs and start times are unchanged; frontend is healthy.
+- Previous frontend image retained as `ffp-tool-client:before-inline-checker-02dc995`. Follow-up logs use `.cache/asin-inline-*.log`; no cache artifacts or credentials are committed.
+
+### Contract / environment / route changes
+
+- None. Existing UI branch retained by user instruction; no backend/service/configuration/dependency changes.
+
+### Remaining TODOs or risks
+
+- Existing repository-wide Gateway/engine test limitations above remain outside this UI follow-up. No real crawl or Shopify write is performed during browser verification.

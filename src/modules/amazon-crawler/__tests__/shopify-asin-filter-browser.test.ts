@@ -24,11 +24,9 @@ test("crawler filter is independent and keeps per-store results until explicitly
     assert.ok(mainBounds && mainBounds.width >= 1100, "shared layout leaves room for the navigation sidebar");
     assert.ok(await page.getByText(/^mock$/i).isVisible(), "Only exercise the isolated mock UI");
     const crawlInput = page.getByLabel("Amazon URLs hoặc ASIN, mỗi dòng một giá trị");
-    await crawlInput.fill("B0MOCK1001");
-    const filterToggle = page.getByRole("button", { name: "Kiểm tra ASIN trên Shopify", exact: true });
-    await filterToggle.click();
-    const filterDialog = page.getByRole("dialog", { name: "Kiểm tra ASIN trên Shopify", exact: true });
-    const closeFilter = () => filterDialog.getByRole("button", { name: "Đóng", exact: true }).click();
+    await crawlInput.fill("B0MOCK1001\nB0MOCK1003");
+    assert.ok(await page.getByRole("complementary", { name: "Kiểm tra ASIN trên Shopify", exact: true }).isVisible());
+    assert.equal(await page.getByRole("dialog", { name: "Kiểm tra ASIN trên Shopify", exact: true }).count(), 0);
     const dialog = page.getByRole("region", { name: "Lọc ASIN trên Shopify", exact: true });
     await dialog.waitFor();
     const input = dialog.getByLabel("Danh sách ASIN cần lọc", { exact: true });
@@ -60,15 +58,13 @@ test("crawler filter is independent and keeps per-store results until explicitly
     await missing.getByRole("button", { name: "Dùng ASIN này B0MOCK1002", exact: true }).click();
     const replaceDialog = page.getByRole("dialog", { name: "Thay danh sách cào?", exact: true });
     await replaceDialog.getByRole("button", { name: "Giữ danh sách hiện tại", exact: true }).click();
-    assert.equal(await crawlInput.inputValue(), "B0MOCK1001", "cancelling replacement preserves the existing batch");
+    assert.equal(await crawlInput.inputValue(), "B0MOCK1001\nB0MOCK1003", "cancelling replacement preserves the existing batch");
     await missing.getByRole("button", { name: "Dùng ASIN này B0MOCK1002", exact: true }).click();
     await replaceDialog.getByRole("button", { name: "Thay bằng ASIN này", exact: true }).click();
     assert.equal(await crawlInput.inputValue(), "B0MOCK1002");
-    await filterToggle.click();
     assert.ok(await missing.getByText("✓ Đã chọn cào", { exact: true }).isVisible(), "confirmed replacement must update per-row action history immediately");
     await missing.getByRole("button", { name: "Dùng ASIN này B0MOCK1002", exact: true }).click();
     assert.equal(await crawlInput.inputValue(), "B0MOCK1002", "selection must replace previous input and not add duplicates");
-    await filterToggle.click();
     assert.ok(await missing.getByText("✓ Đã chọn cào", { exact: true }).isVisible());
     assert.equal(await page.getByRole("button", { name: "Đưa vào ô cào", exact: true }).count(), 0);
     await dialog.locator("summary").filter({ hasText: "Đã có trên Shopify" }).click();
@@ -82,27 +78,20 @@ test("crawler filter is independent and keeps per-store results until explicitly
     assert.equal(await dialog.evaluate((element) => element.scrollWidth > element.clientWidth), false);
     await input.fill("B0MOCK1003");
     assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
-    await closeFilter();
     await page.getByRole("button", { name: "Agent", exact: true }).click();
     await page.getByRole("button", { name: "Cào sản phẩm", exact: true }).click();
-    await filterToggle.click();
     assert.ok(await missing.isVisible());
     await page.reload({ waitUntil: "domcontentloaded" });
-    await filterToggle.click();
     await missing.waitFor();
     assert.equal(await input.inputValue(), "B0MOCK1003");
     assert.ok(await missing.getByText("B0MOCK1002", { exact: true }).isVisible());
     assert.ok(await missing.getByText("✓ Đã chọn cào", { exact: true }).isVisible());
     assert.ok(await missing.getByText("✓ Đã xem", { exact: true }).isVisible());
-    await closeFilter();
     await page.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("new-store");
-    await filterToggle.click();
     assert.ok(await dialog.getByText("new-store", { exact: true }).isVisible());
     assert.equal(await missing.count(), 0);
     assert.equal(await input.inputValue(), "");
-    await closeFilter();
     await page.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("capozen");
-    await filterToggle.click();
     await missing.waitFor();
     assert.equal(await input.inputValue(), "B0MOCK1003");
     page.once("dialog", (confirmation) => confirmation.dismiss());
@@ -114,7 +103,6 @@ test("crawler filter is independent and keeps per-store results until explicitly
     assert.equal(await missing.count(), 0);
     assert.equal(await crawlInput.inputValue(), "B0MOCK1002");
     await page.reload({ waitUntil: "domcontentloaded" });
-    await filterToggle.click();
     await dialog.waitFor();
     assert.equal(await missing.count(), 0);
     assert.equal(await input.inputValue(), "");
@@ -123,6 +111,48 @@ test("crawler filter is independent and keeps per-store results until explicitly
 });
 
 const realUiUrl = process.env.FFP_CRAWLER_REAL_UI_TEST_URL;
+
+test("inline checker keeps 50 and 100 results visible while selecting successive single-ASIN crawls", {
+  skip: !uiUrl, timeout: 60000,
+}, async () => {
+  assert.ok(uiUrl);
+  assert.ok(["127.0.0.1", "localhost"].includes(new URL(uiUrl).hostname));
+  const browser = await chromium.launch({ headless: true, channel: process.env.FFP_CRAWLER_UI_BROWSER_CHANNEL || undefined });
+  try {
+    for (const count of [50, 100]) {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      await page.route("**/api/**", route => route.fulfill({ json: { success: true, data: {
+        stores: [{ storeId: "capozen", shopDomain: "capozen.example.myshopify.com" }], collections: [],
+      } } }));
+      await page.goto(`${uiUrl}/amazon-crawler`);
+      await page.getByText(/^mock$/i).waitFor();
+      const checker = page.getByRole("complementary", { name: "Kiểm tra ASIN trên Shopify", exact: true });
+      const asins = Array.from({ length: count }, (_, index) => `B0${String(index).padStart(8, "0")}`);
+      await checker.getByLabel("Danh sách ASIN cần lọc", { exact: true }).fill(asins.join("\n"));
+      await checker.getByRole("button", { name: "Kiểm tra Shopify", exact: true }).click();
+      const results = checker.getByRole("list", { name: "Danh sách ASIN chưa có trên Shopify", exact: true });
+      await results.waitFor();
+      assert.equal(await results.locator("li").count(), count);
+      const crawlInput = page.getByLabel("Amazon URLs hoặc ASIN, mỗi dòng một giá trị");
+      await crawlInput.fill("B0MOCK1001");
+      for (const asin of asins.slice(-2)) {
+        await results.getByRole("button", { name: `Dùng ASIN này ${asin}`, exact: true }).click();
+        assert.equal(await crawlInput.inputValue(), asin);
+        assert.equal(await page.getByRole("dialog", { name: "Thay danh sách cào?", exact: true }).count(), 0, "single-ASIN selection needs no extra confirmation");
+        assert.ok(await checker.isVisible());
+        assert.equal(await results.locator("li").count(), count, "selection must not discard the checked batch");
+      }
+      assert.equal(await results.getByText("✓ Đã chọn cào", { exact: true }).count(), 2);
+      const navigation = page.getByRole("navigation", { name: "Khu vực crawler", exact: true });
+      await navigation.getByRole("button", { name: "Phiên & kết quả", exact: true }).click();
+      await navigation.getByRole("button", { name: "Cào sản phẩm", exact: true }).click();
+      assert.equal(await results.locator("li").count(), count);
+      assert.equal(await checker.getByLabel("Danh sách ASIN cần lọc", { exact: true }).inputValue(), asins.join("\n"));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.close();
+    }
+  } finally { await browser.close(); }
+});
 
 test("real crawler filter fails closed on partial reads and ignores cancelled or obsolete checks", {
   skip: !realUiUrl, timeout: 60000,
@@ -189,7 +219,6 @@ test("real crawler filter fails closed on partial reads and ignores cancelled or
     await page.goto(`${realUiUrl}/amazon-crawler`, { waitUntil: "domcontentloaded" });
     await page.getByRole("navigation", { name: "Khu vực crawler" }).waitFor();
     assert.equal(await page.getByText(/^mock$/i).count(), 0);
-    await page.getByRole("button", { name: "Kiểm tra ASIN trên Shopify", exact: true }).click();
     const dialog = page.getByRole("region", { name: "Lọc ASIN trên Shopify", exact: true });
     const input = dialog.getByLabel("Danh sách ASIN cần lọc", { exact: true });
     const check = dialog.getByRole("button", { name: "Kiểm tra Shopify", exact: true });

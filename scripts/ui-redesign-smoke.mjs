@@ -30,8 +30,8 @@ try {
   await crawlInput.fill("B0MOCK1001");
   await page.getByRole("button", { name: "Thu gọn menu", exact: true }).click();
   assert.equal(await crawlInput.inputValue(), "B0MOCK1001", "Collapsing navigation must preserve drafts");
-  assert.equal(await page.locator("aside").evaluate(element => Math.round(element.getBoundingClientRect().width)), 64);
-  const queueLink = page.locator("aside").getByRole("link", { name: "SEO Queue", exact: true });
+  assert.equal(await page.locator('aside[aria-label="Menu chính"]').evaluate(element => Math.round(element.getBoundingClientRect().width)), 64);
+  const queueLink = page.locator('aside[aria-label="Menu chính"]').getByRole("link", { name: "SEO Queue", exact: true });
   await queueLink.focus();
   await page.waitForFunction(() => {
     const tooltip = document.querySelector('aside a[href*="/gpt-seo"] span[aria-hidden]');
@@ -80,7 +80,7 @@ try {
   await productCheckbox.check();
   assert.equal(await productCheckbox.isChecked(), true);
   await page.screenshot({ path: `${artifactDirectory}/auto-seo-products-selected.png` });
-  await page.locator("aside").getByRole("link", { name: "SEO Review", exact: true }).click();
+  await page.locator('aside[aria-label="Menu chính"]').getByRole("link", { name: "SEO Review", exact: true }).click();
   assert.equal(new URL(page.url()).searchParams.get("storeId"), "capozen");
   await writeFile(`${artifactDirectory}/report.json`, JSON.stringify({ reports, pageErrors }, null, 2));
   console.log(`Verified ${reports.length} route/viewport combinations, sidebar persistence, draft preservation, store navigation and dialog dismissal.`);

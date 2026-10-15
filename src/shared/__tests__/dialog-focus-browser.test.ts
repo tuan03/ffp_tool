@@ -33,7 +33,7 @@ test("white workspace validates drafts, keeps collection open, and restores dial
     await input.fill("B0MOCK1001");
     assert.equal(await input.getAttribute("aria-invalid"), "false");
     await page.getByLabel("Store nhận sản phẩm", { exact: true }).selectOption("jeminise");
-    assert.equal(new URL(await page.locator("aside").getByRole("link", { name: "SEO Queue", exact: true }).getAttribute("href") ?? "", uiUrl).searchParams.get("storeId"), "jeminise");
+    assert.equal(new URL(await page.locator('aside[aria-label="Menu chính"]').getByRole("link", { name: "SEO Queue", exact: true }).getAttribute("href") ?? "", uiUrl).searchParams.get("storeId"), "jeminise");
     await page.getByRole("checkbox", { name: "Everyday rugs", exact: true }).check();
     assert.ok(await page.getByLabel("Giá cộng thêm ($)", { exact: true }).isVisible());
     assert.equal(await page.locator("summary").filter({ hasText: "Collection, loại sản phẩm" }).count(), 0);
