@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { CustomizationGateway } from "../../types";
 import { cloneCustomization } from "../../service";
 
@@ -61,23 +63,23 @@ export function CloneCustomizationModal({
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-slate-50 backdrop-blur-sm transition-opacity"
         onClick={onClose}
       />
 
       <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+        <div className="relative w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           {/* Header */}
-          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-200">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-sm">
-                📋
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 border border-blue-300 text-blue-700 text-sm">
+                <AppIcon name="queue" />
               </span>
               <div>
-                <h3 className="text-sm font-bold text-slate-100">
+                <h3 className="text-sm font-bold text-slate-900">
                   Nhân Bản Cấu Hình (Clone Customizer)
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-600">
                   Sao chép toàn bộ Surface, Options và Placements sang SP khác
                 </p>
               </div>
@@ -85,7 +87,7 @@ export function CloneCustomizationModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
+              className="rounded-lg p-1 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
             >
               ✕
             </button>
@@ -94,14 +96,14 @@ export function CloneCustomizationModal({
           {/* Body */}
           <div className="py-4 space-y-4 text-xs">
             <div>
-              <span className="text-slate-400 block mb-1">Product Nguồn (Source):</span>
-              <div className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-cyan-300 truncate">
+              <span className="text-slate-600 block mb-1">Product Nguồn (Source):</span>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-blue-700 truncate">
                 {sourceProductId}
               </div>
             </div>
 
             <div>
-              <label className="text-slate-300 font-medium block mb-1">
+              <label className="text-slate-700 font-medium block mb-1">
                 Product Đích (Target Product GID hoặc ID):
               </label>
               <input
@@ -109,7 +111,7 @@ export function CloneCustomizationModal({
                 value={targetProductId}
                 onChange={(e) => setTargetProductId(e.target.value)}
                 placeholder="gid://shopify/Product/987654321..."
-                className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 font-mono focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 font-mono focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
               />
             </div>
 
@@ -118,26 +120,26 @@ export function CloneCustomizationModal({
                 type="checkbox"
                 checked={allowOverwrite}
                 onChange={(e) => setAllowOverwrite(e.target.checked)}
-                className="rounded border-slate-700 bg-slate-950 text-indigo-500 focus:ring-0"
+                className="rounded border-slate-300 bg-white text-blue-700 focus:ring-0"
               />
-              <span className="text-slate-300">
+              <span className="text-slate-700">
                 Ghi đè nếu sản phẩm đích đã có sẵn cấu hình Customizer
               </span>
             </label>
 
             {error && (
-              <div className="rounded-lg border border-rose-800 bg-rose-950/50 p-2.5 text-rose-300">
+              <div className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-rose-700">
                 {error}
               </div>
             )}
           </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 transition"
+              className="rounded-lg px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
             >
               Hủy
             </button>
@@ -145,7 +147,7 @@ export function CloneCustomizationModal({
               type="button"
               onClick={handleClone}
               disabled={isCloning || !targetProductId.trim()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-900/40 hover:bg-indigo-500 disabled:opacity-50 transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition cursor-pointer"
             >
               {isCloning ? "Đang nhân bản..." : "Xác nhận nhân bản"}
             </button>

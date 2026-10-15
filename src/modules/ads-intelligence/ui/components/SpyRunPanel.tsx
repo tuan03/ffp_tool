@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { AdsIntelligenceClient, SpyJob } from "../../types";
 
 import { SpyRunLog } from "./SpyRunLog";
@@ -73,12 +74,12 @@ export function SpyRunPanel({ client, storeId }: { readonly client: AdsIntellige
       window.clearInterval(timer);
     };
   }, [client, storeId, isRunning]);
-  return <section aria-label="Chạy nghiên cứu đối thủ" className="space-y-4 rounded-2xl border border-indigo-900/60 bg-slate-950/70 p-4 sm:p-5">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-slate-100">Nghiên cứu đối thủ</h3><p className="text-xs text-slate-400">Store: <strong className="text-cyan-300">{storeId}</strong> · Tìm tối đa 10 đối thủ đúng sản phẩm, kiểm tra quảng cáo và lưu lên thư viện.</p></div><span className="rounded border border-purple-800 px-2 py-1 text-xs text-purple-300">Skill spy-competitors · MCP ffp-ads</span></div>
-    <div className="rounded-xl border border-indigo-900/30 bg-slate-950/80 p-3.5 space-y-2.5 text-xs">
+  return <section aria-label="Chạy nghiên cứu đối thủ" className="space-y-4 rounded-lg border border-blue-200 bg-slate-50 p-4 sm:p-5">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-slate-900">Nghiên cứu đối thủ</h3><p className="text-xs text-slate-600">Store: <strong className="text-blue-700">{storeId}</strong> · Tìm tối đa 10 đối thủ đúng sản phẩm, kiểm tra quảng cáo và lưu lên thư viện.</p></div><span className="rounded border border-blue-200 px-2 py-1 text-xs text-blue-700">Skill spy-competitors · MCP ffp-ads</span></div>
+    <div className="rounded-lg border border-blue-200 bg-slate-50 p-3.5 space-y-2.5 text-xs">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 text-slate-200 font-semibold">
-          <span className="text-cyan-400">💡</span>
+        <div className="flex items-center gap-2 text-slate-900 font-semibold">
+          <span className="text-blue-700"><AppIcon name="info" /></span>
           <span>Thực thi thông qua AI Agent trên máy tính cá nhân (0đ phí AI API):</span>
         </div>
         <button
@@ -87,29 +88,29 @@ export function SpyRunPanel({ client, storeId }: { readonly client: AdsIntellige
             setReload(value => value + 1);
             if (typeof window !== "undefined") window.location.reload();
           }}
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-cyan-300 hover:text-white hover:border-cyan-500 transition cursor-pointer flex items-center gap-1.5"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-blue-700 hover:text-slate-900 hover:border-blue-300 transition cursor-pointer flex items-center gap-1.5"
         >
-          <span>🔄</span>
+          <span><AppIcon name="refresh" /></span>
           <span>Tải lại dữ liệu</span>
         </button>
       </div>
-      <p className="text-slate-400 leading-relaxed text-[11px]">
-        Tác vụ Spy đối thủ được thực hiện độc lập bởi <strong>Google Antigravity CLI (<code className="text-cyan-300">agy</code>)</strong> hoặc <strong>OpenAI Codex CLI (<code className="text-cyan-300">codex</code>)</strong> đang chạy trên máy tính của bạn thông qua giao thức MCP để tận dụng tối đa gói thuê bao có sẵn.
+      <p className="text-slate-600 leading-relaxed text-[11px]">
+        Tác vụ Spy đối thủ được thực hiện độc lập bởi <strong>Google Antigravity CLI (<code className="text-blue-700">agy</code>)</strong> hoặc <strong>OpenAI Codex CLI (<code className="text-blue-700">codex</code>)</strong> đang chạy trên máy tính của bạn thông qua giao thức MCP để tận dụng tối đa gói thuê bao có sẵn.
       </p>
       <div className="pt-0.5 flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="text-slate-400">Lệnh quét đối thủ mới từ terminal máy bạn:</span>
-        <code className="px-2 py-0.5 rounded bg-black/70 border border-slate-800 text-cyan-300 font-mono select-all">
+        <span className="text-slate-600">Lệnh quét đối thủ mới từ terminal máy bạn:</span>
+        <code className="px-2 py-0.5 rounded bg-black/70 border border-slate-200 text-white font-mono select-all">
           agy &quot;Quét và phân tích đối thủ cho store {storeId}&quot;
         </code>
       </div>
     </div>
 
-    {job && <div aria-live="polite" className="space-y-2 text-xs text-slate-400">
+    {job && <div aria-live="polite" className="space-y-2 text-xs text-slate-600">
       <p>{job.storeId} · {job.runner} / {job.model} · Bắt đầu {new Date(job.startedAt).toLocaleString("vi-VN")}</p>
-      {isRunning && <><ol className="flex flex-wrap gap-2">{PHASES.map(phase => <li key={phase.id} aria-current={job.phase === phase.id ? "step" : undefined} className={`rounded px-2 py-1 ${job.phase === phase.id ? "bg-cyan-950 text-cyan-200" : "bg-slate-900"}`}>{phase.label}</li>)}</ol><p>Bước do agent báo cáo. Bạn có thể chuyển tab hoặc tải lại trang; backend tiếp tục chạy. Kết quả cũ được giữ trong lúc nghiên cứu.</p></>}
-      {(job.status === "completed" || job.status === "partial") && <p className="text-cyan-200">{job.status === "completed" ? "Hoàn tất" : "Đã kết thúc lượt chạy, còn thiếu bằng chứng ở một số đối thủ"}: {job.adCount ?? 0} quảng cáo / {job.brandsWithAds ?? 0} thương hiệu; {job.selectedCount ?? 0} đối thủ được chọn. {job.published ? "Kết quả tự cập nhật bên dưới trong tối đa 15 giây." : "Chưa thay kết quả cũ; lượt mới chưa có quảng cáo xác minh."}</p>}
+      {isRunning && <><ol className="flex flex-wrap gap-2">{PHASES.map(phase => <li key={phase.id} aria-current={job.phase === phase.id ? "step" : undefined} className={`rounded px-2 py-1 ${job.phase === phase.id ? "bg-blue-50 text-blue-700" : "bg-white"}`}>{phase.label}</li>)}</ol><p>Bước do agent báo cáo. Bạn có thể chuyển tab hoặc tải lại trang; backend tiếp tục chạy. Kết quả cũ được giữ trong lúc nghiên cứu.</p></>}
+      {(job.status === "completed" || job.status === "partial") && <p className="text-blue-700">{job.status === "completed" ? "Hoàn tất" : "Đã kết thúc lượt chạy, còn thiếu bằng chứng ở một số đối thủ"}: {job.adCount ?? 0} quảng cáo / {job.brandsWithAds ?? 0} thương hiệu; {job.selectedCount ?? 0} đối thủ được chọn. {job.published ? "Kết quả tự cập nhật bên dưới trong tối đa 15 giây." : "Chưa thay kết quả cũ; lượt mới chưa có quảng cáo xác minh."}</p>}
       {job.status === "cancelled" && <p>Đã dừng. Không công bố kết quả của lượt này.</p>}
-      {(job.status === "failed" || job.status === "interrupted") && <p className="text-amber-300">{ERRORS[job.errorCode ?? ""] ?? "Lượt Spy chưa hoàn tất. Kết quả cũ vẫn được giữ nguyên."}</p>}
+      {(job.status === "failed" || job.status === "interrupted") && <p className="text-amber-700">{ERRORS[job.errorCode ?? ""] ?? "Lượt Spy chưa hoàn tất. Kết quả cũ vẫn được giữ nguyên."}</p>}
     </div>}
     {job && <SpyRunLog key={job.id} job={job} />}
   </section>;

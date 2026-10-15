@@ -81,15 +81,15 @@ export function AgentInstallModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="agent-install-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 p-4 backdrop-blur-sm"
     >
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="w-full max-w-2xl rounded-lg border border-slate-300 bg-white p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <h2 id="agent-install-modal-title" className="text-lg font-bold text-slate-100">
+            <h2 id="agent-install-modal-title" className="text-lg font-bold text-slate-900">
               Kết nối máy cào Pinterest
             </h2>
-            <p className="mt-1 text-xs leading-5 text-slate-400">
+            <p className="mt-1 text-xs leading-5 text-slate-600">
               Sao chép link bên dưới và gửi cho người cài. Họ chỉ cần tải file BAT, mở file và chờ cài đặt hoàn tất.
               Nếu máy đã có Agent, chạy lại file này sẽ cập nhật chương trình và giữ nguyên cấu hình, dữ liệu cùng phiên Pinterest.
             </p>
@@ -98,28 +98,28 @@ export function AgentInstallModal({
             type="button"
             onClick={onClose}
             aria-label="Đóng hướng dẫn cài agent"
-            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+            className="rounded-lg p-1.5 text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
           >
             ✕
           </button>
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-cyan-900/70 bg-cyan-950/20 p-3">
-            <p className="text-sm font-semibold text-cyan-300">Cùng Wi-Fi</p>
-            <p className="mt-1 text-xs leading-5 text-slate-400">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+            <p className="text-sm font-semibold text-blue-700">Cùng Wi-Fi</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
               Dùng IP LAN của máy chạy FFP, ví dụ <code>http://192.168.1.10:3010</code>.
             </p>
           </div>
-          <div className="rounded-xl border border-violet-900/70 bg-violet-950/20 p-3">
-            <p className="text-sm font-semibold text-violet-300">Khác Wi-Fi</p>
-            <p className="mt-1 text-xs leading-5 text-slate-400">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+            <p className="text-sm font-semibold text-blue-700">Khác Wi-Fi</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
               Dùng domain HTTPS đã deploy trên VPS, ví dụ <code>https://ffp.b6-team.site</code>.
             </p>
           </div>
         </div>
 
-        <label className="mt-4 block text-xs font-semibold text-slate-300" htmlFor="agent-server-url">
+        <label className="mt-4 block text-xs font-semibold text-slate-700" htmlFor="agent-server-url">
           Địa chỉ FFP mà máy nhận có thể truy cập
         </label>
         <input
@@ -132,17 +132,17 @@ export function AgentInstallModal({
             setHasCopyError(false);
           }}
           spellCheck={false}
-          className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+          className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 transition focus:border-blue-300"
         />
 
         {installState.error ? (
-          <p role="alert" className="mt-2 text-xs text-rose-300">
+          <p role="alert" className="mt-2 text-xs text-rose-700">
             Địa chỉ phải là origin HTTP(S), không chứa đường dẫn, tài khoản hoặc query.
           </p>
         ) : null}
 
         {installState.details?.isLoopback ? (
-          <div className="mt-3 rounded-lg border border-amber-700/70 bg-amber-950/30 px-3 py-2 text-xs leading-5 text-amber-200">
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
             <strong>Không gửi địa chỉ localhost này.</strong> Trên máy người nhận, localhost sẽ trỏ về chính máy của họ.
             Hãy thay bằng IP LAN khi cùng Wi-Fi hoặc domain HTTPS khi khác mạng.
           </div>
@@ -150,16 +150,16 @@ export function AgentInstallModal({
 
         {installState.details ? (
           <>
-            <div className="mt-4 rounded-xl border border-emerald-700/70 bg-emerald-950/25 p-4">
-              <p className="text-sm font-bold text-emerald-300">Link gửi cho người cài</p>
+            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-sm font-bold text-emerald-700">Link gửi cho người cài</p>
               <a
                 href={installState.details.batchDownloadUrl}
                 download="cai-agent.bat"
-                className="mt-2 block break-all rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm text-cyan-300 underline decoration-cyan-700 underline-offset-4 hover:text-cyan-200"
+                className="mt-2 block break-all rounded-lg bg-white px-3 py-2 font-mono text-sm text-blue-700 underline decoration-blue-200 underline-offset-4 hover:text-blue-700"
               >
                 {installState.details.batchDownloadUrl}
               </a>
-              <p className="mt-2 text-xs leading-5 text-slate-400">
+              <p className="mt-2 text-xs leading-5 text-slate-600">
                 Người nhận mở link, tải <code>cai-agent.bat</code>, sau đó nhấp đúp vào file để cài và kết nối agent.
                 Sau khi cài, dùng biểu tượng FFP cạnh đồng hồ hoặc shortcut ngoài Desktop để đăng nhập Pinterest.
               </p>
@@ -169,36 +169,36 @@ export function AgentInstallModal({
               <button
                 type="button"
                 onClick={() => void handleCopy(installState.details.batchDownloadUrl, "download-link")}
-                className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500"
+                className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
               >
                 {copiedValue === "download-link" ? "✓ Đã sao chép" : "Sao chép link gửi"}
               </button>
               <a
                 href={installState.details.batchDownloadUrl}
                 download="cai-agent.bat"
-                className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
+                className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-100"
               >
                 Tải thử file BAT
               </a>
               <button
                 type="button"
                 onClick={() => void handleCopy(installState.details.powershellCommand, "command")}
-                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-slate-800"
+                className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 {copiedValue === "command" ? "✓ Đã sao chép" : "Sao chép lệnh PowerShell"}
               </button>
             </div>
             {hasCopyError ? (
-              <p role="alert" className="mt-2 text-xs text-rose-300">
+              <p role="alert" className="mt-2 text-xs text-rose-700">
                 Trình duyệt không cho truy cập clipboard. Hãy bôi đen lệnh phía trên và sao chép thủ công.
               </p>
             ) : null}
 
-            <details className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-              <summary className="cursor-pointer text-xs font-semibold text-slate-400">
+            <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">
                 Xem lệnh PowerShell thay thế
               </summary>
-              <code className="mt-3 block overflow-x-auto whitespace-pre text-xs leading-5 text-cyan-300">
+              <code className="mt-3 block overflow-x-auto whitespace-pre text-xs leading-5 text-blue-700">
                 {installState.details.powershellCommand}
               </code>
             </details>

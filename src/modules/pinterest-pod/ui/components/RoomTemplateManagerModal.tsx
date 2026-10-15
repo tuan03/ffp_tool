@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { ReferenceImage } from "../../types";
 
 export interface RoomTemplateManagerModalProps {
@@ -153,25 +155,25 @@ export function RoomTemplateManagerModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-700/80 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="relative w-full max-w-3xl max-h-[90vh] flex flex-col rounded-lg border border-slate-300 bg-white shadow-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-950 border border-purple-500/40 text-lg shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 border border-blue-300 text-lg shadow-sm">
               🛋️
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-100">
+                <h3 className="text-sm font-bold text-slate-900">
                   Quản lý Ảnh Phòng Mẫu (Mockup Reference)
                 </h3>
-                <span className="rounded-full bg-purple-500/20 px-2 py-0.5 text-[11px] font-semibold text-purple-300 border border-purple-500/30">
+                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-300">
                   {images.length}/{maxImages} ảnh
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-600 mt-0.5">
                 AI sẽ giữ nguyên các căn phòng này làm bối cảnh và ghép hoa văn các mẫu đã chọn vào đúng vị trí sàn / giường.
               </p>
             </div>
@@ -180,7 +182,7 @@ export function RoomTemplateManagerModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition cursor-pointer"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition cursor-pointer"
             title="Đóng modal"
           >
             ✕
@@ -191,12 +193,12 @@ export function RoomTemplateManagerModal({
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Error notice if any */}
           {uploadError && (
-            <div className="rounded-lg border border-rose-800/80 bg-rose-950/60 p-3 text-xs text-rose-300 flex items-center justify-between">
-              <span>⚠️ {uploadError}</span>
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 flex items-center justify-between">
+              <span><AppIcon name="warning" /> {uploadError}</span>
               <button
                 type="button"
                 onClick={() => setUploadError(null)}
-                className="text-rose-400 hover:text-white ml-2"
+                className="text-rose-700 hover:text-slate-900 ml-2"
               >
                 ✕
               </button>
@@ -206,13 +208,13 @@ export function RoomTemplateManagerModal({
           {/* Add / Upload Section */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-700">
                 Thêm ảnh phòng mới
               </span>
               <button
                 type="button"
                 onClick={() => setShowUrlInput(!showUrlInput)}
-                className="text-xs text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+                className="text-xs text-blue-700 hover:text-blue-700 hover:underline cursor-pointer"
               >
                 {showUrlInput ? "Đóng nhập URL" : "🔗 Hoặc nhập URL ảnh"}
               </button>
@@ -220,13 +222,13 @@ export function RoomTemplateManagerModal({
 
             {/* URL Input Form */}
             {showUrlInput && (
-              <div className="flex gap-2 p-3 rounded-xl border border-cyan-500/30 bg-cyan-950/20">
+              <div className="flex gap-2 p-3 rounded-lg border border-blue-300 bg-blue-50">
                 <input
                   type="url"
                   value={customUrl}
                   onChange={(e) => setCustomUrl(e.target.value)}
                   placeholder="https://example.com/room-mockup.jpg"
-                  className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
+                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
@@ -237,7 +239,7 @@ export function RoomTemplateManagerModal({
                 <button
                   type="button"
                   onClick={handleAddUrl}
-                  className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 cursor-pointer"
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 cursor-pointer"
                 >
                   Thêm URL
                 </button>
@@ -257,10 +259,10 @@ export function RoomTemplateManagerModal({
                 handleProcessFiles(e.dataTransfer.files);
               }}
               onClick={() => fileInputRef.current?.click()}
-              className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition cursor-pointer ${
+              className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition cursor-pointer ${
                 isDragOver
-                  ? "border-purple-400 bg-purple-950/40"
-                  : "border-slate-700 hover:border-purple-500/60 bg-slate-950/40 hover:bg-slate-950/70"
+                  ? "border-blue-300 bg-blue-50"
+                  : "border-slate-300 hover:border-blue-300 bg-slate-50 hover:bg-slate-50"
               }`}
             >
               <input
@@ -271,12 +273,12 @@ export function RoomTemplateManagerModal({
                 className="hidden"
                 onChange={(e) => handleProcessFiles(e.target.files)}
               />
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-900/50 text-purple-300 text-lg">
-                📤
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700 text-lg">
+                <AppIcon name="upload" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-slate-200">
-                  Kéo thả ảnh phòng vào đây, hoặc <span className="text-purple-400 hover:underline">bấm để chọn từ máy tính</span>
+                <p className="text-xs font-semibold text-slate-900">
+                  Kéo thả ảnh phòng vào đây, hoặc <span className="text-blue-700 hover:underline">bấm để chọn từ máy tính</span>
                 </p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Hỗ trợ tải nhiều file ảnh cùng lúc (PNG, JPG, WEBP). Khuyên dùng ảnh chụp phòng khách, phòng ngủ hoặc bảng Size Chart.
@@ -288,14 +290,14 @@ export function RoomTemplateManagerModal({
           {/* Current Images Gallery */}
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-700">
                 Danh sách phòng mẫu hiện tại ({images.length})
               </span>
               {images.length > 0 && (
                 <button
                   type="button"
                   onClick={handleClearAll}
-                  className="text-xs text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
+                  className="text-xs text-rose-700 hover:text-rose-700 hover:underline cursor-pointer"
                 >
                   Xóa tất cả ({images.length})
                 </button>
@@ -303,11 +305,11 @@ export function RoomTemplateManagerModal({
             </div>
 
             {images.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/30 p-8 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-950/50 text-purple-400 text-2xl mb-2">
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-blue-50 text-blue-700 text-2xl mb-2">
                   🛋️
                 </div>
-                <p className="text-xs font-medium text-slate-300">
+                <p className="text-xs font-medium text-slate-700">
                   Chưa có ảnh phòng mẫu riêng nào
                 </p>
                 <p className="text-[11px] text-slate-500 mt-1 max-w-md mx-auto">
@@ -330,12 +332,12 @@ export function RoomTemplateManagerModal({
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(e, idx)}
                         onDragEnd={handleDragEnd}
-                        className={`group relative flex flex-col overflow-hidden rounded-xl border bg-slate-950 shadow-md select-none transition-all duration-150 cursor-grab active:cursor-grabbing ${
+                        className={`group relative flex flex-col overflow-hidden rounded-lg border bg-white shadow-md select-none transition-all duration-150 cursor-grab active:cursor-grabbing ${
                           isDragging
-                            ? "opacity-30 scale-95 border-dashed border-purple-400"
+                            ? "opacity-30 scale-95 border-dashed border-blue-300"
                             : isOver
-                              ? "ring-2 ring-purple-400 border-purple-400 bg-purple-950/40 scale-105 z-10"
-                              : "border-slate-700/80 hover:border-purple-500/60"
+                              ? "ring-2 ring-blue-300 border-blue-300 bg-blue-50 scale-105 z-10"
+                              : "border-slate-300 hover:border-blue-300"
                         }`}
                         title={
                           images.length > 1
@@ -344,7 +346,7 @@ export function RoomTemplateManagerModal({
                         }
                       >
                         {/* Image Preview Container */}
-                        <div className="relative aspect-4/3 w-full overflow-hidden bg-slate-900 pointer-events-none">
+                        <div className="relative aspect-4/3 w-full overflow-hidden bg-white pointer-events-none">
                           <img
                             src={img.url}
                             alt={img.name || `Phòng ${idx + 1}`}
@@ -354,8 +356,8 @@ export function RoomTemplateManagerModal({
                           {/* Number Badge & Reorder Controls */}
                           <div className="absolute top-2 left-2 flex items-center gap-1 pointer-events-auto">
                             <span
-                              className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-xs ${
-                                idx === 0 ? "bg-purple-600/90 text-purple-100" : "bg-black/70 text-purple-300"
+                              className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow backdrop-blur-xs ${
+                                idx === 0 ? "bg-blue-600 text-white" : "bg-black/70 text-white"
                               }`}
                             >
                               #{idx + 1}{idx === 0 ? " ★" : ""}
@@ -369,7 +371,7 @@ export function RoomTemplateManagerModal({
                                     e.stopPropagation();
                                     handleMove(idx, idx - 1);
                                   }}
-                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-200 hover:bg-purple-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
+                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
                                   title="Chuyển sang trước (◀)"
                                 >
                                   ◀
@@ -381,7 +383,7 @@ export function RoomTemplateManagerModal({
                                     e.stopPropagation();
                                     handleMove(idx, idx + 1);
                                   }}
-                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-200 hover:bg-purple-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
+                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
                                   title="Chuyển ra sau (▶)"
                                 >
                                   ▶
@@ -397,7 +399,7 @@ export function RoomTemplateManagerModal({
                               e.stopPropagation();
                               handleRemove(img.id);
                             }}
-                            className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-600/80 hover:bg-rose-600 text-white text-xs backdrop-blur-xs transition shadow cursor-pointer opacity-80 hover:opacity-100 pointer-events-auto"
+                            className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-rose-600 hover:bg-rose-700 text-white text-xs backdrop-blur-xs transition shadow cursor-pointer opacity-80 hover:opacity-100 pointer-events-auto"
                             title="Gỡ ảnh phòng này"
                           >
                             ✕
@@ -414,16 +416,16 @@ export function RoomTemplateManagerModal({
                               className="absolute bottom-2 right-2 flex items-center gap-1 rounded bg-black/70 hover:bg-black/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xs transition cursor-pointer pointer-events-auto"
                               title="Soi phóng to HD"
                             >
-                              <span>🔍</span>
+                              <span><AppIcon name="search" /></span>
                               <span>Soi</span>
                             </button>
                           )}
                         </div>
 
                         {/* Meta info */}
-                        <div className="p-2 border-t border-slate-800 bg-slate-900/60 pointer-events-auto">
+                        <div className="p-2 border-t border-slate-200 bg-slate-50 pointer-events-auto">
                           <p
-                            className="truncate text-[11px] font-medium text-slate-300"
+                            className="truncate text-[11px] font-medium text-slate-700"
                             title={img.name || `Phòng Mẫu #${idx + 1}`}
                           >
                             {img.name || `Phòng Mẫu #${idx + 1}`}
@@ -434,8 +436,8 @@ export function RoomTemplateManagerModal({
                   })}
                 </div>
                 {images.length > 1 && (
-                  <p className="text-[11px] text-slate-400 italic">
-                    💡 Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
+                  <p className="text-[11px] text-slate-600 italic">
+                    <AppIcon name="info" /> Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
                   </p>
                 )}
               </div>
@@ -444,8 +446,8 @@ export function RoomTemplateManagerModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950/70 px-6 py-3.5">
-          <span className="text-xs text-slate-400">
+        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-3.5">
+          <span className="text-xs text-slate-600">
             {images.length > 0
               ? `Đang có ${images.length} phòng mẫu sẵn sàng cho đợt sản xuất.`
               : "Hệ thống sẽ tự động vẽ ngẫu nhiên bối cảnh phòng."}
@@ -454,7 +456,7 @@ export function RoomTemplateManagerModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl bg-purple-600 hover:bg-purple-500 px-5 py-2 text-xs font-bold text-white shadow-md shadow-purple-600/30 transition cursor-pointer"
+            className="rounded-lg bg-blue-600 hover:bg-blue-700 px-5 py-2 text-xs font-bold text-white shadow-md transition cursor-pointer"
           >
             Hoàn tất &amp; Lưu
           </button>

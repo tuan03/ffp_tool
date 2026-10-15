@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { AppIcon } from "../../../shared/components/AppIcon";
+import { PageHeader } from "../../../shared/components/PageHeader";
 import { normalizeActiveStoreId, persistBrowserActiveStoreId, readActiveStoreId } from "../../../shared/active-store";
 import { AppError } from "../../../shared/errors/app-error";
 import { buildSeoQueueUrl } from "../../../shared/seo-queue-navigation";
@@ -661,37 +664,22 @@ export function AutoSeoPage({
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-100 flex items-center gap-2">
-            <span>✨</span> Auto SEO Product Selection & Payload Pipeline
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Chọn lọc sản phẩm từ Shopify Store, kiểm tra chất lượng dữ liệu và chuẩn bị payload cho SEO Content Generator.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="rounded-md bg-slate-800/80 px-2.5 py-1 text-xs font-mono text-slate-400 border border-slate-700">
-            phase: UI Selection & Mapping
-          </span>
-        </div>
-      </div>
+      <PageHeader title="Auto SEO" description="Chọn sản phẩm Shopify, kiểm tra dữ liệu và chuẩn bị nội dung tối ưu SEO." />
 
       {/* Global Error Banner */}
       {backupProgress ? <AutoSeoRunSummary progress={backupProgress}
         onOpenQueue={() => navigate(buildSeoQueueUrl(backupStoreId ?? selectedStoreId ?? ""))}
         onOpenReview={() => navigate(`/seo-review?storeId=${encodeURIComponent(backupStoreId ?? "")}`)} /> : null}
       {errorMessage && (
-        <div className="rounded-xl border border-rose-800/80 bg-rose-950/40 p-4 text-xs text-rose-200 flex items-center justify-between gap-3">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-base">⚠️</span>
+            <span className="text-base"><AppIcon name="warning" /></span>
             <span>{errorMessage}</span>
           </div>
           <button
             type="button"
             onClick={() => setErrorMessage(null)}
-            className="text-rose-400 hover:text-white"
+            className="text-rose-700 hover:text-slate-900"
           >
             ✕
           </button>

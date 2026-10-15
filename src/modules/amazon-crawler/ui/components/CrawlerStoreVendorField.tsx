@@ -59,21 +59,21 @@ export function CrawlerStoreVendorField({ storeId, manager, onReady }: CrawlerSt
 
   const hasUnsavedChanges = draft.trim() !== savedVendor;
   return <div className="grid min-w-0 gap-1.5">
-    <label htmlFor="crawler-store-vendor" className="text-sm text-slate-300">Vendor Shopify</label>
+    <label htmlFor="crawler-store-vendor" className="text-sm text-slate-700">Vendor Shopify</label>
     <div className="flex min-w-0 gap-2">
       <input id="crawler-store-vendor" value={draft} maxLength={255} placeholder="Nhập tên thương hiệu / nhà cung cấp" disabled={isLoading || isSaving}
-        className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 disabled:opacity-50"
+        className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 disabled:opacity-50"
         onChange={(event) => {
           const vendor = event.target.value;
           setDraft(vendor);
           onReady({ storeId, vendor: vendor.trim() === savedVendor ? savedVendor : null });
         }} />
       <button type="button" disabled={isLoading || isSaving || !manager || !draft.trim() || (!hasUnsavedChanges && !error)}
-        className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-600 px-3 py-2 text-sm text-cyan-300 disabled:opacity-50" onClick={() => void save()}>
+        className="shrink-0 whitespace-nowrap rounded-lg border border-blue-300 px-3 py-2 text-sm text-blue-700 disabled:opacity-50" onClick={() => void save()}>
         {isSaving ? "Đang lưu..." : "Lưu Vendor"}
       </button>
     </div>
-    <p role={error ? "alert" : "status"} className={`text-xs ${error ? "text-rose-300" : "text-slate-400"}`}>
+    <p role={error ? "alert" : "status"} className={`text-xs ${error ? "text-rose-700" : "text-slate-600"}`}>
       {error ?? (isLoading ? "Đang tải Vendor..." : !savedVendor ? "Lưu một lần cho store này trước khi cào." : hasUnsavedChanges ? "Chưa lưu thay đổi." : "Đã lưu cho store này. Thay đổi chỉ áp dụng cho job mới.")}
     </p>
   </div>;

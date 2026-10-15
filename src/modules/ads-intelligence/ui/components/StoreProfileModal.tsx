@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { AdsIntelligenceClient, MetaAdAccountInfo } from "../../types";
 
 export interface StoreProfileModalProps {
@@ -253,26 +255,26 @@ export function StoreProfileModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl rounded-2xl border border-cyan-800/60 bg-slate-900 p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="w-full max-w-2xl rounded-lg border border-blue-200 bg-white p-6 shadow-sm space-y-5 animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 text-xl shadow-lg shadow-cyan-500/20">
-              ⚙️
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-xl shadow-sm ">
+              <AppIcon name="settings" />
             </span>
             <div>
-              <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                Thiết lập Quảng cáo & Đo lường: <span className="text-cyan-400 font-mono">{storeId}</span>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                Thiết lập Quảng cáo & Đo lường: <span className="text-blue-700 font-mono">{storeId}</span>
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-600">
                 {shopDomain ? `Shopify: ${shopDomain} · ` : ""}Chỉ cần điền ID, hệ thống tự động kết nối API
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg text-lg cursor-pointer"
+            className="text-slate-600 hover:text-slate-900 p-1 rounded-lg text-lg cursor-pointer"
             aria-label="Đóng"
           >
             ✕
@@ -280,13 +282,13 @@ export function StoreProfileModal({
         </div>
 
         {loading ? (
-          <p className="text-xs text-slate-400 py-6 text-center">Đang nạp cấu hình store…</p>
+          <p className="text-xs text-slate-600 py-6 text-center">Đang nạp cấu hình store…</p>
         ) : (
           <div className="space-y-5 text-xs">
             {/* SECTION 1: META ADS */}
-            <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                <span className="font-bold text-cyan-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span className="font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
                   <span>📘</span> 1. Tài khoản Meta Ads
                 </span>
                 <div className="flex items-center gap-2">
@@ -294,7 +296,7 @@ export function StoreProfileModal({
                     <button
                       type="button"
                       onClick={() => setManualMetaMode(!manualMetaMode)}
-                      className="text-[10px] text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                      className="text-[10px] text-blue-700 hover:text-blue-700 underline cursor-pointer"
                     >
                       {manualMetaMode ? "📋 Chọn từ danh sách App" : "✏️ Nhập thủ công"}
                     </button>
@@ -304,9 +306,9 @@ export function StoreProfileModal({
               </div>
 
               <div className="space-y-1.5">
-                <label className="font-semibold text-slate-200 flex items-center justify-between">
-                  <span>Meta Ad Account <span className="text-rose-400">*</span></span>
-                  <span className="text-[10px] text-slate-400 font-normal">
+                <label className="font-semibold text-slate-900 flex items-center justify-between">
+                  <span>Meta Ad Account <span className="text-rose-700">*</span></span>
+                  <span className="text-[10px] text-slate-600 font-normal">
                     {manualMetaMode || availableAccounts.length === 0
                       ? "Dãy số hoặc act_xxxxxxxxxxxxxxx"
                       : "Tự động phát hiện từ Meta App"}
@@ -320,13 +322,13 @@ export function StoreProfileModal({
                       value={metaAccountId}
                       onChange={(e) => setMetaAccountId(e.target.value)}
                       placeholder="Ví dụ: act_1569725310249145 hoặc 1569725310249145"
-                      className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                      className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-blue-700 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                     />
                     <button
                       type="button"
                       onClick={handleTestMeta}
                       disabled={testingMeta || !metaAccountId.trim()}
-                      className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                      className="px-3 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-blue-700 border border-slate-300 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
                     >
                       {testingMeta ? "Đang test…" : "⚡ Test Meta"}
                     </button>
@@ -346,7 +348,7 @@ export function StoreProfileModal({
                           }
                           setMetaTestResult(null);
                         }}
-                        className="flex-1 rounded-lg border border-cyan-800/80 bg-slate-900 px-3 py-2 text-cyan-200 font-medium text-xs focus:outline-none focus:border-cyan-500 cursor-pointer"
+                        className="flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-blue-700 font-medium text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 cursor-pointer"
                       >
                         <option value="">-- Chọn tài khoản quảng cáo Meta --</option>
                         {metaAccountId && !availableAccounts.some((a) => a.id === metaAccountId || `act_${a.id}` === metaAccountId) && (
@@ -368,13 +370,13 @@ export function StoreProfileModal({
                         type="button"
                         onClick={handleTestMeta}
                         disabled={testingMeta || !metaAccountId.trim()}
-                        className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                        className="px-3 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-blue-700 border border-slate-300 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
                       >
                         {testingMeta ? "Đang test…" : "⚡ Test"}
                       </button>
                     </div>
                     {loadingAccounts && (
-                      <p className="text-[10px] text-cyan-400 animate-pulse">Đang nạp danh sách Ad Accounts từ Meta App…</p>
+                      <p className="text-[10px] text-blue-700 animate-pulse">Đang nạp danh sách Ad Accounts từ Meta App…</p>
                     )}
                   </div>
                 )}
@@ -383,8 +385,8 @@ export function StoreProfileModal({
                   <div
                     className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
                       metaTestResult.success
-                        ? "bg-emerald-950/60 border-emerald-800/70 text-emerald-300"
-                        : "bg-rose-950/60 border-rose-800/70 text-rose-300"
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                        : "bg-rose-50 border-rose-200 text-rose-700"
                     }`}
                   >
                     <span>{metaTestResult.success ? "✓" : "✕"}</span>
@@ -400,37 +402,37 @@ export function StoreProfileModal({
               </div>
 
               <div className="space-y-1">
-                <label className="font-medium text-slate-300 text-[11px]">Múi giờ tài khoản Meta</label>
+                <label className="font-medium text-slate-700 text-[11px]">Múi giờ tài khoản Meta</label>
                 <input
                   type="text"
                   value={accountTimezone}
                   onChange={(e) => setAccountTimezone(e.target.value)}
                   placeholder="Asia/Manila hoặc America/New_York"
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-slate-200 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-900 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                 />
               </div>
             </div>
 
             {/* SECTION 2: GOOGLE ANALYTICS 4 (1 EMAIL DÙNG CHUNG) */}
-            <div className="rounded-xl border border-indigo-900/60 bg-indigo-950/20 p-4 space-y-3">
-              <div className="flex items-center justify-between border-b border-indigo-900/40 pb-2">
-                <span className="font-bold text-indigo-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
-                  <span>📊</span> 2. Google Analytics 4 (GA4)
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-blue-200 pb-2">
+                <span className="font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                  <span><AppIcon name="chart" /></span> 2. Google Analytics 4 (GA4)
                 </span>
-                <span className="text-[10px] text-emerald-400 font-semibold">1 Email dùng chung cho tất cả store</span>
+                <span className="text-[10px] text-emerald-700 font-semibold">1 Email dùng chung cho tất cả store</span>
               </div>
 
               {/* Service Account Callout Banner */}
-              <div className="p-3 rounded-lg bg-slate-950/90 border border-indigo-800/50 space-y-2">
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  💡 <strong>Không cần tạo file JSON:</strong> Chỉ cần vào Google Analytics của store này (<em>Admin ➔ Property Access Management</em>), bấm <strong>Add User</strong> và thêm email sau với quyền <strong>Viewer</strong>:
+              <div className="p-3 rounded-lg bg-slate-50 border border-blue-200 space-y-2">
+                <p className="text-[11px] text-slate-700 leading-relaxed">
+                  <AppIcon name="info" /> <strong>Không cần tạo file JSON:</strong> Chỉ cần vào Google Analytics của store này (<em>Admin ➔ Property Access Management</em>), bấm <strong>Add User</strong> và thêm email sau với quyền <strong>Viewer</strong>:
                 </p>
-                <div className="flex items-center justify-between gap-2 bg-slate-900 p-2 rounded border border-slate-800 font-mono text-[11px] text-cyan-300">
+                <div className="flex items-center justify-between gap-2 bg-white p-2 rounded border border-slate-200 font-mono text-[11px] text-blue-700">
                   <span className="truncate select-all">{GA4_SERVICE_ACCOUNT_EMAIL}</span>
                   <button
                     type="button"
                     onClick={handleCopyEmail}
-                    className="shrink-0 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-sans text-[10px] font-semibold transition cursor-pointer"
+                    className="shrink-0 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-sans text-[10px] font-semibold transition cursor-pointer"
                   >
                     {copiedEmail ? "✓ Đã chép" : "📋 Sao chép email"}
                   </button>
@@ -438,9 +440,9 @@ export function StoreProfileModal({
               </div>
 
               <div className="space-y-1.5">
-                <label className="font-semibold text-slate-200 flex items-center justify-between">
+                <label className="font-semibold text-slate-900 flex items-center justify-between">
                   <span>GA4 Property ID (Dãy số)</span>
-                  <span className="text-[10px] text-slate-400 font-normal">Xem trong GA4 Property Settings</span>
+                  <span className="text-[10px] text-slate-600 font-normal">Xem trong GA4 Property Settings</span>
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -448,13 +450,13 @@ export function StoreProfileModal({
                     value={ga4PropertyId}
                     onChange={(e) => setGa4PropertyId(e.target.value)}
                     placeholder="Ví dụ: 555699138"
-                    className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-cyan-300 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-blue-700 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
                   <button
                     type="button"
                     onClick={handleTestGa4}
                     disabled={testingGa4 || !ga4PropertyId.trim()}
-                    className="px-3 py-2 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 border border-indigo-700 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+                    className="px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-50 text-blue-700 border border-blue-200 font-semibold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
                   >
                     {testingGa4 ? "Đang test…" : "⚡ Test GA4"}
                   </button>
@@ -464,8 +466,8 @@ export function StoreProfileModal({
                   <div
                     className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
                       ga4TestResult.success
-                        ? "bg-emerald-950/60 border-emerald-800/70 text-emerald-300"
-                        : "bg-rose-950/60 border-rose-800/70 text-rose-300"
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                        : "bg-rose-50 border-rose-200 text-rose-700"
                     }`}
                   >
                     <span>{ga4TestResult.success ? "✓" : "✕"}</span>
@@ -482,39 +484,39 @@ export function StoreProfileModal({
             </div>
 
             {/* SECTION 3: ECONOMICS & RULES */}
-            <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                <span className="font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
-                  <span>🎯</span> 3. Mục tiêu Kinh tế & Quyết định AI (Economics)
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span className="font-bold text-amber-700 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                  <span><AppIcon name="ads" /></span> 3. Mục tiêu Kinh tế & Quyết định AI (Economics)
                 </span>
-                <span className="text-[10px] text-slate-400">Đã điền sẵn chuẩn ngành POD / Dropship</span>
+                <span className="text-[10px] text-slate-600">Đã điền sẵn chuẩn ngành POD / Dropship</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-200">Target CPA (USD) <span className="text-rose-400">*</span></label>
+                  <label className="font-semibold text-slate-900">Target CPA (USD) <span className="text-rose-700">*</span></label>
                   <input
                     type="number"
                     step="0.5"
                     value={targetCpa}
                     onChange={(e) => setTargetCpa(e.target.value)}
                     placeholder="22.0"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
-                  <p className="text-[10px] text-slate-400">Tiền ads tối đa cho 1 đơn (Mặc định: $22)</p>
+                  <p className="text-[10px] text-slate-600">Tiền ads tối đa cho 1 đơn (Mặc định: $22)</p>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-200">Break-even ROAS</label>
+                  <label className="font-semibold text-slate-900">Break-even ROAS</label>
                   <input
                     type="number"
                     step="0.1"
                     value={breakEvenRoas}
                     onChange={(e) => setBreakEvenRoas(e.target.value)}
                     placeholder="2.2"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 font-mono text-xs focus:outline-none focus:border-cyan-500"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
-                  <p className="text-[10px] text-slate-400">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ (Mặc định: 2.2x)</p>
+                  <p className="text-[10px] text-slate-600">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ (Mặc định: 2.2x)</p>
                 </div>
               </div>
             </div>
@@ -524,7 +526,7 @@ export function StoreProfileModal({
               <button
                 type="button"
                 onClick={() => setShowAdvancedJson(!showAdvancedJson)}
-                className="text-[11px] text-slate-400 hover:text-cyan-400 font-medium transition cursor-pointer flex items-center gap-1"
+                className="text-[11px] text-slate-600 hover:text-blue-700 font-medium transition cursor-pointer flex items-center gap-1"
               >
                 <span>{showAdvancedJson ? "▼" : "▶"}</span>
                 <span>Chế độ nâng cao (Xem / chỉnh sửa JSON trực tiếp)</span>
@@ -536,7 +538,7 @@ export function StoreProfileModal({
                     rows={8}
                     value={rawJson}
                     onChange={(e) => setRawJson(e.target.value)}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-cyan-300 font-mono text-[11px] focus:outline-none focus:border-cyan-500"
+                    className="w-full rounded-lg border border-slate-200 bg-white p-3 text-blue-700 font-mono text-[11px] focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
                 </div>
               )}
@@ -546,18 +548,18 @@ export function StoreProfileModal({
 
         {/* Error Alert */}
         {errorMessage && (
-          <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
-            <span>⚠️</span>
+          <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+            <span><AppIcon name="warning" /></span>
             <span>{errorMessage}</span>
           </div>
         )}
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+            className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 text-xs font-semibold cursor-pointer"
           >
             Hủy
           </button>
@@ -565,7 +567,7 @@ export function StoreProfileModal({
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className={`px-5 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-semibold shadow-lg shadow-cyan-500/20 transition cursor-pointer flex items-center gap-1.5 ${
+            className={`px-5 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold shadow-sm transition cursor-pointer flex items-center gap-1.5 ${
               saving ? "opacity-70 cursor-not-allowed" : ""
             }`}
           >

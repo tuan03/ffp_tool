@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type {
   DeliverablesData,
   PinterestPodDeliverables,
@@ -167,18 +169,18 @@ export function DeliverablesShowcase({
   }
 
   return (
-    <section className="flex flex-col gap-6 rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl">
+    <section className="flex flex-col gap-6 rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm">
       {/* Toast Notification */}
       {zipMessage && (
-        <div className="flex items-center justify-between rounded-xl border border-cyan-800 bg-cyan-950/80 p-3 text-xs text-cyan-200 shadow">
+        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700 shadow">
           <div className="flex items-center gap-2">
-            <span>📦</span>
+            <span><AppIcon name="folder" /></span>
             <span>{zipMessage}</span>
           </div>
           <button
             type="button"
             onClick={() => setZipMessage(null)}
-            className="text-cyan-400 hover:text-white"
+            className="text-blue-700 hover:text-slate-900"
           >
             ✕
           </button>
@@ -187,15 +189,15 @@ export function DeliverablesShowcase({
 
       {/* SEO Handoff Toast Notification */}
       {handoffToast && (
-        <div className="flex items-center justify-between rounded-xl border border-emerald-700 bg-emerald-950/90 p-3.5 text-xs text-emerald-200 shadow-lg animate-fade-in">
+        <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-700 shadow-sm animate-fade-in">
           <div className="flex items-center gap-2">
-            <span className="text-base">✨</span>
+            <span className="text-base"><AppIcon name="seo" /></span>
             <span className="font-semibold">{handoffToast}</span>
           </div>
           <button
             type="button"
             onClick={() => setHandoffToast(null)}
-            className="text-emerald-400 hover:text-white ml-2"
+            className="text-emerald-700 hover:text-slate-900 ml-2"
           >
             ✕
           </button>
@@ -203,64 +205,64 @@ export function DeliverablesShowcase({
       )}
 
       {/* Header */}
-      <div className="flex flex-col gap-1 border-b border-slate-800 pb-4">
+      <div className="flex flex-col gap-1 border-b border-slate-200 pb-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <span>🎉</span>
             <span>Thành phẩm Job: {totalProduced} thiết kế hoàn thiện sẵn sàng xuất xưởng</span>
           </h2>
-          <span className="rounded-full bg-emerald-950 border border-emerald-800 px-3 py-1 text-xs font-bold text-emerald-300">
+          <span className="rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-bold text-emerald-700">
             ✓ Hoàn thành
           </span>
         </div>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-slate-600">
           Toàn bộ file in CMYK 300 DPI, phôi bóc tách nền trắng và phối cảnh AI đã sẵn sàng phục vụ sản xuất và đăng sàn.
         </p>
       </div>
 
       {/* 5 Showcase Metrics Cards matching wireframe */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
           <span className="text-2xl">🖨️</span>
-          <span className="text-lg font-bold text-cyan-300">{metrics.rgb_4k_count} Bản in</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">RGB 4K Siêu Nét</span>
+          <span className="text-lg font-bold text-blue-700">{metrics.rgb_4k_count} Bản in</span>
+          <span className="text-[10px] text-slate-600 uppercase font-semibold">RGB 4K Siêu Nét</span>
         </div>
 
-        <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
           <span className="text-2xl">🏭</span>
-          <span className="text-lg font-bold text-emerald-300">{metrics.cmyk_count} File in</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">CMYK 300 DPI</span>
+          <span className="text-lg font-bold text-emerald-700">{metrics.cmyk_count} File in</span>
+          <span className="text-[10px] text-slate-600 uppercase font-semibold">CMYK 300 DPI</span>
         </div>
 
-        <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
           <span className="text-2xl">🛋️</span>
-          <span className="text-lg font-bold text-indigo-300">{metrics.lifestyle_mockup_count} Mockup</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Phòng Khách AI</span>
+          <span className="text-lg font-bold text-blue-700">{metrics.lifestyle_mockup_count} Mockup</span>
+          <span className="text-[10px] text-slate-600 uppercase font-semibold">Phòng Khách AI</span>
         </div>
 
-        <div className="flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
           <span className="text-2xl">✂️</span>
-          <span className="text-lg font-bold text-amber-300">{metrics.cutouts_count} Phôi Cắt</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Nền Trắng</span>
+          <span className="text-lg font-bold text-amber-700">{metrics.cutouts_count} Phôi Cắt</span>
+          <span className="text-[10px] text-slate-600 uppercase font-semibold">Nền Trắng</span>
         </div>
 
-        <div className="col-span-2 sm:col-span-1 flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
-          <span className="text-2xl">🖼️</span>
-          <span className="text-lg font-bold text-pink-300">{metrics.mockups_count} Mockup</span>
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Đa Góc</span>
+        <div className="col-span-2 sm:col-span-1 flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
+          <span className="text-2xl"><AppIcon name="image" /></span>
+          <span className="text-lg font-bold text-blue-700">{metrics.mockups_count} Mockup</span>
+          <span className="text-[10px] text-slate-600 uppercase font-semibold">Đa Góc</span>
         </div>
       </div>
 
       {/* 4 Sub-tabs */}
       <div className="flex flex-col gap-4">
-        <div className="flex border-b border-slate-800 gap-1 overflow-x-auto text-xs font-semibold">
+        <div className="flex border-b border-slate-200 gap-1 overflow-x-auto text-xs font-semibold">
           <button
             type="button"
             onClick={() => setActiveTab("cmyk")}
             className={`border-b-2 px-4 py-2.5 transition whitespace-nowrap ${
               activeTab === "cmyk"
-                ? "border-cyan-400 text-cyan-300"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-blue-300 text-blue-700"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
             🖨️ Bản in CMYK ({printCmykImages.length})
@@ -271,8 +273,8 @@ export function DeliverablesShowcase({
             onClick={() => setActiveTab("mockups")}
             className={`border-b-2 px-4 py-2.5 transition whitespace-nowrap ${
               activeTab === "mockups"
-                ? "border-cyan-400 text-cyan-300"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-blue-300 text-blue-700"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
             🛋️ Mockup Phòng AI ({approvedMockupCount}/{lifestyleMockups.length})
@@ -283,8 +285,8 @@ export function DeliverablesShowcase({
             onClick={() => setActiveTab("cutouts")}
             className={`border-b-2 px-4 py-2.5 transition whitespace-nowrap ${
               activeTab === "cutouts"
-                ? "border-cyan-400 text-cyan-300"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-blue-300 text-blue-700"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
             ✂️ Phôi Cắt ({productCutoutsWhite.length})
@@ -295,11 +297,11 @@ export function DeliverablesShowcase({
             onClick={() => setActiveTab("comparison")}
             className={`border-b-2 px-4 py-2.5 transition whitespace-nowrap ${
               activeTab === "comparison"
-                ? "border-cyan-400 text-cyan-300"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-blue-300 text-blue-700"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
-            🔄 Bảng So Sánh 4 Bước ({comparisonRows.length})
+            <AppIcon name="refresh" /> Bảng So Sánh 4 Bước ({comparisonRows.length})
           </button>
         </div>
 
@@ -309,10 +311,10 @@ export function DeliverablesShowcase({
             {printCmykImages.map((item, idx) => (
               <div
                 key={item.filename || `${item.url}-${idx}`}
-                className="group flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow transition hover:border-cyan-600/70"
+                className="group flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow transition hover:border-blue-300"
               >
                 <div
-                  className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                  className="relative aspect-[4/3] w-full overflow-hidden bg-white cursor-zoom-in"
                   onClick={() =>
                     onPreviewImage?.({
                       url: item.url,
@@ -335,25 +337,25 @@ export function DeliverablesShowcase({
                       e.currentTarget.src =
                         "data:image/svg+xml;charset=utf-8," +
                         encodeURIComponent(
-                          `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#38bdf8" font-family="sans-serif" font-size="14" text-anchor="middle">${item.filename}</text></svg>`,
+                          `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#f8fafc"/><text x="200" y="150" fill="#475569" font-family="sans-serif" font-size="14" text-anchor="middle">${item.filename}</text></svg>`,
                         );
                     }}
                     className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                   />
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 opacity-0 group-hover:opacity-100 transition">
-                    <span>🔍 Soi HD</span>
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
+                    <span><AppIcon name="search" /> Soi HD</span>
                   </div>
                 </div>
                 <div className="flex flex-col p-3 gap-2">
-                  <p className="font-mono text-xs font-semibold text-slate-200 truncate" title={item.filename}>
+                  <p className="font-mono text-xs font-semibold text-slate-900 truncate" title={item.filename}>
                     {item.filename}
                   </p>
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-[11px] text-slate-600">
                     <span>Chuẩn 300 DPI</span>
                     <a
                       href={item.download_url ?? item.url}
                       download={item.filename}
-                      className="rounded bg-cyan-600 px-2 py-1 text-xs font-semibold text-white hover:bg-cyan-500"
+                      className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700"
                     >
                       Tải file in CMYK ↓
                     </a>
@@ -368,49 +370,49 @@ export function DeliverablesShowcase({
         {activeTab === "mockups" && (
           <div className="flex flex-col gap-5">
             {/* Approval Control Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 shadow-inner">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5 shadow-inner">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-300">
+                <span className="text-xs font-semibold text-slate-700">
                   Duyệt ảnh mockup gửi sang SEO:
                 </span>
                 <span
                   className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${
                     approvedMockupCount > 0
-                      ? "bg-indigo-950/80 border-indigo-700/60 text-indigo-300"
-                      : "bg-rose-950/80 border-rose-800 text-rose-300"
+                      ? "bg-blue-50 border-blue-200 text-blue-700"
+                      : "bg-rose-50 border-rose-200 text-rose-700"
                   }`}
                 >
                   {approvedMockupCount} / {lifestyleMockups.length} ảnh được phép
                 </span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-slate-600">
                   (Mặc định đã duyệt tất cả — bạn có thể bật/tắt từng ảnh hoặc từng sản phẩm)
                 </span>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
                 {/* View Mode Switcher */}
-                <div className="flex items-center rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
+                <div className="flex items-center rounded-lg border border-slate-300 bg-white p-0.5 text-xs">
                   <button
                     type="button"
                     onClick={() => setMockupViewMode("by_product")}
                     className={`rounded-md px-2.5 py-1 font-semibold transition ${
                       mockupViewMode === "by_product"
-                        ? "bg-indigo-600 text-white shadow"
-                        : "text-slate-400 hover:text-slate-200"
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    📁 Theo từng sản phẩm ({productGroups.length})
+                    <AppIcon name="folder" /> Theo từng sản phẩm ({productGroups.length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setMockupViewMode("all")}
                     className={`rounded-md px-2.5 py-1 font-semibold transition ${
                       mockupViewMode === "all"
-                        ? "bg-indigo-600 text-white shadow"
-                        : "text-slate-400 hover:text-slate-200"
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    🖼️ Xem tất cả ({lifestyleMockups.length})
+                    <AppIcon name="image" /> Xem tất cả ({lifestyleMockups.length})
                   </button>
                 </div>
 
@@ -418,14 +420,14 @@ export function DeliverablesShowcase({
                   <button
                     type="button"
                     onClick={handleSelectAllMockups}
-                    className="rounded-lg border border-indigo-700/50 bg-indigo-950/60 px-2.5 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/60 hover:text-white transition"
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:text-slate-900 transition"
                   >
                     ✓ Chọn tất cả
                   </button>
                   <button
                     type="button"
                     onClick={handleDeselectAllMockups}
-                    className="rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white transition"
+                    className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition"
                   >
                     ✕ Bỏ chọn tất cả
                   </button>
@@ -445,22 +447,22 @@ export function DeliverablesShowcase({
                     <div
                       key={prod.id || prodIdx}
                       style={{ contentVisibility: "auto", containIntrinsicSize: "0 280px" }}
-                      className="flex flex-col gap-3.5 rounded-2xl border border-slate-800 bg-slate-950/80 p-4 shadow-lg transition hover:border-slate-700"
+                      className="flex flex-col gap-3.5 rounded-lg border border-slate-200 bg-slate-50 p-4 shadow-sm transition hover:border-slate-300"
                     >
                       {/* Product Header */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
                         <div className="flex items-center gap-2.5">
-                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-900/60 border border-indigo-700/60 text-xs font-bold text-indigo-300">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-700">
                             #{prodIdx + 1}
                           </span>
                           <div>
-                            <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                               <span>{prod.title}</span>
-                              <span className="font-mono text-[11px] font-normal text-slate-400">
+                              <span className="font-mono text-[11px] font-normal text-slate-600">
                                 ({prod.id})
                               </span>
                             </h4>
-                            <p className="text-[11px] text-emerald-400 font-medium">
+                            <p className="text-[11px] text-emerald-700 font-medium">
                               {prod.badge || `${prod.widthPx}x${prod.heightPx} @ 300 DPI (CMYK)`}
                             </p>
                           </div>
@@ -470,8 +472,8 @@ export function DeliverablesShowcase({
                           <span
                             className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${
                               prodApprovedCount > 0
-                                ? "bg-indigo-950 border-indigo-700/60 text-indigo-300"
-                                : "bg-rose-950 border-rose-800 text-rose-300"
+                                ? "bg-blue-50 border-blue-200 text-blue-700"
+                                : "bg-rose-50 border-rose-200 text-rose-700"
                             }`}
                           >
                             {prodApprovedCount} / {prod.mockups.length} mockup đã chọn
@@ -479,14 +481,14 @@ export function DeliverablesShowcase({
                           <button
                             type="button"
                             onClick={() => handleSelectProductMockups(prod)}
-                            className="rounded border border-indigo-700/50 bg-indigo-950/60 px-2 py-0.5 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900 hover:text-white transition"
+                            className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-50 hover:text-slate-900 transition"
                           >
                             ✓ Chọn hết SP này
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeselectProductMockups(prod)}
-                            className="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] font-medium text-slate-400 hover:bg-slate-700 hover:text-white transition"
+                            className="rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition"
                           >
                             ✕ Bỏ hết SP này
                           </button>
@@ -496,18 +498,18 @@ export function DeliverablesShowcase({
                       {/* Product Content: Left = Print Master, Right = Mockups */}
                       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
                         {/* Left: Print Master Preview */}
-                        <div className="lg:col-span-1 flex flex-col gap-2 rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-3 shadow-inner">
+                        <div className="lg:col-span-1 flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 shadow-inner">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-emerald-300 flex items-center gap-1">
+                            <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
                               <span>🏭</span> Bản in xưởng
                             </span>
-                            <span className="rounded bg-emerald-900/80 px-1.5 py-0.5 text-[9px] font-mono font-bold text-emerald-200">
+                            <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-mono font-bold text-emerald-700">
                               300 DPI
                             </span>
                           </div>
 
                           <div
-                            className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-950 border border-slate-800 cursor-zoom-in group"
+                            className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-white border border-slate-200 cursor-zoom-in group"
                             onClick={() =>
                               onPreviewImage?.({
                                 url: prod.rgbUrl || prod.cmykUrl,
@@ -534,16 +536,16 @@ export function DeliverablesShowcase({
                                 }
                               }}
                             />
-                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-cyan-300">
-                              🔍 Soi bản in
+                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-white">
+                              <AppIcon name="search" /> Soi bản in
                             </div>
                           </div>
 
-                          <div className="flex flex-col gap-0.5 text-[10px] text-slate-400">
-                            <p className="font-mono text-slate-300 truncate" title={prod.cmykFilename}>
+                          <div className="flex flex-col gap-0.5 text-[10px] text-slate-600">
+                            <p className="font-mono text-slate-700 truncate" title={prod.cmykFilename}>
                               {prod.cmykFilename}
                             </p>
-                            <span className="text-emerald-400 font-semibold">
+                            <span className="text-emerald-700 font-semibold">
                               ✓ Sẵn sàng xuất xưởng
                             </span>
                           </div>
@@ -551,7 +553,7 @@ export function DeliverablesShowcase({
 
                         {/* Right: Mockups for this product */}
                         <div className="lg:col-span-3 flex flex-col gap-2">
-                          <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                             <span>🛋️</span> Phối cảnh phòng AI của sản phẩm ({prod.mockups.length} ảnh)
                           </span>
 
@@ -561,10 +563,10 @@ export function DeliverablesShowcase({
                               return (
                                 <div
                                   key={mockup.filename || `${mockup.url}-${mIdx}`}
-                                  className={`group relative flex flex-col overflow-hidden rounded-xl border shadow transition ${
+                                  className={`group relative flex flex-col overflow-hidden rounded-lg border shadow transition ${
                                     approved
-                                      ? "border-indigo-600/70 bg-slate-950 hover:border-indigo-500"
-                                      : "border-slate-800/80 bg-slate-950/50 opacity-55 hover:opacity-85"
+                                      ? "border-blue-300 bg-white hover:border-blue-300"
+                                      : "border-slate-200 bg-slate-50 opacity-55 hover:opacity-85"
                                   }`}
                                 >
                                   {/* Approval Toggle Badge Button */}
@@ -574,10 +576,10 @@ export function DeliverablesShowcase({
                                       e.stopPropagation();
                                       toggleMockupApproval(mockup.url, mockup.filename);
                                     }}
-                                    className={`absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-lg transition ${
+                                    className={`absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-sm transition ${
                                       approved
-                                        ? "bg-emerald-600/95 text-white hover:bg-emerald-500 shadow-emerald-950/50"
-                                        : "bg-slate-900/95 text-slate-400 border border-slate-700 hover:border-slate-500 hover:text-slate-200"
+                                        ? "bg-emerald-700 text-white hover:bg-emerald-700 "
+                                        : "bg-slate-50 text-slate-600 border border-slate-300 hover:border-slate-300 hover:text-slate-900"
                                     }`}
                                     title={
                                       approved
@@ -590,7 +592,7 @@ export function DeliverablesShowcase({
                                   </button>
 
                                   <div
-                                    className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                                    className="relative aspect-[4/3] w-full overflow-hidden bg-white cursor-zoom-in"
                                     onClick={() =>
                                       onPreviewImage?.({
                                         url: mockup.url,
@@ -612,27 +614,27 @@ export function DeliverablesShowcase({
                                         e.currentTarget.src =
                                           "data:image/svg+xml;charset=utf-8," +
                                           encodeURIComponent(
-                                            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
+                                            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#f8fafc"/><text x="200" y="150" fill="#475569" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
                                           );
                                       }}
                                       className={`h-full w-full object-cover transition duration-200 group-hover:scale-105 ${
                                         !approved ? "grayscale-[35%]" : ""
                                       }`}
                                     />
-                                    <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 opacity-0 group-hover:opacity-100 transition">
-                                      <span>🔍 Soi Mockup</span>
+                                    <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
+                                      <span><AppIcon name="search" /> Soi Mockup</span>
                                     </div>
                                   </div>
 
                                   <div className="flex flex-col p-3 gap-1.5">
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-2">
-                                        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 uppercase">
+                                        <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 uppercase">
                                           {mockup.scene_type}
                                         </span>
                                         <span
                                           className={`text-[10px] font-medium ${
-                                            approved ? "text-emerald-400" : "text-slate-500"
+                                            approved ? "text-emerald-700" : "text-slate-500"
                                           }`}
                                         >
                                           {approved ? "• Sẵn sàng SEO" : "• Đã loại bỏ"}
@@ -642,13 +644,13 @@ export function DeliverablesShowcase({
                                         href={mockup.url}
                                         download={mockup.filename}
                                         onClick={(e) => e.stopPropagation()}
-                                        className="text-xs text-cyan-400 hover:underline"
+                                        className="text-xs text-blue-700 hover:underline"
                                       >
                                         Tải ảnh ↓
                                       </a>
                                     </div>
                                     <p
-                                      className="text-xs text-slate-300 line-clamp-2"
+                                      className="text-xs text-slate-700 line-clamp-2"
                                       title={mockup.scene_description}
                                     >
                                       {mockup.scene_description}
@@ -672,10 +674,10 @@ export function DeliverablesShowcase({
                   return (
                     <div
                       key={mockup.filename || `${mockup.url}-${idx}`}
-                      className={`group relative flex flex-col overflow-hidden rounded-xl border shadow transition ${
+                      className={`group relative flex flex-col overflow-hidden rounded-lg border shadow transition ${
                         approved
-                          ? "border-indigo-600/70 bg-slate-950 hover:border-indigo-500"
-                          : "border-slate-800/80 bg-slate-950/50 opacity-60 hover:opacity-90"
+                          ? "border-blue-300 bg-white hover:border-blue-300"
+                          : "border-slate-200 bg-slate-50 opacity-60 hover:opacity-90"
                       }`}
                     >
                       {/* Approval Toggle Badge Button */}
@@ -685,10 +687,10 @@ export function DeliverablesShowcase({
                           e.stopPropagation();
                           toggleMockupApproval(mockup.url, mockup.filename);
                         }}
-                        className={`absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-lg transition ${
+                        className={`absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-sm transition ${
                           approved
-                            ? "bg-emerald-600/95 text-white hover:bg-emerald-500 shadow-emerald-950/50"
-                            : "bg-slate-900/95 text-slate-400 border border-slate-700 hover:border-slate-500 hover:text-slate-200"
+                            ? "bg-emerald-700 text-white hover:bg-emerald-700 "
+                            : "bg-slate-50 text-slate-600 border border-slate-300 hover:border-slate-300 hover:text-slate-900"
                         }`}
                         title={
                           approved
@@ -701,7 +703,7 @@ export function DeliverablesShowcase({
                       </button>
 
                       <div
-                        className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900 cursor-zoom-in"
+                        className="relative aspect-[4/3] w-full overflow-hidden bg-white cursor-zoom-in"
                         onClick={() =>
                           onPreviewImage?.({
                             url: mockup.url,
@@ -723,26 +725,26 @@ export function DeliverablesShowcase({
                             e.currentTarget.src =
                               "data:image/svg+xml;charset=utf-8," +
                               encodeURIComponent(
-                                `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#0f172a"/><text x="200" y="150" fill="#a78bfa" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
+                                `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="400" height="300" fill="#f8fafc"/><text x="200" y="150" fill="#475569" font-family="sans-serif" font-size="14" text-anchor="middle">${mockup.filename}</text></svg>`,
                               );
                           }}
                           className={`h-full w-full object-cover transition duration-200 group-hover:scale-105 ${
                             !approved ? "grayscale-[35%]" : ""
                           }`}
                         />
-                        <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 opacity-0 group-hover:opacity-100 transition">
-                          <span>🔍 Soi Mockup</span>
+                        <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/80 px-2 py-0.5 text-[10px] font-semibold text-white opacity-0 group-hover:opacity-100 transition">
+                          <span><AppIcon name="search" /> Soi Mockup</span>
                         </div>
                       </div>
                       <div className="flex flex-col p-3 gap-1.5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 uppercase">
+                            <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 uppercase">
                               {mockup.scene_type}
                             </span>
                             <span
                               className={`text-[10px] font-medium ${
-                                approved ? "text-emerald-400" : "text-slate-500"
+                                approved ? "text-emerald-700" : "text-slate-500"
                               }`}
                             >
                               {approved ? "• Sẵn sàng SEO" : "• Đã loại bỏ"}
@@ -752,12 +754,12 @@ export function DeliverablesShowcase({
                             href={mockup.url}
                             download={mockup.filename}
                             onClick={(e) => e.stopPropagation()}
-                            className="text-xs text-cyan-400 hover:underline"
+                            className="text-xs text-blue-700 hover:underline"
                           >
                             Tải ảnh ↓
                           </a>
                         </div>
-                        <p className="text-xs text-slate-300 line-clamp-2" title={mockup.scene_description}>
+                        <p className="text-xs text-slate-700 line-clamp-2" title={mockup.scene_description}>
                           {mockup.scene_description}
                         </p>
                       </div>
@@ -775,7 +777,7 @@ export function DeliverablesShowcase({
             {productCutoutsWhite.map((cutout, idx) => (
               <div
                 key={cutout.filename || `${cutout.url}-${idx}`}
-                className="group flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow transition hover:border-slate-600"
+                className="group flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow transition hover:border-slate-300"
               >
                 <div
                   className="relative aspect-[4/3] w-full overflow-hidden bg-white p-2 cursor-zoom-in"
@@ -803,17 +805,17 @@ export function DeliverablesShowcase({
                     className="h-full w-full object-contain transition duration-300 group-hover:scale-105"
                   />
                   <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-xs opacity-0 group-hover:opacity-100 transition">
-                    <span>🔍 Soi Phôi</span>
+                    <span><AppIcon name="search" /> Soi Phôi</span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between p-3 text-xs">
-                  <span className="font-mono text-slate-300 truncate" title={cutout.filename}>
+                  <span className="font-mono text-slate-700 truncate" title={cutout.filename}>
                     {cutout.filename}
                   </span>
                   <a
                     href={cutout.url}
                     download={cutout.filename}
-                    className="rounded bg-slate-800 px-2 py-1 font-semibold text-slate-200 hover:bg-slate-700"
+                    className="rounded bg-slate-50 px-2 py-1 font-semibold text-slate-900 hover:bg-slate-100"
                   >
                     Tải phôi ↓
                   </a>
@@ -830,8 +832,8 @@ export function DeliverablesShowcase({
       </div>
 
       {/* Footer Actions */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-800 pt-5">
-        <div className="text-xs text-slate-400">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 pt-5">
+        <div className="text-xs text-slate-600">
           Thành phẩm đã sẵn sàng chuyển giao cho quy trình SEO &amp; Content viết bài bán hàng.
         </div>
 
@@ -840,7 +842,7 @@ export function DeliverablesShowcase({
             type="button"
             onClick={handleDownloadZip}
             disabled={isZipping}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-200 shadow transition hover:bg-slate-700 hover:text-white disabled:opacity-50"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-900 shadow transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
           >
             <span>{isZipping ? "⏳" : "📦"}</span>
             <span>{isZipping ? "Đang nén ZIP..." : "Tải toàn bộ file in ZIP ↓"}</span>
@@ -853,9 +855,9 @@ export function DeliverablesShowcase({
                 setHandoffResult(null);
                 setShowSeoModal(true);
               }}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/25 transition hover:from-emerald-400 hover:to-teal-500 hover:shadow-emerald-500/40"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-lg bg-blue-50 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-sm transition "
             >
-              <span>✨</span>
+              <span><AppIcon name="seo" /></span>
               <span>
                 {`Bàn giao sang SEO (${printCmykImages.length} file in + ${approvedMockupCount}/${lifestyleMockups.length} mockup) ➔`}
               </span>

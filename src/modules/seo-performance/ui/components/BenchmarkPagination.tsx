@@ -41,20 +41,20 @@ export function BenchmarkPagination({
   const pages = getPageNumbers();
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-300">
+    <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-700">
       {/* Left: Summary and Page Size */}
       <div className="flex flex-wrap items-center gap-3">
         <span>
-          Hiển thị <strong className="text-white">{startRecord}</strong> – <strong className="text-white">{endRecord}</strong> trên tổng số <strong className="text-cyan-400">{total}</strong> sản phẩm
+          Hiển thị <strong className="text-slate-900">{startRecord}</strong> – <strong className="text-slate-900">{endRecord}</strong> trên tổng số <strong className="text-blue-700">{total}</strong> sản phẩm
         </span>
-        <label className="flex items-center gap-1.5 text-slate-400">
+        <label className="flex items-center gap-1.5 text-slate-600">
           <span>Kích thước trang:</span>
           <select
             aria-label="Số sản phẩm mỗi trang"
             value={pageSize}
             disabled={isLoading}
             onChange={e => onChange(0, Number(e.target.value))}
-            className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 transition focus:border-cyan-500 focus:outline-none"
+            className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 transition focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
           >
             <option value={25}>25 / trang</option>
             <option value={50}>50 / trang</option>
@@ -70,7 +70,7 @@ export function BenchmarkPagination({
           aria-label="Trang trước"
           disabled={currentPage <= 1 || isLoading}
           onClick={() => onChange(Math.max(0, offset - pageSize))}
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-medium text-slate-300 transition hover:border-slate-500 hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
         >
           ◀ Trước
         </button>
@@ -94,8 +94,8 @@ export function BenchmarkPagination({
               onClick={() => onChange((p - 1) * pageSize)}
               className={`min-w-[32px] rounded-lg border px-2.5 py-1.5 font-semibold transition ${
                 isActive
-                  ? "border-cyan-500 bg-cyan-600 text-white shadow-sm"
-                  : "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white"
+                  ? "border-blue-300 bg-blue-600 text-white shadow-sm"
+                  : "border-slate-300 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
               } disabled:cursor-not-allowed disabled:opacity-50`}
             >
               {p}
@@ -108,7 +108,7 @@ export function BenchmarkPagination({
           aria-label="Trang sau"
           disabled={currentPage >= totalPages || isLoading}
           onClick={() => onChange(offset + pageSize)}
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-medium text-slate-300 transition hover:border-slate-500 hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Sau ▶
         </button>

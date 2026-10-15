@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { AppIcon } from "./AppIcon";
 export interface AddedStoreInfo {
   readonly storeId: string;
   readonly shopDomain: string;
@@ -86,12 +87,12 @@ export function AddStoreModal({
         });
         if (isMounted) setSeoProfiles(validProfiles);
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (isMounted) {
           setSeoProfiles([]);
           setStatusMessage({
             type: "error",
-            text: error instanceof Error ? error.message : "Không tải được danh sách SEO profile.",
+            text: "Không tải được danh sách SEO profile. Kiểm tra kết nối Gateway rồi thử lại.",
           });
         }
       })
@@ -430,29 +431,29 @@ export function AddStoreModal({
   return (
     <div
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 p-4 backdrop-blur-sm"
       role="dialog"
     >
-      <div className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl text-slate-100">
+      <div className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-lg border border-slate-300 bg-white p-6 shadow-sm text-slate-900">
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400 font-bold border border-cyan-500/30 text-sm">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-700 font-bold border border-blue-300 text-sm">
                 {isEditMode ? "✏️" : "🏬"}
               </span>
-              <h3 className="text-lg font-bold text-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">
                 {isEditMode ? "Chỉnh sửa Shopify Store" : "Thêm & Kết nối Shopify Store mới"}
               </h3>
             </div>
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-xs text-slate-600">
               {isEditMode
                 ? "Cập nhật ứng dụng Partner App, đổi Access Token hoặc thay đổi cấu hình Proxy"
                 : "Nhập thông tin xác thực để kết nối trực tiếp với Shopify qua Gateway và lưu vào cấu hình hệ thống."}
             </p>
           </div>
           <button
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors disabled:opacity-50"
+            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50"
             disabled={isLoading || isTesting}
             type="button"
             onClick={handleClose}
@@ -462,8 +463,8 @@ export function AddStoreModal({
         </div>
 
         {isLoadingDetails ? (
-          <div className="py-12 text-center text-sm text-slate-400">
-            <svg className="mx-auto h-6 w-6 animate-spin text-cyan-400 mb-2" fill="none" viewBox="0 0 24 24">
+          <div className="py-12 text-center text-sm text-slate-600">
+            <svg className="mx-auto h-6 w-6 animate-spin text-blue-700 mb-2" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
@@ -483,14 +484,14 @@ export function AddStoreModal({
 
             {/* Store ID & Domain */}
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1 text-xs font-medium text-slate-300">
+              <label className="grid gap-1 text-xs font-medium text-slate-700">
                 <span>
-                  Store ID <span className="text-rose-400">*</span>
+                  Store ID <span className="text-rose-700">*</span>
                   {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Cố định)</span>}
                 </span>
                 <input
-                  className={`rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono ${
-                    isEditMode ? "opacity-60 cursor-not-allowed bg-slate-900" : ""
+                  className={`rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono ${
+                    isEditMode ? "opacity-60 cursor-not-allowed bg-white" : ""
                   }`}
                   disabled={isLoading || isTesting || isEditMode}
                   placeholder="vd: dizzy"
@@ -506,12 +507,12 @@ export function AddStoreModal({
                 <span className="text-[10px] text-slate-500">Mã định danh duy nhất (chữ thường, số, dấu gạch)</span>
               </label>
 
-              <label className="grid gap-1 text-xs font-medium text-slate-300">
+              <label className="grid gap-1 text-xs font-medium text-slate-700">
                 <span>
-                  Shopify Domain <span className="text-rose-400">*</span>
+                  Shopify Domain <span className="text-rose-700">*</span>
                 </span>
                 <input
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                   disabled={isLoading || isTesting}
                   placeholder="vd: dizzy.myshopify.com"
                   required
@@ -527,12 +528,12 @@ export function AddStoreModal({
               </label>
             </div>
 
-            <label className="grid gap-1 text-xs font-medium text-slate-300">
+            <label className="grid gap-1 text-xs font-medium text-slate-700">
               <span>
-                SEO profile <span className="text-rose-400">*</span>
+                SEO profile <span className="text-rose-700">*</span>
               </span>
               <select
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                 disabled={isLoading || isTesting || isLoadingProfiles}
                 name="ffp_seo_profile_id"
                 required
@@ -554,13 +555,13 @@ export function AddStoreModal({
             </label>
 
             {/* Product Types / Niche */}
-            <label className="grid gap-1 text-xs font-medium text-slate-300">
+            <label className="grid gap-1 text-xs font-medium text-slate-700">
               <span className="flex items-center justify-between">
                 <span>Loại sản phẩm chính (Niche / Product Types)</span>
                 <span className="text-[11px] font-normal text-slate-500">Tùy chọn</span>
               </span>
               <input
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-sans"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-sans"
                 disabled={isLoading || isTesting}
                 placeholder="vd: Blanket, Quilt, Bedding Set (hoặc Rug, Doormat...)"
                 type="text"
@@ -573,25 +574,25 @@ export function AddStoreModal({
             </label>
 
             {/* Auth Type Tabs */}
-            <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
-              <label className="text-xs font-semibold text-slate-300">Phương thức xác thực Shopify</label>
+            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+              <label className="text-xs font-semibold text-slate-700">Phương thức xác thực Shopify</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setAuthType("client_credentials")}
                   className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-all ${
                     authType === "client_credentials"
-                      ? "border-cyan-500/60 bg-cyan-950/30 text-cyan-200 shadow-sm"
-                      : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-300"
+                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:text-slate-700"
                   }`}
                 >
                   <span className="text-xs font-bold flex items-center gap-1.5">
                     <span>🔑 Client Credentials</span>
-                    <span className="rounded bg-cyan-500/20 px-1 py-0.2 text-[9px] text-cyan-300 font-normal">
+                    <span className="rounded bg-blue-50 px-1 py-0.2 text-[9px] text-blue-700 font-normal">
                       Khuyên dùng
                     </span>
                   </span>
-                  <span className="text-[11px] text-slate-400 leading-tight">
+                  <span className="text-[11px] text-slate-600 leading-tight">
                     Tự động cấp & gia hạn token qua Partner App (không bao giờ hết hạn).
                   </span>
                 </button>
@@ -601,12 +602,12 @@ export function AddStoreModal({
                   onClick={() => setAuthType("static_access_token")}
                   className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-all ${
                     authType === "static_access_token"
-                      ? "border-cyan-500/60 bg-cyan-950/30 text-cyan-200 shadow-sm"
-                      : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-300"
+                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:text-slate-700"
                   }`}
                 >
                   <span className="text-xs font-bold">🎫 Static Access Token</span>
-                  <span className="text-[11px] text-slate-400 leading-tight">
+                  <span className="text-[11px] text-slate-600 leading-tight">
                     Dùng Admin API token tĩnh (bắt đầu bằng shpat_...).
                   </span>
                 </button>
@@ -615,12 +616,12 @@ export function AddStoreModal({
               {/* Client Credentials Inputs */}
               {authType === "client_credentials" ? (
                 <div className="space-y-2.5 pt-2">
-                  <label className="grid gap-1 text-xs font-medium text-slate-300">
+                  <label className="grid gap-1 text-xs font-medium text-slate-700">
                     <span>
-                      Client ID {!isEditMode && <span className="text-rose-400">*</span>}
+                      Client ID {!isEditMode && <span className="text-rose-700">*</span>}
                     </span>
                     <input
-                      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                       disabled={isLoading || isTesting}
                       placeholder={isEditMode ? "Giữ nguyên Client ID cũ nếu không đổi" : "Client ID từ Partner App"}
                       type="text"
@@ -632,14 +633,14 @@ export function AddStoreModal({
                     />
                   </label>
 
-                  <label className="grid gap-1 text-xs font-medium text-slate-300">
+                  <label className="grid gap-1 text-xs font-medium text-slate-700">
                     <span>
-                      Client Secret {!isEditMode && <span className="text-rose-400">*</span>}
+                      Client Secret {!isEditMode && <span className="text-rose-700">*</span>}
                       {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên bí mật cũ)</span>}
                     </span>
                     <div className="relative">
                       <input
-                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-10 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-10 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                         disabled={isLoading || isTesting}
                         placeholder={isEditMode ? "•••••••• (để trống nếu giữ nguyên bí mật cũ)" : "Client Secret từ Partner App"}
                         type={showSecret ? "text" : "password"}
@@ -653,7 +654,7 @@ export function AddStoreModal({
                       <button
                         type="button"
                         onClick={() => setShowSecret(!showSecret)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 text-xs"
                       >
                         {showSecret ? "🙈" : "👁️"}
                       </button>
@@ -663,14 +664,14 @@ export function AddStoreModal({
               ) : (
                 /* Static Token Input */
                 <div className="pt-2">
-                  <label className="grid gap-1 text-xs font-medium text-slate-300">
+                  <label className="grid gap-1 text-xs font-medium text-slate-700">
                     <span>
-                      Admin API Access Token {!isEditMode && <span className="text-rose-400">*</span>}
+                      Admin API Access Token {!isEditMode && <span className="text-rose-700">*</span>}
                       {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên token cũ)</span>}
                     </span>
                     <div className="relative">
                       <input
-                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-10 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-10 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                         disabled={isLoading || isTesting}
                         placeholder={isEditMode ? "•••••••• (để trống nếu giữ nguyên token cũ)" : "shpat_xxxxxxxxxxxxxxxxxxxxxxxx"}
                         type={showSecret ? "text" : "password"}
@@ -684,7 +685,7 @@ export function AddStoreModal({
                       <button
                         type="button"
                         onClick={() => setShowSecret(!showSecret)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 text-xs"
                       >
                         {showSecret ? "🙈" : "👁️"}
                       </button>
@@ -695,16 +696,16 @@ export function AddStoreModal({
             </div>
 
             {/* Proxy Section */}
-            <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
               <div className="flex items-center justify-between">
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                     <span>🌐 Proxy riêng cho Store</span>
-                    <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 font-normal">
+                    <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600 font-normal">
                       Khuyên dùng cho Multi-Store
                     </span>
                   </label>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
+                  <p className="text-[11px] text-slate-600 mt-0.5">
                     Mỗi store một IP proxy riêng biệt chống liên kết tài khoản (Fail-closed policy).
                   </p>
                 </div>
@@ -713,18 +714,18 @@ export function AddStoreModal({
                   checked={enableProxy}
                   onChange={(e) => setEnableProxy(e.target.checked)}
                   disabled={isLoading || isTesting}
-                  className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-400 cursor-pointer"
+                  className="h-4 w-4 rounded border-slate-300 bg-white text-blue-700 focus:ring-blue-300 cursor-pointer"
                 />
               </div>
 
               {enableProxy && (
-                <div className="space-y-2.5 pt-1 border-t border-slate-800/80">
-                  <label className="grid gap-1 text-xs font-medium text-slate-300">
+                <div className="space-y-2.5 pt-1 border-t border-slate-200">
+                  <label className="grid gap-1 text-xs font-medium text-slate-700">
                     <span>
-                      Proxy URL <span className="text-rose-400">*</span>
+                      Proxy URL <span className="text-rose-700">*</span>
                     </span>
                     <input
-                      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                       disabled={isLoading || isTesting}
                       placeholder="vd: http://123.45.67.89:8080"
                       type="text"
@@ -736,10 +737,10 @@ export function AddStoreModal({
                   </label>
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="grid gap-1 text-xs font-medium text-slate-300">
+                    <label className="grid gap-1 text-xs font-medium text-slate-700">
                       <span>Proxy Username (tùy chọn)</span>
                       <input
-                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                         disabled={isLoading || isTesting}
                         placeholder="username"
                         type="text"
@@ -751,14 +752,14 @@ export function AddStoreModal({
                       />
                     </label>
 
-                    <label className="grid gap-1 text-xs font-medium text-slate-300">
+                    <label className="grid gap-1 text-xs font-medium text-slate-700">
                       <span>
                         Proxy Password (tùy chọn)
                         {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ mật khẩu cũ)</span>}
                       </span>
                       <div className="relative">
                         <input
-                          className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-10 text-sm text-slate-100 outline-none focus:border-cyan-400 font-mono"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-10 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono"
                           disabled={isLoading || isTesting}
                           placeholder={isEditMode ? "•••••••• (để trống nếu giữ nguyên mật khẩu cũ)" : "password"}
                           type={showProxyPassword ? "text" : "password"}
@@ -772,7 +773,7 @@ export function AddStoreModal({
                         <button
                           type="button"
                           onClick={() => setShowProxyPassword(!showProxyPassword)}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 text-xs"
                         >
                           {showProxyPassword ? "🙈" : "👁️"}
                         </button>
@@ -786,7 +787,7 @@ export function AddStoreModal({
                       type="button"
                       onClick={() => void handleCheckProxy()}
                       disabled={isLoading || isTesting || isTestingProxy || !proxyUrl.trim()}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-400 disabled:opacity-50 transition-all shadow-sm"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 hover:border-emerald-300 disabled:opacity-50 transition-all shadow-sm"
                     >
                       {isTestingProxy ? (
                         <>
@@ -798,7 +799,7 @@ export function AddStoreModal({
                         </>
                       ) : (
                         <>
-                          <span>⚡ Kiểm tra Proxy</span>
+                          <span><AppIcon name="seo" /> Kiểm tra Proxy</span>
                         </>
                       )}
                     </button>
@@ -807,8 +808,8 @@ export function AddStoreModal({
                       <div
                         className={`text-xs px-2.5 py-1 rounded-md border flex items-center gap-1.5 ${
                           proxyCheckResult.success
-                            ? "bg-emerald-950/40 border-emerald-500/30 text-emerald-300"
-                            : "bg-rose-950/40 border-rose-500/30 text-rose-300"
+                            ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                            : "bg-rose-50 border-rose-300 text-rose-700"
                         }`}
                       >
                         {proxyCheckResult.success ? (
@@ -816,7 +817,7 @@ export function AddStoreModal({
                             <span>✓ IP: {proxyCheckResult.ip}</span>
                             {proxyCheckResult.country && <span>({proxyCheckResult.country})</span>}
                             {proxyCheckResult.latencyMs !== undefined && (
-                              <span className="font-mono text-emerald-400">· {proxyCheckResult.latencyMs}ms</span>
+                              <span className="font-mono text-emerald-700">· {proxyCheckResult.latencyMs}ms</span>
                             )}
                           </>
                         ) : (
@@ -834,10 +835,10 @@ export function AddStoreModal({
             {/* Status Message */}
             {statusMessage && (
               <div
-                className={`rounded-xl border p-3 text-xs leading-relaxed ${
+                className={`rounded-lg border p-3 text-xs leading-relaxed ${
                   statusMessage.type === "success"
-                    ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-300"
-                    : "border-rose-500/40 bg-rose-950/30 text-rose-300"
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                    : "border-rose-300 bg-rose-50 text-rose-700"
                 }`}
               >
                 {statusMessage.text}
@@ -845,12 +846,12 @@ export function AddStoreModal({
             )}
 
             {/* Actions */}
-            <div className="flex items-center justify-between border-t border-slate-800 pt-4">
+            <div className="flex items-center justify-between border-t border-slate-200 pt-4">
               <button
                 type="button"
                 onClick={() => void handleTestConnection()}
                 disabled={isLoading || isTesting || isTestingProxy}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50 transition-colors"
               >
                 {isTesting ? (
                   <>
@@ -870,14 +871,14 @@ export function AddStoreModal({
                   type="button"
                   onClick={handleClose}
                   disabled={isLoading || isTesting}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
+                  className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={isLoading || isTesting}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50 transition-colors shadow-sm"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm"
                 >
                   {isLoading ? (
                     <>

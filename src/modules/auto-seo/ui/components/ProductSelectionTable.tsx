@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import { filterAutoSeoProducts } from "./product-filter";
 
 import {
@@ -380,12 +381,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   if (products.length === 0) {
     if (isLoading) {
       return (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-12 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-cyan-950/60 text-2xl text-cyan-400 mb-3 animate-pulse">
-            ⏳
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-2xl text-blue-700 mb-3 animate-pulse">
+            <AppIcon name="clock" />
           </div>
-          <h3 className="text-base font-semibold text-slate-200">Đang tải sản phẩm từ cửa hàng...</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+          <h3 className="text-base font-semibold text-slate-900">Đang tải sản phẩm từ cửa hàng...</h3>
+          <p className="text-xs text-slate-600 max-w-md mx-auto mt-1">
             Vui lòng chờ trong giây lát trong khi danh sách sản phẩm được đồng bộ từ Shopify.
           </p>
         </div>
@@ -393,12 +394,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
     }
 
     return (
-      <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-800/80 text-2xl text-slate-400 mb-3">
-          📦
+      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-12 text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-50 text-2xl text-slate-600 mb-3">
+          <AppIcon name="folder" />
         </div>
-        <h3 className="text-base font-semibold text-slate-200">Chưa có sản phẩm nào được tải</h3>
-        <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+        <h3 className="text-base font-semibold text-slate-900">Chưa có sản phẩm nào được tải</h3>
+        <p className="text-xs text-slate-600 max-w-md mx-auto mt-1">
           Bấm nút <strong>&quot;Tải sản phẩm&quot;</strong> ở trên để lấy danh sách sản phẩm từ cửa hàng.
         </p>
       </div>
@@ -413,9 +414,9 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
   ];
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-sm">
+    <div className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm overflow-hidden backdrop-blur-sm">
       {/* Table Filter Header */}
-      <div className="border-b border-slate-800 p-3 sm:p-4 space-y-3 bg-slate-900/90">
+      <div className="border-b border-slate-200 p-3 sm:p-4 space-y-3 bg-slate-50">
         {/* Row 1: Compact, Responsive Filter Bar */}
         <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs">
           {/* Left: Search input */}
@@ -425,13 +426,13 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               value={searchQuery}
               onChange={(e) => handleSearchQueryChange(e.target.value)}
               placeholder="🔍 Tìm theo tiêu đề, handle, ID, SKU..."
-              className="w-full rounded-lg border border-slate-700 bg-slate-950/90 pl-3 pr-7 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 pl-3 pr-7 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => handleSearchQueryChange("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300 cursor-pointer"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
                 title="Xóa tìm kiếm"
               >
                 ✕
@@ -443,12 +444,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
           <div className="flex flex-wrap items-center gap-2">
             {/* Shopify Status Select */}
             <div className="relative flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">Shopify:</span>
+              <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">Shopify:</span>
               <select
                 aria-label="Lọc theo trạng thái Shopify"
                 value={statusFilter}
                 onChange={(e) => handleStatusFilterChange(e.target.value as ShopifyStatusFilter)}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-slate-200 focus:border-cyan-500 focus:outline-hidden cursor-pointer"
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer"
               >
                 {statusTabs.map((tab) => (
                   <option key={tab.id} value={tab.id}>
@@ -461,23 +462,23 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             {/* SEO Eligibility Select */}
             {props.eligibilityItems && (
               <div className="relative flex items-center gap-1.5">
-                <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">SEO:</span>
+                <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">SEO:</span>
                 <select
                   aria-label="Lọc theo trạng thái SEO"
                   value={props.eligibilityFilter ?? "needs_seo"}
                   onChange={(e) => props.onEligibilityFilterChange?.(e.target.value as AutoSeoEligibilityFilter)}
-                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer ${
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer ${
                     (props.eligibilityFilter ?? "needs_seo") === "needs_seo"
-                      ? "border-cyan-700 bg-cyan-950/80 text-cyan-200"
+                      ? "border-blue-200 bg-blue-50 text-blue-700"
                       : props.eligibilityFilter === "active"
-                        ? "border-violet-700 bg-violet-950/80 text-violet-200"
+                        ? "border-blue-200 bg-blue-50 text-blue-700"
                         : props.eligibilityFilter === "current"
-                          ? "border-emerald-700 bg-emerald-950/80 text-emerald-200"
-                          : "border-slate-700 bg-slate-950 text-slate-200"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-300 bg-white text-slate-900"
                   }`}
                 >
                   <option value="needs_seo">
-                    ⚡ Cần SEO {eligibilityCounts ? `(${eligibilityCounts.needs_seo})` : ""}
+                    <AppIcon name="seo" /> Cần SEO {eligibilityCounts ? `(${eligibilityCounts.needs_seo})` : ""}
                   </option>
                   <option value="active">
                     🟣 Đang xử lý {eligibilityCounts ? `(${eligibilityCounts.active})` : ""}
@@ -499,13 +500,13 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   aria-label="Lọc theo loại sản phẩm"
                   value={typeFilter}
                   onChange={(e) => handleTypeFilterChange(e.target.value)}
-                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-hidden cursor-pointer max-w-[170px] truncate ${
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer max-w-[170px] truncate ${
                     typeFilter !== "all"
-                      ? "border-cyan-700 bg-cyan-950/80 text-cyan-200 font-semibold"
-                      : "border-slate-700 bg-slate-950 text-slate-300"
+                      ? "border-blue-200 bg-blue-50 text-blue-700 font-semibold"
+                      : "border-slate-300 bg-white text-slate-700"
                   }`}
                 >
-                  <option value="all">📦 Loại SP: Tất cả</option>
+                  <option value="all"><AppIcon name="folder" /> Loại SP: Tất cả</option>
                   {availableTypes.map((t) => (
                     <option key={t.name} value={t.name}>
                       {t.name} ({t.count})
@@ -521,19 +522,19 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                 aria-label="Lọc theo Collection"
                 value={collectionFilter}
                 onChange={(e) => handleCollectionFilterChange(e.target.value)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-hidden cursor-pointer max-w-[220px] truncate ${
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer max-w-[220px] truncate ${
                   collectionFilter !== "all"
-                    ? "border-cyan-700 bg-cyan-950/80 text-cyan-200 font-semibold"
-                    : "border-slate-700 bg-slate-950 text-slate-300"
+                    ? "border-blue-200 bg-blue-50 text-blue-700 font-semibold"
+                    : "border-slate-300 bg-white text-slate-700"
                 }`}
               >
-                <option value="all" className="bg-slate-950 text-slate-200">
+                <option value="all" className="bg-white text-slate-900">
                   {availableCollections.length > 0
                     ? `-- Tất cả bộ sưu tập (${availableCollections.length}) --`
                     : "🏷️ Collection: Tất cả"}
                 </option>
                 {availableCollections.map((col) => (
-                  <option key={col.id} value={col.id} className="bg-slate-950 text-slate-200">
+                  <option key={col.id} value={col.id} className="bg-white text-slate-900">
                     {col.name} {col.count !== undefined ? `(${col.count})` : ""}
                   </option>
                 ))}
@@ -542,15 +543,15 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
             {/* SEO Version Filter Select */}
             <div className="relative flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">Version:</span>
+              <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">Version:</span>
               <select
                 aria-label="Lọc theo phiên bản SEO"
                 value={seoVersionFilter}
                 onChange={(e) => handleSeoVersionFilterChange(e.target.value as SeoVersionFilter)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus:outline-hidden cursor-pointer ${
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer ${
                   seoVersionFilter !== "all"
-                    ? "border-emerald-600 bg-emerald-950/80 text-emerald-200 ring-1 ring-emerald-500/50"
-                    : "border-slate-700 bg-slate-950 text-slate-300"
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-300"
+                    : "border-slate-300 bg-white text-slate-700"
                 }`}
               >
                 <option value="all">Tất cả phiên bản</option>
@@ -568,13 +569,13 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
                 isAdvancedOpen || hasActiveAdvancedFilters
-                  ? "bg-cyan-950 border-cyan-600 text-cyan-200 font-semibold shadow-xs"
-                  : "bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800"
+                  ? "bg-blue-50 border-blue-300 text-blue-700 font-semibold shadow-xs"
+                  : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
               }`}
             >
-              <span>⚙️</span> Bộ lọc nâng cao
+              <span><AppIcon name="settings" /></span> Bộ lọc nâng cao
               {activeAdvancedFilterCount > 0 && (
-                <span className="rounded-full bg-cyan-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.2">
+                <span className="rounded-full bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.2">
                   {activeAdvancedFilterCount}
                 </span>
               )}
@@ -586,7 +587,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               <button
                 type="button"
                 onClick={handleResetAllFilters}
-                className="text-xs text-rose-400 hover:text-rose-300 hover:underline px-1 py-1 transition cursor-pointer whitespace-nowrap"
+                className="text-xs text-rose-700 hover:text-rose-700 hover:underline px-1 py-1 transition cursor-pointer whitespace-nowrap"
                 title="Xóa tất cả các bộ lọc đang chọn"
               >
                 ✕ Xóa lọc
@@ -597,11 +598,11 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
         {/* Row 2: Advanced Filter Drawer (ASIN & Date Range) */}
         {(isAdvancedOpen || Boolean(asinQuery || startDate || endDate)) && (
-          <div className="pt-3 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+          <div className="pt-3 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
             {/* 1. Amazon ASIN Filter */}
             <div className="space-y-1">
-              <label htmlFor="filter-asin-input" className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
-                <span>📦</span> Lọc theo Amazon ASIN:
+              <label htmlFor="filter-asin-input" className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                <span><AppIcon name="folder" /></span> Lọc theo Amazon ASIN:
               </label>
               <div className="relative">
                 <input
@@ -610,13 +611,13 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   value={asinQuery}
                   onChange={(e) => handleAsinQueryChange(e.target.value)}
                   placeholder="Nhập ASIN (vd: B08N5WRWNW, B0...)"
-                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-hidden font-mono uppercase"
+                  className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 font-mono uppercase"
                 />
                 {asinQuery && (
                   <button
                     type="button"
                     onClick={() => handleAsinQueryChange("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
                   >
                     ✕
                   </button>
@@ -626,7 +627,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
             {/* 2. Date Range Picker (Từ ngày -> Đến ngày) */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+              <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
                 <span>📅</span> Ngày up sản phẩm:
               </label>
               <div className="flex items-center gap-1.5">
@@ -635,7 +636,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   aria-label="Từ ngày"
                   value={startDate}
                   onChange={(e) => handleStartDateChange(e.target.value)}
-                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-cyan-500 focus:outline-hidden flex-1"
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 flex-1"
                 />
                 <span className="text-slate-500 text-xs">→</span>
                 <input
@@ -643,7 +644,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   aria-label="Đến ngày"
                   value={endDate}
                   onChange={(e) => handleEndDateChange(e.target.value)}
-                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-cyan-500 focus:outline-hidden flex-1"
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 flex-1"
                 />
                 {(startDate || endDate) && (
                   <button
@@ -652,7 +653,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                       handleStartDateChange("");
                       handleEndDateChange("");
                     }}
-                    className="text-xs text-slate-400 hover:text-rose-400 px-1 cursor-pointer"
+                    className="text-xs text-slate-600 hover:text-rose-700 px-1 cursor-pointer"
                     title="Xóa khoảng ngày"
                   >
                     ✕
@@ -663,35 +664,35 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
             {/* 3. Quick Date Presets */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-400">
+              <label className="text-[11px] font-semibold text-slate-600">
                 Chọn nhanh khoảng ngày:
               </label>
               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                 <button
                   type="button"
                   onClick={() => applyDatePreset("today")}
-                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 transition cursor-pointer"
+                  className="rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-300 px-2.5 py-1 text-[11px] text-slate-700 transition cursor-pointer"
                 >
                   Hôm nay
                 </button>
                 <button
                   type="button"
                   onClick={() => applyDatePreset("7days")}
-                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 transition cursor-pointer"
+                  className="rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-300 px-2.5 py-1 text-[11px] text-slate-700 transition cursor-pointer"
                 >
                   7 ngày qua
                 </button>
                 <button
                   type="button"
                   onClick={() => applyDatePreset("30days")}
-                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 transition cursor-pointer"
+                  className="rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-300 px-2.5 py-1 text-[11px] text-slate-700 transition cursor-pointer"
                 >
                   30 ngày qua
                 </button>
                 <button
                   type="button"
                   onClick={() => applyDatePreset("all")}
-                  className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-[11px] text-slate-400 transition cursor-pointer"
+                  className="rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-300 px-2.5 py-1 text-[11px] text-slate-600 transition cursor-pointer"
                 >
                   Tất cả ngày
                 </button>
@@ -706,12 +707,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             <span className="text-slate-500 font-medium">Đang lọc:</span>
 
             {searchQuery && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-50 border border-slate-300 px-2 py-0.5 text-slate-700">
                 Từ khóa: &ldquo;{searchQuery}&rdquo;
                 <button
                   type="button"
                   onClick={() => handleSearchQueryChange("")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -719,12 +720,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {statusFilter !== "all" && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-50 border border-slate-300 px-2 py-0.5 text-slate-700">
                 Shopify: {statusFilter}
                 <button
                   type="button"
                   onClick={() => handleStatusFilterChange("all")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -732,12 +733,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {props.eligibilityFilter && props.eligibilityFilter !== "all" && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-50 border border-slate-300 px-2 py-0.5 text-slate-700">
                 SEO: {props.eligibilityFilter === "needs_seo" ? "Cần SEO" : props.eligibilityFilter === "active" ? "Đang xử lý" : "Đã SEO"}
                 <button
                   type="button"
                   onClick={() => props.onEligibilityFilterChange?.("all")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -745,12 +746,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {typeFilter !== "all" && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-teal-950/60 border border-teal-800 px-2 py-0.5 text-teal-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-blue-700">
                 Loại SP: {typeFilter}
                 <button
                   type="button"
                   onClick={() => handleTypeFilterChange("all")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -758,7 +759,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {collectionFilter !== "all" && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-cyan-950/60 border border-cyan-800 px-2 py-0.5 text-cyan-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-blue-700">
                 BST:{" "}
                 {availableCollections.find(
                   (c) => c.id === collectionFilter || c.name === collectionFilter,
@@ -766,7 +767,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                 <button
                   type="button"
                   onClick={() => handleCollectionFilterChange("all")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -774,7 +775,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {seoVersionFilter !== "all" && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-950/60 border border-emerald-800 px-2 py-0.5 text-emerald-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-700">
                 Phiên bản: {
                   seoVersionFilter === "v0"
                     ? "Chưa SEO (v0)"
@@ -789,7 +790,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                 <button
                   type="button"
                   onClick={() => handleSeoVersionFilterChange("all")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -797,12 +798,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {asinQuery && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-indigo-950/60 border border-indigo-800 px-2 py-0.5 text-indigo-300 font-mono">
+              <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-blue-700 font-mono">
                 ASIN: {asinQuery}
                 <button
                   type="button"
                   onClick={() => handleAsinQueryChange("")}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -810,7 +811,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
             )}
 
             {(startDate || endDate) && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-amber-950/60 border border-amber-800 px-2 py-0.5 text-amber-300">
+              <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-amber-700">
                 Ngày: {startDate || "..."} → {endDate || "..."}
                 <button
                   type="button"
@@ -818,7 +819,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     handleStartDateChange("");
                     handleEndDateChange("");
                   }}
-                  className="hover:text-rose-400 cursor-pointer ml-0.5"
+                  className="hover:text-rose-700 cursor-pointer ml-0.5"
                 >
                   ✕
                 </button>
@@ -830,8 +831,8 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
 
       {/* Table Data */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs text-slate-300">
-          <thead className="border-b border-slate-800 bg-slate-950/70 text-[11px] uppercase tracking-wider text-slate-400">
+        <table className="w-full text-left text-xs text-slate-700">
+          <thead className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-600">
             <tr>
               <th scope="col" className="p-3.5 text-center w-10">
                 <label className="inline-flex cursor-pointer items-center justify-center">
@@ -849,7 +850,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                           : `Chọn tất cả ${displayProducts.length} sản phẩm đang hiển thị`
                     }
                     aria-label="Chọn hoặc bỏ chọn tất cả sản phẩm đang hiển thị"
-                    className="h-4 w-4 rounded-sm border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-950 cursor-pointer disabled:opacity-40"
+                    className="h-4 w-4 rounded-sm border-slate-300 bg-white text-blue-700 focus:ring-blue-300 focus:ring-offset-slate-950 cursor-pointer disabled:opacity-40"
                   />
                 </label>
               </th>
@@ -861,7 +862,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
               <th scope="col" className="py-3.5 px-3 font-medium text-center">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/60">
+          <tbody className="divide-y divide-slate-200">
             {displayProducts.length === 0 ? (
               <tr>
                 <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
@@ -884,8 +885,8 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   onClick={() => onOpenDetail(product)}
                   className={`group cursor-pointer transition ${
                     isSelected
-                      ? "bg-cyan-950/20 hover:bg-cyan-950/30"
-                      : "hover:bg-slate-800/40"
+                      ? "bg-blue-50 hover:bg-blue-50"
+                      : "hover:bg-slate-50"
                   }`}
                 >
                   {/* Checkbox */}
@@ -898,7 +899,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => onToggleSelect(product.id)}
-                        className="h-4 w-4 rounded-sm border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-950 cursor-pointer"
+                        className="h-4 w-4 rounded-sm border-slate-300 bg-white text-blue-700 focus:ring-blue-300 focus:ring-offset-slate-950 cursor-pointer"
                       />
                     </label>
                   </td>
@@ -911,7 +912,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   {/* Thumbnail */}
                   <td className="py-3.5 px-3">
                     {thumbnailUrl ? (
-                      <div className="h-12 w-12 overflow-hidden rounded-md border border-slate-700 bg-slate-800 shadow-xs">
+                      <div className="h-12 w-12 overflow-hidden rounded-md border border-slate-300 bg-slate-50 shadow-xs">
                         <img
                           src={thumbnailUrl}
                           alt={thumbnailAlt}
@@ -920,7 +921,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                         />
                       </div>
                     ) : (
-                      <div className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-slate-700 bg-slate-800/50 text-[10px] text-slate-500 text-center">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-slate-300 bg-slate-50 text-[10px] text-slate-500 text-center">
                         No image
                       </div>
                     )}
@@ -929,15 +930,15 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   {/* Title & tags */}
                   <td className="py-3.5 px-3 max-w-xs sm:max-w-sm">
                     <div className="flex items-start gap-2">
-                      <div className="font-semibold text-slate-200 group-hover:text-cyan-300 transition-colors line-clamp-2 flex-1">
+                      <div className="font-semibold text-slate-900 group-hover:text-blue-700 transition-colors line-clamp-2 flex-1">
                         {product.title}
                       </div>
                       {productVersion > 0 ? (
-                        <span className="shrink-0 rounded bg-emerald-950 border border-emerald-700/60 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                        <span className="shrink-0 rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
                           v{productVersion}
                         </span>
                       ) : (
-                        <span className="shrink-0 rounded bg-slate-800 border border-slate-700/60 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                        <span className="shrink-0 rounded bg-slate-50 border border-slate-300 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
                           v0
                         </span>
                       )}
@@ -948,7 +949,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                         {product.tags.slice(0, 3).map((tag) => (
                           <span
                             key={tag}
-                            className="rounded-xs bg-slate-800 px-1.5 py-0.2 text-[10px] text-slate-400"
+                            className="rounded-xs bg-slate-50 px-1.5 py-0.2 text-[10px] text-slate-600"
                           >
                             #{tag}
                           </span>
@@ -963,14 +964,14 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                   </td>
 
                   {/* Product ID */}
-                  <td className="py-3.5 px-3 hidden md:table-cell font-mono text-[11px] text-slate-400">
+                  <td className="py-3.5 px-3 hidden md:table-cell font-mono text-[11px] text-slate-600">
                     <span title={product.id}>
                       {product.id.replace("gid://shopify/Product/", "prod:")}
                     </span>
                   </td>
 
                   {/* Handle */}
-                  <td className="py-3.5 px-3 hidden lg:table-cell font-mono text-[11px] text-slate-400 max-w-xs truncate">
+                  <td className="py-3.5 px-3 hidden lg:table-cell font-mono text-[11px] text-slate-600 max-w-xs truncate">
                     {product.handle}
                   </td>
 
@@ -979,12 +980,12 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
                     <span
                       className={`inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
                         upperStatus === "ACTIVE"
-                          ? "bg-emerald-950/70 border border-emerald-800 text-emerald-300"
+                          ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
                           : upperStatus === "DRAFT"
-                            ? "bg-amber-950/70 border border-amber-800 text-amber-300"
+                            ? "bg-amber-50 border border-amber-200 text-amber-700"
                             : upperStatus === "ARCHIVED"
-                              ? "bg-purple-950/70 border border-purple-800 text-purple-300"
-                              : "bg-slate-800 border border-slate-700 text-slate-400"
+                              ? "bg-blue-50 border border-blue-200 text-blue-700"
+                              : "bg-slate-50 border border-slate-300 text-slate-600"
                       }`}
                     >
                       {upperStatus || "UNKNOWN"}
@@ -998,7 +999,7 @@ export function ProductSelectionTable(props: ProductSelectionTableProps): React.
       </div>
 
       {/* Footer Info */}
-      <div className="flex items-center justify-between border-t border-slate-800 px-4 py-2.5 bg-slate-950/80 text-[11px] text-slate-500">
+      <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2.5 bg-slate-50 text-[11px] text-slate-500">
         <span>Hiển thị {displayProducts.length} / {products.length} sản phẩm</span>
         <span>Click hàng để xem chi tiết sản phẩm (PDP Drawer)</span>
       </div>
@@ -1015,11 +1016,11 @@ function EligibilityBadge({ state }: { readonly state: AutoSeoEligibilityItem["s
     active: "Đang xử lý",
   };
   const colors: Readonly<Record<AutoSeoEligibilityItem["state"], string>> = {
-    never_processed: "border-cyan-800 bg-cyan-950/60 text-cyan-300",
-    changed: "border-amber-800 bg-amber-950/60 text-amber-300",
-    retry: "border-rose-800 bg-rose-950/60 text-rose-300",
-    current: "border-emerald-800 bg-emerald-950/60 text-emerald-300",
-    active: "border-violet-800 bg-violet-950/60 text-violet-300",
+    never_processed: "border-blue-200 bg-blue-50 text-blue-700",
+    changed: "border-amber-200 bg-amber-50 text-amber-700",
+    retry: "border-rose-200 bg-rose-50 text-rose-700",
+    current: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    active: "border-blue-200 bg-blue-50 text-blue-700",
   };
   return (
     <span className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${colors[state]}`}>

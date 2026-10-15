@@ -13,12 +13,12 @@ export function WorkerReviewHistoryPanel({ client, storeId, jobId }: { readonly 
     void client.workerReviewHistory(storeId, jobId, offset).then(next => { if (isActive) setHistory(next); }).catch(() => { if (isActive) setHasError(true); });
     return () => { isActive = false; };
   }, [client, storeId, jobId, offset, refresh]);
-  return <section aria-label="Lịch sử Worker và revision" className="space-y-3 rounded-xl border border-slate-700 p-4">
-    <h3 className="font-semibold text-cyan-300">Lịch sử revision · Worker / Run / Validation</h3>
-    <button type="button" onClick={() => setRefresh(value => value + 1)} className="text-cyan-300">Làm mới lịch sử</button>
+  return <section aria-label="Lịch sử Worker và revision" className="space-y-3 rounded-lg border border-slate-300 p-4">
+    <h3 className="font-semibold text-blue-700">Lịch sử revision · Worker / Run / Validation</h3>
+    <button type="button" onClick={() => setRefresh(value => value + 1)} className="text-blue-700">Làm mới lịch sử</button>
     {hasError ? <p role="alert">Không tải được lịch sử. Kiểm tra quyền quản trị; dữ liệu cũ đã được ẩn.</p> : !history ? <p role="status">Đang tải…</p> : <>
       {history.entries.length === 0 && <p>Chưa có lịch sử.</p>}
-      {history.entries.map(entry => <details key={entry.jobId} open={entry.jobId === jobId} className="rounded-lg border border-slate-700 p-3">
+      {history.entries.map(entry => <details key={entry.jobId} open={entry.jobId === jobId} className="rounded-lg border border-slate-300 p-3">
         <summary className="cursor-pointer break-all">{entry.jobId === jobId ? "Bản đang xem · " : "Revision · "}{entry.jobId} · {entry.status}</summary>
         <dl className="mt-2 grid gap-2 break-all">
           <div><dt>Bản trước</dt><dd>{entry.previousJobId ?? "Bản gốc"}</dd></div>

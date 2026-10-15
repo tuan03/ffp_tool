@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { ShopifyProduct } from "../../../module-api";
 import {
   groupBulkCustomizations,
@@ -206,12 +207,12 @@ export function BulkCustomizerEditor({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-700 bg-slate-950 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <div>
-            <h2 className="text-lg font-bold text-slate-100">Sửa Customizer hàng loạt</h2>
-            <p className="mt-1 text-xs text-slate-400">
+            <h2 className="text-lg font-bold text-slate-900">Sửa Customizer hàng loạt</h2>
+            <p className="mt-1 text-xs text-slate-600">
               Chọn một nhóm sản phẩm giống nhau, sau đó chọn mặt in hoặc trường cần xóa.
             </p>
           </div>
@@ -219,7 +220,7 @@ export function BulkCustomizerEditor({
             type="button"
             onClick={onClose}
             disabled={isSaving}
-            className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40"
             aria-label="Đóng chỉnh sửa hàng loạt"
           >
             ✕
@@ -228,14 +229,14 @@ export function BulkCustomizerEditor({
 
         {isLoading ? (
           <div className="p-16 text-center">
-            <div className="text-2xl">⏳</div>
-            <p className="mt-3 text-sm text-slate-300">
+            <div className="text-2xl"><AppIcon name="clock" /></div>
+            <p className="mt-3 text-sm text-slate-700">
               Đang đọc cấu hình của {products.length} sản phẩm…
             </p>
           </div>
         ) : (
           <div className="grid min-h-0 flex-1 md:grid-cols-[320px_1fr]">
-            <aside className="overflow-y-auto border-b border-slate-800 p-4 md:border-b-0 md:border-r">
+            <aside className="overflow-y-auto border-b border-slate-200 p-4 md:border-b-0 md:border-r">
               <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 {groups.length} nhóm cấu hình
               </div>
@@ -249,17 +250,17 @@ export function BulkCustomizerEditor({
                       setSelectedItemKeys(new Set());
                       setMessage(null);
                     }}
-                    className={`w-full rounded-2xl border p-3 text-left transition ${
+                    className={`w-full rounded-lg border p-3 text-left transition ${
                       selectedGroup?.schemaKey === group.schemaKey
-                        ? "border-cyan-500 bg-cyan-950/40"
-                        : "border-slate-800 bg-slate-900/60 hover:border-slate-600"
+                        ? "border-blue-300 bg-blue-50"
+                        : "border-slate-200 bg-slate-50 hover:border-slate-300"
                     }`}
                   >
-                    <div className="font-bold text-slate-100">Nhóm {index + 1}</div>
-                    <div className="mt-1 text-xs text-cyan-300">
+                    <div className="font-bold text-slate-900">Nhóm {index + 1}</div>
+                    <div className="mt-1 text-xs text-blue-700">
                       {group.entries.length} sản phẩm · {group.fields.filter((field) => field.kind === "surface").length} mặt in · {group.fields.filter((field) => field.kind !== "surface").length} trường
                     </div>
-                    <div className="mt-2 line-clamp-2 text-[11px] text-slate-400">
+                    <div className="mt-2 line-clamp-2 text-[11px] text-slate-600">
                       {group.fields.map((field) => field.label).join(" · ") || "Không còn cấu hình"}
                     </div>
                   </button>
@@ -269,28 +270,28 @@ export function BulkCustomizerEditor({
 
             <main className="min-h-0 overflow-y-auto p-5">
               {failedReads > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-800 bg-amber-950/30 p-3 text-xs text-amber-300">
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
                   Không đọc được {failedReads} sản phẩm; các sản phẩm này sẽ không được cập nhật.
                 </div>
               )}
               {message && (
-                <div className="mb-4 rounded-xl border border-emerald-800 bg-emerald-950/30 p-3 text-xs text-emerald-300">
+                <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
                   {message}
                 </div>
               )}
 
               {!selectedGroup ? (
-                <div className="py-16 text-center text-sm text-slate-400">
+                <div className="py-16 text-center text-sm text-slate-600">
                   Không tìm thấy sản phẩm có Customizer.
                 </div>
               ) : (
                 <>
                   <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-bold text-slate-100">
+                      <h3 className="font-bold text-slate-900">
                         {selectedGroup.entries.length} sản phẩm cùng cấu hình
                       </h3>
-                      <p className="mt-1 text-xs text-slate-400">
+                      <p className="mt-1 text-xs text-slate-600">
                         Đánh dấu mặt in hoặc trường cần xóa khỏi toàn bộ nhóm.
                       </p>
                     </div>
@@ -299,7 +300,7 @@ export function BulkCustomizerEditor({
                         type="button"
                         onClick={() => void handleDeleteGroup()}
                         disabled={isSaving}
-                        className="rounded-xl border border-rose-700 px-4 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-lg border border-rose-200 px-4 py-2.5 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {savingAction === "group"
                           ? `Đang xóa ${progress.completed}/${progress.total}`
@@ -309,7 +310,7 @@ export function BulkCustomizerEditor({
                         type="button"
                         onClick={() => void handleApply()}
                         disabled={selectedItemKeys.size === 0 || isSaving}
-                        className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-lg bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {savingAction === "items"
                           ? `Đang xử lý ${progress.completed}/${progress.total}`
@@ -320,7 +321,7 @@ export function BulkCustomizerEditor({
 
                   <section>
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <h4 className="text-xs font-bold uppercase tracking-wide text-cyan-300">
+                      <h4 className="text-xs font-bold uppercase tracking-wide text-blue-700">
                         Mặt in ({selectedGroup.fields.filter((field) => field.kind === "surface").length})
                       </h4>
                       <span className="text-[11px] text-slate-500">
@@ -331,13 +332,13 @@ export function BulkCustomizerEditor({
                       {selectedGroup.fields.filter((field) => field.kind === "surface").map((field) => (
                         <label
                           key={field.key}
-                          className={`cursor-pointer overflow-hidden rounded-2xl border ${
+                          className={`cursor-pointer overflow-hidden rounded-lg border ${
                             selectedItemKeys.has(field.key)
-                              ? "border-rose-600 bg-rose-950/30"
-                              : "border-slate-800 bg-slate-900/60"
+                              ? "border-rose-300 bg-rose-50"
+                              : "border-slate-200 bg-slate-50"
                           }`}
                         >
-                          <div className="flex h-36 items-center justify-center bg-slate-900">
+                          <div className="flex h-36 items-center justify-center bg-white">
                             {field.imageUrl ? (
                               <img
                                 src={field.imageUrl}
@@ -345,7 +346,7 @@ export function BulkCustomizerEditor({
                                 className="h-full w-full object-contain"
                               />
                             ) : (
-                              <span className="text-3xl text-slate-600">🖼️</span>
+                              <span className="text-3xl text-slate-500"><AppIcon name="image" /></span>
                             )}
                           </div>
                           <div className="flex items-center gap-3 p-3">
@@ -354,11 +355,11 @@ export function BulkCustomizerEditor({
                               checked={selectedItemKeys.has(field.key)}
                               onChange={() => handleToggleItem(field.key)}
                               disabled={isSaving}
-                              className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-rose-500"
+                              className="h-4 w-4 rounded border-slate-300 bg-white text-rose-700"
                             />
                             <span>
-                              <span className="block font-semibold text-slate-100">{field.label}</span>
-                              <span className="text-xs text-slate-400">{field.detail}</span>
+                              <span className="block font-semibold text-slate-900">{field.label}</span>
+                              <span className="text-xs text-slate-600">{field.detail}</span>
                             </span>
                           </div>
                         </label>
@@ -367,17 +368,17 @@ export function BulkCustomizerEditor({
                   </section>
 
                   <section className="mt-6">
-                    <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-cyan-300">
+                    <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-blue-700">
                       Trường tùy chọn ({selectedGroup.fields.filter((field) => field.kind !== "surface").length})
                     </h4>
                     <div className="grid gap-3 sm:grid-cols-2">
                       {selectedGroup.fields.filter((field) => field.kind !== "surface").map((field) => (
                         <label
                           key={field.key}
-                          className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-4 ${
+                          className={`flex cursor-pointer items-center gap-3 rounded-lg border p-4 ${
                             selectedItemKeys.has(field.key)
-                              ? "border-rose-600 bg-rose-950/30"
-                              : "border-slate-800 bg-slate-900/60"
+                              ? "border-rose-300 bg-rose-50"
+                              : "border-slate-200 bg-slate-50"
                           }`}
                         >
                           <input
@@ -385,11 +386,11 @@ export function BulkCustomizerEditor({
                             checked={selectedItemKeys.has(field.key)}
                             onChange={() => handleToggleItem(field.key)}
                             disabled={isSaving}
-                            className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-rose-500"
+                            className="h-4 w-4 rounded border-slate-300 bg-white text-rose-700"
                           />
                           <span className="min-w-0">
-                            <span className="block font-semibold text-slate-100">{field.label}</span>
-                            <span className="mt-0.5 block text-xs text-slate-400">
+                            <span className="block font-semibold text-slate-900">{field.label}</span>
+                            <span className="mt-0.5 block text-xs text-slate-600">
                               {field.kind === "text" ? "Trường nhập chữ" : "Nhóm lựa chọn"} · {field.detail}
                             </span>
                           </span>
@@ -398,11 +399,11 @@ export function BulkCustomizerEditor({
                     </div>
                   </section>
 
-                  <details className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-                    <summary className="cursor-pointer text-xs font-semibold text-cyan-300">
+                  <details className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <summary className="cursor-pointer text-xs font-semibold text-blue-700">
                       Xem sản phẩm trong nhóm
                     </summary>
-                    <div className="mt-3 max-h-48 space-y-1 overflow-y-auto text-xs text-slate-400">
+                    <div className="mt-3 max-h-48 space-y-1 overflow-y-auto text-xs text-slate-600">
                       {selectedGroup.entries.map((entry) => (
                         <div key={entry.product.id}>{entry.product.title}</div>
                       ))}

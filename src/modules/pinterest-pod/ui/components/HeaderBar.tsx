@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { PinterestAuthStatus, PodRecentRunItem } from "../../types";
 
 interface HeaderBarProps {
@@ -78,26 +79,26 @@ export function HeaderBar({
   }
 
   return (
-    <header className="relative z-40 flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
+    <header className="relative z-40 flex flex-col gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 shadow-sm backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
       {/* 3 Stage Wizard Tabs */}
       <nav aria-label="Các giai đoạn quy trình" className="flex items-center gap-1.5 overflow-x-auto sm:gap-2">
         {/* Step 1 */}
         <button
           type="button"
           onClick={() => onSelectStage?.(1)}
-          className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition sm:text-sm cursor-pointer ${
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition sm:text-sm cursor-pointer ${
             currentStage === 1
-              ? "bg-cyan-500 text-slate-950 font-bold shadow-lg shadow-cyan-500/25 ring-2 ring-cyan-400"
-              : "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white"
+              ? "bg-blue-600 text-white font-bold shadow-sm ring-2 ring-blue-300"
+              : "bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/30 text-xs font-bold">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs font-medium">
             1
           </span>
           <span>1. Quét Trend</span>
         </button>
 
-        <span className="text-slate-600 font-bold">➔</span>
+        <span className="text-slate-500 font-bold">➔</span>
 
         {/* Step 2 */}
         <button
@@ -109,22 +110,22 @@ export function HeaderBar({
           }}
           disabled={!isStage2Available}
           title={!isStage2Available ? "Cần hoàn thành quét mẫu ở Bước 1 trước" : "Chuyển sang Bước 2: Duyệt và chọn mẫu"}
-          className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition sm:text-sm ${
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition sm:text-sm ${
             currentStage === 2
-              ? "bg-amber-400 text-slate-950 font-bold shadow-lg shadow-amber-400/25 ring-2 ring-amber-300"
+              ? "bg-blue-600 text-white font-medium ring-2 ring-blue-300"
               : isStage2Available
-                ? "bg-slate-800 text-amber-300 hover:bg-slate-700 hover:text-amber-200 cursor-pointer"
-                : "bg-slate-900/60 text-slate-500 border border-slate-800/80 cursor-not-allowed opacity-50"
+                ? "bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                : "bg-slate-50 text-slate-500 border border-slate-200 cursor-not-allowed opacity-50"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/30 text-xs font-bold">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs font-medium">
             2
           </span>
           <span>2. Duyệt Ứng viên</span>
           {candidateCount > 0 && (
             <span
               className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                currentStage === 2 ? "bg-slate-950 text-amber-300" : "bg-amber-950 text-amber-300"
+                currentStage === 2 ? "bg-white text-amber-700" : "bg-amber-50 text-amber-700"
               }`}
             >
               {candidateCount}
@@ -132,7 +133,7 @@ export function HeaderBar({
           )}
         </button>
 
-        <span className="text-slate-600 font-bold">➔</span>
+        <span className="text-slate-500 font-bold">➔</span>
 
         {/* Step 3 */}
         <button
@@ -144,20 +145,20 @@ export function HeaderBar({
           }}
           disabled={!isStage3Available}
           title={!isStage3Available ? "Cần chọn mẫu và bấm sản xuất ở Bước 2 trước" : "Chuyển sang Bước 3: Thành phẩm & Bàn giao"}
-          className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition sm:text-sm ${
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition sm:text-sm ${
             currentStage === 3
-              ? "bg-emerald-400 text-slate-950 font-bold shadow-lg shadow-emerald-400/25 ring-2 ring-emerald-300"
+              ? "bg-blue-600 text-white font-medium ring-2 ring-blue-300"
               : isStage3Available
-                ? "bg-slate-800 text-emerald-300 hover:bg-slate-700 hover:text-emerald-200 cursor-pointer"
-                : "bg-slate-900/60 text-slate-500 border border-slate-800/80 cursor-not-allowed opacity-50"
+                ? "bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                : "bg-slate-50 text-slate-500 border border-slate-200 cursor-not-allowed opacity-50"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/30 text-xs font-bold">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs font-medium">
             3
           </span>
           <span>3. Thành phẩm</span>
           {isProducing && (
-            <span className="animate-pulse text-[10px] text-amber-400">
+            <span className="animate-pulse text-[10px] text-amber-700">
               ●
             </span>
           )}
@@ -169,44 +170,44 @@ export function HeaderBar({
         <button
           type="button"
           onClick={() => setIsJobDropdownOpen((prev) => !prev)}
-          className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-semibold text-slate-200 shadow-sm transition hover:border-cyan-500 hover:bg-slate-800 cursor-pointer"
+          className="flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm transition hover:border-blue-300 hover:bg-slate-50 cursor-pointer"
           title="Bấm để chuyển đổi Job hoặc tạo đợt quét mới"
         >
-          <span className="text-cyan-400 text-sm">📁</span>
+          <span className="text-blue-700 text-sm"><AppIcon name="folder" /></span>
           <div className="flex items-center gap-1.5 max-w-[180px] sm:max-w-[240px] truncate text-left">
             {activeRun ? (
               <>
-                <span className="truncate text-slate-100 font-bold">
+                <span className="truncate text-slate-900 font-bold">
                   {activeRun.niche || activeRun.title || activeJobId}
                 </span>
                 {activeRun.status === "completed" && (
-                  <span className="rounded bg-emerald-950/80 px-1.5 py-0.2 text-[10px] font-bold text-emerald-300 border border-emerald-700/60 whitespace-nowrap">
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.2 text-[10px] font-bold text-emerald-700 border border-emerald-200 whitespace-nowrap">
                     ✓ Thành phẩm
                   </span>
                 )}
                 {activeRun.status === "ready_for_review" && (
-                  <span className="rounded bg-amber-950/80 px-1.5 py-0.2 text-[10px] font-bold text-amber-300 border border-amber-700/60 whitespace-nowrap">
-                    ⏳ Chờ duyệt
+                  <span className="rounded bg-amber-50 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 border border-amber-200 whitespace-nowrap">
+                    <AppIcon name="clock" /> Chờ duyệt
                   </span>
                 )}
                 {activeRun.status === "running" && (
-                  <span className="rounded bg-cyan-950/80 px-1.5 py-0.2 text-[10px] font-bold text-cyan-300 border border-cyan-700/60 whitespace-nowrap">
-                    🔄 Đang chạy
+                  <span className="rounded bg-blue-50 px-1.5 py-0.2 text-[10px] font-bold text-blue-700 border border-blue-200 whitespace-nowrap">
+                    <AppIcon name="refresh" /> Đang chạy
                   </span>
                 )}
               </>
             ) : activeJobId ? (
-              <span className="font-mono text-slate-300 truncate">{activeJobId}</span>
+              <span className="font-mono text-slate-700 truncate">{activeJobId}</span>
             ) : (
-              <span className="text-slate-400">+ Chọn / Tạo Job mới</span>
+              <span className="text-slate-600">+ Chọn / Tạo Job mới</span>
             )}
           </div>
-          <span className="text-[10px] text-slate-400">▼</span>
+          <span className="text-[10px] text-slate-600">▼</span>
         </button>
 
         {/* Floating Dropdown Panel */}
         {isJobDropdownOpen && (
-          <div className="absolute top-full left-0 sm:left-auto sm:right-0 mt-2 z-50 w-84 sm:w-96 max-h-96 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl p-2.5 flex flex-col gap-1.5 text-xs animate-in fade-in duration-150">
+          <div className="absolute top-full left-0 sm:left-auto sm:right-0 mt-2 z-50 w-84 sm:w-96 max-h-96 overflow-y-auto rounded-lg border border-slate-300 bg-white shadow-sm p-2.5 flex flex-col gap-1.5 text-xs animate-in fade-in duration-150">
             {/* Top Action: Tạo Job mới */}
             <button
               type="button"
@@ -214,20 +215,20 @@ export function HeaderBar({
                 setIsJobDropdownOpen(false);
                 onNewJob?.();
               }}
-              className="flex items-center gap-2.5 rounded-xl border border-cyan-500/30 bg-cyan-950/30 p-2.5 font-bold text-cyan-300 hover:bg-cyan-900/40 transition text-left cursor-pointer"
+              className="flex items-center gap-2.5 rounded-lg border border-blue-300 bg-blue-50 p-2.5 font-bold text-blue-700 hover:bg-blue-50 transition text-left cursor-pointer"
             >
               <span className="text-lg">➕</span>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-cyan-300">Bắt đầu đợt quét mới</p>
-                <p className="text-[10px] text-slate-400 font-normal">Cấu hình từ khóa và quét Pinterest từ đầu</p>
+                <p className="text-xs font-bold text-blue-700">Bắt đầu đợt quét mới</p>
+                <p className="text-[10px] text-slate-600 font-normal">Cấu hình từ khóa và quét Pinterest từ đầu</p>
               </div>
             </button>
 
-            <div className="border-t border-slate-800" />
+            <div className="border-t border-slate-200" />
 
-            <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+            <div className="px-2 py-1 text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between">
               <span>Lịch sử Job &amp; Thư mục Run</span>
-              <span className="rounded-full bg-slate-800 px-2 py-0.2 text-slate-300">{recentRuns.length}</span>
+              <span className="rounded-full bg-slate-50 px-2 py-0.2 text-slate-700">{recentRuns.length}</span>
             </div>
 
             {recentRuns.length === 0 ? (
@@ -252,39 +253,39 @@ export function HeaderBar({
                         setIsJobDropdownOpen(false);
                         onLoadJob?.(targetId);
                       }}
-                      className={`flex items-center justify-between gap-2.5 rounded-xl p-2.5 text-left transition cursor-pointer ${
+                      className={`flex items-center justify-between gap-2.5 rounded-lg p-2.5 text-left transition cursor-pointer ${
                         isSelected
-                          ? "bg-cyan-950/70 border border-cyan-500/60 text-cyan-100 shadow-sm"
-                          : "hover:bg-slate-800/80 text-slate-300 border border-transparent"
+                          ? "bg-blue-50 border border-blue-300 text-blue-700 shadow-sm"
+                          : "hover:bg-slate-50 text-slate-700 border border-transparent"
                       }`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <strong className="truncate font-semibold text-slate-100 text-xs">{rNiche}</strong>
-                          <span className="rounded bg-slate-800 px-1.5 py-0.2 text-[9px] text-slate-400 uppercase font-semibold">
+                          <strong className="truncate font-semibold text-slate-900 text-xs">{rNiche}</strong>
+                          <span className="rounded bg-slate-50 px-1.5 py-0.2 text-[9px] text-slate-600 uppercase font-semibold">
                             {r.product || r.productType || "rug"}
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px]">
                           {isCompleted && (
-                            <span className="text-emerald-300 font-bold">✓ Thành phẩm</span>
+                            <span className="text-emerald-700 font-bold">✓ Thành phẩm</span>
                           )}
                           {isReview && (
-                            <span className="text-amber-300 font-bold">⏳ Chờ duyệt ({r.candidateCount ?? 0})</span>
+                            <span className="text-amber-700 font-bold"><AppIcon name="clock" /> Chờ duyệt ({r.candidateCount ?? 0})</span>
                           )}
                           {isFailed && (
-                            <span className="text-rose-400 font-bold">✕ Lỗi</span>
+                            <span className="text-rose-700 font-bold">✕ Lỗi</span>
                           )}
                           {r.cmykCount && r.cmykCount > 0 ? (
-                            <span className="text-cyan-300">• {r.cmykCount} CMYK</span>
+                            <span className="text-blue-700">• {r.cmykCount} CMYK</span>
                           ) : null}
                           {r.mockupCount && r.mockupCount > 0 ? (
-                            <span className="text-indigo-300">• {r.mockupCount} Mockup</span>
+                            <span className="text-blue-700">• {r.mockupCount} Mockup</span>
                           ) : null}
                           <code className="text-slate-500 font-mono text-[9px] truncate">{targetId}</code>
                         </div>
                       </div>
-                      {isSelected && <span className="text-cyan-400 font-bold text-sm">✓</span>}
+                      {isSelected && <span className="text-blue-700 font-bold text-sm">✓</span>}
                     </button>
                   );
                 })}
@@ -305,10 +306,10 @@ export function HeaderBar({
               ? `Pinterest API đã kết nối${authStatus.token_info?.username ? ` (@${authStatus.token_info.username})` : ""}. Bấm để quản lý OAuth hoặc token.`
               : "Pinterest API chưa kết nối. Bấm để cấu hình OAuth hoặc token."
           }
-          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70 ${
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70 ${
             authStatus?.oauth_valid
-              ? "border-emerald-700/50 bg-emerald-950/60 text-emerald-300"
-              : "border-rose-700/50 bg-rose-950/60 text-rose-300"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
           }`}
         >
           {isLoggingIn ? (
@@ -317,7 +318,7 @@ export function HeaderBar({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
           ) : (
-            <span className={`h-2 w-2 rounded-full ${authStatus?.oauth_valid ? "bg-emerald-400" : "bg-rose-400"}`} />
+            <span className={`h-2 w-2 rounded-full ${authStatus?.oauth_valid ? "bg-emerald-700" : "bg-rose-600"}`} />
           )}
           <span>
             {isLoggingIn
@@ -338,21 +339,21 @@ export function HeaderBar({
                 ? `Crawler ${agentName || "hiện tại"} đã sẵn sàng. Bấm để quản lý máy cào.`
                 : `Crawler ${agentName || "hiện tại"} chưa đăng nhập Pinterest browser. Bấm để đăng nhập.`
           }
-          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:brightness-110 ${
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:brightness-110 ${
             isAgentConnected && isAgentBrowserLoggedIn
-              ? "border-cyan-700/50 bg-cyan-950/60 text-cyan-300"
+              ? "border-blue-200 bg-blue-50 text-blue-700"
               : isAgentConnected
-                ? "border-amber-700/50 bg-amber-950/50 text-amber-300"
-                : "border-slate-700/60 bg-slate-800/60 text-slate-400"
+                ? "border-amber-200 bg-amber-50 text-amber-700"
+                : "border-slate-300 bg-slate-50 text-slate-600"
           }`}
         >
           <span
             className={`h-2 w-2 rounded-full ${
               isAgentConnected && isAgentBrowserLoggedIn
-                ? "bg-cyan-400"
+                ? "bg-blue-600"
                 : isAgentConnected
-                  ? "bg-amber-400"
-                  : "bg-slate-500"
+                  ? "bg-amber-700"
+                  : "bg-slate-200"
             }`}
           />
           <span>

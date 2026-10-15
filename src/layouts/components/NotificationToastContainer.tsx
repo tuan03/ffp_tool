@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { AppIcon } from "../../shared/components/AppIcon";
+
 import {
   subscribeToNotifications,
   type AppNotification,
@@ -55,41 +57,41 @@ export function NotificationToastContainer(): React.JSX.Element | null {
       {toasts.map((toast) => {
         const typeBorder =
           toast.type === "success"
-            ? "border-emerald-500/60 bg-slate-900/95 shadow-emerald-500/10"
+            ? "border-emerald-300 bg-slate-50 "
             : toast.type === "warning"
-              ? "border-amber-500/60 bg-slate-900/95 shadow-amber-500/10"
+              ? "border-amber-300 bg-slate-50 "
               : toast.type === "error"
-                ? "border-rose-500/60 bg-slate-900/95 shadow-rose-500/10"
-                : "border-cyan-500/60 bg-slate-900/95 shadow-cyan-500/10";
+                ? "border-rose-300 bg-slate-50 "
+                : "border-blue-300 bg-slate-50 ";
 
         const icon =
           toast.type === "success"
-            ? "✅"
+            ? "check"
             : toast.type === "warning"
-              ? "⚠️"
+              ? "warning"
               : toast.type === "error"
-                ? "❌"
-                : "🔔";
+                ? "close"
+                : "bell";
 
         return (
           <div
             key={toast.id}
             role="status"
-            className={`pointer-events-auto flex items-start gap-3 rounded-xl border p-4 shadow-xl backdrop-blur-md transition-all animate-in slide-in-from-bottom-2 ${typeBorder} ${
-              toast.url ? "cursor-pointer hover:border-cyan-400" : ""
+            className={`pointer-events-auto flex items-start gap-3 rounded-lg border p-4 shadow-sm  transition-all animate-in slide-in-from-bottom-2 ${typeBorder} ${
+              toast.url ? "cursor-pointer hover:border-blue-300" : ""
             }`}
             onClick={() => handleClickToast(toast)}
           >
-            <span className="text-xl flex-shrink-0 select-none">{icon}</span>
+            <AppIcon name={icon} className="h-5 w-5 shrink-0" />
             <div className="flex-1 min-w-0">
-              <h4 className="text-xs font-semibold text-slate-100 leading-tight">
+              <h4 className="text-xs font-semibold text-slate-900 leading-tight">
                 {toast.title}
               </h4>
-              <p className="mt-1 text-xs text-slate-300 line-clamp-3 leading-relaxed">
+              <p className="mt-1 text-xs text-slate-700 line-clamp-3 leading-relaxed">
                 {toast.message}
               </p>
               {toast.url && (
-                <p className="mt-1.5 text-[11px] font-medium text-cyan-400 hover:underline">
+                <p className="mt-1.5 text-[11px] font-medium text-blue-700 hover:underline">
                   Nhấn để xem chi tiết →
                 </p>
               )}
@@ -101,7 +103,7 @@ export function NotificationToastContainer(): React.JSX.Element | null {
                 e.stopPropagation();
                 handleDismiss(toast.id, toast.expiryTimer);
               }}
-              className="text-slate-400 hover:text-slate-100 rounded p-1 transition cursor-pointer flex-shrink-0"
+              className="text-slate-600 hover:text-slate-900 rounded p-1 transition cursor-pointer flex-shrink-0"
             >
               ✕
             </button>

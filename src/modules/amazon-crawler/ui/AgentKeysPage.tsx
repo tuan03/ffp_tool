@@ -1,5 +1,8 @@
 import { useState } from "react";
 
+import { Button } from "../../../shared/components/Button";
+import { PageHeader } from "../../../shared/components/PageHeader";
+
 import { requestAgentKeyManagement } from "../service";
 import type { AgentKeySummary } from "../service";
 
@@ -50,9 +53,9 @@ export function AgentKeysPage() {
     } finally { setIsBusy(false); }
   }
 
-  const inputClass = "rounded border border-slate-600 bg-slate-900 p-2";
-  return <main className="mx-auto flex max-w-4xl flex-col gap-4 p-6">
-    <h1 className="text-2xl font-semibold">Crawler Agent Keys</h1>
+  const inputClass = "rounded border border-slate-300 bg-white p-2";
+  return <main className="flex max-w-4xl flex-col gap-4">
+    <PageHeader title="Crawler Agent Keys" description="Quản lý quyền kết nối và danh tính của các máy chạy crawler." />
     <p>Chỉ operator quản lý key. Mật khẩu và key chỉ giữ trong bộ nhớ trang, không lưu browser storage.
       Key tạo mới có hạn 30 ngày. Rotate giữ identity; Rebind cho phép đăng ký lại identity đó.</p>
     <label className="flex flex-col gap-1">Operator<input className={inputClass} autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
@@ -61,23 +64,23 @@ export function AgentKeysPage() {
     <label className="flex flex-col gap-1">Số worker tối đa<input type="number" min={1} max={16} className={inputClass} value={maxWorkers} onChange={(event) => setMaxWorkers(Number(event.target.value))} /></label>
     <label className="flex flex-col gap-1">Môi trường<select className={inputClass} value={environment} onChange={(event) => setEnvironment(event.target.value)}><option value="test">Test</option><option value="production">Production</option></select></label>
     <label><input type="checkbox" checked={allowPinterest} onChange={(event) => setAllowPinterest(event.target.checked)} /> Cho phép Pinterest (ngoài Amazon)</label>
-    <div className="flex gap-4"><button type="button" disabled={isBusy} onClick={() => void handleAction("list", undefined, false, 0)}>Tải danh sách</button>
-      <button type="button" disabled={isBusy} onClick={() => void handleAction("create")}>Tạo key</button>
-      <button type="button" onClick={() => { setPassword(""); setRawKey(""); setKeys([]); setKeyTotal(0); setKeyOffset(0); setHasLoaded(false); setIsKeySnapshotStale(false); }}>Xóa thông tin khỏi trang</button></div>
+    <div className="flex flex-wrap gap-2"><Button disabled={isBusy} onClick={() => void handleAction("list", undefined, false, 0)}>Tải danh sách</Button>
+      <Button variant="primary" disabled={isBusy} onClick={() => void handleAction("create")}>Tạo key</Button>
+      <Button onClick={() => { setPassword(""); setRawKey(""); setKeys([]); setKeyTotal(0); setKeyOffset(0); setHasLoaded(false); setIsKeySnapshotStale(false); }}>Xóa thông tin khỏi trang</Button></div>
     {isBusy && <p role="status">Đang xử lý…</p>}
-    {error && <p role="alert" className="text-red-400">{error}</p>}
-    {isKeySnapshotStale ? <p role="status" className="text-amber-300">Danh sách key bên dưới là snapshot cũ; thao tác rotate/rebind/revoke đã khóa cho đến khi tải lại thành công.</p> : null}
-    {rawKey && <section className="flex flex-col gap-2 rounded border border-amber-500 p-4"><p>Key chỉ hiển thị một lần. Lưu riêng an toàn, không đưa vào Git/chat.</p>
+    {error && <p role="alert" className="text-red-700">{error}</p>}
+    {isKeySnapshotStale ? <p role="status" className="text-amber-700">Danh sách key bên dưới là snapshot cũ; thao tác rotate/rebind/revoke đã khóa cho đến khi tải lại thành công.</p> : null}
+    {rawKey && <section className="flex flex-col gap-2 rounded border border-amber-300 p-4"><p>Key chỉ hiển thị một lần. Lưu riêng an toàn, không đưa vào Git/chat.</p>
       <label>Agent Key<input readOnly autoComplete="off" className={`${inputClass} w-full`} value={rawKey} /></label>
       <button type="button" onClick={() => setRawKey("")}>Đã lưu, đóng key</button></section>}
     {hasLoaded && keys.length === 0 && <p>Chưa có key.</p>}
-    <ul className="flex flex-col gap-3">{keys.map((key) => <li key={key.id} className="rounded border border-slate-600 p-3">
+    <ul className="flex flex-col gap-3">{keys.map((key) => <li key={key.id} className="rounded border border-slate-300 p-3">
       <p>{key.name} — {key.status} — {key.agentId ?? "Chưa đăng ký"}</p>
       <div className="flex gap-4"><button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("rotate", key.id)}>Rotate</button>
         <button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("rotate", key.id, true)}>Rebind</button>
         <button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("revoke", key.id)}>Revoke</button></div>
     </li>)}</ul>
-    {hasLoaded && keyTotal > keyPageSize ? <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
+    {hasLoaded && keyTotal > keyPageSize ? <div className="flex items-center justify-end gap-3 text-sm text-slate-600">
       <button type="button" disabled={isBusy || keyOffset === 0} onClick={() => void handleAction("list", undefined, false, Math.max(0, keyOffset - keyPageSize))}>Trước</button>
       <span>{keyOffset + 1}–{Math.min(keyOffset + keys.length, keyTotal)} / {keyTotal}</span>
       <button type="button" disabled={isBusy || keyOffset + keys.length >= keyTotal} onClick={() => void handleAction("list", undefined, false, keyOffset + keyPageSize)}>Sau</button>

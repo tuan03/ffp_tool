@@ -71,42 +71,42 @@ export function getStatusBadge(
   if (technicalFlags.length > 0) {
     return {
       label: "Cần kiểm tra kỹ thuật",
-      className: "bg-purple-950/80 text-purple-300 border-purple-800",
+      className: "bg-blue-50 text-blue-700 border-blue-200",
       description: `Lỗi kỹ thuật hoặc trạng thái index: ${technicalFlags.join(", ")}`,
     };
   }
   if (measurementStatus === "CONTENT_CHANGED") {
     return {
       label: "External Changes",
-      className: "bg-amber-950/80 text-amber-300 border-amber-700",
+      className: "bg-amber-50 text-amber-700 border-amber-200",
       description: "Nội dung storefront thực tế đã bị chỉnh sửa ngoài snapshot của phiên bản FFP",
     };
   }
   if (measurementStatus === "BASELINE") {
     return {
       label: "Baseline · v0",
-      className: "bg-slate-800 text-slate-300 border-slate-700",
+      className: "bg-slate-50 text-slate-700 border-slate-300",
       description: "Phiên bản gốc ban đầu (v0). Chưa có phiên bản SEO trước để so sánh hiệu quả.",
     };
   }
   if (measurementStatus === "WAITING_FOR_CRAWL") {
     return {
       label: "Chờ Google crawl",
-      className: "bg-sky-950/80 text-sky-300 border-sky-800",
+      className: "bg-blue-50 text-blue-700 border-blue-200",
       description: "Phiên bản mới đã xuất bản nhưng Google URL Inspection chưa quan sát được lần crawl sau ngày public.",
     };
   }
   if (measurementStatus === "COLLECTING") {
     return {
       label: "Đang thu thập",
-      className: "bg-blue-950/80 text-blue-300 border-blue-800",
+      className: "bg-blue-50 text-blue-700 border-blue-200",
       description: "Chưa đủ số ngày hoàn tất trong cửa sổ quan sát After (settling + window days).",
     };
   }
   if (measurementStatus === "INSUFFICIENT_DATA") {
     return {
       label: "Thiếu dữ liệu",
-      className: "bg-slate-800 text-slate-400 border-slate-700",
+      className: "bg-slate-50 text-slate-600 border-slate-300",
       description: "Lượng hiển thị hoặc lượt nhấp chưa đạt ngưỡng tín hiệu tối thiểu theo cấu hình.",
     };
   }
@@ -114,31 +114,31 @@ export function getStatusBadge(
     case "IMPROVING":
       return {
         label: "Đang cải thiện",
-        className: "bg-emerald-950/80 text-emerald-300 border-emerald-700",
+        className: "bg-emerald-50 text-emerald-700 border-emerald-200",
         description: "Lượt nhấp tìm kiếm Google tăng ít nhất 20% và tối thiểu 10 lượt nhấp tuyệt đối.",
       };
     case "DECLINING":
       return {
         label: "Suy giảm",
-        className: "bg-rose-950/80 text-rose-300 border-rose-800",
+        className: "bg-rose-50 text-rose-700 border-rose-200",
         description: "Lượt nhấp tìm kiếm Google giảm ít nhất 20% và tối thiểu 10 lượt nhấp tuyệt đối.",
       };
     case "MIXED":
       return {
         label: "Tín hiệu trái chiều",
-        className: "bg-amber-950/80 text-amber-300 border-amber-800",
+        className: "bg-amber-50 text-amber-700 border-amber-200",
         description: "Có tín hiệu khác chiều (ví dụ: impressions tăng mạnh nhưng CTR hoặc position matched queries giảm).",
       };
     case "STABLE":
       return {
         label: "Ổn định",
-        className: "bg-slate-800 text-slate-300 border-slate-600",
+        className: "bg-slate-50 text-slate-700 border-slate-300",
         description: "Hiệu suất dao động trong biên độ bình thường, chưa vượt ngưỡng biến động.",
       };
     default:
       return {
         label: "Chưa đánh giá",
-        className: "bg-slate-900 text-slate-400 border-slate-800",
+        className: "bg-white text-slate-600 border-slate-200",
         description: "Chưa có đủ điều kiện để đánh giá hiệu quả.",
       };
   }

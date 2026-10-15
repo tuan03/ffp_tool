@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type {
   ProductCrawlerJobStatus,
   ProductCrawlerStepper,
@@ -83,72 +84,72 @@ export function CrawlerRunPanel({
   return (
     <div className="space-y-6">
       {/* Top Header Card */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow-lg">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
           <div className="flex items-center gap-3">
             <div
               className={`flex h-10 w-10 items-center justify-center rounded-lg border ${
                 isRunning
-                  ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400"
+                  ? "bg-blue-50 border-blue-300 text-blue-700"
                   : isFinished
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-700"
                     : status === "failed"
-                      ? "bg-rose-500/10 border-rose-500/30 text-rose-400"
-                      : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                      ? "bg-rose-50 border-rose-300 text-rose-700"
+                      : "bg-amber-50 border-amber-300 text-amber-700"
               }`}
             >
               {isRunning ? (
-                <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" />
               ) : isFinished ? (
-                <span className="text-emerald-400 text-lg font-bold">✓</span>
+                <span className="text-emerald-700 text-lg font-bold">✓</span>
               ) : status === "failed" ? (
-                <span className="text-rose-400 text-lg font-bold">✕</span>
+                <span className="text-rose-700 text-lg font-bold">✕</span>
               ) : (
-                <span className="text-amber-400 text-lg font-bold">!</span>
+                <span className="text-amber-700 text-lg font-bold">!</span>
               )}
             </div>
 
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-slate-100">Tiến trình cào sản phẩm</h2>
+                <h2 className="text-base font-bold text-slate-900">Tiến trình cào sản phẩm</h2>
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
                     status === "completed"
-                      ? "bg-emerald-950/70 border border-emerald-800 text-emerald-300"
+                      ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
                       : status === "partial"
-                        ? "bg-amber-950/70 border border-amber-800 text-amber-300"
+                        ? "bg-amber-50 border border-amber-200 text-amber-700"
                         : status === "running"
-                          ? "bg-cyan-950/70 border border-cyan-800 text-cyan-300 animate-pulse"
+                          ? "bg-blue-50 border border-blue-200 text-blue-700 animate-pulse"
                           : status === "cancelled"
-                            ? "bg-rose-950/70 border border-rose-800 text-rose-300"
+                            ? "bg-rose-50 border border-rose-200 text-rose-700"
                             : status === "failed"
-                              ? "bg-rose-950/70 border border-rose-700 text-rose-300 font-bold"
-                              : "bg-slate-800 text-slate-300"
+                              ? "bg-rose-50 border border-rose-200 text-rose-700 font-bold"
+                              : "bg-slate-50 text-slate-700"
                   }`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
                       status === "completed"
-                        ? "bg-emerald-400"
+                        ? "bg-emerald-700"
                         : status === "partial"
-                          ? "bg-amber-400"
+                          ? "bg-amber-700"
                           : status === "running"
-                            ? "bg-cyan-400"
+                            ? "bg-blue-600"
                             : status === "failed" || status === "cancelled"
-                              ? "bg-rose-400"
-                              : "bg-slate-400"
+                              ? "bg-rose-600"
+                              : "bg-slate-200"
                     }`}
                   />
                   {status}
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400 font-mono">
+              <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-600 font-mono">
                 <span>Mã Job: {jobId}</span>
                 <button
                   type="button"
                   onClick={handleCopyJobId}
-                  className="text-slate-400 hover:text-cyan-400 transition"
+                  className="text-slate-600 hover:text-blue-700 transition"
                   title="Sao chép Job ID"
                 >
                   {copied ? "✓ Đã sao chép" : "📋"}
@@ -163,7 +164,7 @@ export function CrawlerRunPanel({
                 type="button"
                 onClick={onCancel}
                 disabled={isCancelling}
-                className="rounded-lg border border-rose-800/60 bg-rose-950/40 px-3.5 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-900/60 hover:text-rose-100 disabled:opacity-50"
+                className="rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
               >
                 {isCancelling ? "Đang hủy..." : "✕ Hủy tiến trình (Cancel)"}
               </button>
@@ -175,7 +176,7 @@ export function CrawlerRunPanel({
                   <button
                     type="button"
                     onClick={onRetry}
-                    className="rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 hover:from-amber-400 hover:to-orange-500 transition"
+                    className="rounded-lg bg-blue-50 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition"
                   >
                     ↻ Thử lại (Retry)
                   </button>
@@ -184,7 +185,7 @@ export function CrawlerRunPanel({
                   <button
                     type="button"
                     onClick={onBackToInput}
-                    className="rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+                    className="rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
                   >
                     ← Quay lại nhập nguồn
                   </button>
@@ -196,7 +197,7 @@ export function CrawlerRunPanel({
               <button
                 type="button"
                 onClick={onBackToInput}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+                className="rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
               >
                 ← Quay lại nhập nguồn
               </button>
@@ -206,7 +207,7 @@ export function CrawlerRunPanel({
               <button
                 type="button"
                 onClick={onViewResults}
-                className="rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-emerald-500/20 hover:from-emerald-400 hover:to-teal-500 transition"
+                className="rounded-lg bg-blue-50 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition"
               >
                 Xem kết quả sản phẩm →
               </button>
@@ -216,10 +217,10 @@ export function CrawlerRunPanel({
 
         {/* Failure message banner if failed */}
         {status === "failed" && (
-          <div className="mt-4 rounded-lg border border-rose-800/80 bg-rose-950/40 p-3.5 text-xs text-rose-200 flex items-start gap-2.5">
-            <span className="text-base text-rose-400">⚠️</span>
+          <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-700 flex items-start gap-2.5">
+            <span className="text-base text-rose-700"><AppIcon name="warning" /></span>
             <div>
-              <span className="font-bold text-rose-300 block">Tiến trình cào thất bại</span>
+              <span className="font-bold text-rose-700 block">Tiến trình cào thất bại</span>
               <span>{errorMessage || "Không thể kết nối đến máy chủ cào hoặc sản phẩm không tồn tại trên Amazon."}</span>
             </div>
           </div>
@@ -228,22 +229,22 @@ export function CrawlerRunPanel({
         {/* Progress Bar */}
         <div className="mt-5 space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-slate-300">{currentMessage}</span>
-            <span className="font-mono font-bold text-cyan-400">{percent}%</span>
+            <span className="font-medium text-slate-700">{currentMessage}</span>
+            <span className="font-mono font-bold text-blue-700">{percent}%</span>
           </div>
 
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-950 border border-slate-800">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-white border border-slate-200">
             <div
               className={`h-full transition-all duration-500 ease-out ${
                 status === "completed"
-                  ? "bg-gradient-to-r from-emerald-500 to-teal-400"
+                  ? "bg-blue-50 "
                   : status === "partial"
-                    ? "bg-gradient-to-r from-amber-500 to-emerald-400"
+                    ? "bg-blue-50 "
                     : status === "cancelled"
-                      ? "bg-slate-600"
+                      ? "bg-slate-100"
                       : status === "failed"
-                        ? "bg-rose-500"
-                        : "bg-gradient-to-r from-cyan-500 to-blue-500"
+                        ? "bg-rose-600"
+                        : "bg-blue-50 "
               }`}
               style={{ width: `${percent}%` }}
             />
@@ -262,24 +263,24 @@ export function CrawlerRunPanel({
                 key={item.step}
                 className={`rounded-lg border p-2.5 transition ${
                   isPassed
-                    ? "border-emerald-800/60 bg-emerald-950/20 text-emerald-300"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                     : isCurrent
-                      ? "border-cyan-500 bg-cyan-950/40 text-cyan-200 shadow-sm shadow-cyan-500/20"
+                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow-sm "
                       : isFailedStep
-                        ? "border-rose-700 bg-rose-950/30 text-rose-300"
-                        : "border-slate-800 bg-slate-950/40 text-slate-500"
+                        ? "border-rose-200 bg-rose-50 text-rose-700"
+                        : "border-slate-200 bg-slate-50 text-slate-500"
                 }`}
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <span
                     className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
                       isPassed
-                        ? "bg-emerald-500 text-slate-950"
+                        ? "bg-emerald-700 text-white"
                         : isCurrent
-                          ? "bg-cyan-500 text-slate-950 animate-pulse"
+                          ? "bg-blue-600 text-white animate-pulse"
                           : isFailedStep
-                            ? "bg-rose-500 text-white"
-                            : "bg-slate-800 text-slate-400"
+                            ? "bg-rose-600 text-white"
+                            : "bg-slate-50 text-slate-600"
                     }`}
                   >
                     {isPassed ? "✓" : isFailedStep ? "✕" : item.step}
@@ -296,26 +297,26 @@ export function CrawlerRunPanel({
       {/* Summary Metrics Grid */}
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <span className="text-xs text-slate-400 block mb-1">Số mục yêu cầu</span>
-            <span className="text-2xl font-bold font-mono text-slate-100">{summary.requestedInputs}</span>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <span className="text-xs text-slate-600 block mb-1">Số mục yêu cầu</span>
+            <span className="text-2xl font-bold font-mono text-slate-900">{summary.requestedInputs}</span>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <span className="text-xs text-slate-400 block mb-1">Sản phẩm tìm thấy</span>
-            <span className="text-2xl font-bold font-mono text-cyan-400">{summary.productsFound}</span>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <span className="text-xs text-slate-600 block mb-1">Sản phẩm tìm thấy</span>
+            <span className="text-2xl font-bold font-mono text-blue-700">{summary.productsFound}</span>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <span className="text-xs text-slate-400 block mb-1">Đã hoàn thành</span>
-            <span className="text-2xl font-bold font-mono text-emerald-400">{summary.productsCompleted}</span>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <span className="text-xs text-slate-600 block mb-1">Đã hoàn thành</span>
+            <span className="text-2xl font-bold font-mono text-emerald-700">{summary.productsCompleted}</span>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <span className="text-xs text-slate-400 block mb-1">Lỗi / Thất bại</span>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <span className="text-xs text-slate-600 block mb-1">Lỗi / Thất bại</span>
             <span
               className={`text-2xl font-bold font-mono ${
-                summary.productsFailed > 0 ? "text-rose-400" : "text-slate-400"
+                summary.productsFailed > 0 ? "text-rose-700" : "text-slate-600"
               }`}
             >
               {summary.productsFailed}
@@ -325,12 +326,12 @@ export function CrawlerRunPanel({
       )}
 
       {/* Real-time Logs Console */}
-      <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-lg">
-        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5 bg-slate-900/80">
+      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 bg-slate-50">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-semibold text-slate-200">Nhật ký xử lý (Live Crawler Logs)</span>
-            <span className="rounded bg-slate-800 px-1.5 py-0.2 text-[10px] font-mono text-slate-400">
+            <span className="h-2 w-2 rounded-full bg-emerald-700 animate-pulse" />
+            <span className="text-xs font-semibold text-slate-900">Nhật ký xử lý (Live Crawler Logs)</span>
+            <span className="rounded bg-slate-50 px-1.5 py-0.2 text-[10px] font-mono text-slate-600">
               {logs.length} dòng
             </span>
           </div>
@@ -338,29 +339,29 @@ export function CrawlerRunPanel({
           <button
             type="button"
             onClick={() => setIsLogsExpanded(!isLogsExpanded)}
-            className="text-xs text-slate-400 hover:text-slate-200"
+            className="text-xs text-slate-600 hover:text-slate-900"
           >
             {isLogsExpanded ? "Thu gọn ▲" : "Mở rộng ▼"}
           </button>
         </div>
 
         {isLogsExpanded && (
-          <div className="max-h-64 overflow-y-auto p-4 font-mono text-xs text-slate-300 space-y-1 bg-slate-950/90 selection:bg-cyan-900">
+          <div className="max-h-64 overflow-y-auto p-4 font-mono text-xs text-slate-700 space-y-1 bg-slate-50 selection:bg-blue-50">
             {logs.length === 0 ? (
-              <div className="text-slate-600 italic">Đang chờ nhận bản ghi đầu tiên từ crawler daemon...</div>
+              <div className="text-slate-500 italic">Đang chờ nhận bản ghi đầu tiên từ crawler daemon...</div>
             ) : (
               logs.map((log, index) => (
-                <div key={index} className="leading-relaxed hover:bg-slate-900/50 px-1 rounded">
+                <div key={index} className="leading-relaxed hover:bg-slate-50 px-1 rounded">
                   <span className="text-slate-500 mr-2">{String(index + 1).padStart(2, "0")}.</span>
                   <span
                     className={
                       log.includes("Failed") || log.includes("Error")
-                        ? "text-rose-400"
+                        ? "text-rose-700"
                         : log.includes("warning") || log.includes("Warning")
-                          ? "text-amber-300"
+                          ? "text-amber-700"
                           : log.includes("Successfully") || log.includes("finished")
-                            ? "text-emerald-300"
-                            : "text-slate-300"
+                            ? "text-emerald-700"
+                            : "text-slate-700"
                     }
                   >
                     {log}

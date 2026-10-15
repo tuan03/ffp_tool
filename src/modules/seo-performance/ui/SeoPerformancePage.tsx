@@ -28,8 +28,8 @@ import { ConnectionsSyncView } from "./components/ConnectionsSyncView";
 import { BenchmarkPagination } from "./components/BenchmarkPagination";
 import { displayDate, JOB_LABELS } from "./presentation";
 
-const control = "rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-40";
-const button = `${control} text-cyan-300 hover:border-cyan-600`;
+const control = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-40";
+const button = `${control} text-blue-700 hover:border-blue-300`;
 
 const opportunityLabels: Readonly<Record<string, string>> = {
   INSUFFICIENT_DATA: "Chưa đủ dữ liệu để đánh giá hiệu suất",
@@ -355,20 +355,20 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
   const selected = tab === "pages" ? pages : tab === "recommendations" ? recommendations : history;
 
   return (
-    <main className="w-full min-w-0 space-y-6 py-4">
+    <main className="w-full min-w-0 space-y-6">
       {/* Top Header */}
-      <header className="flex flex-wrap items-center justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
-          <h1 className="text-2xl font-bold text-cyan-300">SEO Performance Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">SEO Performance</h1>
+          <p className="mt-1 text-sm text-slate-600">
             SEO Benchmark · Báo cáo Google Search Console & GA4 · Kiểm tra toàn diện website · Đề xuất có dẫn chứng
           </p>
         </div>
-        <label className="grid min-w-0 gap-1 text-sm text-slate-400">
+        <label className="grid min-w-0 gap-1 text-sm text-slate-600">
           Cửa hàng
           <select
             aria-label="Cửa hàng"
-            className={`${control} w-full max-w-sm text-slate-100`}
+            className={`${control} w-full max-w-sm text-slate-900`}
             value={storeId}
             onChange={event => {
               setOffset(0);
@@ -385,14 +385,14 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
       </header>
 
       {error && (
-        <p role="alert" className="rounded-lg border border-rose-800 bg-rose-950/30 p-4 text-rose-300">
+        <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-rose-700">
           {error}
         </p>
       )}
-      {message && <p role="status" className="text-emerald-300">{message}</p>}
+      {message && <p role="status" className="text-emerald-700">{message}</p>}
 
       {/* Main 5 Navigation Tabs */}
-      <nav aria-label="Khu vực SEO Performance" className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
+      <nav aria-label="Khu vực SEO Performance" className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
         {[
           ["benchmark", "SEO Benchmark"],
           ["search-overview", "Search Overview"],
@@ -405,7 +405,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             key={value}
             aria-pressed={area === value}
             className={`rounded-lg px-4 py-3 text-sm font-semibold transition-colors ${
-              area === value ? "bg-cyan-400 text-slate-950 shadow" : "bg-slate-900 text-slate-400 hover:text-white"
+              area === value ? "bg-blue-600 text-white shadow" : "bg-white text-slate-600 hover:text-slate-900"
             }`}
             onClick={() => {
               setArea(value as typeof area);
@@ -491,12 +491,12 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
               endDate={overview.endDate}
             />
           ) : (
-            <div className="rounded-xl border border-slate-800 p-8 text-center text-slate-400 space-y-3">
+            <div className="rounded-lg border border-slate-200 p-8 text-center text-slate-600 space-y-3">
               <p>Chưa hoàn tất kết nối Search Console hoặc cần chọn property cho store này.</p>
               <button
                 type="button"
                 onClick={() => setArea("connections-sync")}
-                className="rounded-lg bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950"
+                className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white"
               >
                 Mở Cấu hình Kết nối & Đồng bộ
               </button>
@@ -509,8 +509,8 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
       {area === "website" && (
         <section className="space-y-5" aria-label="Kiểm tra website">
           <div>
-            <h2 className="text-lg font-semibold text-slate-100">Tình trạng SEO của website</h2>
-            <p className="mt-1 text-sm text-slate-400">
+            <h2 className="text-lg font-semibold text-slate-900">Tình trạng SEO của website</h2>
+            <p className="mt-1 text-sm text-slate-600">
               Xem bằng chứng nội dung, SEO/AEO và các vấn đề kỹ thuật. Quét website không thay đổi sản phẩm.
             </p>
           </div>
@@ -569,7 +569,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             </button>
           </section>
 
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-slate-600">
             Số liệu tham khảo cho đánh giá: {displayDate(overview?.startDate)} → {displayDate(overview?.endDate)} · Đồng bộ: {displayDate(overview?.mapping?.lastSync)}
           </p>
 
@@ -577,7 +577,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             .filter(job => job.kind !== "report")
             .slice(0, 3)
             .map(job => (
-              <p key={job.id} className="text-sm text-slate-400">
+              <p key={job.id} className="text-sm text-slate-600">
                 {JOB_LABELS[job.kind]}: {JOB_LABELS[job.status]} · {job.progress}% {job.error ? `· ${job.error}` : ""}
               </p>
             ))}
@@ -626,13 +626,13 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             {loading ? (
               <p role="status">Đang tải…</p>
             ) : error ? null : pages.total === 0 ? (
-              <p className="rounded-xl border border-slate-800 p-8 text-slate-400">
+              <p className="rounded-lg border border-slate-200 p-8 text-slate-600">
                 Chưa có trang phù hợp. Thử xóa bộ lọc hoặc bấm Kiểm tra website để thu thập bằng chứng.
               </p>
             ) : (
               pages.items.map(page => (
-                <article key={page.url} className="space-y-2 rounded-xl border border-slate-800 p-4">
-                  <a href={page.url} target="_blank" rel="noreferrer" className="break-all text-cyan-300">
+                <article key={page.url} className="space-y-2 rounded-lg border border-slate-200 p-4">
+                  <a href={page.url} target="_blank" rel="noreferrer" className="break-all text-blue-700">
                     {page.audit?.title || page.url}
                   </a>
                   <p className="break-all text-xs text-slate-500">
@@ -643,7 +643,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
                     {formatMetric(page.current, "impressions")} · CTR: {formatMetric(page.current, "ctr")} · Vị trí:{" "}
                     {formatMetric(page.current, "position")}
                   </p>
-                  <p className="text-sm text-amber-200">
+                  <p className="text-sm text-amber-700">
                     {page.opportunities.map(code => opportunityLabels[code] ?? code).join(" · ") ||
                       "Chưa phát hiện cơ hội nổi bật; không phải chứng nhận SEO hoàn chỉnh."}
                   </p>
@@ -706,8 +706,8 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
       {area === "recommendations" && (
         <section className="space-y-5" aria-label="Đề xuất cải thiện">
           <div>
-            <h2 className="text-lg font-semibold text-slate-100">Đề xuất và lịch sử cải thiện</h2>
-            <p className="mt-1 text-sm text-slate-400">
+            <h2 className="text-lg font-semibold text-slate-900">Đề xuất và lịch sử cải thiện</h2>
+            <p className="mt-1 text-sm text-slate-600">
               Xem xét đề xuất trước khi tạo bản sửa. Không tự phê duyệt hoặc xuất bản lên Shopify.
             </p>
           </div>
@@ -721,7 +721,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
                 type="button"
                 key={val}
                 aria-pressed={tab === val}
-                className={`${button} ${tab === val ? "border-cyan-500" : ""}`}
+                className={`${button} ${tab === val ? "border-blue-300" : ""}`}
                 onClick={() => {
                   setTab(val as typeof tab);
                   setOffset(0);
@@ -736,25 +736,25 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             {loading ? (
               <p role="status">Đang tải…</p>
             ) : error ? null : selected.total === 0 ? (
-              <p className="rounded-xl border border-slate-800 p-8 text-slate-400">
+              <p className="rounded-lg border border-slate-200 p-8 text-slate-600">
                 {tab === "recommendations"
                   ? "Chưa có đề xuất. Sau khi kiểm tra website, bạn có thể yêu cầu Codex đánh giá và lưu đề xuất cải thiện."
                   : "Chưa có lịch sử thay đổi cho cửa hàng này."}
               </p>
             ) : tab === "recommendations" ? (
               recommendations.items.map(rec => (
-                <article key={rec.id} className="space-y-2 rounded-xl border border-slate-800 p-4">
-                  <h3 className="font-semibold text-slate-200">{rec.issue}</h3>
-                  <p className="text-sm text-cyan-300">{rec.url}</p>
-                  <p className="text-sm text-slate-400">
+                <article key={rec.id} className="space-y-2 rounded-lg border border-slate-200 p-4">
+                  <h3 className="font-semibold text-slate-900">{rec.issue}</h3>
+                  <p className="text-sm text-blue-700">{rec.url}</p>
+                  <p className="text-sm text-slate-600">
                     {rec.priority} · Tin cậy: {rec.confidence} · {rec.status} · {rec.actor}
                   </p>
                   <details>
-                    <summary className="cursor-pointer text-slate-300">Dẫn chứng và nội dung đề xuất</summary>
-                    <p className="whitespace-pre-wrap text-slate-400">{rec.evidence.join("\n")}</p>
-                    <p className="mt-3 whitespace-pre-wrap text-slate-200">{rec.proposed}</p>
-                    <p className="text-slate-400">Lý do: {rec.rationale}</p>
-                    <p className="text-slate-400">Rủi ro: {rec.risk}</p>
+                    <summary className="cursor-pointer text-slate-700">Dẫn chứng và nội dung đề xuất</summary>
+                    <p className="whitespace-pre-wrap text-slate-600">{rec.evidence.join("\n")}</p>
+                    <p className="mt-3 whitespace-pre-wrap text-slate-900">{rec.proposed}</p>
+                    <p className="text-slate-600">Lý do: {rec.rationale}</p>
+                    <p className="text-slate-600">Rủi ro: {rec.risk}</p>
                     <p className="text-slate-500">{rec.startDate} → {rec.endDate} · {rec.rulesVersion}</p>
                   </details>
                   {rec.status === "proposed" && (
@@ -782,7 +782,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
                     </div>
                   )}
                   {rec.jobId && (
-                    <Link className="text-cyan-300 text-sm hover:underline" to={`/gpt-seo?storeId=${encodeURIComponent(storeId)}`}>
+                    <Link className="text-blue-700 text-sm hover:underline" to={`/gpt-seo?storeId=${encodeURIComponent(storeId)}`}>
                       Mở SEO Queue →
                     </Link>
                   )}
@@ -790,11 +790,11 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
               ))
             ) : (
               history.items.map(event => (
-                <article key={event.id} className="rounded-xl border border-slate-800 p-4">
-                  <p className="text-slate-200">{event.event} · {event.createdAt}</p>
+                <article key={event.id} className="rounded-lg border border-slate-200 p-4">
+                  <p className="text-slate-900">{event.event} · {event.createdAt}</p>
                   <details>
-                    <summary className="text-slate-400">Chi tiết</summary>
-                    <pre className="overflow-auto whitespace-pre-wrap text-xs text-slate-400">
+                    <summary className="text-slate-600">Chi tiết</summary>
+                    <pre className="overflow-auto whitespace-pre-wrap text-xs text-slate-600">
                       {JSON.stringify(event.details, null, 2)}
                     </pre>
                   </details>
@@ -827,7 +827,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
               }}
             />
           ) : (
-            <div className="rounded-xl border border-slate-800 p-8 text-center text-slate-400">
+            <div className="rounded-lg border border-slate-200 p-8 text-center text-slate-600">
               Đang nạp dữ liệu kết nối...
             </div>
           )}
@@ -836,12 +836,12 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
           <details
             key={`${storeId}:${Boolean(overview?.mapping)}`}
             open={!overview?.mapping || overview.reconnectRequired}
-            className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/50 p-4"
+            className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
           >
-            <summary className="cursor-pointer text-sm font-semibold text-slate-300">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-700">
               Cấu hình Mapping Tên miền & Property
             </summary>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-600">
               {overview?.mapping
                 ? `${overview.mapping.origin} → ${overview.mapping.property}`
                 : "Chọn property và xác nhận tên miền storefront, không mặc định dùng myshopify.com."}
@@ -860,7 +860,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
             </div>
             {!overview?.mapping && properties.length > 0 && (
               <div className="flex flex-wrap items-center gap-3 pt-2">
-                <label className="text-xs text-slate-400">
+                <label className="text-xs text-slate-600">
                   Property{" "}
                   <select className={control} value={property} onChange={e => setProperty(e.target.value)}>
                     <option value="">Chọn property</option>
@@ -869,7 +869,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
                     ))}
                   </select>
                 </label>
-                <label className="text-xs text-slate-400">
+                <label className="text-xs text-slate-600">
                   Storefront{" "}
                   <input
                     className={control}
@@ -878,7 +878,7 @@ export function SeoPerformancePage({ client }: { readonly client: SeoPerformance
                     onChange={e => setOrigin(e.target.value)}
                   />
                 </label>
-                <label className="text-xs text-slate-300">
+                <label className="text-xs text-slate-700">
                   <input
                     type="checkbox"
                     checked={confirmed}

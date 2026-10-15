@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { ReferenceImage } from "../../types";
 
 interface ReferenceDropzoneProps {
@@ -130,13 +132,13 @@ export function ReferenceDropzone({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between text-xs text-slate-300">
+      <div className="flex items-center justify-between text-xs text-slate-700">
         <div className="flex items-center gap-1.5">
-          <label className="font-medium text-slate-200">
+          <label className="font-medium text-slate-900">
             Ảnh phòng tham chiếu ({images.length}/{maxImages} ảnh)
           </label>
           {images.length > 1 && (
-            <span className="text-[10px] text-cyan-400 font-normal">
+            <span className="text-[10px] text-blue-700 font-normal">
               (kéo thả hoặc bấm ◀ ▶ đổi thứ tự)
             </span>
           )}
@@ -144,7 +146,7 @@ export function ReferenceDropzone({
         <button
           type="button"
           onClick={() => setShowUrlInput(!showUrlInput)}
-          className="text-cyan-400 underline-offset-2 hover:underline"
+          className="text-blue-700 underline-offset-2 hover:underline"
         >
           {showUrlInput ? "Đóng nhập URL" : "+ Nhập URL ảnh"}
         </button>
@@ -158,13 +160,13 @@ export function ReferenceDropzone({
             onChange={(e) => setCustomUrl(e.target.value)}
             placeholder="Dán URL ảnh (/mockups/room.jpg hoặc https://...)"
             disabled={disabled || images.length >= maxImages}
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+            className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
           />
           <button
             type="button"
             onClick={handleAddUrl}
             disabled={!customUrl.trim() || disabled || images.length >= maxImages}
-            className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             Thêm
           </button>
@@ -187,10 +189,10 @@ export function ReferenceDropzone({
           onClick={() => {
             if (!disabled) fileInputRef.current?.click();
           }}
-          className={`group flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-4 text-center transition ${
+          className={`group flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-4 text-center transition ${
             isDragOver
-              ? "border-cyan-400 bg-cyan-950/20"
-              : "border-slate-700 bg-slate-950/50 hover:border-slate-500 hover:bg-slate-900"
+              ? "border-blue-300 bg-blue-50"
+              : "border-slate-300 bg-slate-50 hover:border-slate-300 hover:bg-white"
           } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
         >
           <input
@@ -202,11 +204,11 @@ export function ReferenceDropzone({
             className="hidden"
             onChange={(e) => handleFiles(e.target.files)}
           />
-          <span className="text-2xl transition group-hover:scale-110">📁</span>
-          <p className="mt-1 text-xs font-medium text-slate-200">
-            Kéo thả ảnh phòng mẫu hoặc <span className="text-cyan-400">click để chọn file</span>
+          <span className="text-2xl transition group-hover:scale-110"><AppIcon name="folder" /></span>
+          <p className="mt-1 text-xs font-medium text-slate-900">
+            Kéo thả ảnh phòng mẫu hoặc <span className="text-blue-700">click để chọn file</span>
           </p>
-          <p className="mt-0.5 text-[10px] text-slate-400">Hỗ trợ JPG, PNG, WEBP (Tối đa {maxImages} ảnh)</p>
+          <p className="mt-0.5 text-[10px] text-slate-600">Hỗ trợ JPG, PNG, WEBP (Tối đa {maxImages} ảnh)</p>
         </div>
       )}
 
@@ -227,12 +229,12 @@ export function ReferenceDropzone({
                   onDragLeave={handleDragLeave}
                   onDrop={(e) => handleDrop(e, idx)}
                   onDragEnd={handleDragEnd}
-                  className={`group relative aspect-square overflow-hidden rounded-lg border bg-slate-950 shadow select-none transition-all duration-150 ${
+                  className={`group relative aspect-square overflow-hidden rounded-lg border bg-white shadow select-none transition-all duration-150 ${
                     isDragging
-                      ? "opacity-30 scale-95 border-dashed border-cyan-400"
+                      ? "opacity-30 scale-95 border-dashed border-blue-300"
                       : isOver
-                        ? "ring-2 ring-cyan-400 border-cyan-400 bg-cyan-950/40 scale-105 z-10"
-                        : "border-slate-700 hover:border-slate-500"
+                        ? "ring-2 ring-blue-300 border-blue-300 bg-blue-50 scale-105 z-10"
+                        : "border-slate-300 hover:border-slate-300"
                   } ${!disabled ? "cursor-grab active:cursor-grabbing" : ""}`}
                   title={
                     !disabled && images.length > 1
@@ -249,8 +251,8 @@ export function ReferenceDropzone({
                   {/* Badge & Reorder controls bar */}
                   <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between pointer-events-auto">
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold text-white shadow backdrop-blur-xs ${
-                        idx === 0 ? "bg-cyan-600/90" : "bg-black/75"
+                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold text-slate-900 shadow backdrop-blur-xs ${
+                        idx === 0 ? "bg-blue-600" : "bg-black/75"
                       }`}
                     >
                       #{idx + 1}{idx === 0 ? " ★" : ""}
@@ -265,7 +267,7 @@ export function ReferenceDropzone({
                             e.stopPropagation();
                             handleMove(idx, idx - 1);
                           }}
-                          className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-200 hover:bg-cyan-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
+                          className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
                           title="Chuyển sang trước (◀)"
                         >
                           ◀
@@ -277,7 +279,7 @@ export function ReferenceDropzone({
                             e.stopPropagation();
                             handleMove(idx, idx + 1);
                           }}
-                          className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-200 hover:bg-cyan-600 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
+                          className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
                           title="Chuyển ra sau (▶)"
                         >
                           ▶
@@ -293,7 +295,7 @@ export function ReferenceDropzone({
                         e.stopPropagation();
                         handleRemove(img.id);
                       }}
-                      className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600/90 text-[10px] font-bold text-white shadow hover:bg-rose-500 pointer-events-auto"
+                      className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-[10px] font-bold text-white shadow hover:bg-rose-700 pointer-events-auto"
                       title="Xóa ảnh này"
                     >
                       ✕
@@ -305,8 +307,8 @@ export function ReferenceDropzone({
           </div>
 
           {images.length > 1 && (
-            <p className="text-[10px] text-slate-400 italic">
-              💡 Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
+            <p className="text-[10px] text-slate-600 italic">
+              <AppIcon name="info" /> Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
             </p>
           )}
         </div>

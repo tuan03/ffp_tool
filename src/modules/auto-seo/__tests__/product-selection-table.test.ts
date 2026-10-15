@@ -281,7 +281,7 @@ test("ProductSelectionTable & filterAutoSeoProducts: filters by active (Đang x�
     eligibilityItems,
     eligibilityFilter: "active",
   });
-  assert.ok(html.includes("⚡ Cần SEO (1)"));
+  assert.ok(html.includes("Cần SEO (1)"));
   assert.ok(html.includes("🟣 Đang xử lý (1)"));
   assert.ok(html.includes("🟢 Đã SEO (1)"));
   assert.ok(html.includes("Tất cả (3)"));
@@ -1066,7 +1066,7 @@ test("AutoSeoPage: binds toolbar counts and product selection table correctly", 
   }
 
   const html = renderToStaticMarkup(React.createElement(PageHarness));
-  assert.ok(html.includes("Auto SEO Product Selection"));
+  assert.match(html, /<h1[^>]*>Auto SEO<\/h1>/);
 
   const children = React.Children.toArray(capturedTree!.props.children);
   const toolbarElement = children.find(
@@ -1092,7 +1092,7 @@ test("AutoSeoPage: renders full page without crashing", () => {
   const dummyClient = new MockAutoSeoClient();
 
   const html = renderToStaticMarkup(React.createElement(AutoSeoPage, { client: dummyClient }));
-  assert.ok(html.includes("Auto SEO Product Selection"));
+  assert.match(html, /<h1[^>]*>Auto SEO<\/h1>/);
   assert.ok(html.includes("Quy trình chọn lọc"));
 });
 

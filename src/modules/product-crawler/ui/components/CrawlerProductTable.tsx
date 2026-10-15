@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import { crawlerProductToListItem } from "../../service";
 import type { CrawlerError, CrawlerProduct, ProductCrawlerFilter } from "../../types";
 
@@ -86,10 +87,10 @@ export function CrawlerProductTable({
     <div className="space-y-4">
       {/* Job-level Errors Alert Banner (Section 18) */}
       {jobErrors && jobErrors.length > 0 && (
-        <div className="rounded-xl border border-rose-800/80 bg-rose-950/40 p-4 space-y-2.5">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 space-y-2.5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-rose-300 font-bold text-xs">
-              <span>⚠️</span>
+            <div className="flex items-center gap-2 text-rose-700 font-bold text-xs">
+              <span><AppIcon name="warning" /></span>
               <span>Crawl Failed — Phát hiện {jobErrors.length} mục cào không thành công:</span>
             </div>
             {onRetryFailed && (
@@ -102,7 +103,7 @@ export function CrawlerProductTable({
                       .filter(Boolean),
                   )
                 }
-                className="rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-500 transition shadow-sm"
+                className="rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 transition shadow-sm"
               >
                 ↻ Thử lại mục lỗi
               </button>
@@ -112,15 +113,15 @@ export function CrawlerProductTable({
             {jobErrors.map((err, i) => (
               <div
                 key={i}
-                className="flex flex-wrap items-center justify-between rounded-lg bg-rose-950/70 p-2.5 text-xs border border-rose-900/60"
+                className="flex flex-wrap items-center justify-between rounded-lg bg-rose-50 p-2.5 text-xs border border-rose-200"
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-mono font-bold text-rose-200">
+                  <span className="font-mono font-bold text-rose-700">
                     {err.input || err.productId || "ASIN"}
                   </span>
-                  <span className="text-slate-300">— Lý do: {err.message}</span>
+                  <span className="text-slate-700">— Lý do: {err.message}</span>
                 </div>
-                <span className="font-mono text-[10px] text-rose-400">Mã: {err.code}</span>
+                <span className="font-mono text-[10px] text-rose-700">Mã: {err.code}</span>
               </div>
             ))}
           </div>
@@ -129,28 +130,28 @@ export function CrawlerProductTable({
 
       {/* Warnings banner */}
       {jobWarnings && jobWarnings.length > 0 && (
-        <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-200 flex items-center gap-2">
-          <span>⚠️</span>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 flex items-center gap-2">
+          <span><AppIcon name="warning" /></span>
           <span>{jobWarnings.join("; ")}</span>
         </div>
       )}
 
       {/* Top Results Metrics & Summary */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/80 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <div className="flex items-center gap-4 text-xs">
           <div>
-            <span className="text-slate-400">Tổng sản phẩm:</span>{" "}
-            <strong className="text-slate-100 font-mono text-sm">{products.length}</strong>
+            <span className="text-slate-600">Tổng sản phẩm:</span>{" "}
+            <strong className="text-slate-900 font-mono text-sm">{products.length}</strong>
           </div>
-          <div className="h-4 w-px bg-slate-800" />
+          <div className="h-4 w-px bg-slate-50" />
           <div>
-            <span className="text-slate-400">Tổng biến thể:</span>{" "}
-            <strong className="text-cyan-400 font-mono text-sm">{totalVariants}</strong>
+            <span className="text-slate-600">Tổng biến thể:</span>{" "}
+            <strong className="text-blue-700 font-mono text-sm">{totalVariants}</strong>
           </div>
-          <div className="h-4 w-px bg-slate-800" />
+          <div className="h-4 w-px bg-slate-50" />
           <div>
-            <span className="text-slate-400">Có tùy biến:</span>{" "}
-            <strong className="text-emerald-400 font-mono text-sm">
+            <span className="text-slate-600">Có tùy biến:</span>{" "}
+            <strong className="text-emerald-700 font-mono text-sm">
               {products.filter((p) => Boolean(p.customization)).length}
             </strong>
           </div>
@@ -163,13 +164,13 @@ export function CrawlerProductTable({
             placeholder="Tìm theo tiêu đề hoặc ASIN..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="absolute right-2.5 top-1.5 text-slate-400 hover:text-white text-xs"
+              className="absolute right-2.5 top-1.5 text-slate-600 hover:text-slate-900 text-xs"
             >
               ✕
             </button>
@@ -210,8 +211,8 @@ export function CrawlerProductTable({
               onClick={() => setFilter(tab.id as ProductCrawlerFilter)}
               className={`rounded-lg px-2.5 py-1 transition ${
                 filter === tab.id
-                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold"
-                  : "bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-slate-200"
+                  ? "bg-blue-50 text-blue-700 border border-blue-300 font-semibold"
+                  : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:text-slate-900"
               }`}
             >
               {tab.label}
@@ -221,14 +222,14 @@ export function CrawlerProductTable({
 
         {/* Selection Actions (Section 13) */}
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-400">
-            Đã chọn: <strong className="text-cyan-400 font-mono">{selectedIds.length}</strong> / {products.length}
+          <span className="text-slate-600">
+            Đã chọn: <strong className="text-blue-700 font-mono">{selectedIds.length}</strong> / {products.length}
           </span>
 
           <button
             type="button"
             onClick={() => onToggleSelectAll(filteredIds)}
-            className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700 transition"
+            className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100 transition"
           >
             Chọn tất cả
           </button>
@@ -237,7 +238,7 @@ export function CrawlerProductTable({
             <button
               type="button"
               onClick={onClearSelection}
-              className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700 transition"
+              className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100 transition"
             >
               Bỏ chọn
             </button>
@@ -249,8 +250,8 @@ export function CrawlerProductTable({
               onClick={() => setIsOnlySelected(!isOnlySelected)}
               className={`rounded px-2 py-1 transition border ${
                 isOnlySelected
-                  ? "bg-cyan-950 border-cyan-700 text-cyan-300 font-semibold"
-                  : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  ? "bg-blue-50 border-blue-200 text-blue-700 font-semibold"
+                  : "border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
               }`}
             >
               {isOnlySelected ? "✓ Đang xem mục đã chọn" : "👁️ Xem mục đã chọn"}
@@ -261,17 +262,17 @@ export function CrawlerProductTable({
             type="button"
             disabled={selectedIds.length === 0}
             onClick={onOpenHandoff}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-600 px-3 py-1 font-bold text-slate-950 shadow-md shadow-emerald-500/20 hover:from-emerald-400 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            className="flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1 font-bold text-slate-950 shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition"
           >
-            <span>🚀 Bàn giao {selectedIds.length} mục sang SEO</span>
+            <span><AppIcon name="play" /> Bàn giao {selectedIds.length} mục sang SEO</span>
           </button>
         </div>
       </div>
 
       {/* Main Table */}
-      <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 shadow-lg">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
         <table className="w-full text-left text-xs">
-          <thead className="border-b border-slate-800 bg-slate-950/80 font-semibold text-slate-300">
+          <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-700">
             <tr>
               <th className="w-10 p-3 text-center">
                 <input
@@ -281,7 +282,7 @@ export function CrawlerProductTable({
                     if (el) el.indeterminate = isSomeFilteredSelected;
                   }}
                   onChange={() => onToggleSelectAll(filteredIds)}
-                  className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
+                  className="rounded border-slate-300 text-blue-700 focus:ring-blue-300"
                   aria-label="Chọn tất cả sản phẩm đang lọc"
                 />
               </th>
@@ -296,7 +297,7 @@ export function CrawlerProductTable({
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-slate-800/60 text-slate-300">
+          <tbody className="divide-y divide-slate-200 text-slate-700">
             {filteredItems.length === 0 ? (
               <tr>
                 <td colSpan={9} className="p-8 text-center text-slate-500 italic">
@@ -310,8 +311,8 @@ export function CrawlerProductTable({
                 return (
                   <tr
                     key={raw.id}
-                    className={`transition hover:bg-slate-800/40 ${
-                      isSelected ? "bg-cyan-950/20" : ""
+                    className={`transition hover:bg-slate-50 ${
+                      isSelected ? "bg-blue-50" : ""
                     }`}
                   >
                     <td className="p-3 text-center">
@@ -319,13 +320,13 @@ export function CrawlerProductTable({
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => onToggleSelect(raw.id)}
-                        className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
+                        className="rounded border-slate-300 text-blue-700 focus:ring-blue-300"
                         aria-label={`Chọn sản phẩm ${projected.title}`}
                       />
                     </td>
 
                     <td className="p-3">
-                      <div className="h-12 w-12 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center">
+                      <div className="h-12 w-12 overflow-hidden rounded-lg border border-slate-200 bg-white flex items-center justify-center">
                         {projected.thumbnailUrl ? (
                           <img
                             src={projected.thumbnailUrl}
@@ -333,21 +334,21 @@ export function CrawlerProductTable({
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <span className="text-slate-600 text-xs">No img</span>
+                          <span className="text-slate-500 text-xs">No img</span>
                         )}
                       </div>
                     </td>
 
                     <td className="p-3 max-w-xs sm:max-w-md">
-                      <div className="font-medium text-slate-100 line-clamp-2 leading-relaxed">
+                      <div className="font-medium text-slate-900 line-clamp-2 leading-relaxed">
                         {projected.title}
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-600">
                         <a
                           href={raw.canonicalUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-cyan-400 hover:underline flex items-center gap-1"
+                          className="text-blue-700 hover:underline flex items-center gap-1"
                         >
                           <span>Amazon Link ↗</span>
                         </a>
@@ -357,23 +358,23 @@ export function CrawlerProductTable({
                       </div>
                     </td>
 
-                    <td className="p-3 font-mono text-[11px] text-slate-300 font-semibold">
+                    <td className="p-3 font-mono text-[11px] text-slate-700 font-semibold">
                       {projected.asin}
                     </td>
 
                     <td className="p-3 text-center">
-                      <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] font-bold text-cyan-300">
+                      <span className="rounded bg-slate-50 px-2 py-0.5 font-mono text-[11px] font-bold text-blue-700">
                         {projected.variantCount}
                       </span>
                     </td>
 
                     <td className="p-3 text-center">
                       {projected.hasCustomization ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
                           <span>🟢</span> Có
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+                        <span className="inline-flex items-center gap-1 rounded bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
                           <span>⚪</span> Không
                         </span>
                       )}
@@ -381,11 +382,11 @@ export function CrawlerProductTable({
 
                     <td className="p-3 text-center">
                       {projected.warningCount > 0 ? (
-                        <span className="inline-flex items-center rounded bg-amber-950/80 border border-amber-800/80 px-2 py-0.5 text-[10px] font-bold text-amber-300">
-                          ⚠️ {projected.warningCount}
+                        <span className="inline-flex items-center rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                          <AppIcon name="warning" /> {projected.warningCount}
                         </span>
                       ) : (
-                        <span className="text-slate-600 text-xs">—</span>
+                        <span className="text-slate-500 text-xs">—</span>
                       )}
                     </td>
 
@@ -393,10 +394,10 @@ export function CrawlerProductTable({
                       <span
                         className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
                           projected.status === "success"
-                            ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                             : projected.status === "partial"
-                              ? "bg-amber-950 text-amber-300 border border-amber-800"
-                              : "bg-rose-950 text-rose-300 border border-rose-800"
+                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-rose-50 text-rose-700 border border-rose-200"
                         }`}
                       >
                         {projected.status}
@@ -407,7 +408,7 @@ export function CrawlerProductTable({
                       <button
                         type="button"
                         onClick={() => onViewDetail(raw)}
-                        className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-200 hover:bg-slate-700 hover:text-white transition"
+                        className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition"
                       >
                         Chi tiết
                       </button>

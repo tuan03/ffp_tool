@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 export interface PlacementItem {
   name: string;
   placementId: string;
@@ -61,14 +62,14 @@ export function SurfaceManager({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-bold text-slate-200">
+        <h3 className="text-sm font-bold text-slate-900">
           Mặt In
         </h3>
       </div>
 
       {surfaces.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center bg-slate-900/30">
-          <p className="text-xs text-slate-400">Chưa có mặt in nào.</p>
+        <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center bg-slate-50">
+          <p className="text-xs text-slate-600">Chưa có mặt in nào.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -77,10 +78,10 @@ export function SurfaceManager({
             return (
               <div
                 key={surface.surfaceId || idx}
-                className={`rounded-2xl border p-4 transition-all ${
+                className={`rounded-lg border p-4 transition-all ${
                   isEditing
-                    ? "border-cyan-500/80 bg-slate-900/90 shadow-md shadow-cyan-950/20"
-                    : "border-slate-800 bg-slate-900/50 hover:border-slate-700"
+                    ? "border-blue-300 bg-slate-50 shadow-md "
+                    : "border-slate-200 bg-slate-50 hover:border-slate-300"
                 }`}
               >
                 {/* Surface Header */}
@@ -90,18 +91,18 @@ export function SurfaceManager({
                       <img
                         src={surface.previewUrl}
                         alt={surface.name}
-                        className="h-10 w-10 rounded-xl border border-slate-700 bg-slate-950 object-cover flex-shrink-0"
+                        className="h-10 w-10 rounded-lg border border-slate-300 bg-white object-cover flex-shrink-0"
                         onError={(e) => {
                           (e.target as HTMLElement).style.display = "none";
                         }}
                       />
                     ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-slate-500 text-xs flex-shrink-0">
-                        🖼️
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 text-xs flex-shrink-0">
+                        <AppIcon name="image" />
                       </div>
                     )}
                     <div className="min-w-0 flex-1">
-                      <h4 className="text-xs font-bold text-slate-200 truncate">
+                      <h4 className="text-xs font-bold text-slate-900 truncate">
                         {surface.name || "Chưa đặt tên"}
                       </h4>
                     </div>
@@ -111,14 +112,14 @@ export function SurfaceManager({
                     <button
                       type="button"
                       onClick={() => setEditingIndex(isEditing ? null : idx)}
-                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition whitespace-nowrap cursor-pointer"
+                      className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition whitespace-nowrap cursor-pointer"
                     >
                       {isEditing ? "Thu gọn" : "Chỉnh sửa"}
                     </button>
                     <button
                       type="button"
                       onClick={() => handleRemoveSurface(idx)}
-                      className="rounded-lg border border-rose-900/60 bg-rose-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-900/60 transition whitespace-nowrap cursor-pointer"
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 transition whitespace-nowrap cursor-pointer"
                       title="Xóa mặt in"
                     >
                       Xóa
@@ -128,21 +129,21 @@ export function SurfaceManager({
 
                 {/* Surface Details (Editable) */}
                 {isEditing && (
-                  <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
+                  <div className="space-y-3 pt-3 border-t border-slate-200 text-xs">
                     <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         Tên mặt in
                       </label>
                       <input
                         type="text"
                         value={surface.name}
                         onChange={(e) => handleUpdateSurfaceField(idx, "name", e.target.value)}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         Link ảnh phôi (URL)
                       </label>
                       <input
@@ -150,14 +151,14 @@ export function SurfaceManager({
                         placeholder="https://cdn.shopify.com/.../mockup.png"
                         value={surface.previewUrl ?? ""}
                         onChange={(e) => handleUpdateSurfaceField(idx, "previewUrl", e.target.value)}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                       />
                     </div>
 
                     {/* Placements Section */}
-                    <div className="pt-2 border-t border-slate-800">
+                    <div className="pt-2 border-t border-slate-200">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-semibold text-slate-300">
+                        <span className="text-[11px] font-semibold text-slate-700">
                           Vùng in ({surface.placements?.length ?? 0})
                         </span>
                       </div>
@@ -166,13 +167,13 @@ export function SurfaceManager({
                         {surface.placements?.map((p, pIdx) => (
                           <div
                             key={p.placementId || pIdx}
-                            className="flex items-center justify-between gap-2 rounded-xl bg-slate-950 p-2.5 border border-slate-800 text-xs"
+                            className="flex items-center justify-between gap-2 rounded-lg bg-white p-2.5 border border-slate-200 text-xs"
                           >
-                            <span className="font-medium text-slate-200">{p.name}</span>
+                            <span className="font-medium text-slate-900">{p.name}</span>
                             <button
                               type="button"
                               onClick={() => handleRemovePlacement(idx, pIdx)}
-                              className="text-rose-400 hover:text-rose-300 px-1 cursor-pointer"
+                              className="text-rose-700 hover:text-rose-700 px-1 cursor-pointer"
                               title="Xóa vùng in"
                             >
                               ✕

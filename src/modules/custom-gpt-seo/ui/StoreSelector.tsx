@@ -7,7 +7,7 @@ interface StoreSelectorProps {
   readonly onChange: (storeId: string) => void;
 }
 
-const SELECT_CLASS_NAME = "w-64 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-wait disabled:opacity-60";
+const SELECT_CLASS_NAME = "w-64 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 transition focus:border-blue-300 focus:ring-2 focus:ring-blue-300 disabled:cursor-wait disabled:opacity-60";
 
 export function StoreSelector({ stores, selectedStoreId, isLoading, onChange }: StoreSelectorProps): React.JSX.Element {
   return (

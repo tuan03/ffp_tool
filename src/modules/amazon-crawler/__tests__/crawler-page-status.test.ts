@@ -83,6 +83,9 @@ test("crawler page puts ASIN and start ahead of settings, agents and maintenance
   assert.ok(inputPosition > 0);
   assert.ok(inputPosition < startPosition);
   assert.ok(startPosition < markup.indexOf("Collection, loại sản phẩm"));
+  const pricingDisclosure = markup.match(/<details[^>]*>\s*<summary[^>]*>Collection, loại sản phẩm/)?.[0];
+  assert.ok(pricingDisclosure, "Pricing configuration remains available in the crawl form");
+  assert.doesNotMatch(pricingDisclosure, /\bopen=/, "Advanced pricing starts collapsed without removing its controls");
   assert.ok(startPosition < markup.indexOf("Crawler clients"));
   assert.ok(startPosition < markup.indexOf("Xóa toàn bộ cache"));
   assert.match(markup, /id="crawler-panel-agents"[^>]*hidden=""/);
@@ -141,7 +144,7 @@ test("restored product details are in a closed dialog rather than expanding the 
   clearCrawlerSession();
 });
 
-test("collection and pricing settings are open at full width with one store selector", () => {
+test("collection and pricing settings stay available in a compact disclosure with one store selector", () => {
   clearCrawlerSession();
   const markup = renderToStaticMarkup(createElement(MemoryRouter, null,
     createElement(AmazonCrawlerPage, {
@@ -152,7 +155,7 @@ test("collection and pricing settings are open at full width with one store sele
     }),
   ));
 
-  assert.match(markup, /<details[^>]*open=""[^>]*>[\s\S]*?Collection, loại sản phẩm/);
+  assert.match(markup, /<details[^>]*>\s*<summary[^>]*>Collection, loại sản phẩm/);
   assert.match(markup, /aria-label="Lọc ASIN trên Shopify"/);
   assert.equal((markup.match(/<select[^>]*>[\s\S]*?<\/select>/g) ?? []).filter((select) => select.includes('value="capozen"')).length, 1);
   assert.match(markup, /Tìm collection/);

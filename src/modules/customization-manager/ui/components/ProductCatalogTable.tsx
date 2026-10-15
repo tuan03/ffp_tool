@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { ShopifyProduct, ShopifyCollection } from "../../../module-api";
 
 export interface ProductCatalogTableProps {
@@ -224,27 +226,27 @@ export function ProductCatalogTable({
   return (
     <div className="space-y-4">
       {/* Search & Header Summary Bar */}
-      <div className="relative z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-sm backdrop-blur-sm">
+      <div className="relative z-30 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5 shadow-sm backdrop-blur-sm">
         {/* Search Input with Shopify-style filter dropdown */}
-        <div className="flex-1 min-w-[320px] flex items-center rounded-xl border border-slate-800 bg-slate-950 px-2 py-1 shadow-inner focus-within:border-cyan-500 transition">
+        <div className="flex-1 min-w-[320px] flex items-center rounded-lg border border-slate-200 bg-white px-2 py-1 shadow-inner focus-within:border-blue-300 transition">
           {/* Filter selector popup */}
           <div className="relative" ref={filterDropdownRef}>
             <button
               type="button"
               onClick={() => setIsFilterDropdownOpen((prev) => !prev)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:text-cyan-400 transition cursor-pointer select-none rounded-lg hover:bg-slate-900"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-900 hover:text-blue-700 transition cursor-pointer select-none rounded-lg hover:bg-white"
             >
               <span>
                 {filterMode === "all" && "All"}
                 {filterMode === "collection" && "Collection"}
                 {filterMode === "asin" && "Amazon ASIN"}
               </span>
-              <span className="text-[10px] text-slate-400">▼</span>
+              <span className="text-[10px] text-slate-600">▼</span>
             </button>
 
             {/* Dropdown Menu */}
             {isFilterDropdownOpen && (
-              <div className="absolute left-0 top-full mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-900/98 p-1.5 shadow-2xl backdrop-blur-md z-50 space-y-0.5">
+              <div className="absolute left-0 top-full mt-2 w-56 rounded-lg border border-slate-200 bg-slate-50 p-1.5 shadow-sm z-50 space-y-0.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -252,10 +254,10 @@ export function ProductCatalogTable({
                     setIsFilterDropdownOpen(false);
                     setCurrentPage(1);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${
                     filterMode === "all"
-                      ? "bg-cyan-600 text-white font-bold"
-                      : "text-slate-300 hover:bg-slate-800"
+                      ? "bg-blue-600 text-white font-bold"
+                      : "text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   <span>Tất cả (All)</span>
@@ -269,14 +271,14 @@ export function ProductCatalogTable({
                     setIsFilterDropdownOpen(false);
                     setCurrentPage(1);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${
                     filterMode === "collection"
-                      ? "bg-cyan-600 text-white font-bold"
-                      : "text-slate-300 hover:bg-slate-800"
+                      ? "bg-blue-600 text-white font-bold"
+                      : "text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   <span className="flex items-center gap-2">
-                    <span>📁</span>
+                    <span><AppIcon name="folder" /></span>
                     <span>Collection (Bộ sưu tập)</span>
                   </span>
                   {filterMode === "collection" && <span>✓</span>}
@@ -289,14 +291,14 @@ export function ProductCatalogTable({
                     setIsFilterDropdownOpen(false);
                     setCurrentPage(1);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${
                     filterMode === "asin"
-                      ? "bg-cyan-600 text-white font-bold"
-                      : "text-slate-300 hover:bg-slate-800"
+                      ? "bg-blue-600 text-white font-bold"
+                      : "text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   <span className="flex items-center gap-2">
-                    <span>📦</span>
+                    <span><AppIcon name="folder" /></span>
                     <span>Amazon ASIN</span>
                   </span>
                   {filterMode === "asin" && <span>✓</span>}
@@ -305,7 +307,7 @@ export function ProductCatalogTable({
             )}
           </div>
 
-          <div className="h-5 w-px bg-slate-800 mx-1 flex-shrink-0" />
+          <div className="h-5 w-px bg-slate-50 mx-1 flex-shrink-0" />
 
           {/* If Collection mode and collections are available, show Collection Picker */}
           {filterMode === "collection" && collections.length > 0 && (
@@ -316,24 +318,24 @@ export function ProductCatalogTable({
                   setSelectedCollectionId(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-cyan-300 font-semibold focus:outline-none focus:border-cyan-500 cursor-pointer max-w-[200px] truncate mr-2"
+                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-blue-700 font-semibold focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 cursor-pointer max-w-[200px] truncate mr-2"
               >
-                <option value="" className="bg-slate-950 text-slate-200">
+                <option value="" className="bg-white text-slate-900">
                   -- Tất cả bộ sưu tập ({collections.length}) --
                 </option>
                 {collections.map((col) => (
-                  <option key={col.id} value={col.id} className="bg-slate-950 text-slate-200">
+                  <option key={col.id} value={col.id} className="bg-white text-slate-900">
                     {col.title} {col.productsCount ? `(${col.productsCount})` : ""}
                   </option>
                 ))}
               </select>
-              <div className="h-5 w-px bg-slate-800 mx-1 flex-shrink-0" />
+              <div className="h-5 w-px bg-slate-50 mx-1 flex-shrink-0" />
             </>
           )}
 
           {/* Search input field */}
           <div className="relative flex-1 flex items-center">
-            <span className="text-slate-500 text-xs mr-2">🔍</span>
+            <span className="text-slate-500 text-xs mr-2"><AppIcon name="search" /></span>
             <input
               type="text"
               value={searchQuery}
@@ -348,7 +350,7 @@ export function ProductCatalogTable({
                     ? "Tìm kiếm trong bộ sưu tập hoặc nhập tên..."
                     : "Tìm kiếm sản phẩm theo tên, handle, tag..."
               }
-              className="w-full bg-transparent py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none"
+              className="w-full bg-transparent py-1 text-xs text-slate-900 placeholder-slate-500 focus-visible:ring-2 focus-visible:ring-blue-600/30"
             />
             {searchQuery && (
               <button
@@ -357,7 +359,7 @@ export function ProductCatalogTable({
                   setSearchQuery("");
                   setCurrentPage(1);
                 }}
-                className="text-slate-500 hover:text-slate-300 text-xs cursor-pointer px-1.5"
+                className="text-slate-500 hover:text-slate-700 text-xs cursor-pointer px-1.5"
                 title="Xóa tìm kiếm"
               >
                 ✕
@@ -367,7 +369,7 @@ export function ProductCatalogTable({
         </div>
 
         {/* Counter Badge & Reset Filter button */}
-        <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
+        <div className="flex items-center gap-3 text-xs text-slate-600 font-medium">
           {(filterMode !== "all" || searchQuery || selectedCollectionId) && (
             <button
               type="button"
@@ -377,43 +379,43 @@ export function ProductCatalogTable({
                 setSelectedCollectionId("");
                 setCurrentPage(1);
               }}
-              className="text-xs text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+              className="text-xs text-blue-700 hover:text-blue-700 underline cursor-pointer"
             >
               Xóa bộ lọc
             </button>
           )}
           <div>
-            Hiển thị <span className="text-cyan-400 font-bold">{filteredProducts.length}</span> / {products.length} sản phẩm
+            Hiển thị <span className="text-blue-700 font-bold">{filteredProducts.length}</span> / {products.length} sản phẩm
           </div>
         </div>
       </div>
 
       {/* Products Table Card */}
-      <div className="relative z-10 rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl overflow-hidden backdrop-blur-md">
+      <div className="relative z-10 rounded-lg border border-slate-200 bg-slate-50 shadow-sm overflow-hidden ">
         {isLoading ? (
           <div className="p-16 text-center space-y-3">
-            <span className="inline-block animate-spin text-2xl">⏳</span>
-            <p className="text-xs text-slate-400">Đang tải danh sách sản phẩm...</p>
+            <span className="inline-block animate-spin text-2xl"><AppIcon name="clock" /></span>
+            <p className="text-xs text-slate-600">Đang tải danh sách sản phẩm...</p>
           </div>
         ) : filteredProducts.length === 0 ? (
           <div className="p-16 text-center space-y-3">
-            <span className="text-3xl block">📦</span>
-            <h4 className="text-sm font-bold text-slate-200">Không tìm thấy sản phẩm nào</h4>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+            <span className="text-3xl block"><AppIcon name="folder" /></span>
+            <h4 className="text-sm font-bold text-slate-900">Không tìm thấy sản phẩm nào</h4>
+            <p className="text-xs text-slate-600 max-w-sm mx-auto">
               Không có sản phẩm nào khớp với bộ lọc hoặc từ khóa tìm kiếm.
             </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-800 bg-slate-900/90 text-slate-400 uppercase tracking-wider text-[11px]">
+              <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase tracking-wider text-[11px]">
                 <tr>
                   <th className="py-4 pl-6 pr-4">Sản phẩm</th>
                   <th className="py-4 px-4 w-48 text-center">Trạng thái Tùy Biến</th>
                   <th className="py-4 pr-6 pl-4 w-56 text-right">Thao tác</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
+              <tbody className="divide-y divide-slate-200">
                 {paginatedProducts.map((product) => {
                   const hasCustomizer =
                     configuredProductIds.has(product.id) ||
@@ -429,12 +431,12 @@ export function ProductCatalogTable({
                     <tr
                       key={product.id}
                       onClick={() => onSelectProductForEdit(product)}
-                      className="hover:bg-slate-800/40 transition group cursor-pointer"
+                      className="hover:bg-slate-50 transition group cursor-pointer"
                     >
                       {/* Product Thumbnail, Title & ASIN Badge */}
                       <td className="py-4 pl-6 pr-4">
                         <div className="flex items-center gap-3.5">
-                          <div className="h-14 w-14 flex-shrink-0 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 flex items-center justify-center shadow-sm group-hover:border-cyan-500/50 transition">
+                          <div className="h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border border-slate-200 bg-white flex items-center justify-center shadow-sm group-hover:border-blue-300 transition">
                             <img
                               src={imageUrl}
                               alt={product.title}
@@ -447,7 +449,7 @@ export function ProductCatalogTable({
                           </div>
                           <div className="min-w-0">
                             <h4
-                              className="font-bold text-slate-200 text-sm group-hover:text-cyan-300 transition line-clamp-2"
+                              className="font-bold text-slate-900 text-sm group-hover:text-blue-700 transition line-clamp-2"
                               title={product.title}
                             >
                               {product.title}
@@ -464,11 +466,11 @@ export function ProductCatalogTable({
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-slate-500 hover:text-emerald-400 transition inline-flex items-center gap-0.5 text-[11px] font-medium"
+                                  className="text-slate-500 hover:text-emerald-700 transition inline-flex items-center gap-0.5 text-[11px] font-medium"
                                   title="Mở sản phẩm trong Shopify Admin"
                                 >
                                   <span>Shopify</span>
-                                  <svg className="w-2.5 h-2.5 text-slate-500 hover:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <svg className="w-2.5 h-2.5 text-slate-500 hover:text-emerald-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                                     <polyline points="15 3 21 3 21 9" />
                                     <line x1="10" y1="14" x2="21" y2="3" />
@@ -477,7 +479,7 @@ export function ProductCatalogTable({
                               )}
                               {asin && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 shadow-sm"
+                                  className="inline-flex items-center gap-1 rounded bg-amber-50 border border-amber-300 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-700 shadow-sm"
                                   title={`Amazon ASIN: ${asin}`}
                                 >
                                   <span>🏷️</span>
@@ -492,12 +494,12 @@ export function ProductCatalogTable({
                       {/* Customizer Status Badge */}
                       <td className="py-4 px-4 text-center">
                         {hasCustomizer ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-950/80 border border-cyan-800 px-3 py-1 text-xs font-semibold text-cyan-300 shadow-sm">
-                            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm">
+                            <span className="h-2 w-2 rounded-full bg-blue-600 animate-pulse" />
                             <span>Đã có Customizer</span>
                           </span>
                         ) : (
-                          <span className="inline-flex items-center rounded-full bg-slate-800/80 border border-slate-700 px-3 py-1 text-xs text-slate-400">
+                          <span className="inline-flex items-center rounded-full bg-slate-50 border border-slate-300 px-3 py-1 text-xs text-slate-600">
                             Chưa cấu hình
                           </span>
                         )}
@@ -512,15 +514,15 @@ export function ProductCatalogTable({
                           <button
                             type="button"
                             onClick={() => onSelectProductForEdit(product)}
-                            className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition cursor-pointer shadow-md ${
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold transition cursor-pointer shadow-md ${
                               hasCustomizer
-                                ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-cyan-950/40 hover:from-cyan-500 hover:to-blue-500 hover:shadow-cyan-900/60"
-                                : "border border-slate-700 bg-slate-800 text-slate-300 hover:border-cyan-500 hover:bg-slate-750 hover:text-white"
+                                ? "bg-blue-600 text-white "
+                                : "border border-slate-300 bg-white text-slate-700 hover:border-blue-300 hover:bg-slate-100 hover:text-slate-900"
                             }`}
                             title={hasCustomizer ? "Xem trực quan và sửa cấu hình đã có" : "Sản phẩm chưa có tùy biến. Bấm để tạo cấu hình mới."}
                           >
-                            <span>{hasCustomizer ? "🎨" : "✨"}</span>
-                            <span>{hasCustomizer ? "Mở Tùy Biến" : "Tạo Mới Tùy Biến"}</span>
+                            <AppIcon name={hasCustomizer ? "settings" : "edit"} />
+                            <span>{hasCustomizer ? "Mở tùy biến" : "Tạo tùy biến"}</span>
                           </button>
 
                           {adminUrl && (
@@ -528,7 +530,7 @@ export function ProductCatalogTable({
                               href={adminUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="rounded-xl border border-slate-800 bg-slate-950/80 p-2 text-slate-400 hover:border-emerald-600/60 hover:bg-emerald-950/40 hover:text-emerald-300 transition cursor-pointer"
+                              className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition cursor-pointer"
                               title="Mở sản phẩm này trong Shopify Admin"
                             >
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -543,10 +545,10 @@ export function ProductCatalogTable({
                             <button
                               type="button"
                               onClick={() => onDeleteCustomizer(product)}
-                              className="rounded-xl border border-slate-800 bg-slate-950/80 p-2 text-slate-400 hover:border-rose-800 hover:bg-rose-950/50 hover:text-rose-300 transition cursor-pointer"
+                              className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 transition cursor-pointer"
                               title="Xóa cấu hình Customizer của sản phẩm này"
                             >
-                              🗑️
+                              <AppIcon name="trash" />
                             </button>
                           )}
                         </div>
@@ -561,9 +563,9 @@ export function ProductCatalogTable({
 
         {/* Pagination Bar */}
         {!isLoading && filteredProducts.length > 0 && (
-          <div className="flex items-center justify-between border-t border-slate-800 bg-slate-900/80 px-6 py-3.5 text-xs text-slate-400">
+          <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-3.5 text-xs text-slate-600">
             <div>
-              Trang <span className="text-slate-200 font-semibold">{validCurrentPage}</span> / <span className="text-slate-200 font-semibold">{totalPages}</span>
+              Trang <span className="text-slate-900 font-semibold">{validCurrentPage}</span> / <span className="text-slate-900 font-semibold">{totalPages}</span>
             </div>
 
             <div className="flex items-center gap-1.5">
@@ -571,7 +573,7 @@ export function ProductCatalogTable({
                 type="button"
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={validCurrentPage <= 1}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-40 transition cursor-pointer"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
               >
                 ← Trước
               </button>
@@ -586,8 +588,8 @@ export function ProductCatalogTable({
                   onClick={() => setCurrentPage(page)}
                   className={`h-7 w-7 rounded-lg text-xs font-semibold transition cursor-pointer ${
                     validCurrentPage === page
-                      ? "bg-cyan-600 text-white shadow-md shadow-cyan-900/40"
-                      : "border border-slate-800 bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                      ? "bg-blue-600 text-white shadow-md "
+                      : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
                 >
                   {page}
@@ -598,7 +600,7 @@ export function ProductCatalogTable({
                 type="button"
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                 disabled={validCurrentPage >= totalPages}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-40 transition cursor-pointer"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
               >
                 Sau →
               </button>

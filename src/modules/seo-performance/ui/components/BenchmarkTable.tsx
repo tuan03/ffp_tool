@@ -9,7 +9,7 @@ function ProductThumbnail({ url, title }: { readonly url?: string | null; readon
   if (!url || hasError) {
     return (
       <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-700/80 bg-gradient-to-br from-slate-800 to-slate-900 text-slate-400 shadow-inner"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-blue-50 text-slate-600 shadow-inner"
         title={title}
       >
         <svg className="h-5 w-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -24,7 +24,7 @@ function ProductThumbnail({ url, title }: { readonly url?: string | null; readon
       src={url}
       alt={title}
       onError={() => setHasError(true)}
-      className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-700 shadow-sm"
+      className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-300 shadow-sm"
       loading="lazy"
     />
   );
@@ -55,14 +55,14 @@ export function BenchmarkTable({
 }: BenchmarkTableProps): React.JSX.Element {
   const renderSortIndicator = (column: string): React.JSX.Element | null => {
     if (sortBy !== column) return null;
-    return <span className="ml-1 text-cyan-400">{sortDir === "asc" ? "▲" : "▼"}</span>;
+    return <span className="ml-1 text-blue-700">{sortDir === "asc" ? "▲" : "▼"}</span>;
   };
 
   const headerButton = (column: string, title: string) => (
     <button
       type="button"
       onClick={() => onSort?.(column)}
-      className="inline-flex items-center text-xs font-semibold text-slate-300 transition hover:text-cyan-300"
+      className="inline-flex items-center text-xs font-semibold text-slate-700 transition hover:text-blue-700"
     >
       {title}
       {renderSortIndicator(column)}
@@ -70,13 +70,13 @@ export function BenchmarkTable({
   );
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl">
+    <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm text-slate-300">
-          <thead className="border-b border-slate-800 bg-slate-950/80 text-xs uppercase tracking-wider text-slate-400">
+        <table className="w-full text-left text-sm text-slate-700">
+          <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
             <tr>
               {/* 1. Product (Sticky Left) */}
-              <th scope="col" className="sticky left-0 z-20 bg-slate-950 px-4 py-3 min-w-[240px]">
+              <th scope="col" className="sticky left-0 z-20 bg-white px-4 py-3 min-w-[240px]">
                 {headerButton("title", "Sản phẩm (Product)")}
               </th>
 
@@ -126,25 +126,25 @@ export function BenchmarkTable({
               </th>
 
               {/* 11. Action (Sticky Right) */}
-              <th scope="col" className="sticky right-0 z-20 bg-slate-950 px-4 py-3 min-w-[130px] text-center">
+              <th scope="col" className="sticky right-0 z-20 bg-white px-4 py-3 min-w-[130px] text-center">
                 Hành động
               </th>
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-slate-800/80">
+          <tbody className="divide-y divide-slate-200">
             {loading ? (
               <tr>
-                <td colSpan={11} className="p-8 text-center text-slate-400">
+                <td colSpan={11} className="p-8 text-center text-slate-600">
                   <div className="flex items-center justify-center gap-2">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" />
                     <span>Đang tính toán benchmark và nạp dữ liệu...</span>
                   </div>
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={11} className="p-8 text-center text-slate-400">
+                <td colSpan={11} className="p-8 text-center text-slate-600">
                   Không tìm thấy sản phẩm nào phù hợp với bộ lọc hiện tại.
                 </td>
               </tr>
@@ -157,16 +157,16 @@ export function BenchmarkTable({
                 );
 
                 return (
-                  <tr key={item.productId} className="group transition hover:bg-slate-800/40">
+                  <tr key={item.productId} className="group transition hover:bg-slate-50">
                     {/* 1. Product (Sticky Left) */}
-                    <td className="sticky left-0 z-10 bg-slate-900 px-4 py-3 group-hover:bg-slate-850">
+                    <td className="sticky left-0 z-10 bg-white px-4 py-3 group-hover:bg-slate-100">
                       <div className="flex items-center gap-3">
                         <ProductThumbnail url={item.thumbnailUrl} title={item.title} />
                         <div className="min-w-0">
                           <button
                             type="button"
                             onClick={() => onSelectProduct(item)}
-                            className="truncate text-left font-medium text-slate-100 transition hover:text-cyan-300 hover:underline focus:outline-none"
+                            className="truncate text-left font-medium text-slate-900 transition hover:text-blue-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-600/30"
                             title={item.title}
                           >
                             {item.title}
@@ -179,7 +179,7 @@ export function BenchmarkTable({
                               href={item.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-cyan-400 hover:text-cyan-200"
+                              className="text-blue-700 hover:text-blue-700"
                               title="Mở storefront"
                             >
                               ↗
@@ -195,15 +195,15 @@ export function BenchmarkTable({
                         <span
                           className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
                             item.currentVersion === "v0"
-                              ? "bg-slate-800 text-slate-300 border border-slate-700"
-                              : "bg-cyan-950 text-cyan-300 border border-cyan-800"
+                              ? "bg-slate-50 text-slate-700 border border-slate-300"
+                              : "bg-blue-50 text-blue-700 border border-blue-200"
                           }`}
                         >
                           {item.currentVersion}
                         </span>
                         {item.hasExternalDrift && (
                           <span
-                            className="rounded bg-amber-950/80 px-1.5 py-0.2 text-[10px] text-amber-300 border border-amber-800"
+                            className="rounded bg-amber-50 px-1.5 py-0.2 text-[10px] text-amber-700 border border-amber-200"
                             title="Nội dung trên storefront đã bị thay đổi ngoài snapshot"
                           >
                             External Drift
@@ -213,7 +213,7 @@ export function BenchmarkTable({
                           <button
                             type="button"
                             onClick={() => onSelectBatch?.(item.batchId!)}
-                            className="text-[11px] text-indigo-400 hover:underline"
+                            className="text-[11px] text-blue-700 hover:underline"
                             title={`Xem batch: ${item.batchId}`}
                           >
                             {item.batchId}
@@ -226,7 +226,7 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.seoAge != null ? (
                         <div>
-                          <span className="font-semibold text-slate-200">{item.seoAge}d</span>
+                          <span className="font-semibold text-slate-900">{item.seoAge}d</span>
                           <div className="text-[11px] text-slate-500">
                             {item.coverageDays}/{item.targetDays}d
                           </div>
@@ -238,20 +238,20 @@ export function BenchmarkTable({
 
                     {/* 4. Clicks Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-bold text-slate-100">
+                      <div className="font-bold text-slate-900">
                         {item.clicks.after.toLocaleString("vi-VN")}
                       </div>
                       <div className="text-xs">
                         {item.clicks.isNewActivity ? (
-                          <span className="text-cyan-300">New activity</span>
+                          <span className="text-blue-700">New activity</span>
                         ) : item.clicks.deltaAbsolute != null ? (
                           <span
                             className={
                               item.clicks.deltaAbsolute > 0
-                                ? "text-emerald-400"
+                                ? "text-emerald-700"
                                 : item.clicks.deltaAbsolute < 0
-                                  ? "text-rose-400"
-                                  : "text-slate-400"
+                                  ? "text-rose-700"
+                                  : "text-slate-600"
                             }
                           >
                             {item.clicks.deltaAbsolute > 0 ? "+" : ""}
@@ -265,7 +265,7 @@ export function BenchmarkTable({
 
                     {/* 5. Impressions Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-bold text-slate-100">
+                      <div className="font-bold text-slate-900">
                         {item.impressions.after.toLocaleString("vi-VN")}
                       </div>
                       <div className="text-xs">
@@ -273,10 +273,10 @@ export function BenchmarkTable({
                           <span
                             className={
                               item.impressions.deltaAbsolute > 0
-                                ? "text-emerald-400"
+                                ? "text-emerald-700"
                                 : item.impressions.deltaAbsolute < 0
-                                  ? "text-rose-400"
-                                  : "text-slate-400"
+                                  ? "text-rose-700"
+                                  : "text-slate-600"
                             }
                           >
                             {item.impressions.deltaAbsolute > 0 ? "+" : ""}
@@ -291,7 +291,7 @@ export function BenchmarkTable({
 
                     {/* 6. CTR Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-semibold text-slate-200">
+                      <div className="font-semibold text-slate-900">
                         {item.ctr.after != null ? `${(item.ctr.after * 100).toFixed(2)}%` : "—"}
                       </div>
                       <div className="text-xs">
@@ -299,10 +299,10 @@ export function BenchmarkTable({
                           <span
                             className={
                               item.ctr.deltaPercentagePoints > 0
-                                ? "text-emerald-400"
+                                ? "text-emerald-700"
                                 : item.ctr.deltaPercentagePoints < 0
-                                  ? "text-rose-400"
-                                  : "text-slate-400"
+                                  ? "text-rose-700"
+                                  : "text-slate-600"
                             }
                           >
                             {formatPp(item.ctr.deltaPercentagePoints)}
@@ -317,7 +317,7 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.position.after != null ? (
                         <div>
-                          <div className="text-xs text-slate-300">
+                          <div className="text-xs text-slate-700">
                             {item.position.before != null
                               ? `${item.position.before.toFixed(1)} → ${item.position.after.toFixed(1)}`
                               : item.position.after.toFixed(1)}
@@ -327,10 +327,10 @@ export function BenchmarkTable({
                               <span
                                 className={
                                   item.position.improvement > 0
-                                    ? "text-emerald-400 font-medium"
+                                    ? "text-emerald-700 font-medium"
                                     : item.position.improvement < 0
-                                      ? "text-rose-400 font-medium"
-                                      : "text-slate-400"
+                                      ? "text-rose-700 font-medium"
+                                      : "text-slate-600"
                                 }
                               >
                                 {item.position.improvement > 0 ? "+" : ""}
@@ -348,16 +348,16 @@ export function BenchmarkTable({
 
                     {/* 8. Queries Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-semibold text-slate-200">{item.queries.afterCount}</div>
+                      <div className="font-semibold text-slate-900">{item.queries.afterCount}</div>
                       <div className="text-xs">
                         {item.queries.delta != null ? (
                           <span
                             className={
                               item.queries.delta > 0
-                                ? "text-emerald-400"
+                                ? "text-emerald-700"
                                 : item.queries.delta < 0
-                                  ? "text-rose-400"
-                                  : "text-slate-400"
+                                  ? "text-rose-700"
+                                  : "text-slate-600"
                             }
                             title={`Mới: +${item.queries.newlyObserved} · Mất: -${item.queries.noLongerObserved} · Trùng khớp: ${item.queries.matchedCount}`}
                           >
@@ -374,14 +374,14 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.organicSessions.isGscQueryFilterApplied ? (
                         <span
-                          className="text-[11px] text-amber-400 italic"
+                          className="text-[11px] text-amber-700 italic"
                           title="GSC query filter is not supported by this GA4 report (Rule 12.7: từ khóa GSC không map trực tiếp vào phiên GA4)"
                         >
                           N/A (Query filter)
                         </span>
                       ) : item.organicSessions.after != null ? (
                         <div>
-                          <div className="font-semibold text-slate-200">
+                          <div className="font-semibold text-slate-900">
                             {item.organicSessions.after.toLocaleString("vi-VN")}
                           </div>
                           <div className="text-xs">
@@ -389,10 +389,10 @@ export function BenchmarkTable({
                               <span
                                 className={
                                   item.organicSessions.deltaAbsolute > 0
-                                    ? "text-emerald-400"
+                                    ? "text-emerald-700"
                                     : item.organicSessions.deltaAbsolute < 0
-                                      ? "text-rose-400"
-                                      : "text-slate-400"
+                                      ? "text-rose-700"
+                                      : "text-slate-600"
                                 }
                               >
                                 {item.organicSessions.deltaAbsolute > 0 ? "+" : ""}
@@ -420,13 +420,13 @@ export function BenchmarkTable({
                     </td>
 
                     {/* 11. Action (Sticky Right) */}
-                    <td className="sticky right-0 z-10 bg-slate-900 px-4 py-3 text-center group-hover:bg-slate-850">
+                    <td className="sticky right-0 z-10 bg-white px-4 py-3 text-center group-hover:bg-slate-100">
                       {item.action.type === "SEND_TO_AUTO_SEO" ? (
                         <button
                           type="button"
                           onClick={() => onSendToAutoSeo?.(item)}
                           disabled={!item.action.enabled || loading}
-                          className="rounded-lg border border-cyan-500 bg-cyan-950/60 px-2.5 py-1.5 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:opacity-40"
+                          className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo draft yêu cầu Auto-SEO qua checkpoint"}
                         >
                           Send to Auto-SEO
@@ -436,7 +436,7 @@ export function BenchmarkTable({
                           type="button"
                           onClick={() => (onAutoSeo ? onAutoSeo(item) : onSelectProduct(item))}
                           disabled={!item.action.enabled || loading}
-                          className="rounded-lg border border-indigo-500 bg-indigo-950/60 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-900 disabled:opacity-40"
+                          className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo Auto-SEO cho sản phẩm baseline v0"}
                         >
                           {item.action.label}
@@ -446,7 +446,7 @@ export function BenchmarkTable({
                           type="button"
                           onClick={() => onSelectProduct(item)}
                           disabled={loading}
-                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-white disabled:opacity-40"
+                          className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-40"
                         >
                           {item.action.label}
                         </button>

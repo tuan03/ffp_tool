@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { Button } from "../../shared/components/Button";
+import { PageHeader } from "../../shared/components/PageHeader";
 import type { WorkflowInput, WorkflowOutput } from "../../modules/orchestrator";
 
 interface HomePageProps {
@@ -20,20 +22,16 @@ export function HomePage({ runWorkflow }: HomePageProps): React.JSX.Element {
 
   return (
     <>
-      <h1 className="mt-5 text-4xl font-bold tracking-tight">Hello, world!</h1>
-      <p className="mt-4 text-lg leading-8 text-slate-300">
-        React, TypeScript, Vite, and Tailwind are ready. Business modules remain isolated
-        under <code className="rounded bg-slate-800 px-1.5 py-0.5 text-sm text-cyan-300">src/modules</code>.
-      </p>
-      <button
-        className="mt-6 rounded-lg bg-cyan-400 px-4 py-2 font-semibold text-slate-950 transition hover:bg-cyan-300"
-        type="button"
+      <PageHeader title="Workflow demo" description="Chạy quy trình mẫu để kiểm tra kết nối giữa các module." />
+      <Button
+        className="mt-6"
+        variant="primary"
         onClick={() => void handleRunWorkflow()}
       >
-        Run workflow
-      </button>
+        Chạy quy trình mẫu
+      </Button>
       {result === null ? null : (
-        <pre className="mt-6 overflow-x-auto rounded-lg bg-slate-950 p-4 text-left text-xs leading-6 text-cyan-100">
+        <pre className="mt-6 overflow-x-auto rounded-lg bg-white p-4 text-left text-xs leading-6 text-blue-700">
           {JSON.stringify(result, null, 2)}
         </pre>
       )}

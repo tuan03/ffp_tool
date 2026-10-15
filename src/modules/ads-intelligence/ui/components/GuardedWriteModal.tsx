@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 
+import { AppIcon } from "../../../../shared/components/AppIcon";
 export interface GuardedWriteProposal {
   readonly proposalId: string;
   readonly action: "PAUSE" | "ADJUST_BUDGET";
@@ -40,26 +41,26 @@ export function GuardedWriteModal({
   const isBudget = proposal.action === "ADJUST_BUDGET";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="w-full max-w-lg rounded-lg border border-slate-300 bg-white p-6 shadow-sm space-y-5 animate-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-500 to-rose-600 text-xl shadow-lg">
-              🛡️
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-xl shadow-sm">
+              <AppIcon name="lock" />
             </span>
             <div>
-              <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 Xác nhận Guarded Write (Ghi có kiểm soát)
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-600">
                 Thao tác thay đổi trực tiếp tài khoản quảng cáo Meta
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg text-lg cursor-pointer"
+            className="text-slate-600 hover:text-slate-900 p-1 rounded-lg text-lg cursor-pointer"
             aria-label="Đóng"
           >
             ✕
@@ -70,10 +71,10 @@ export function GuardedWriteModal({
         {executionResult ? (
           <div className="space-y-4">
             <div
-              className={`p-4 rounded-xl border ${
+              className={`p-4 rounded-lg border ${
                 executionResult.success
-                  ? "bg-emerald-950/60 border-emerald-800 text-emerald-200"
-                  : "bg-rose-950/60 border-rose-800 text-rose-200"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                  : "bg-rose-50 border-rose-200 text-rose-700"
               }`}
             >
               <div className="font-bold text-sm flex items-center gap-2">
@@ -81,7 +82,7 @@ export function GuardedWriteModal({
               </div>
               <p className="text-xs mt-1 leading-relaxed">{executionResult.message}</p>
               {executionResult.auditLogId && (
-                <div className="text-[11px] font-mono mt-2 text-slate-400">
+                <div className="text-[11px] font-mono mt-2 text-slate-600">
                   Mã kiểm toán (Audit ID): {executionResult.auditLogId}
                 </div>
               )}
@@ -91,7 +92,7 @@ export function GuardedWriteModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs font-semibold cursor-pointer"
+                className="px-4 py-2 rounded-lg bg-slate-50 text-slate-900 hover:bg-slate-100 text-xs font-semibold cursor-pointer"
               >
                 Đóng cửa sổ
               </button>
@@ -101,14 +102,14 @@ export function GuardedWriteModal({
           /* Verification & Details Form */
           <div className="space-y-4">
             {/* Diff details */}
-            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Loại hành động:</span>
+                <span className="text-slate-600">Loại hành động:</span>
                 <span
                   className={`font-mono font-bold px-2 py-0.5 rounded ${
                     isPause
-                      ? "bg-rose-950 text-rose-300 border border-rose-800"
-                      : "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                      ? "bg-rose-50 text-rose-700 border border-rose-200"
+                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                   }`}
                 >
                   {proposal.action}
@@ -116,38 +117,38 @@ export function GuardedWriteModal({
               </div>
 
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Đối tượng tác động:</span>
-                <span className="font-semibold text-slate-200">
+                <span className="text-slate-600">Đối tượng tác động:</span>
+                <span className="font-semibold text-slate-900">
                   {proposal.targetName} ({proposal.targetType}: {proposal.targetId})
                 </span>
               </div>
 
               {isBudget && (
-                <div className="flex items-center justify-between text-xs bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-                  <span className="text-slate-400">Điều chỉnh ngân sách:</span>
+                <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-200">
+                  <span className="text-slate-600">Điều chỉnh ngân sách:</span>
                   <div className="flex items-center gap-2 font-mono font-bold">
-                    <span className="text-slate-400">${proposal.currentBudget}/ngày</span>
-                    <span className="text-cyan-400">&rarr;</span>
-                    <span className="text-emerald-400">${proposal.proposedBudget}/ngày</span>
-                    <span className="text-[10px] text-emerald-500 font-normal">(+20% max)</span>
+                    <span className="text-slate-600">${proposal.currentBudget}/ngày</span>
+                    <span className="text-blue-700">&rarr;</span>
+                    <span className="text-emerald-700">${proposal.proposedBudget}/ngày</span>
+                    <span className="text-[10px] text-emerald-700 font-normal">(+20% max)</span>
                   </div>
                 </div>
               )}
 
               <div className="space-y-1 text-xs">
-                <span className="text-slate-400">Lý do & Bằng chứng:</span>
-                <div className="text-slate-300 bg-slate-900 p-2 rounded border border-slate-800 text-[11px] leading-relaxed">
+                <span className="text-slate-600">Lý do & Bằng chứng:</span>
+                <div className="text-slate-700 bg-white p-2 rounded border border-slate-200 text-[11px] leading-relaxed">
                   {proposal.reason}
                 </div>
               </div>
             </div>
 
             {/* Safety Safeguards Alert */}
-            <div className="rounded-xl border border-amber-900/60 bg-amber-950/30 p-3 text-xs text-amber-200/90 space-y-1">
-              <div className="font-semibold text-amber-300 flex items-center gap-1.5">
-                <span>🛡️</span> Hàng rào an toàn 3 lớp (Safety Fence)
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 space-y-1">
+              <div className="font-semibold text-amber-700 flex items-center gap-1.5">
+                <span><AppIcon name="lock" /></span> Hàng rào an toàn 3 lớp (Safety Fence)
               </div>
-              <ul className="text-[11px] text-amber-200/80 list-disc list-inside space-y-0.5">
+              <ul className="text-[11px] text-amber-700 list-disc list-inside space-y-0.5">
                 <li>Giới hạn ngân sách tối đa +20% mỗi lần tăng.</li>
                 <li>Kiểm tra độ trôi trạng thái (State drift check) trước khi ghi.</li>
                 <li>Tự động ghi sổ nhật ký kiểm toán (Audit Trail) có chữ ký số.</li>
@@ -155,12 +156,12 @@ export function GuardedWriteModal({
             </div>
 
             {/* Confirmation checkbox */}
-            <label className="flex items-center gap-2.5 text-xs text-slate-200 cursor-pointer pt-1">
+            <label className="flex items-center gap-2.5 text-xs text-slate-900 cursor-pointer pt-1">
               <input
                 type="checkbox"
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
-                className="rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500/20 h-4 w-4"
+                className="rounded border-slate-300 bg-white text-blue-700 focus:ring-blue-300 h-4 w-4"
               />
               <span>
                 Tôi đã kiểm tra số liệu và đồng ý thực hiện hành động này trên tài khoản quảng cáo.
@@ -168,12 +169,12 @@ export function GuardedWriteModal({
             </label>
 
             {/* Actions */}
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={executing}
-                className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-700 transition cursor-pointer"
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
               >
                 Hủy bỏ
               </button>
@@ -183,13 +184,13 @@ export function GuardedWriteModal({
                 disabled={!confirmed || executing}
                 className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
                   !confirmed || executing
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed opacity-60"
+                    ? "bg-slate-50 text-slate-500 cursor-not-allowed opacity-60"
                     : isPause
-                    ? "bg-gradient-to-r from-rose-600 to-red-600 text-white hover:from-rose-500 hover:to-red-500 shadow-lg shadow-rose-900/30"
-                    : "bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 shadow-lg shadow-emerald-900/30"
+                    ? "bg-blue-600 text-white shadow-sm "
+                    : "bg-blue-600 text-white shadow-sm "
                 }`}
               >
-                {executing && <span className="inline-block animate-spin">🔄</span>}
+                {executing && <span className="inline-block animate-spin"><AppIcon name="refresh" /></span>}
                 <span>{executing ? "Đang ghi an toàn..." : isPause ? "Xác nhận Tắt" : "Xác nhận Điều chỉnh"}</span>
               </button>
             </div>

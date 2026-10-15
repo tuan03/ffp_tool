@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { AppIcon } from "../../shared/components/AppIcon";
+import { PageHeader } from "../../shared/components/PageHeader";
 import { environment } from "../../config/environment";
 import { getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { adaptCustomGptReview, loadAllCustomGptReviewRecords } from "./custom-gpt-review";
@@ -532,7 +534,7 @@ export function SeoReviewPage({
         // ignore
       }
     }
-    return "cards";
+    return "split";
   });
 
   const [expandedTableIds, setExpandedTableIds] = useState<ReadonlySet<string>>(new Set());
@@ -2276,40 +2278,25 @@ export function SeoReviewPage({
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 text-lg shadow-lg shadow-cyan-500/20">
-              📝
-            </span>
-            <h1 className="text-xl font-bold tracking-tight text-slate-100">
-              SEO Content Review
-            </h1>
-          </div>
-          <p className="mt-1 text-xs text-slate-400">
-            Xem xét, tinh chỉnh và phê duyệt kết quả tối ưu SEO cho sản phẩm trước khi đồng bộ lên Shopify.
-          </p>
-        </div>
-
-      </div>
+      <PageHeader title="SEO Review" description="Xem, chỉnh sửa và phê duyệt nội dung SEO trước khi đồng bộ lên Shopify." />
 
       {/* Viewing store selection never changes a product's immutable publish destination. */}
-      <div className="flex flex-col gap-3 rounded-xl border border-teal-800/40 bg-gradient-to-r from-slate-900/95 via-slate-900/80 to-teal-950/30 p-3.5 shadow-sm">
+      <div className="flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3.5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-500/20 text-teal-300 text-sm">
-              🏪
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-700 text-sm">
+              <AppIcon name="store" />
             </span>
-            <span className="text-sm font-semibold text-slate-200">
+            <span className="text-sm font-semibold text-slate-900">
               <label htmlFor="review-store">Store đang xem:</label>
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-500/40 bg-teal-500/10 px-2.5 py-1 font-mono text-xs font-bold text-teal-300">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 font-mono text-xs font-bold text-blue-700">
               <span>{effectiveStoreId.toUpperCase()}</span>
-              <span className="text-[10px] text-slate-400 font-normal">
+              <span className="text-[10px] text-slate-600 font-normal">
                 ({availableStores.find((s) => s.storeId.toLowerCase() === effectiveStoreId.toLowerCase())?.shopDomain || effectiveStoreId})
               </span>
             </span>
-            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
               onChange={event => {
                 const nextStore = event.target.value;
                 setSelectedIds(new Set()); setActiveProduct(null); setIsDrawerOpen(false); setIsEditModalOpen(false);
@@ -2319,12 +2306,12 @@ export function SeoReviewPage({
               {!availableStores.some(store => store.storeId === effectiveStoreId) && <option value={effectiveStoreId}>{effectiveStoreId}</option>}
               {availableStores.map(store => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
             </select>
-            <span className="text-xs text-slate-400">Đổi store để xem; store đích của từng sản phẩm được giữ nguyên.</span>
+            <span className="text-xs text-slate-600">Đổi store để xem; store đích của từng sản phẩm được giữ nguyên.</span>
           </div>
 
-          <div className="text-xs text-slate-400 flex items-center gap-2">
+          <div className="text-xs text-slate-600 flex items-center gap-2">
             <span>Trang hiện tại:</span>
-            <span className="font-mono text-cyan-300 font-semibold bg-slate-800/90 px-2.5 py-1 rounded border border-slate-700">
+            <span className="font-mono text-blue-700 font-semibold bg-slate-50 px-2.5 py-1 rounded border border-slate-300">
               {storeScopedProducts.length} sản phẩm
             </span>
           </div>
@@ -2332,7 +2319,7 @@ export function SeoReviewPage({
 
         {/* Other stores that have products in review queue */}
         {otherStoresWithProducts.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/60 text-xs text-slate-400">
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200 text-xs text-slate-600">
             <span className="text-slate-500">Các store khác có bản Review:</span>
             {otherStoresWithProducts.map((os) => (
               <button
@@ -2342,14 +2329,14 @@ export function SeoReviewPage({
                   persistBrowserActiveStoreId(os.storeId);
                   navigate(`/seo-review?storeId=${encodeURIComponent(os.storeId)}`);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 font-mono text-[11px] text-cyan-300 hover:border-cyan-500 hover:bg-slate-700 transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1 font-mono text-[11px] text-blue-700 hover:border-blue-300 hover:bg-slate-100 transition cursor-pointer"
                 title={`Chuyển sang xem danh sách review của store ${os.storeId.toUpperCase()}`}
               >
-                <span>🏪 {os.storeId.toUpperCase()}</span>
-                <span className="rounded bg-cyan-950 px-1.5 py-0.2 text-[10px] text-cyan-400 font-bold border border-cyan-800">
+                <span><AppIcon name="store" /> {os.storeId.toUpperCase()}</span>
+                <span className="rounded bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue-700 font-bold border border-blue-200">
                   {os.count} sp
                 </span>
-                <span className="text-slate-400">➔</span>
+                <span className="text-slate-600">➔</span>
               </button>
             ))}
           </div>
@@ -2357,16 +2344,16 @@ export function SeoReviewPage({
       </div>
 
       {/* Batch Actions & Filters Toolbar */}
-      {environment !== "mock" && <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
+      {environment !== "mock" && <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
         <span>{catalog.isLoading ? "Đang tải danh sách Review…" : `${catalog.catalog?.total ?? 0} kết quả · Trang ${catalog.page} · Các thao tác hàng loạt áp dụng cho trang hiện tại`}</span>
         <div className="flex gap-2">
-          <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40">Trang trước</button>
-          <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-700 px-3 py-1 disabled:opacity-40">Trang sau</button>
-          <button type="button" onClick={() => { setPinnedReviewIds(new Set()); catalog.refresh(); }} className="rounded border border-slate-700 px-3 py-1">Làm mới</button>
+          <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-300 px-3 py-1 disabled:opacity-40">Trang trước</button>
+          <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-300 px-3 py-1 disabled:opacity-40">Trang sau</button>
+          <button type="button" onClick={() => { setPinnedReviewIds(new Set()); catalog.refresh(); }} className="rounded border border-slate-300 px-3 py-1">Làm mới</button>
         </div>
-        {catalog.error && <p role="alert" className="w-full text-rose-300">{catalog.error} <button type="button" onClick={catalog.refresh}>Thử lại</button></p>}
+        {catalog.error && <p role="alert" className="w-full text-rose-700">{catalog.error} <button type="button" onClick={catalog.refresh}>Thử lại</button></p>}
       </div>}
-      {isDetailLoading && <p role="status" className="text-sm text-cyan-300">Đang tải chi tiết sản phẩm…</p>}
+      {isDetailLoading && <p role="status" className="text-sm text-blue-700">Đang tải chi tiết sản phẩm…</p>}
       <SeoBatchToolbar
         counts={workspaceCounts} workspace={workspace} filter={filter} viewMode={viewMode}
         selectedCount={selectedIds.size} approvableCount={selectedActionCounts.approve}
@@ -2381,30 +2368,30 @@ export function SeoReviewPage({
 
       {/* Review Content View based on active viewMode */}
       {filteredProducts.length === 0 ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-800/80 text-2xl text-slate-400 border border-slate-700/50 shadow-inner">
-            📝
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-lg bg-slate-50 text-2xl text-slate-600 border border-slate-300 shadow-inner">
+            <AppIcon name="review" />
           </div>
-          <h3 className="mt-4 text-base font-bold text-slate-200">
+          <h3 className="mt-4 text-base font-bold text-slate-900">
             {catalog.isLoading ? "Đang tải Review…" : workspace === "synced" ? "Chưa có sản phẩm đã sync phù hợp" : "Không có sản phẩm Review phù hợp"}
           </h3>
-          <p className="mt-2 text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+          <p className="mt-2 text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
             {workspace === "synced" ? "Sản phẩm sync thành công sẽ xuất hiện ở đây và vẫn xem được trong Tất cả."
               : "Chọn Tất cả để xem cả bản đã sync hoặc lưu trữ; bản sẵn sàng có thể Sync ngay, không cần duyệt."}
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
             <a
               href="/amazon-crawler"
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/20 hover:from-cyan-500 hover:to-blue-500 transition"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition"
             >
-              <span>⚡ Distributed Crawler</span>
+              <span><AppIcon name="seo" /> Distributed Crawler</span>
               <span>➔</span>
             </a>
             <a
               href="/pinterest-pod"
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-pink-600/20 hover:from-pink-500 hover:to-rose-500 transition"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition"
             >
-              <span>🎨 Pinterest POD Studio</span>
+              <span><AppIcon name="image" /> Pinterest POD Studio</span>
               <span>➔</span>
             </a>
           </div>

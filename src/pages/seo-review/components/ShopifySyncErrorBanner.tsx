@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { AppIcon } from "../../../shared/components/AppIcon";
 export interface ShopifySyncErrorBannerProps {
   readonly error?: string;
   readonly syncedAt?: number;
@@ -43,32 +44,32 @@ export function ShopifySyncErrorBanner({
 
   return (
     <div
-      className={`rounded-xl border border-rose-500/40 bg-gradient-to-r from-rose-950/60 to-rose-900/40 p-3.5 text-xs text-rose-200 shadow-sm transition-all ${className}`}
+      className={`rounded-lg border border-rose-300 bg-blue-50 p-3.5 text-xs text-rose-700 shadow-sm transition-all ${className}`}
     >
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div className="flex items-start gap-2.5 min-w-0 flex-1">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-rose-500/20 text-rose-400 font-bold text-sm">
-            ⚠️
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-700 font-bold text-sm">
+            <AppIcon name="warning" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-rose-200">{title}</span>
+              <span className="font-semibold text-rose-700">{title}</span>
               {formattedTime && (
-                <span className="text-[10px] text-rose-400/80 font-mono">
+                <span className="text-[10px] text-rose-700 font-mono">
                   (lúc {formattedTime})
                 </span>
               )}
             </div>
 
             {/* Error Message Box */}
-            <div className="mt-1.5 rounded-lg bg-slate-950/80 border border-rose-900/60 p-2 font-mono text-[11px] text-rose-300 leading-relaxed break-words select-all">
+            <div className="mt-1.5 rounded-lg bg-slate-50 border border-rose-200 p-2 font-mono text-[11px] text-rose-700 leading-relaxed break-words select-all">
               {isMultiLine && !isExpanded ? (
                 <>
                   <div className="line-clamp-2">{errorMessage}</div>
                   <button
                     type="button"
                     onClick={() => setIsExpanded(true)}
-                    className="mt-1 text-[10px] font-semibold text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                    className="mt-1 text-[10px] font-semibold text-blue-700 hover:text-blue-700 underline cursor-pointer"
                   >
                     Xem chi tiết lỗi đầy đủ ▾
                   </button>
@@ -80,7 +81,7 @@ export function ShopifySyncErrorBanner({
                     <button
                       type="button"
                       onClick={() => setIsExpanded(false)}
-                      className="mt-1 text-[10px] font-semibold text-slate-400 hover:text-slate-300 underline cursor-pointer"
+                      className="mt-1 text-[10px] font-semibold text-slate-600 hover:text-slate-700 underline cursor-pointer"
                     >
                       Thu gọn ▴
                     </button>
@@ -96,7 +97,7 @@ export function ShopifySyncErrorBanner({
           <button
             type="button"
             onClick={handleCopy}
-            className="rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 px-2 py-1 text-[11px] font-medium text-slate-300 hover:text-white transition flex items-center gap-1"
+            className="rounded-lg bg-slate-50 hover:bg-slate-50 border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-slate-900 transition flex items-center gap-1"
             title="Sao chép toàn bộ thông báo lỗi"
           >
             <span>{copied ? "✓" : "📋"}</span>
@@ -108,12 +109,12 @@ export function ShopifySyncErrorBanner({
               type="button"
               onClick={onRetry}
               disabled={isRetrying}
-              className="rounded-lg bg-rose-700 hover:bg-rose-600 disabled:opacity-50 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm shadow-rose-900/40 transition flex items-center gap-1 cursor-pointer"
+              className="rounded-lg bg-rose-50 hover:bg-rose-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm transition flex items-center gap-1 cursor-pointer"
               title="Thử đồng bộ lại sản phẩm này lên Shopify"
             >
               {isRetrying ? (
                 <>
-                  <svg className="animate-spin h-3 w-3 text-white" viewBox="0 0 24 24" fill="none">
+                  <svg className="animate-spin h-3 w-3 text-slate-900" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                   </svg>
@@ -121,7 +122,7 @@ export function ShopifySyncErrorBanner({
                 </>
               ) : (
                 <>
-                  <span>🔄</span>
+                  <span><AppIcon name="refresh" /></span>
                   <span>Thử lại</span>
                 </>
               )}

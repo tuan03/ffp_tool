@@ -36,17 +36,17 @@ export function AssetInspector({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-200">
+        <h3 className="text-sm font-bold text-slate-900">
           Tài Nguyên CDN ({assets.length})
         </h3>
-        <div className="text-xs font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-800/60 px-2.5 py-1 rounded-lg">
+        <div className="text-xs font-mono text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
           {trackedFileIds.length} Files tracked
         </div>
       </div>
 
       {/* Add New Asset Form */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-3">
-        <span className="text-xs font-medium text-slate-300">Thêm Asset mới thủ công:</span>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-3">
+        <span className="text-xs font-medium text-slate-700">Thêm Asset mới thủ công:</span>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
           <div className="md:col-span-2">
             <input
@@ -54,7 +54,7 @@ export function AssetInspector({
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
               placeholder="Shopify CDN URL (https://cdn.shopify.com/...)"
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
             />
           </div>
           <div>
@@ -63,14 +63,14 @@ export function AssetInspector({
               value={newAlt}
               onChange={(e) => setNewAlt(e.target.value)}
               placeholder="Mô tả alt..."
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
             />
           </div>
           <div className="flex gap-2">
             <select
               value={newRole}
               onChange={(e) => setNewRole(e.target.value)}
-              className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+              className="flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
             >
               <option value="preview">preview</option>
               <option value="mockup">mockup</option>
@@ -81,7 +81,7 @@ export function AssetInspector({
               type="button"
               onClick={handleAddAsset}
               disabled={!newUrl.trim()}
-              className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-cyan-500 disabled:opacity-40 transition cursor-pointer"
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-40 transition cursor-pointer"
             >
               Thêm
             </button>
@@ -91,8 +91,8 @@ export function AssetInspector({
 
       {/* Asset Cards Grid */}
       {assets.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/30 p-8 text-center">
-          <p className="text-xs text-slate-400">Không có asset nào trong cấu hình.</p>
+        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+          <p className="text-xs text-slate-600">Không có asset nào trong cấu hình.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -101,11 +101,11 @@ export function AssetInspector({
             return (
               <div
                 key={`${asset.url}-${index}`}
-                className="group relative flex flex-col justify-between overflow-hidden rounded-xl border border-slate-800 bg-slate-900/50 p-3 hover:border-slate-700 transition"
+                className="group relative flex flex-col justify-between overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-3 hover:border-slate-300 transition"
               >
                 <div className="flex items-start gap-3">
                   {/* Thumbnail */}
-                  <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-950 flex items-center justify-center">
+                  <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-white flex items-center justify-center">
                     <img
                       src={asset.url}
                       alt={asset.alt || `Asset ${index + 1}`}
@@ -122,19 +122,19 @@ export function AssetInspector({
                       {(asset.roles || ["asset"]).map((role: string) => (
                         <span
                           key={role}
-                          className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-cyan-400 uppercase tracking-wider"
+                          className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 uppercase tracking-wider"
                         >
                           {role}
                         </span>
                       ))}
                       {hasGid && (
-                        <span className="rounded bg-emerald-950/80 border border-emerald-800 px-1.5 py-0.5 text-[10px] text-emerald-300">
+                        <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] text-emerald-700">
                           Tracked
                         </span>
                       )}
                     </div>
 
-                    <p className="text-xs font-medium text-slate-200 truncate">
+                    <p className="text-xs font-medium text-slate-900 truncate">
                       {asset.alt || `Asset ${index + 1}`}
                     </p>
 
@@ -143,7 +143,7 @@ export function AssetInspector({
                     </p>
 
                     {hasGid && (
-                      <p className="text-[10px] font-mono text-slate-600 truncate mt-0.5">
+                      <p className="text-[10px] font-mono text-slate-500 truncate mt-0.5">
                         GID: {hasGid}
                       </p>
                     )}
@@ -151,19 +151,19 @@ export function AssetInspector({
                 </div>
 
                 {/* Footer Actions */}
-                <div className="mt-3 flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px]">
+                <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-2 text-[11px]">
                   <a
                     href={asset.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1"
+                    className="text-blue-700 hover:text-blue-700 hover:underline flex items-center gap-1"
                   >
                     Xem ảnh gốc ↗
                   </a>
                   <button
                     type="button"
                     onClick={() => handleRemoveAsset(index)}
-                    className="text-rose-400 hover:text-rose-300 transition"
+                    className="text-rose-700 hover:text-rose-700 transition"
                   >
                     Xóa asset
                   </button>

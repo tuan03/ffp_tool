@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+
+import { AppIcon } from "../../../../shared/components/AppIcon";
 import type { AdsGatewayStore, AdsStoreSummary } from "../../types";
 
 export interface AdsHeaderProps {
@@ -27,52 +29,46 @@ export function AdsHeader({
   const [showMaturityTooltip, setShowMaturityTooltip] = useState(false);
 
   return (
-    <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-800 pb-4">
+    <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-200 pb-4">
       {/* Brand & Store Identity */}
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 text-xl shadow-lg shadow-cyan-500/20">
-          🎯
-        </div>
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-lg font-bold text-slate-100 tracking-tight">Ads Intelligence</h1>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-400 border border-cyan-800/80 font-mono font-semibold">
-              V1 Pro
-            </span>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Ads Intelligence</h1>
 
             {/* Compact Maturity Pill with Hover Tooltip */}
             <div className="relative inline-block">
-              {!summary ? <span className="text-xs text-slate-400">Chưa xác định kỳ báo cáo</span> : summary.maturity === "PROVISIONAL" ? (
+              {!summary ? <span className="text-xs text-slate-600">Chưa xác định kỳ báo cáo</span> : summary.maturity === "PROVISIONAL" ? (
                 <button
                   type="button"
                   onMouseEnter={() => setShowMaturityTooltip(true)}
                   onMouseLeave={() => setShowMaturityTooltip(false)}
                   onClick={() => setShowMaturityTooltip((v) => !v)}
-                  className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/70 hover:bg-amber-900/60 transition cursor-help font-medium"
+                  className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-50 transition cursor-help font-medium"
                 >
-                  <span>⚠️</span>
+                  <span><AppIcon name="warning" /></span>
                   <span>Chưa đủ 7 ngày (Provisional)</span>
                 </button>
               ) : (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-800/70 font-medium">
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
                   Kỳ báo cáo đã qua 7 ngày
                 </span>
               )}
 
               {showMaturityTooltip && (
-                <div className="absolute left-0 top-full mt-1.5 z-50 w-72 p-2.5 rounded-lg bg-slate-900 text-xs text-slate-200 border border-amber-800/60 shadow-xl space-y-1">
-                  <div className="font-semibold text-amber-300 flex items-center gap-1.5">
-                    <span>🛡️</span> Cổng kiểm soát độ chín chuyển đổi
+                <div className="absolute left-0 top-full mt-1.5 z-50 w-72 p-2.5 rounded-lg bg-white text-xs text-slate-900 border border-amber-200 shadow-sm space-y-1">
+                  <div className="font-semibold text-amber-700 flex items-center gap-1.5">
+                    <span><AppIcon name="lock" /></span> Cổng kiểm soát độ chín chuyển đổi
                   </div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                  <p className="text-[11px] text-slate-700 leading-relaxed">
                     Kỳ báo cáo ({summary?.periodStart} → {summary?.periodEnd}) kết thúc trong vòng 7 ngày gần nhất. Chuyển đổi Meta và hoàn tiền Shopify chưa đóng sổ hoàn toàn. Quyết định scale lớn bị khóa an toàn.
                   </p>
                 </div>
               )}
             </div>
           </div>
-          <p className="text-xs text-slate-400">
-            Đo đúng → So sánh đúng → Phân tích chuyển đổi & Quyết định tăng trưởng
+          <p className="mt-1.5 text-sm text-slate-600">
+            Theo dõi quảng cáo, đối soát chuyển đổi và nghiên cứu đối thủ theo từng store.
           </p>
         </div>
       </div>
@@ -80,13 +76,13 @@ export function AdsHeader({
       {/* Control Actions & Store Switcher */}
       <div className="flex items-center gap-2.5 flex-wrap">
         {/* Source status indicator pill */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px]">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px]">
           <span
             className={`inline-block h-2 w-2 rounded-full ${
-              !summary ? "bg-slate-500" : summary.fromCache ? "bg-amber-400" : "bg-emerald-400"
+              !summary ? "bg-slate-200" : summary.fromCache ? "bg-amber-700" : "bg-emerald-700"
             }`}
           />
-          <span className="text-slate-300 font-medium">
+          <span className="text-slate-700 font-medium">
             {!summary ? "Chưa có dữ liệu Meta" : summary.fromCache ? "Dữ liệu đã lưu tạm" : "Meta API"}
           </span>
           {summary?.cachedAt && (
@@ -104,7 +100,7 @@ export function AdsHeader({
           value={currentStoreId}
           onChange={(e) => onStoreChange(e.target.value)}
           aria-label="Chọn cửa hàng"
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-cyan-300 font-medium focus:outline-none focus:border-cyan-500 cursor-pointer shadow-sm"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-blue-700 font-medium focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 cursor-pointer shadow-sm"
         >
           {stores.map(store => <option key={store.storeId} value={store.storeId}>{store.storeId} · {store.shopDomain}{store.hasProxy ? " · Proxy" : ""}</option>)}
         </select>
@@ -113,10 +109,10 @@ export function AdsHeader({
         <button
           type="button"
           onClick={onOpenMcp}
-          className="flex items-center gap-1 rounded-lg border border-purple-500/50 bg-purple-950/40 px-2.5 py-1.5 text-xs font-semibold text-purple-200 hover:bg-purple-900/40 hover:border-purple-400 hover:text-white transition cursor-pointer"
+          className="flex items-center gap-1 rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 hover:border-blue-300 hover:text-slate-900 transition cursor-pointer"
           title="Xem thông số kết nối Model Context Protocol (MCP) và Custom GPT"
         >
-          <span>🤖</span>
+          <span><AppIcon name="code" /></span>
           <span>MCP</span>
         </button>
 
@@ -125,10 +121,10 @@ export function AdsHeader({
           <button
             type="button"
             onClick={onOpenProfile}
-            className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:border-slate-500 hover:text-white transition cursor-pointer"
+            className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900 transition cursor-pointer"
             title="Cấu hình tài khoản Meta Ads, GA4 và Target CPA cho store này"
           >
-            <span>⚙️</span>
+            <span><AppIcon name="settings" /></span>
             <span>Cấu hình Ads</span>
           </button>
         )}
@@ -140,12 +136,12 @@ export function AdsHeader({
           disabled={syncing}
           className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
             syncing
-              ? "border-cyan-700 bg-cyan-950/60 text-cyan-300 cursor-not-allowed opacity-80"
-              : "border-cyan-500/60 bg-gradient-to-r from-cyan-950 to-blue-950 text-cyan-200 hover:border-cyan-400 hover:text-white hover:shadow-md hover:shadow-cyan-500/20 active:scale-95"
+              ? "border-blue-200 bg-blue-50 text-blue-700 cursor-not-allowed opacity-80"
+              : "border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-300 hover:text-slate-900 hover:shadow-md active:scale-95"
           }`}
           title="Xóa cache và gọi live Meta & GA4 API ngay lập tức"
         >
-          <span className={syncing ? "inline-block animate-spin" : ""}>🔄</span>
+          <span className={syncing ? "inline-block animate-spin" : ""}><AppIcon name="refresh" /></span>
           <span>{syncing ? "Đang đồng bộ..." : "Đồng bộ mới"}</span>
         </button>
       </div>

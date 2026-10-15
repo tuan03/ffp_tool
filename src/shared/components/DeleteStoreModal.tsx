@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { AppIcon } from "./AppIcon";
 export interface DeleteStoreModalProps {
   readonly isOpen: boolean;
   readonly storeId: string;
@@ -54,9 +55,9 @@ export function DeleteStoreModal({
         }
       }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
+      <div className="w-full max-w-md rounded-lg border border-rose-300 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-700">
             <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -66,24 +67,24 @@ export function DeleteStoreModal({
             </svg>
           </div>
           <div>
-            <h3 className="text-lg font-bold text-slate-100">Xóa Shopify Store</h3>
-            <p className="text-xs text-slate-400">Ngắt kết nối và gỡ cấu hình store khỏi hệ thống</p>
+            <h3 className="text-lg font-bold text-slate-900">Xóa Shopify Store</h3>
+            <p className="text-xs text-slate-600">Ngắt kết nối và gỡ cấu hình store khỏi hệ thống</p>
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-          <p className="text-sm text-slate-300">
-            Bạn có chắc chắn muốn xóa store <strong className="font-mono text-rose-300">{storeId}</strong> (
-            <span className="text-slate-400">{shopDomain}</span>) không?
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm text-slate-700">
+            Bạn có chắc chắn muốn xóa store <strong className="font-mono text-rose-700">{storeId}</strong> (
+            <span className="text-slate-600">{shopDomain}</span>) không?
           </p>
-          <p className="mt-2 text-xs text-amber-400/90">
-            ⚠️ Thao tác này sẽ gỡ store khỏi registry và file cấu hình. Các tác vụ sync đang chạy tới store này có thể bị
+          <p className="mt-2 text-xs text-amber-700">
+            <AppIcon name="warning" /> Thao tác này sẽ gỡ store khỏi registry và file cấu hình. Các tác vụ sync đang chạy tới store này có thể bị
             ảnh hưởng.
           </p>
         </div>
 
         {errorMessage && (
-          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+          <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
             {errorMessage}
           </div>
         )}
@@ -93,7 +94,7 @@ export function DeleteStoreModal({
             type="button"
             disabled={isDeleting}
             onClick={onClose}
-            className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
+            className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
           >
             Hủy
           </button>
@@ -101,7 +102,7 @@ export function DeleteStoreModal({
             type="button"
             disabled={isDeleting}
             onClick={() => void handleDelete()}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 transition-all hover:bg-rose-500 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-rose-700 disabled:opacity-50"
           >
             {isDeleting ? (
               <>

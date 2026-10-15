@@ -15,6 +15,6 @@ test("Review Studio presents the image and Amazon workflows as two steps", () =>
   assert.match(html, /Review Studio/);
   assert.match(html, /1\. Chọn store và loại sản phẩm/);
   assert.match(html, /kho ảnh nền và prompt phù hợp/);
-  assert.match(html, /border-cyan-500\/40/);
+  assert.match(html, /<h1[^>]*>Review Studio<\/h1>/);
   assert.match(html, /Store sản phẩm nhận review\/XLSX/);
 });

@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 
 import { environment } from "../config/environment";
 import {
   ACTIVE_STORE_CHANGED_EVENT,
-  buildStoreAwarePath,
   normalizeActiveStoreId,
   persistActiveStoreId,
   readActiveStoreId,
 } from "../shared/active-store";
+
+import { AppSidebar, NAVIGATION_GROUPS } from "./components/AppSidebar";
 import { NotificationPermissionBadge } from "./components/NotificationPermissionBadge";
 import { NotificationToastContainer } from "./components/NotificationToastContainer";
+import { readSidebarCollapsed, saveSidebarCollapsed } from "./sidebar-preferences";
 
 export function AppLayout(): React.JSX.Element {
   const location = useLocation();
@@ -20,7 +22,11 @@ export function AppLayout(): React.JSX.Element {
   );
   const [activeStoreId, setActiveStoreId] = useState(() => {
     if (queryStoreId) return queryStoreId;
-    return typeof window === "undefined" ? "" : readActiveStoreId(window.localStorage);
+    try {
+      return typeof window === "undefined" ? "" : readActiveStoreId(window.localStorage);
+    } catch {
+      return "";
+    }
   });
 
   useEffect(() => {
@@ -42,160 +48,52 @@ export function AppLayout(): React.JSX.Element {
     return () => window.removeEventListener(ACTIVE_STORE_CHANGED_EVENT, handleStoreChange);
   }, []);
 
-  const queuePath = buildStoreAwarePath("/gpt-seo", activeStoreId);
-  const autoSeoPath = buildStoreAwarePath("/auto-seo", activeStoreId);
-  const reviewPath = buildStoreAwarePath("/seo-review", activeStoreId);
-  const performancePath = buildStoreAwarePath("/seo-performance", activeStoreId);
-  const adsIntelligencePath = buildStoreAwarePath("/ads-intelligence", activeStoreId);
+
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    try {
+      return typeof window !== "undefined" && readSidebarCollapsed(window.localStorage);
+    } catch {
+      return false;
+    }
+  });
+  const activeDestination = NAVIGATION_GROUPS.flatMap(group => group.destinations)
+    .find(destination => location.pathname === destination.path || location.pathname.startsWith(destination.path + "/"));
+  const pageTitle = location.pathname === "/amazon-crawler/agent-keys" ? "Agent Keys" : activeDestination?.label ?? "FFP Tool";
+
+  useEffect(() => {
+    document.title = `${pageTitle} · FFP Tool`;
+  }, [pageTitle]);
+
+  function handleToggleSidebar(): void {
+    const nextCollapsed = !isSidebarCollapsed;
+    setIsSidebarCollapsed(nextCollapsed);
+    try {
+      saveSidebarCollapsed(window.localStorage, nextCollapsed);
+    } catch {
+      // Keep navigation available even when access to storage itself is blocked.
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
-      {/* Top Application Navbar */}
-      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md">
-        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:px-5">
-          <div className="flex w-full min-w-0 items-center gap-3 lg:w-auto lg:flex-1 lg:gap-6">
-            <NavLink to="/amazon-crawler" className="flex shrink-0 items-center gap-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 text-xs font-bold text-slate-950 shadow-md shadow-cyan-500/20">
-                FP
-              </span>
-              <span className="text-sm font-bold tracking-wider uppercase text-cyan-400">
-                FFP Tool
-              </span>
-            </NavLink>
-
-            <nav aria-label="Điều hướng ứng dụng" className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-xs font-medium lg:whitespace-normal [&>a]:shrink-0 lg:[&>a]:shrink">
-              <NavLink
-                to={adsIntelligencePath}
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300 shadow-sm shadow-cyan-500/20"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                🎯 Ads Intelligence
-              </NavLink>
-              <NavLink to={performancePath} className={({ isActive }) => `rounded-lg px-3 py-1.5 ${isActive ? "bg-slate-800 text-cyan-300" : "text-slate-400 hover:text-slate-200"}`}>SEO Performance</NavLink>
-              <NavLink
-                to={queuePath}
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                ✦ SEO Queue
-              </NavLink>
-              <NavLink
-                to="/amazon-crawler"
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                ⚡ Distributed Crawler
-              </NavLink>
-
-              <NavLink
-                to="/pinterest-pod"
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                🎨 Pinterest POD Studio
-              </NavLink>
-
-              <NavLink
-                to={autoSeoPath}
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                ✨ Auto SEO
-              </NavLink>
-
-              <NavLink
-                to={reviewPath}
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                📝 SEO Review
-              </NavLink>
-
-              <NavLink
-                to="/review-studio"
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                ⭐ Review Studio
-              </NavLink>
-
-              <NavLink
-                to="/customization"
-                className={({ isActive }) =>
-                  `rounded-lg px-3 py-1.5 transition ${
-                    isActive
-                      ? "bg-slate-800 font-semibold text-cyan-300"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`
-                }
-              >
-                🎛️ Customizer
-              </NavLink>
-            </nav>
+    <div className="flex min-h-dvh items-start bg-white text-slate-900">
+      <a href="#main-content" className="sr-only z-50 rounded-md bg-blue-600 px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Đi tới nội dung</a>
+      <AppSidebar activeStoreId={activeStoreId} isCollapsed={isSidebarCollapsed} onToggle={handleToggleSidebar} />
+      <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-6 backdrop-blur-sm">
+          <div className="flex min-w-0 items-center gap-2 text-xs">
+            <span className="text-slate-500">Không gian làm việc</span>
+            <span aria-hidden="true" className="text-slate-300">/</span>
+            <span className="truncate font-medium text-slate-800">{pageTitle}</span>
           </div>
-
           <div className="flex shrink-0 items-center gap-3">
             <NotificationPermissionBadge />
-
-            <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
-              <span className="text-[11px] text-slate-500 font-mono">env:</span>
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
-                  environment === "mock"
-                    ? "bg-amber-950/70 border border-amber-800 text-amber-300"
-                    : environment === "production"
-                      ? "bg-emerald-950/70 border border-emerald-800 text-emerald-300"
-                      : "bg-cyan-950/70 border border-cyan-800 text-cyan-300"
-                }`}
-              >
-                {environment}
-              </span>
-            </div>
+            <span title="Môi trường ứng dụng" className={`rounded border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${environment === "mock" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>{environment}</span>
           </div>
-        </div>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="min-w-0 flex-1 w-full px-3 sm:px-4 lg:px-5 py-4">
-        <Outlet />
-      </main>
-
-      {/* Floating In-App Toast Container */}
+        </header>
+        <main id="main-content" tabIndex={-1} className="min-w-0 px-6 py-6 outline-none 2xl:px-8">
+          <Outlet />
+        </main>
+      </div>
       <NotificationToastContainer />
     </div>
   );

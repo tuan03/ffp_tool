@@ -30,18 +30,18 @@ export function TextInputEditor({
       {textInputs.map((input, idx) => (
         <div
           key={input.id || idx}
-          className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 space-y-3 shadow-sm"
+          className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3 shadow-sm"
         >
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-200">
+              <span className="text-xs font-bold text-slate-900">
                 {input.label || `Trường chữ ${idx + 1}`}
               </span>
               <span
                 className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                   input.required
-                    ? "bg-rose-950/80 border border-rose-800 text-rose-300"
-                    : "bg-slate-800 text-slate-400"
+                    ? "bg-rose-50 border border-rose-200 text-rose-700"
+                    : "bg-slate-50 text-slate-600"
                 }`}
               >
                 {input.required ? "Bắt buộc" : "Không bắt buộc"}
@@ -50,7 +50,7 @@ export function TextInputEditor({
             <button
               type="button"
               onClick={() => handleRemoveTextInput(idx)}
-              className="rounded-lg p-1 text-slate-400 hover:bg-rose-950 hover:text-rose-400 transition cursor-pointer"
+              className="rounded-lg p-1 text-slate-600 hover:bg-rose-50 hover:text-rose-700 transition cursor-pointer"
               title="Xóa trường này"
             >
               ✕
@@ -59,33 +59,33 @@ export function TextInputEditor({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div>
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">
+              <label className="block text-[11px] font-medium text-slate-600 mb-1">
                 Tên trường hiển thị
               </label>
               <input
                 type="text"
                 value={input.label}
                 onChange={(e) => handleUpdateTextInput(idx, { label: e.target.value })}
-                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                 placeholder="ví dụ: Customize Text"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">
+              <label className="block text-[11px] font-medium text-slate-600 mb-1">
                 Chữ gợi ý (Placeholder)
               </label>
               <input
                 type="text"
                 value={input.placeholder || ""}
                 onChange={(e) => handleUpdateTextInput(idx, { placeholder: e.target.value })}
-                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                 placeholder="ví dụ: The Smiths Family"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">
+              <label className="block text-[11px] font-medium text-slate-600 mb-1">
                 Giới hạn số ký tự tối đa
               </label>
               <input
@@ -96,17 +96,17 @@ export function TextInputEditor({
                 onChange={(e) =>
                   handleUpdateTextInput(idx, { maxLength: Number(e.target.value) || 50 })
                 }
-                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
               />
             </div>
 
             <div className="flex items-center pt-5">
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
                 <input
                   type="checkbox"
                   checked={Boolean(input.required)}
                   onChange={(e) => handleUpdateTextInput(idx, { required: e.target.checked })}
-                  className="rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-0"
+                  className="rounded border-slate-300 bg-white text-blue-700 focus:ring-0"
                 />
                 <span>Bắt buộc khách hàng phải nhập</span>
               </label>

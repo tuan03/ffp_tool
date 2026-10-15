@@ -1,4 +1,6 @@
 import { useState } from "react";
+
+import { AppIcon } from "../../../shared/components/AppIcon";
 import type { SeoProvider } from "../../../modules/custom-gpt-seo";
 
 export interface RequeueModalProps {
@@ -36,23 +38,23 @@ export function RequeueModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 backdrop-blur-xs animate-in fade-in duration-150"
       role="dialog"
       aria-modal="true"
       aria-labelledby="requeue-modal-title"
     >
-      <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-5">
+      <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-sm space-y-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-950 text-cyan-400 border border-cyan-800 text-lg">
-              🔄
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-lg">
+              <AppIcon name="refresh" />
             </span>
             <div>
-              <h2 id="requeue-modal-title" className="text-base font-bold text-white">
+              <h2 id="requeue-modal-title" className="text-base font-bold text-slate-900">
                 {isRevision ? "Tạo revision SEO mới" : "Đưa vào Queue SEO lại"}
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Đưa <strong className="text-cyan-400 font-semibold">{count}</strong> sản phẩm đã chọn trở lại hàng đợi để AI xử lý lại.
+              <p className="text-xs text-slate-600 mt-0.5">
+                Đưa <strong className="text-blue-700 font-semibold">{count}</strong> sản phẩm đã chọn trở lại hàng đợi để AI xử lý lại.
                 {isRevision && " Đọc lại nguồn Shopify, giữ bản Review cũ; không tự duyệt hoặc Sync."}
               </p>
             </div>
@@ -61,7 +63,7 @@ export function RequeueModal({
             type="button"
             onClick={onClose}
             disabled={isBusy}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition cursor-pointer"
+            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition cursor-pointer"
             aria-label="Đóng"
           >
             ✕
@@ -70,7 +72,7 @@ export function RequeueModal({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">
+            <label className="text-xs font-semibold text-slate-700">
               Chọn AI xử lý:
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -78,13 +80,13 @@ export function RequeueModal({
                 type="button"
                 onClick={() => setProvider("custom_gpt")}
                 disabled={isRevision}
-                className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer ${
+                className={`flex flex-col items-center justify-center p-2.5 rounded-lg border text-xs font-medium transition cursor-pointer ${
                   !isRevision && provider === "custom_gpt"
-                    ? "border-cyan-500 bg-cyan-950/60 text-cyan-200 ring-1 ring-cyan-500/30 font-semibold"
-                    : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    ? "border-blue-300 bg-blue-50 text-blue-700 ring-1 ring-blue-300 font-semibold"
+                    : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:text-slate-900"
                 }`}
               >
-                <span>🤖</span>
+                <span><AppIcon name="code" /></span>
                 <span className="mt-1">GPT Custom</span>
                 <span className="text-[10px] text-slate-500">Xử lý batch</span>
               </button>
@@ -93,13 +95,13 @@ export function RequeueModal({
                 type="button"
                 onClick={() => setProvider("gemini")}
                 disabled={isRevision}
-                className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer ${
+                className={`flex flex-col items-center justify-center p-2.5 rounded-lg border text-xs font-medium transition cursor-pointer ${
                   !isRevision && provider === "gemini"
-                    ? "border-cyan-500 bg-cyan-950/60 text-cyan-200 ring-1 ring-cyan-500/30 font-semibold"
-                    : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    ? "border-blue-300 bg-blue-50 text-blue-700 ring-1 ring-blue-300 font-semibold"
+                    : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:text-slate-900"
                 }`}
               >
-                <span>⚡</span>
+                <span><AppIcon name="seo" /></span>
                 <span className="mt-1">Gemini API</span>
                 <span className="text-[10px] text-slate-500">Tự động ngay</span>
               </button>
@@ -107,10 +109,10 @@ export function RequeueModal({
               <button
                 type="button"
                 onClick={() => setProvider("codex_mcp")}
-                className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition cursor-pointer ${
+                className={`flex flex-col items-center justify-center p-2.5 rounded-lg border text-xs font-medium transition cursor-pointer ${
                   isRevision || provider === "codex_mcp"
-                    ? "border-cyan-500 bg-cyan-950/60 text-cyan-200 ring-1 ring-cyan-500/30 font-semibold"
-                    : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    ? "border-blue-300 bg-blue-50 text-blue-700 ring-1 ring-blue-300 font-semibold"
+                    : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:text-slate-900"
                 }`}
               >
                 <span>💻</span>
@@ -121,7 +123,7 @@ export function RequeueModal({
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="requeue-instructions" className="text-xs font-semibold text-slate-300">
+            <label htmlFor="requeue-instructions" className="text-xs font-semibold text-slate-700">
               Quy tắc / Prompt bổ sung cho đợt này (Tùy chọn):
             </label>
             <textarea
@@ -130,30 +132,30 @@ export function RequeueModal({
               onChange={(e) => setInstructions(e.target.value)}
               placeholder="Ví dụ: Viết tiêu đề ngắn gọn < 70 ký tự, bỏ từ vintage, tập trung vào quà tặng sinh nhật..."
               rows={3}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-500 focus:outline-hidden focus:ring-1 focus:ring-cyan-500 transition resize-none"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-600 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 transition resize-none"
             />
             <p className="text-[11px] text-slate-500">
               Quy tắc này sẽ được cập nhật vào cấu hình xử lý của các sản phẩm được chọn khi nạp lại vào hàng đợi.
             </p>
           </div>
 
-          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800/80">
+          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200">
             <button
               type="button"
               onClick={onClose}
               disabled={isBusy}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
             >
               Hủy
             </button>
             <button
               type="submit"
               disabled={isBusy}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-cyan-600 text-white hover:bg-cyan-500 transition cursor-pointer shadow-md shadow-cyan-950/50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isBusy ? (
                 <>
-                  <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                  <svg className="animate-spin h-3.5 w-3.5 text-slate-900" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                   </svg>
@@ -161,7 +163,7 @@ export function RequeueModal({
                 </>
               ) : (
                 <>
-                  <span>🔄</span>
+                  <span><AppIcon name="refresh" /></span>
                   <span>Xác nhận đưa vào Queue ({count})</span>
                 </>
               )}

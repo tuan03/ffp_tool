@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { AppIcon } from "../../../shared/components/AppIcon";
 import { SourceBadge } from "./SourceBadge";
 import type { DisplayField } from "../types";
 
@@ -34,35 +35,35 @@ export function SeoSerpPreview({
   function getTitleStatusBadge(len: number) {
     if (len === 0) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-950/80 text-rose-300 border border-rose-800/60">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-50 text-rose-700 border border-rose-200">
           0 / 70 • Thiếu tiêu đề
         </span>
       );
     }
     if (len > 70) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-950/80 text-rose-300 border border-rose-800/60">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-50 text-rose-700 border border-rose-200">
           {len} / 70 • Quá dài ({len - 70} ký tự)
         </span>
       );
     }
     if (len >= 45 && len <= 65) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
           ✓ {len} / 70 • Chuẩn SEO
         </span>
       );
     }
     if (len < 45) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-950/80 text-amber-300 border border-amber-800/60">
-          ⚠️ {len} / 70 • Hơi ngắn
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200">
+          <AppIcon name="warning" /> {len} / 70 • Hơi ngắn
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-950/80 text-amber-300 border border-amber-800/60">
-        ⚠️ {len} / 70 • Giới hạn
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200">
+        <AppIcon name="warning" /> {len} / 70 • Giới hạn
       </span>
     );
   }
@@ -70,40 +71,40 @@ export function SeoSerpPreview({
   function getDescStatusBadge(len: number) {
     if (len === 0) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-950/80 text-rose-300 border border-rose-800/60">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-50 text-rose-700 border border-rose-200">
           0 / 160 • Thiếu mô tả
         </span>
       );
     }
     if (len > 160) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-950/80 text-rose-300 border border-rose-800/60">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-50 text-rose-700 border border-rose-200">
           {len} / 160 • Quá dài ({len - 160} ký tự)
         </span>
       );
     }
     if (len >= 110 && len <= 160) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
           ✓ {len} / 160 • Chuẩn SEO
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-950/80 text-amber-300 border border-amber-800/60">
-        ⚠️ {len} / 160 • Hơi ngắn
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200">
+        <AppIcon name="warning" /> {len} / 160 • Hơi ngắn
       </span>
     );
   }
 
   return (
-    <div className="rounded-xl border border-slate-800/90 bg-slate-950/80 p-3.5 shadow-sm space-y-2.5">
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 shadow-sm space-y-2.5">
       {/* Header with SERP indicator & Badges */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/60 pb-2">
-        <div className="flex items-center gap-2 text-xs text-slate-400">
-          <span className="text-cyan-400 font-bold">🔍 Google Snippet</span>
-          <span className="text-slate-600">•</span>
-          <span className="text-[11px] font-mono text-slate-400 truncate max-w-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+        <div className="flex items-center gap-2 text-xs text-slate-600">
+          <span className="text-blue-700 font-bold"><AppIcon name="search" /> Google Snippet</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-[11px] font-mono text-slate-600 truncate max-w-xs">
             https://{storeDomain}/products/{handle.value}
           </span>
           <SourceBadge source={handle.source} />
@@ -119,7 +120,7 @@ export function SeoSerpPreview({
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
               SEO Title
             </span>
             <SourceBadge source={seoTitle.source} />
@@ -127,7 +128,7 @@ export function SeoSerpPreview({
           <button
             type="button"
             onClick={() => handleCopy(seoTitle.value, "title")}
-            className="text-[10px] font-medium text-slate-400 hover:text-cyan-400 transition cursor-pointer px-1.5 py-0.5 rounded hover:bg-slate-800/60"
+            className="text-[10px] font-medium text-slate-600 hover:text-blue-700 transition cursor-pointer px-1.5 py-0.5 rounded hover:bg-slate-50"
             title="Sao chép tiêu đề SEO"
           >
             {copiedField === "title" ? "✓ Đã chép" : "Copy"}
@@ -135,11 +136,11 @@ export function SeoSerpPreview({
         </div>
 
         <div
-          className={`font-semibold text-cyan-300 hover:text-cyan-200 transition ${
+          className={`font-semibold text-blue-700 hover:text-blue-700 transition ${
             compact ? "text-sm line-clamp-1" : "text-base leading-snug"
           }`}
         >
-          {seoTitle.value || <span className="text-rose-400 italic">Chưa có tiêu đề SEO</span>}
+          {seoTitle.value || <span className="text-rose-700 italic">Chưa có tiêu đề SEO</span>}
         </div>
       </div>
 
@@ -147,7 +148,7 @@ export function SeoSerpPreview({
       <div className="space-y-1 pt-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
               Meta Description
             </span>
             <SourceBadge source={seoDescription.source} />
@@ -155,7 +156,7 @@ export function SeoSerpPreview({
           <button
             type="button"
             onClick={() => handleCopy(seoDescription.value, "desc")}
-            className="text-[10px] font-medium text-slate-400 hover:text-cyan-400 transition cursor-pointer px-1.5 py-0.5 rounded hover:bg-slate-800/60"
+            className="text-[10px] font-medium text-slate-600 hover:text-blue-700 transition cursor-pointer px-1.5 py-0.5 rounded hover:bg-slate-50"
             title="Sao chép mô tả SEO"
           >
             {copiedField === "desc" ? "✓ Đã chép" : "Copy"}
@@ -163,12 +164,12 @@ export function SeoSerpPreview({
         </div>
 
         <div
-          className={`text-slate-300 leading-relaxed ${
+          className={`text-slate-700 leading-relaxed ${
             compact ? "text-xs line-clamp-2" : "text-xs"
           }`}
         >
           {seoDescription.value || (
-            <span className="text-rose-400 italic">Chưa có mô tả SEO</span>
+            <span className="text-rose-700 italic">Chưa có mô tả SEO</span>
           )}
         </div>
       </div>

@@ -20,9 +20,6 @@ test("review image page exposes multi-image, store template and Shopify approval
   assert.match(html, /3\. Thêm ảnh sản phẩm cần tạo review/);
   assert.match(html, /Mỗi ảnh đầu vào sẽ tạo một ảnh review riêng/);
   assert.match(html, /Ctrl\+V để dán ảnh sản phẩm; có thể dán thêm nhiều lần/);
-  assert.match(html, /bg-cyan-500\/10/);
-  assert.match(html, /bg-violet-500\/10/);
-  assert.match(html, /bg-emerald-500\/10/);
   assert.match(html, /Chỉ túi chính/);
   assert.match(html, /Cả túi và ví/);
   assert.match(html, /Image 1/);
