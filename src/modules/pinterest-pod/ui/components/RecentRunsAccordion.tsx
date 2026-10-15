@@ -64,7 +64,7 @@ export function RecentRunsAccordion({
           <span className="text-xs font-bold text-slate-900">
             Lịch sử Job &amp; Thư mục Run có sẵn
           </span>
-          <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+          <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
             {recentRuns.length}
           </span>
         </div>
@@ -76,7 +76,7 @@ export function RecentRunsAccordion({
               onClick={onRefresh}
               disabled={isLoading}
               title="Làm mới danh sách"
-              className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] text-slate-700 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+              className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
             >
               {isLoading ? "↻ Đang tải..." : "↻ Làm mới"}
             </button>
@@ -125,11 +125,11 @@ export function RecentRunsAccordion({
                           <strong className="truncate text-xs font-bold text-slate-900" title={itemNiche}>
                             {itemNiche}
                           </strong>
-                          <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 uppercase">
+                          <span className="rounded bg-slate-50 px-1.5 py-0.5 text-xs font-semibold text-slate-700 uppercase">
                             {itemProduct}
                           </span>
                           {item.createdAt && (
-                            <span className="text-[10px] text-slate-600">
+                            <span className="text-xs text-slate-600">
                               {item.createdAt}
                             </span>
                           )}
@@ -138,43 +138,43 @@ export function RecentRunsAccordion({
                         {/* Status Badges & Counts */}
                         <div className="mt-1.5 flex flex-wrap items-center gap-2">
                           {isCompleted && (
-                            <span className="rounded-full bg-emerald-50 border border-emerald-300 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                            <span className="rounded-full bg-emerald-50 border border-emerald-300 px-2 py-0.5 text-xs font-bold text-emerald-700">
                               ✓ Thành phẩm hoàn tất
                             </span>
                           )}
                           {isReview && (
-                            <span className="rounded-full bg-amber-50 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                            <span className="rounded-full bg-amber-50 border border-amber-300 px-2 py-0.5 text-xs font-bold text-amber-700">
                               <AppIcon name="clock" /> Chờ duyệt ({candCount} mẫu)
                             </span>
                           )}
                           {isFailed && (
-                            <span className="rounded-full bg-rose-50 border border-rose-300 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                            <span className="rounded-full bg-rose-50 border border-rose-300 px-2 py-0.5 text-xs font-bold text-rose-700">
                               ✕ Lỗi
                             </span>
                           )}
                           {isCancelled && (
-                            <span className="rounded-full bg-slate-50 border border-slate-300 px-2 py-0.5 text-[10px] text-slate-600">
+                            <span className="rounded-full bg-slate-50 border border-slate-300 px-2 py-0.5 text-xs text-slate-600">
                               ⏹ Đã dừng
                             </span>
                           )}
                           {!isCompleted && !isReview && !isFailed && !isCancelled && (
-                            <span className="rounded-full bg-blue-50 border border-blue-300 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                            <span className="rounded-full bg-blue-50 border border-blue-300 px-2 py-0.5 text-xs font-bold text-blue-700">
                               <AppIcon name="refresh" /> {item.status || "đang chạy"}
                             </span>
                           )}
 
                           {cmykCount > 0 && (
-                            <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-blue-700 font-medium">
+                            <span className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-blue-700 font-medium">
                               🖨️ {cmykCount} file CMYK
                             </span>
                           )}
                           {mockupCount > 0 && (
-                            <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-blue-700 font-medium">
+                            <span className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-blue-700 font-medium">
                               🛋️ {mockupCount} mockup
                             </span>
                           )}
 
-                          <code className="text-[10px] text-slate-600 font-mono">
+                          <code className="text-xs text-slate-600 font-mono">
                             {targetId}
                           </code>
                         </div>
@@ -218,13 +218,13 @@ export function RecentRunsAccordion({
                                 e.currentTarget.style.display = "none";
                               }}
                             />
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-[11px] text-white">
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-xs text-white">
                               <AppIcon name="search" />
                             </div>
                           </div>
                         ))}
                         {item.thumbnails.length > 4 && (
-                          <span className="text-[10px] text-slate-600">
+                          <span className="text-xs text-slate-600">
                             +{item.thumbnails.length - 4} ảnh
                           </span>
                         )}
@@ -239,7 +239,7 @@ export function RecentRunsAccordion({
                             type="button"
                             onClick={() => onReuseNiche(item.niche ?? itemNiche, itemProduct as PinterestProductType)}
                             title="Lấy lại từ khóa và sản phẩm này lên form để tạo đợt mới"
-                            className="flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:border-blue-300 hover:text-slate-900 transition"
+                            className="flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:border-blue-300 hover:text-slate-900 transition"
                           >
                             <span><AppIcon name="play" /></span>
                             <span>Làm đợt mới</span>

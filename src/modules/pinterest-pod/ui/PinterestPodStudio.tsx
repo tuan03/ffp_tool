@@ -1105,7 +1105,7 @@ export function PinterestPodStudio({
                   <p className="font-bold text-blue-700 text-sm">
                     {jobStatus === "producing" ? "Đang sản xuất thiết kế POD..." : "Đang tiến hành cào mẫu & phân tích xu hướng Pinterest..."}
                   </p>
-                  <p className="text-[11px] text-slate-600">
+                  <p className="text-xs text-slate-600">
                     Job ID: <span className="font-mono text-blue-700">{jobId || "Đang khởi tạo"}</span> • Bạn có thể theo dõi tiến độ chi tiết ở cột bên phải.
                   </p>
                 </div>
@@ -1132,7 +1132,7 @@ export function PinterestPodStudio({
                   <p className="font-bold text-amber-700">
                     Đã có {candidates.length} mẫu ứng viên sẵn sàng duyệt trong job này!
                   </p>
-                  <p className="text-[11px] text-amber-700">
+                  <p className="text-xs text-amber-700">
                     Bạn có thể chuyển ngay sang Bước 2 để lọc và chọn mẫu in xưởng.
                   </p>
                 </div>
@@ -1276,7 +1276,7 @@ export function PinterestPodStudio({
               {jobId && (
                 <>
                   <span>•</span>
-                  <code className="text-[10px] text-slate-600 font-mono">{jobId}</code>
+                  <code className="text-xs text-slate-600 font-mono">{jobId}</code>
                 </>
               )}
             </div>

@@ -91,7 +91,7 @@ export function NotificationToastContainer(): React.JSX.Element | null {
                 {toast.message}
               </p>
               {toast.url && (
-                <p className="mt-1.5 text-[11px] font-medium text-blue-700 hover:underline">
+                <p className="mt-1.5 text-xs font-medium text-blue-700 hover:underline">
                   Nhấn để xem chi tiết →
                 </p>
               )}

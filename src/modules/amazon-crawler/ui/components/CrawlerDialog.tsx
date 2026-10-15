@@ -25,7 +25,7 @@ export function CrawlerDialog({ title, isOpen, onClose, children }: CrawlerDialo
       aria-labelledby={headingId}
       onCancel={onClose}
       onClose={onClose}
-      className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-5xl overflow-y-auto rounded-lg border border-slate-300 bg-white p-0 text-white shadow-sm backdrop:bg-black/70"
+      className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-5xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-900/30"
     >
       <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
         <h2 id={headingId} className="min-w-0 truncate font-semibold">{title}</h2>

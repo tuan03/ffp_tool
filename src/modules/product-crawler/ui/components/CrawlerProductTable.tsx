@@ -121,7 +121,7 @@ export function CrawlerProductTable({
                   </span>
                   <span className="text-slate-700">— Lý do: {err.message}</span>
                 </div>
-                <span className="font-mono text-[10px] text-rose-700">Mã: {err.code}</span>
+                <span className="font-mono text-xs text-rose-700">Mã: {err.code}</span>
               </div>
             ))}
           </div>
@@ -181,7 +181,7 @@ export function CrawlerProductTable({
       {/* Filter Tabs & Selection Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium">
-          <span className="text-slate-500 mr-1 text-[11px]">Lọc:</span>
+          <span className="text-slate-500 mr-1 text-xs">Lọc:</span>
           {[
             { id: "all", label: `Tất cả (${products.length})` },
             {
@@ -343,7 +343,7 @@ export function CrawlerProductTable({
                       <div className="font-medium text-slate-900 line-clamp-2 leading-relaxed">
                         {projected.title}
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-600">
+                      <div className="mt-1 flex items-center gap-2 text-xs text-slate-600">
                         <a
                           href={raw.canonicalUrl}
                           target="_blank"
@@ -358,23 +358,23 @@ export function CrawlerProductTable({
                       </div>
                     </td>
 
-                    <td className="p-3 font-mono text-[11px] text-slate-700 font-semibold">
+                    <td className="p-3 font-mono text-xs text-slate-700 font-semibold">
                       {projected.asin}
                     </td>
 
                     <td className="p-3 text-center">
-                      <span className="rounded bg-slate-50 px-2 py-0.5 font-mono text-[11px] font-bold text-blue-700">
+                      <span className="rounded bg-slate-50 px-2 py-0.5 font-mono text-xs font-bold text-blue-700">
                         {projected.variantCount}
                       </span>
                     </td>
 
                     <td className="p-3 text-center">
                       {projected.hasCustomization ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-bold text-emerald-700">
                           <span>🟢</span> Có
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                        <span className="inline-flex items-center gap-1 rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
                           <span>⚪</span> Không
                         </span>
                       )}
@@ -382,7 +382,7 @@ export function CrawlerProductTable({
 
                     <td className="p-3 text-center">
                       {projected.warningCount > 0 ? (
-                        <span className="inline-flex items-center rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                        <span className="inline-flex items-center rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-bold text-amber-700">
                           <AppIcon name="warning" /> {projected.warningCount}
                         </span>
                       ) : (
@@ -392,7 +392,7 @@ export function CrawlerProductTable({
 
                     <td className="p-3 text-center">
                       <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold uppercase ${
                           projected.status === "success"
                             ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                             : projected.status === "partial"

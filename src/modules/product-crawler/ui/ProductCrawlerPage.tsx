@@ -300,7 +300,7 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
               : "text-slate-600 hover:text-slate-900"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-[11px]">1</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-xs">1</span>
           <span>Nhập nguồn (Input)</span>
         </button>
 
@@ -314,7 +314,7 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
               : "text-slate-600 hover:text-slate-900"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-[11px]">2</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-xs">2</span>
           <span>Đang cào (Running)</span>
           {jobStatus === "running" && <span className="h-2 w-2 rounded-full bg-blue-600 animate-pulse" />}
         </button>
@@ -329,9 +329,9 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
               : "text-slate-600 hover:text-slate-900"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-[11px]">3</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-xs">3</span>
           <span>Kết quả & Bàn giao ({products.length})</span>
-          {products.length > 0 && <span className="text-[10px] text-emerald-700 font-bold">✓</span>}
+          {products.length > 0 && <span className="text-xs text-emerald-700 font-bold">✓</span>}
         </button>
       </div>
 

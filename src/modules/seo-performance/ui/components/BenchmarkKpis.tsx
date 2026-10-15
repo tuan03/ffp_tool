@@ -225,7 +225,7 @@ export function BenchmarkKpis({ kpis, isQueryFilterActive = false, onStatusSelec
                 >
                   N/A (Query filter)
                 </span>
-                <div className="mt-1 text-[11px] text-slate-500">
+                <div className="mt-1 text-xs text-slate-500">
                   Không khả dụng khi lọc query GSC
                 </div>
               </div>

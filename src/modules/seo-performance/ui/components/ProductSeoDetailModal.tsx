@@ -235,7 +235,7 @@ export function ProductSeoDetailModal({
                       <span className="rounded bg-slate-50 px-2 py-0.5 font-mono text-blue-700">
                         {item.date}
                       </span>
-                      <span className="rounded bg-blue-50 px-2 py-0.5 text-blue-700 border border-blue-200 uppercase text-[10px]">
+                      <span className="rounded bg-blue-50 px-2 py-0.5 text-blue-700 border border-blue-200 uppercase text-xs">
                         {item.type}
                       </span>
                       <span className="text-slate-700 flex-1">{item.note}</span>
@@ -386,7 +386,7 @@ export function ProductSeoDetailModal({
                         <td className="px-3 py-2.5 font-medium text-slate-900">{q.query}</td>
                         <td className="px-3 py-2.5 text-center">
                           <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                            className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
                               q.category === "matched"
                                 ? "bg-blue-50 text-blue-700 border border-blue-200"
                                 : q.category === "new"
@@ -546,7 +546,7 @@ export function ProductSeoDetailModal({
                     <div key={rec.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="font-semibold text-slate-900">{rec.issue}</span>
-                        <span className="rounded bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">{rec.priority} priority</span>
+                        <span className="rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-600">{rec.priority} priority</span>
                       </div>
                       <p className="text-slate-600">{rec.rationale}</p>
                       <div className="rounded bg-white p-2 text-slate-700 whitespace-pre-wrap">{rec.proposed}</div>

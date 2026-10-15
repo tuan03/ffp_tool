@@ -138,7 +138,7 @@ export function ReferenceDropzone({
             Ảnh phòng tham chiếu ({images.length}/{maxImages} ảnh)
           </label>
           {images.length > 1 && (
-            <span className="text-[10px] text-blue-700 font-normal">
+            <span className="text-xs text-blue-700 font-normal">
               (kéo thả hoặc bấm ◀ ▶ đổi thứ tự)
             </span>
           )}
@@ -208,7 +208,7 @@ export function ReferenceDropzone({
           <p className="mt-1 text-xs font-medium text-slate-900">
             Kéo thả ảnh phòng mẫu hoặc <span className="text-blue-700">click để chọn file</span>
           </p>
-          <p className="mt-0.5 text-[10px] text-slate-600">Hỗ trợ JPG, PNG, WEBP (Tối đa {maxImages} ảnh)</p>
+          <p className="mt-0.5 text-xs text-slate-600">Hỗ trợ JPG, PNG, WEBP (Tối đa {maxImages} ảnh)</p>
         </div>
       )}
 
@@ -251,7 +251,7 @@ export function ReferenceDropzone({
                   {/* Badge & Reorder controls bar */}
                   <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between pointer-events-auto">
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold text-slate-900 shadow backdrop-blur-xs ${
+                      className={`rounded px-1.5 py-0.5 text-xs font-bold text-slate-900 shadow backdrop-blur-xs ${
                         idx === 0 ? "bg-blue-600" : "bg-black/75"
                       }`}
                     >
@@ -267,7 +267,7 @@ export function ReferenceDropzone({
                             e.stopPropagation();
                             handleMove(idx, idx - 1);
                           }}
-                          className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
+                          className="flex h-4 w-4 items-center justify-center rounded text-xs text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
                           title="Chuyển sang trước (◀)"
                         >
                           ◀
@@ -279,7 +279,7 @@ export function ReferenceDropzone({
                             e.stopPropagation();
                             handleMove(idx, idx + 1);
                           }}
-                          className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
+                          className="flex h-4 w-4 items-center justify-center rounded text-xs text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent"
                           title="Chuyển ra sau (▶)"
                         >
                           ▶
@@ -295,7 +295,7 @@ export function ReferenceDropzone({
                         e.stopPropagation();
                         handleRemove(img.id);
                       }}
-                      className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-[10px] font-bold text-white shadow hover:bg-rose-700 pointer-events-auto"
+                      className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-xs font-bold text-white shadow hover:bg-rose-700 pointer-events-auto"
                       title="Xóa ảnh này"
                     >
                       ✕
@@ -307,7 +307,7 @@ export function ReferenceDropzone({
           </div>
 
           {images.length > 1 && (
-            <p className="text-[10px] text-slate-600 italic">
+            <p className="text-xs text-slate-600 italic">
               <AppIcon name="info" /> Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
             </p>
           )}

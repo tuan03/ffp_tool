@@ -143,7 +143,7 @@ export function ProductionStep({
           {jobId && (
             <>
               <span>•</span>
-              <code className="text-[10px] text-slate-600 font-mono">{jobId}</code>
+              <code className="text-xs text-slate-600 font-mono">{jobId}</code>
             </>
           )}
         </div>
@@ -212,7 +212,7 @@ export function ProductionStep({
             />
           </div>
 
-          <p className="text-[11px] text-slate-600">
+          <p className="text-xs text-slate-600">
             <AppIcon name="seo" /> Hệ thống đang xử lý độc lập ở chế độ chuẩn mẫu tham chiếu (Direct Print). Sau khi hoàn thành toàn bộ {candidateCount} sản phẩm, thông báo Windows sẽ tự động kích hoạt.
           </p>
         </div>
@@ -303,19 +303,19 @@ export function ProductionStep({
             >
               <span className="text-slate-600">{isLogsExpanded ? "▼" : "▶"}</span>
               <span>Live Execution Logs</span>
-              <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600">
+              <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
                 {logs.length} dòng
               </span>
             </button>
 
             {isProductionActive && (
-              <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+              <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-700 animate-pulse" />
                 Live streaming
               </span>
             )}
             {jobStatus === "cancelled" && (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
                 Đã dừng
               </span>
             )}
@@ -323,7 +323,7 @@ export function ProductionStep({
 
           <div className="flex items-center gap-3">
             {isLogsExpanded && (
-              <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={autoScroll}
@@ -338,7 +338,7 @@ export function ProductionStep({
               <button
                 type="button"
                 onClick={handleCopyLogs}
-                className="text-[11px] font-medium text-blue-700 hover:text-blue-700 hover:underline cursor-pointer"
+                className="text-xs font-medium text-blue-700 hover:text-blue-700 hover:underline cursor-pointer"
               >
                 {copied ? "✓ Đã sao chép" : "Sao chép"}
               </button>
@@ -349,14 +349,14 @@ export function ProductionStep({
         {isLogsExpanded && (
           <div
             ref={logsContainerRef}
-            className="max-h-60 min-h-28 overflow-y-auto p-3.5 font-mono text-[11px] leading-relaxed text-slate-700 bg-slate-50 select-text"
+            className="max-h-60 min-h-28 overflow-y-auto p-3.5 font-mono text-xs leading-relaxed text-slate-700 bg-slate-50 select-text"
           >
             {logs.length === 0 ? (
               <p className="italic text-slate-500">Chưa có log từ hệ thống.</p>
             ) : (
               logs.map((log, i) => (
                 <div key={`${i}-${log.slice(0, 30)}`} className="flex gap-2 py-0.5">
-                  <span className="text-slate-500 select-none text-[10px] w-6 shrink-0 text-right">
+                  <span className="text-slate-500 select-none text-xs w-6 shrink-0 text-right">
                     {i + 1}
                   </span>
                   <span className="text-slate-500 select-none">&gt;</span>

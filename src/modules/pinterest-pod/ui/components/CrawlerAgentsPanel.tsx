@@ -67,7 +67,7 @@ export function CrawlerAgentsPanel({
           <span className="text-lg">🖥️</span>
           <span>
             <span className="block text-sm font-bold text-slate-900">Máy Crawler Agent</span>
-            <span className="block text-[11px] text-slate-600">
+            <span className="block text-xs text-slate-600">
               {isLoading ? "Đang cập nhật..." : `${connectedCount} online · ${activeCount} đang cào · ${agents.length} máy đã đăng ký · chỉ cần khi cào ảnh`}
             </span>
           </span>
@@ -106,15 +106,15 @@ export function CrawlerAgentsPanel({
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={`h-2 w-2 rounded-full ${agent.isConnected ? "bg-emerald-700" : "bg-slate-100"}`} />
                           <strong className="text-sm text-slate-900">{agent.displayName || agent.id}</strong>
-                          <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                          <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-700">
                             {statusLabel(agent)}
                           </span>
                         </div>
-                        <p className="mt-1 text-[10px] text-slate-500">
+                        <p className="mt-1 text-xs text-slate-500">
                           ID: {agent.id} · Phiên bản: {agent.agentVersion ?? "không rõ"}
                         </p>
                         {hasUpdate && (
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-amber-700">
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-amber-700">
                             <span>Có bản {agent.latestAgentVersion}.</span>
                             <button
                               type="button"
@@ -126,7 +126,7 @@ export function CrawlerAgentsPanel({
                           </div>
                         )}
                       </div>
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isPinterestLoggedIn ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>
+                      <span className={`rounded-full px-2 py-1 text-xs font-bold ${isPinterestLoggedIn ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>
                         Pinterest: {isPinterestLoggedIn ? "Đã login" : hasPinterestLoginStatus ? "Chưa login" : "Chưa báo cáo"}
                       </span>
                     </div>
@@ -135,14 +135,14 @@ export function CrawlerAgentsPanel({
                       <div className="mt-3 space-y-2">
                         {tasks.map((task) => (
                           <div key={task.taskId} className="rounded-lg border border-blue-200 bg-slate-50 p-2.5">
-                            <div className="flex flex-wrap justify-between gap-2 text-[11px]">
+                            <div className="flex flex-wrap justify-between gap-2 text-xs">
                               <span className="font-semibold text-blue-700">{task.channel === "pinterest" ? "Pinterest" : "Amazon"} · {task.stage ?? "crawl"}</span>
                               <span className="font-mono text-slate-500">{task.jobId || task.taskId}</span>
                             </div>
                             <p className="mt-1 text-xs font-semibold text-slate-900">
                               {task.niche || task.source || "Tác vụ crawler"}{task.product ? ` · ${task.product}` : ""}
                             </p>
-                            <p className="mt-1 break-words text-[11px] leading-5 text-slate-600">{task.message || "Đang xử lý..."}</p>
+                            <p className="mt-1 break-words text-xs leading-5 text-slate-600">{task.message || "Đang xử lý..."}</p>
                             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-50">
                               <div className="h-full rounded-full bg-blue-600" style={{ width: `${Math.max(2, Math.min(100, task.percent ?? 0))}%` }} />
                             </div>
@@ -150,7 +150,7 @@ export function CrawlerAgentsPanel({
                         ))}
                       </div>
                     ) : (
-                      <p className="mt-3 text-[11px] text-slate-500">
+                      <p className="mt-3 text-xs text-slate-500">
                         {agent.isConnected ? "Không có job đang chạy." : `Lần cuối kết nối: ${formatLastSeen(agent.lastSeenAt)}`}
                       </p>
                     )}
@@ -163,7 +163,7 @@ export function CrawlerAgentsPanel({
                             setBusyAgentId(agent.id);
                             void onForgetAgent(agent).finally(() => setBusyAgentId(null));
                           }}
-                          className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                          className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
                         >
                           {busyAgentId === agent.id ? "Đang quên..." : "Quên máy này"}
                         </button>

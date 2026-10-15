@@ -204,15 +204,15 @@ export function TrendClusterDiscovery({
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-slate-600 font-medium">Thị trường:</span>
+              <span className="text-xs text-slate-600 font-medium">Thị trường:</span>
               {activeResult.query_matrix_stats.markets.map((m) => (
-                <span key={m} className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700 border border-slate-300">
+                <span key={m} className="rounded bg-slate-50 px-1.5 py-0.5 text-xs font-bold text-blue-700 border border-slate-300">
                   {m === "US" ? "🇺🇸 US" : m === "CA" ? "🇨🇦 CA" : m === "DE" ? "🇩🇪 DE" : m === "FR" ? "🇫🇷 FR" : m === "ES" ? "🇪🇸 ES" : m === "IT" ? "🇮🇹 IT" : m === "GB" ? "🇬🇧 GB" : m === "AU" ? "🇦🇺 AU" : m}
                 </span>
               ))}
-              <span className="text-[11px] text-slate-600 font-medium ml-1">Xu hướng:</span>
+              <span className="text-xs text-slate-600 font-medium ml-1">Xu hướng:</span>
               {activeResult.query_matrix_stats.trend_types.map((t) => (
-                <span key={t} className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200">
+                <span key={t} className="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-bold text-blue-700 border border-blue-200">
                   {t === "growing" ? "🔥 Tăng trưởng" : t === "monthly" ? "📅 Hàng tháng" : t === "seasonal" ? "🍂 Mùa vụ" : t}
                 </span>
               ))}
@@ -253,7 +253,7 @@ export function TrendClusterDiscovery({
             }`}
           >
             <span>🗂️ 1. Chọn theo Cụm Chủ đề AI</span>
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-700 font-mono">
+            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700 font-mono">
               {activeResult.clusters.length} Cụm
             </span>
           </button>
@@ -269,7 +269,7 @@ export function TrendClusterDiscovery({
           >
             <span><AppIcon name="queue" /> 2. Chọn trực tiếp từ {allAcceptedKeywords.length} Từ khóa Đạt chuẩn</span>
             {selectedKeywordNames.size > 0 && (
-              <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] text-white font-mono font-bold">
+              <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs text-white font-mono font-bold">
                 ✓ {selectedKeywordNames.size} đã chọn
               </span>
             )}
@@ -285,14 +285,14 @@ export function TrendClusterDiscovery({
             <button
               type="button"
               onClick={handleSelectTop10Keywords}
-              className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 transition cursor-pointer"
+              className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 transition cursor-pointer"
             >
               <AppIcon name="seo" /> {isOfficialTrendData ? "Chọn Top 10 Hot" : "Chọn 10 gợi ý đầu"}
             </button>
             <button
               type="button"
               onClick={handleSelectTop25Keywords}
-              className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 transition cursor-pointer"
+              className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 transition cursor-pointer"
             >
               <AppIcon name="seo" /> {isOfficialTrendData ? "Chọn Top 25 Hot" : "Chọn 25 gợi ý đầu"}
             </button>
@@ -300,7 +300,7 @@ export function TrendClusterDiscovery({
               <button
                 type="button"
                 onClick={handleClearKeywordSelection}
-                className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 transition cursor-pointer"
               >
                 Bỏ chọn từ khóa
               </button>
@@ -346,7 +346,7 @@ export function TrendClusterDiscovery({
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-bold text-slate-900">{title}</h3>
                         {cluster.recommended && (
-                          <span className="rounded-full bg-amber-50 border border-amber-300 px-2 py-0.2 text-[10px] font-bold text-amber-700">
+                          <span className="rounded-full bg-amber-50 border border-amber-300 px-2 py-0.2 text-xs font-bold text-amber-700">
                             <AppIcon name="star" /> Đề xuất cao
                           </span>
                         )}
@@ -374,7 +374,7 @@ export function TrendClusterDiscovery({
                 )}
 
                 {/* Visual Style Note */}
-                <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] text-slate-700">
+                <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs text-slate-700">
                   <span className="font-semibold text-blue-700"><AppIcon name="image" /> Phong cách in: </span>
                   <span>{visualStyle}</span>
                 </div>
@@ -382,11 +382,11 @@ export function TrendClusterDiscovery({
                 {/* Sample Motifs */}
                 {sampleMotifs.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[10px] font-medium text-slate-600">Họa tiết tiêu biểu:</span>
+                    <span className="text-xs font-medium text-slate-600">Họa tiết tiêu biểu:</span>
                     {sampleMotifs.map((motif: string) => (
                       <span
                         key={motif}
-                        className="rounded bg-slate-50 px-2 py-0.5 text-[10px] text-slate-700 border border-slate-300"
+                        className="rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-700 border border-slate-300"
                       >
                         {motif}
                       </span>
@@ -397,7 +397,7 @@ export function TrendClusterDiscovery({
                 {/* Cluster Keywords with Market & Growth Badges */}
                 {cluster.keywords && cluster.keywords.length > 0 && (
                   <div className="flex flex-col gap-1 border-t border-slate-200 pt-2">
-                    <div className="flex items-center justify-between text-[10px] text-slate-600 font-medium">
+                    <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
                       <span>Từ khóa xu hướng trong cụm ({cluster.keywords.length}):</span>
                       <span>Thị trường & Loại xu hướng</span>
                     </div>
@@ -405,28 +405,28 @@ export function TrendClusterDiscovery({
                       {cluster.keywords.slice(0, 5).map((kw) => (
                         <div
                           key={kw.keyword}
-                          className="flex items-center gap-1.5 rounded bg-white border border-slate-200 px-2 py-0.5 text-[11px] text-slate-900"
+                          className="flex items-center gap-1.5 rounded bg-white border border-slate-200 px-2 py-0.5 text-xs text-slate-900"
                         >
                           <span className="font-medium truncate max-w-[140px]">{kw.keyword}</span>
                           {kw.markets && kw.markets.length > 1 && (
-                            <span className="rounded bg-amber-50 px-1 text-[9px] font-bold text-amber-700 border border-amber-300">
+                            <span className="rounded bg-amber-50 px-1 text-xs font-bold text-amber-700 border border-amber-300">
                               🌍 {kw.markets.length} QG
                             </span>
                           )}
                           {kw.markets && kw.markets.length === 1 && (
-                            <span className="rounded bg-slate-50 px-1 text-[9px] font-bold text-blue-700">
+                            <span className="rounded bg-slate-50 px-1 text-xs font-bold text-blue-700">
                               {kw.markets[0]}
                             </span>
                           )}
                           {kw.pct_growth_mom !== undefined && (
-                            <span className="text-[10px] text-emerald-700 font-semibold">
+                            <span className="text-xs text-emerald-700 font-semibold">
                               +{kw.pct_growth_mom}%
                             </span>
                           )}
                         </div>
                       ))}
                       {cluster.keywords.length > 5 && (
-                        <span className="text-[10px] text-slate-600 self-center">
+                        <span className="text-xs text-slate-600 self-center">
                           +{cluster.keywords.length - 5} từ khóa khác...
                         </span>
                       )}
@@ -437,14 +437,14 @@ export function TrendClusterDiscovery({
                 {/* Fused 2D Pattern Queries */}
                 {fusedQueries.length > 0 && (
                   <div className="flex flex-col gap-1 border-t border-slate-200 pt-2.5">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-700">
                       <AppIcon name="seo" /> Câu truy vấn cào ảnh hoa văn 2D (Fused Queries):
                     </span>
                     <div className="flex flex-col gap-1">
                       {fusedQueries.map((q: string) => (
                         <div
                           key={q}
-                          className="flex items-center gap-1.5 text-[11px] font-mono text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 truncate"
+                          className="flex items-center gap-1.5 text-xs font-mono text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 truncate"
                         >
                           <span className="text-blue-700">→</span>
                           <span className="truncate">{q}</span>
@@ -553,13 +553,13 @@ export function TrendClusterDiscovery({
                     </div>
 
                     {kw.pct_growth_mom !== undefined && (
-                      <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-[10px] font-bold text-emerald-700 shrink-0">
+                      <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 text-xs font-bold text-emerald-700 shrink-0">
                         +{kw.pct_growth_mom}%
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between gap-2 text-[10px] text-slate-600">
+                  <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
                     <div className="flex items-center gap-1 truncate">
                       <span className="text-slate-500 font-mono">#{kw.rank ?? idx + 1}</span>
                       {kw.markets && kw.markets.length > 0 && (
@@ -570,7 +570,7 @@ export function TrendClusterDiscovery({
                       )}
                     </div>
 
-                    <span className="text-[9px] text-slate-500 font-mono truncate max-w-[120px]" title={fusedQ}>
+                    <span className="text-xs text-slate-500 font-mono truncate max-w-[120px]" title={fusedQ}>
                       → {fusedQ}
                     </span>
                   </div>
@@ -580,7 +580,7 @@ export function TrendClusterDiscovery({
           </div>
 
           {filteredKeywords.length > 150 && (
-            <p className="text-[11px] text-slate-500 text-center italic">
+            <p className="text-xs text-slate-500 text-center italic">
               Đang hiển thị 150 / {filteredKeywords.length} từ khóa phù hợp. Sử dụng ô tìm kiếm để lọc chính xác từ bạn muốn.
             </p>
           )}
@@ -616,7 +616,7 @@ export function TrendClusterDiscovery({
           <div className="flex items-center gap-2">
             <span><AppIcon name="lock" /></span>
             <span>Minh bạch Bộ lọc Ấn phẩm (Graphic Printability Gate):</span>
-            <span className="rounded bg-rose-50 border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+            <span className="rounded bg-rose-50 border border-rose-200 px-2 py-0.5 text-xs font-bold text-rose-700">
               {activeResult.rejected_keywords.length} Từ khóa không phù hợp đã loại bỏ
             </span>
           </div>
@@ -627,7 +627,7 @@ export function TrendClusterDiscovery({
 
         {showRejected && (
           <div className="flex flex-col gap-2 border-t border-slate-200 p-4 pt-3">
-            <p className="text-[11px] text-slate-600 leading-relaxed">
+            <p className="text-xs text-slate-600 leading-relaxed">
               Bộ lọc Printability Gate tự động chặn các từ khóa công thức nấu ăn, làm đẹp móng tay, không gian kiến trúc 3D
               và bài tập thể hình để đảm bảo 100% kết quả cào về là hoa văn, tranh vẽ vector, typography chữ nghệ thuật
               và hình nền đồ họa chuẩn xưởng in ấn POD.
@@ -651,7 +651,7 @@ export function TrendClusterDiscovery({
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] text-rose-700 truncate">
+                      <span className="text-xs text-rose-700 truncate">
                         {kw.reject_reason || "Từ khóa phi ấn phẩm"}
                       </span>
                       {kw.markets && kw.markets.length > 0 && (
@@ -665,7 +665,7 @@ export function TrendClusterDiscovery({
                   <button
                     type="button"
                     onClick={() => handleRestoreKeyword(kw)}
-                    className="shrink-0 rounded bg-slate-50 hover:bg-blue-50 border border-slate-300 hover:border-blue-300 px-2 py-1 text-[10px] font-semibold text-blue-700 transition cursor-pointer"
+                    className="shrink-0 rounded bg-slate-50 hover:bg-blue-50 border border-slate-300 hover:border-blue-300 px-2 py-1 text-xs font-semibold text-blue-700 transition cursor-pointer"
                   >
                     <AppIcon name="seo" /> Khôi phục
                   </button>

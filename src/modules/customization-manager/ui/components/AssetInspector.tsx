@@ -122,13 +122,13 @@ export function AssetInspector({
                       {(asset.roles || ["asset"]).map((role: string) => (
                         <span
                           key={role}
-                          className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 uppercase tracking-wider"
+                          className="rounded bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-blue-700 uppercase tracking-wider"
                         >
                           {role}
                         </span>
                       ))}
                       {hasGid && (
-                        <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                        <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-xs text-emerald-700">
                           Tracked
                         </span>
                       )}
@@ -138,12 +138,12 @@ export function AssetInspector({
                       {asset.alt || `Asset ${index + 1}`}
                     </p>
 
-                    <p className="text-[11px] font-mono text-slate-500 truncate" title={asset.url}>
+                    <p className="text-xs font-mono text-slate-500 truncate" title={asset.url}>
                       {asset.url}
                     </p>
 
                     {hasGid && (
-                      <p className="text-[10px] font-mono text-slate-500 truncate mt-0.5">
+                      <p className="text-xs font-mono text-slate-500 truncate mt-0.5">
                         GID: {hasGid}
                       </p>
                     )}
@@ -151,7 +151,7 @@ export function AssetInspector({
                 </div>
 
                 {/* Footer Actions */}
-                <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-2 text-[11px]">
+                <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-2 text-xs">
                   <a
                     href={asset.url}
                     target="_blank"

@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { AppIcon } from "../../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../../shared/hooks/useDialogFocus";
 import type { ShopifyProductForAutoSeoUi } from "../../types";
 
 export interface ProductDetailDrawerProps {
@@ -26,6 +27,7 @@ export function ProductDetailDrawer({
   const [prevProductId, setPrevProductId] = useState<string | undefined>(product?.id);
   const [prevIsOpen, setPrevIsOpen] = useState<boolean>(isOpen);
   const [activeTab, setActiveTab] = useState<"overview" | "description" | "variants" | "raw">("overview");
+  const dialogRef = useDialogFocus({ isOpen: isOpen && product !== null, onClose });
 
   // Reset state when product changes
   if (product?.id !== prevProductId) {
@@ -63,7 +65,7 @@ export function ProductDetailDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-slate-50 backdrop-blur-xs flex justify-end transition-opacity">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Chi tiết sản phẩm (PDP)" className="fixed inset-0 z-50 overflow-hidden bg-slate-900/30 backdrop-blur-xs flex justify-end transition-opacity">
       {/* Backdrop overlay click to close */}
       <div className="fixed inset-0" onClick={onClose} />
 
@@ -76,7 +78,7 @@ export function ProductDetailDrawer({
               <span><AppIcon name="search" /></span> Chi tiết sản phẩm (PDP)
             </h2>
             {isLoading && (
-              <span className="flex items-center gap-1.5 text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+              <span className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
                 Đang tải chi tiết...
               </span>
@@ -88,6 +90,7 @@ export function ProductDetailDrawer({
             onClick={onClose}
             className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
             title="Đóng (ESC)"
+            aria-label="Đóng chi tiết sản phẩm"
           >
             ✕
           </button>
@@ -149,7 +152,7 @@ export function ProductDetailDrawer({
 
                     {/* Active Image Metadata */}
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs space-y-2">
-                      <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-[11px]">
+                      <div className="flex items-center justify-between border-b border-slate-200 pb-1.5 text-xs">
                         <span className="font-semibold text-slate-700">
                           Ảnh {safeImageIndex + 1} / {images.length}
                         </span>
@@ -165,7 +168,7 @@ export function ProductDetailDrawer({
 
                       <div className="space-y-1.5">
                         <div>
-                          <span className="text-slate-500 text-[11px] block font-medium">Alt Text:</span>
+                          <span className="text-slate-500 text-xs block font-medium">Alt Text:</span>
                           <p className="text-slate-900 font-medium break-words">
                             {activeImage?.altText && activeImage.altText.trim().length > 0 ? (
                               activeImage.altText
@@ -176,7 +179,7 @@ export function ProductDetailDrawer({
                         </div>
 
                         {activeImage?.url ? (
-                          <div className="pt-1 border-t border-slate-200 text-[11px]">
+                          <div className="pt-1 border-t border-slate-200 text-xs">
                             <span className="text-slate-500 block mb-0.5">URL:</span>
                             <a
                               href={activeImage.url}
@@ -244,10 +247,10 @@ export function ProductDetailDrawer({
                 <div>
                   <h3 className="text-base font-bold text-slate-900">{product.title}</h3>
                   <div className="flex flex-wrap items-center gap-2 mt-2">
-                    <span className="text-[11px] font-mono text-slate-600 bg-white px-2 py-0.5 rounded-sm border border-slate-200">
+                    <span className="text-xs font-mono text-slate-600 bg-white px-2 py-0.5 rounded-sm border border-slate-200">
                       ID: {product.id}
                     </span>
-                    <span className="text-[11px] font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded-sm border border-blue-200">
+                    <span className="text-xs font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded-sm border border-blue-200">
                       handle: {product.handle}
                     </span>
                   </div>
@@ -255,19 +258,19 @@ export function ProductDetailDrawer({
 
                 <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200 text-xs">
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Trạng thái:</span>
+                    <span className="text-slate-500 block text-xs">Trạng thái:</span>
                     <span className="font-semibold text-slate-700">{product.status ?? "N/A"}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Nhà cung cấp (Vendor):</span>
+                    <span className="text-slate-500 block text-xs">Nhà cung cấp (Vendor):</span>
                     <span className="font-semibold text-slate-700">{product.vendor ?? "N/A"}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Loại sản phẩm (Product Type):</span>
+                    <span className="text-slate-500 block text-xs">Loại sản phẩm (Product Type):</span>
                     <span className="font-semibold text-slate-700">{product.productType ?? "N/A"}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Số lượng biến thể:</span>
+                    <span className="text-slate-500 block text-xs">Số lượng biến thể:</span>
                     <span className="font-semibold text-slate-700">{product.variants?.length ?? 0}</span>
                   </div>
                 </div>
@@ -275,7 +278,7 @@ export function ProductDetailDrawer({
                 {/* Tags */}
                 {product.tags && product.tags.length > 0 && (
                   <div className="pt-2 border-t border-slate-200">
-                    <span className="text-slate-500 block text-[11px] mb-1.5">Tags:</span>
+                    <span className="text-slate-500 block text-xs mb-1.5">Tags:</span>
                     <div className="flex flex-wrap gap-1.5">
                       {product.tags.map((tag) => (
                         <span
@@ -296,14 +299,14 @@ export function ProductDetailDrawer({
                   <span className="text-xs font-semibold uppercase text-slate-600">
                     SEO
                   </span>
-                  <span className="text-[11px] font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded-sm border border-blue-200">
+                  <span className="text-xs font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded-sm border border-blue-200">
                     Read-only
                   </span>
                 </div>
 
                 <div className="space-y-3 text-xs">
                   <div>
-                    <span className="text-slate-500 block text-[11px] font-medium mb-1">SEO Title:</span>
+                    <span className="text-slate-500 block text-xs font-medium mb-1">SEO Title:</span>
                     <p className="text-slate-900 font-medium break-words">
                       {product.seo?.title && product.seo.title.trim().length > 0 ? (
                         product.seo.title
@@ -314,7 +317,7 @@ export function ProductDetailDrawer({
                   </div>
 
                   <div className="pt-2 border-t border-slate-200">
-                    <span className="text-slate-500 block text-[11px] font-medium mb-1">SEO Description:</span>
+                    <span className="text-slate-500 block text-xs font-medium mb-1">SEO Description:</span>
                     <p className="text-slate-700 leading-relaxed break-words whitespace-pre-wrap">
                       {product.seo?.description && product.seo.description.trim().length > 0 ? (
                         product.seo.description
@@ -337,7 +340,7 @@ export function ProductDetailDrawer({
               {product.variants && product.variants.length > 0 ? (
                 <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
                   <table className="w-full text-left text-xs text-slate-700">
-                    <thead className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-600">
+                    <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
                       <tr>
                         <th className="py-2.5 px-3">Tên biến thể</th>
                         <th className="py-2.5 px-3">Giá ($)</th>
@@ -345,7 +348,7 @@ export function ProductDetailDrawer({
                         <th className="py-2.5 px-3 text-right">Tồn kho</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
+                    <tbody className="divide-y divide-slate-200 font-mono text-xs">
                       {product.variants.map((variant) => (
                         <tr key={variant.id} className="hover:bg-slate-50">
                           <td className="py-2.5 px-3 font-sans font-medium text-slate-900">
@@ -379,7 +382,7 @@ export function ProductDetailDrawer({
                 <span className="text-xs font-semibold uppercase text-slate-600">
                   Nội dung mô tả HTML gốc (Read-only Code)
                 </span>
-                <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-sm border border-amber-200">
+                <span className="text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded-sm border border-amber-200">
                   Không render trực tiếp để chống XSS
                 </span>
               </div>

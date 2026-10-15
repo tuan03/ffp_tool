@@ -148,10 +148,10 @@ export function OrphanAssetCleanerModal({
 
                 {scanResult.orphanCount > 0 ? (
                   <div>
-                    <span className="text-[11px] font-medium text-slate-600 block mb-1.5">
+                    <span className="text-xs font-medium text-slate-600 block mb-1.5">
                       Danh sách File GIDs mồ côi:
                     </span>
-                    <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 text-[11px] font-mono text-slate-600 space-y-1">
+                    <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 text-xs font-mono text-slate-600 space-y-1">
                       {scanResult.orphanFileIds.map((id) => (
                         <div key={id} className="text-amber-700 truncate">
                           {id}

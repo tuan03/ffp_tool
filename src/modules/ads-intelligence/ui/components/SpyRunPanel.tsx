@@ -94,10 +94,10 @@ export function SpyRunPanel({ client, storeId }: { readonly client: AdsIntellige
           <span>Tải lại dữ liệu</span>
         </button>
       </div>
-      <p className="text-slate-600 leading-relaxed text-[11px]">
+      <p className="text-slate-600 leading-relaxed text-xs">
         Tác vụ Spy đối thủ được thực hiện độc lập bởi <strong>Google Antigravity CLI (<code className="text-blue-700">agy</code>)</strong> hoặc <strong>OpenAI Codex CLI (<code className="text-blue-700">codex</code>)</strong> đang chạy trên máy tính của bạn thông qua giao thức MCP để tận dụng tối đa gói thuê bao có sẵn.
       </p>
-      <div className="pt-0.5 flex flex-wrap items-center gap-2 text-[11px]">
+      <div className="pt-0.5 flex flex-wrap items-center gap-2 text-xs">
         <span className="text-slate-600">Lệnh quét đối thủ mới từ terminal máy bạn:</span>
         <code className="px-2 py-0.5 rounded bg-black/70 border border-slate-200 text-white font-mono select-all">
           agy &quot;Quét và phân tích đối thủ cho store {storeId}&quot;

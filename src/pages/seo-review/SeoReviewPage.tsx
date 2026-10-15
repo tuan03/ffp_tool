@@ -2276,12 +2276,12 @@ export function SeoReviewPage({
   }, [products, selectedIds]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Page Header */}
       <PageHeader title="SEO Review" description="Xem, chỉnh sửa và phê duyệt nội dung SEO trước khi đồng bộ lên Shopify." />
 
       {/* Viewing store selection never changes a product's immutable publish destination. */}
-      <div className="flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3.5 shadow-sm">
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-700 text-sm">
@@ -2289,12 +2289,6 @@ export function SeoReviewPage({
             </span>
             <span className="text-sm font-semibold text-slate-900">
               <label htmlFor="review-store">Store đang xem:</label>
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 font-mono text-xs font-bold text-blue-700">
-              <span>{effectiveStoreId.toUpperCase()}</span>
-              <span className="text-[10px] text-slate-600 font-normal">
-                ({availableStores.find((s) => s.storeId.toLowerCase() === effectiveStoreId.toLowerCase())?.shopDomain || effectiveStoreId})
-              </span>
             </span>
             <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
               onChange={event => {
@@ -2329,11 +2323,11 @@ export function SeoReviewPage({
                   persistBrowserActiveStoreId(os.storeId);
                   navigate(`/seo-review?storeId=${encodeURIComponent(os.storeId)}`);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1 font-mono text-[11px] text-blue-700 hover:border-blue-300 hover:bg-slate-100 transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1 font-mono text-xs text-blue-700 hover:border-blue-300 hover:bg-slate-100 transition cursor-pointer"
                 title={`Chuyển sang xem danh sách review của store ${os.storeId.toUpperCase()}`}
               >
                 <span><AppIcon name="store" /> {os.storeId.toUpperCase()}</span>
-                <span className="rounded bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue-700 font-bold border border-blue-200">
+                <span className="rounded bg-blue-50 px-1.5 py-0.2 text-xs text-blue-700 font-bold border border-blue-200">
                   {os.count} sp
                 </span>
                 <span className="text-slate-600">➔</span>

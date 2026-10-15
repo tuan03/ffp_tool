@@ -203,7 +203,7 @@ export function BenchmarkTable({
                         </span>
                         {item.hasExternalDrift && (
                           <span
-                            className="rounded bg-amber-50 px-1.5 py-0.2 text-[10px] text-amber-700 border border-amber-200"
+                            className="rounded bg-amber-50 px-1.5 py-0.2 text-xs text-amber-700 border border-amber-200"
                             title="Nội dung trên storefront đã bị thay đổi ngoài snapshot"
                           >
                             External Drift
@@ -213,7 +213,7 @@ export function BenchmarkTable({
                           <button
                             type="button"
                             onClick={() => onSelectBatch?.(item.batchId!)}
-                            className="text-[11px] text-blue-700 hover:underline"
+                            className="text-xs text-blue-700 hover:underline"
                             title={`Xem batch: ${item.batchId}`}
                           >
                             {item.batchId}
@@ -227,7 +227,7 @@ export function BenchmarkTable({
                       {item.seoAge != null ? (
                         <div>
                           <span className="font-semibold text-slate-900">{item.seoAge}d</span>
-                          <div className="text-[11px] text-slate-500">
+                          <div className="text-xs text-slate-500">
                             {item.coverageDays}/{item.targetDays}d
                           </div>
                         </div>
@@ -374,7 +374,7 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.organicSessions.isGscQueryFilterApplied ? (
                         <span
-                          className="text-[11px] text-amber-700 italic"
+                          className="text-xs text-amber-700 italic"
                           title="GSC query filter is not supported by this GA4 report (Rule 12.7: từ khóa GSC không map trực tiếp vào phiên GA4)"
                         >
                           N/A (Query filter)

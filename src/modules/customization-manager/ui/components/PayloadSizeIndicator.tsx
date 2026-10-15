@@ -43,7 +43,7 @@ export function PayloadSizeIndicator({
           <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
             Shopify Metafield Payload Size
           </span>
-          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${bgBadge}`}>
+          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${bgBadge}`}>
             {statusLabel}
           </span>
         </div>
@@ -64,7 +64,7 @@ export function PayloadSizeIndicator({
         <div className="absolute top-0 bottom-0 left-[86%] w-0.5 bg-rose-50" title="Giới hạn tối đa (110 KB)" />
       </div>
 
-      <p className="mt-2 text-[11px] text-slate-600 leading-relaxed">
+      <p className="mt-2 text-xs text-slate-600 leading-relaxed">
         Shopify giới hạn dung lượng lưu trữ Metafield tối đa là 128 KB. Module sẽ tự động nén và loại bỏ asset thừa nếu dữ liệu vượt ngưỡng khuyến nghị.
       </p>
     </div>

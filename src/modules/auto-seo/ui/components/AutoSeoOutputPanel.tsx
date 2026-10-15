@@ -99,7 +99,7 @@ export function AutoSeoOutputPanel({
           </div>
           <ul className="list-disc list-inside space-y-1 text-xs text-amber-700 pl-1">
             {output.warnings.map((warning) => (
-              <li key={warning} className="font-mono text-[11px]">
+              <li key={warning} className="font-mono text-xs">
                 {warning}
               </li>
             ))}
@@ -119,7 +119,7 @@ export function AutoSeoOutputPanel({
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-600">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
                 <tr>
                   <th className="py-2.5 px-3 text-center w-12">STT</th>
                   <th className="py-2.5 px-3">Product ID</th>
@@ -129,7 +129,7 @@ export function AutoSeoOutputPanel({
                   <th className="py-2.5 px-3 text-center">Số ảnh</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
+              <tbody className="divide-y divide-slate-200 font-mono text-xs">
                 {output.seoContentInputs.map((item, idx) => (
                   <tr key={item.productId} className="hover:bg-slate-50">
                     <td className="py-2.5 px-3 text-center text-slate-500 font-sans">{idx + 1}</td>
@@ -142,7 +142,7 @@ export function AutoSeoOutputPanel({
                     </td>
                     <td className="py-2.5 px-3 font-sans text-slate-900 max-w-xs truncate">{item.sourceTitle}</td>
                     <td className="py-2.5 px-3 text-center text-slate-700 font-sans">
-                      <span className="inline-block rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold">
+                      <span className="inline-block rounded-full bg-slate-50 px-2 py-0.5 text-xs font-semibold">
                         {item.images.length} ảnh
                       </span>
                     </td>
@@ -209,7 +209,7 @@ export function AutoSeoOutputPanel({
             )}
           </button>
           {!onSendToSeoContent && (
-            <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block z-20 w-64 rounded-lg bg-white p-2 text-[11px] text-slate-600 border border-slate-200 shadow-sm text-center">
+            <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block z-20 w-64 rounded-lg bg-white p-2 text-xs text-slate-600 border border-slate-200 shadow-sm text-center">
               SEO Content handler is not provided.
             </div>
           )}

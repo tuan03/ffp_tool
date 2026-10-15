@@ -39,20 +39,20 @@ export function CrawlerProductDetailModal({
         <div className="flex items-start justify-between border-b border-slate-200 p-5 bg-slate-50">
           <div className="pr-4">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-mono font-semibold text-blue-700">
+              <span className="rounded bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-mono font-semibold text-blue-700">
                 ASIN: {asin}
               </span>
               {product.customization ? (
-                <span className="rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                <span className="rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                   🟢 Có Customize
                 </span>
               ) : (
-                <span className="rounded bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                <span className="rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
                   ⚪ Không Customize
                 </span>
               )}
               {product.warnings && product.warnings.length > 0 && (
-                <span className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                <span className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-700">
                   <AppIcon name="warning" /> {product.warnings.length} Cảnh báo
                 </span>
               )}
@@ -151,7 +151,7 @@ export function CrawlerProductDetailModal({
                         alt={product.title}
                         className="mx-auto h-48 w-full object-cover rounded-lg"
                       />
-                      <span className="text-[11px] text-slate-500 block mt-1">Ảnh đại diện chính</span>
+                      <span className="text-xs text-slate-500 block mt-1">Ảnh đại diện chính</span>
                     </div>
                   )}
 
@@ -206,7 +206,7 @@ export function CrawlerProductDetailModal({
                           className="h-full w-full object-cover group-hover:scale-105 transition"
                         />
                       </div>
-                      <div className="mt-2 flex items-center justify-between text-[11px] text-slate-600">
+                      <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
                         <span>Ảnh #{idx + 1}</span>
                         <span className="text-blue-700 opacity-0 group-hover:opacity-100 transition"><AppIcon name="search" /> Phóng to</span>
                       </div>
@@ -268,7 +268,7 @@ export function CrawlerProductDetailModal({
                             {Object.entries(v.options).map(([k, val]) => (
                               <span
                                 key={k}
-                                className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-blue-700"
+                                className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-blue-700"
                               >
                                 {k}: <strong className="text-slate-900">{val}</strong>
                               </span>
@@ -317,14 +317,14 @@ export function CrawlerProductDetailModal({
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-semibold text-slate-900">{ti.label}</span>
                               {ti.required && (
-                                <span className="text-[10px] text-rose-700 font-semibold">Bắt buộc</span>
+                                <span className="text-xs text-rose-700 font-semibold">Bắt buộc</span>
                               )}
                             </div>
-                            <p className="text-[11px] text-slate-600 font-mono italic">
+                            <p className="text-xs text-slate-600 font-mono italic">
                               Ví dụ mẫu: {ti.placeholder || "(Không có)"}
                             </p>
                             {ti.maxLength && (
-                              <span className="text-[10px] text-slate-500 block">Tối đa {ti.maxLength} ký tự</span>
+                              <span className="text-xs text-slate-500 block">Tối đa {ti.maxLength} ký tự</span>
                             )}
                           </div>
                         ))}
@@ -343,7 +343,7 @@ export function CrawlerProductDetailModal({
                           <div key={og.id} className="rounded-lg border border-slate-200 bg-white p-4">
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-xs font-bold text-slate-900">{og.name}</span>
-                              <span className="text-[10px] font-mono text-slate-600">Kiểu: {og.type}</span>
+                              <span className="text-xs font-mono text-slate-600">Kiểu: {og.type}</span>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                               {og.options.map((opt, i) => (
@@ -388,7 +388,7 @@ export function CrawlerProductDetailModal({
                             )}
                             <div>
                               <span className="text-xs font-semibold text-slate-900 block">{s.name}</span>
-                              <span className="text-[11px] text-blue-700">Bề mặt in / khắc laser</span>
+                              <span className="text-xs text-blue-700">Bề mặt in / khắc laser</span>
                             </div>
                           </div>
                         ))}
@@ -408,10 +408,10 @@ export function CrawlerProductDetailModal({
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-semibold text-slate-900">{imgIn.label}</span>
                               {imgIn.required && (
-                                <span className="text-[10px] text-rose-700 font-semibold">Bắt buộc</span>
+                                <span className="text-xs text-rose-700 font-semibold">Bắt buộc</span>
                               )}
                             </div>
-                            <span className="text-[11px] text-slate-600 block">Hỗ trợ PNG/JPG chuẩn nét cao</span>
+                            <span className="text-xs text-slate-600 block">Hỗ trợ PNG/JPG chuẩn nét cao</span>
                           </div>
                         ))}
                       </div>
@@ -516,7 +516,7 @@ export function CrawlerProductDetailModal({
                 </button>
               </div>
 
-              <pre className="max-h-[55vh] overflow-auto rounded-lg border border-slate-200 bg-white p-4 font-mono text-[11px] text-blue-700">
+              <pre className="max-h-[55vh] overflow-auto rounded-lg border border-slate-200 bg-white p-4 font-mono text-xs text-blue-700">
                 {JSON.stringify(product, null, 2)}
               </pre>
             </div>

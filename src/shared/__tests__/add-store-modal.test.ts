@@ -15,4 +15,7 @@ test("new store form requires an explicit SEO profile selection", () => {
   assert.match(html, /name="ffp_seo_profile_id"/);
   assert.match(html, /name="ffp_seo_profile_id"[^>]*required/);
   assert.match(html, /Chọn chính sách SEO cho store/);
+  assert.match(html, /aria-label="Thêm &amp; Kết nối Shopify Store mới"/);
+  assert.match(html, /aria-label="Đóng cấu hình store"/);
+  assert.match(html, /bg-slate-900\/30/);
 });

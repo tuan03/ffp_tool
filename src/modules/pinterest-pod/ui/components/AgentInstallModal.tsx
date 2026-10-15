@@ -205,7 +205,7 @@ export function AgentInstallModal({
           </>
         ) : null}
 
-        <p className="mt-4 text-[11px] leading-5 text-slate-500">
+        <p className="mt-4 text-xs leading-5 text-slate-500">
           Chỉ gửi cho người bạn tin tưởng. Máy nhận sẽ tải Python dependencies, Chromium và kết nối về Coordinator của FFP.
         </p>
       </div>

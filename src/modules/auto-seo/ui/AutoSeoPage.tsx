@@ -715,6 +715,8 @@ export function AutoSeoPage({
 
       {/* Product Selection Table */}
       <ProductSelectionTable
+        onLoadProducts={() => void handleLoadProducts()}
+        canLoadProducts={Boolean(selectedStoreId) && !isLoadingStores && !isLoadingProducts}
         products={products}
         selectedProductIds={selectedProductIds}
         searchQuery={searchQuery}

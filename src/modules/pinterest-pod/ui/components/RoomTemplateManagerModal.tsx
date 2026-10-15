@@ -169,7 +169,7 @@ export function RoomTemplateManagerModal({
                 <h3 className="text-sm font-bold text-slate-900">
                   Quản lý Ảnh Phòng Mẫu (Mockup Reference)
                 </h3>
-                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-300">
+                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 border border-blue-300">
                   {images.length}/{maxImages} ảnh
                 </span>
               </div>
@@ -280,7 +280,7 @@ export function RoomTemplateManagerModal({
                 <p className="text-xs font-semibold text-slate-900">
                   Kéo thả ảnh phòng vào đây, hoặc <span className="text-blue-700 hover:underline">bấm để chọn từ máy tính</span>
                 </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Hỗ trợ tải nhiều file ảnh cùng lúc (PNG, JPG, WEBP). Khuyên dùng ảnh chụp phòng khách, phòng ngủ hoặc bảng Size Chart.
                 </p>
               </div>
@@ -312,7 +312,7 @@ export function RoomTemplateManagerModal({
                 <p className="text-xs font-medium text-slate-700">
                   Chưa có ảnh phòng mẫu riêng nào
                 </p>
-                <p className="text-[11px] text-slate-500 mt-1 max-w-md mx-auto">
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
                   Khi danh sách trống, AI sẽ tự động sinh ngẫu nhiên các bối cảnh phòng decor. Hãy tải ảnh lên ở trên hoặc bấm nút &ldquo;Làm phòng&rdquo; trên thẻ ảnh Pinterest để chỉ định bối cảnh cố định!
                 </p>
               </div>
@@ -356,7 +356,7 @@ export function RoomTemplateManagerModal({
                           {/* Number Badge & Reorder Controls */}
                           <div className="absolute top-2 left-2 flex items-center gap-1 pointer-events-auto">
                             <span
-                              className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow backdrop-blur-xs ${
+                              className={`rounded-md px-1.5 py-0.5 text-xs font-bold text-slate-900 shadow backdrop-blur-xs ${
                                 idx === 0 ? "bg-blue-600 text-white" : "bg-black/70 text-white"
                               }`}
                             >
@@ -371,7 +371,7 @@ export function RoomTemplateManagerModal({
                                     e.stopPropagation();
                                     handleMove(idx, idx - 1);
                                   }}
-                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
+                                  className="flex h-4 w-4 items-center justify-center rounded text-xs text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
                                   title="Chuyển sang trước (◀)"
                                 >
                                   ◀
@@ -383,7 +383,7 @@ export function RoomTemplateManagerModal({
                                     e.stopPropagation();
                                     handleMove(idx, idx + 1);
                                   }}
-                                  className="flex h-4 w-4 items-center justify-center rounded text-[9px] text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
+                                  className="flex h-4 w-4 items-center justify-center rounded text-xs text-slate-900 hover:bg-blue-700 hover:text-white disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer"
                                   title="Chuyển ra sau (▶)"
                                 >
                                   ▶
@@ -413,7 +413,7 @@ export function RoomTemplateManagerModal({
                                 e.stopPropagation();
                                 onPreviewImage(img.url, img.name || `Phòng Mẫu #${idx + 1}`);
                               }}
-                              className="absolute bottom-2 right-2 flex items-center gap-1 rounded bg-black/70 hover:bg-black/90 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xs transition cursor-pointer pointer-events-auto"
+                              className="absolute bottom-2 right-2 flex items-center gap-1 rounded bg-black/70 hover:bg-black/90 px-1.5 py-0.5 text-xs font-medium text-white backdrop-blur-xs transition cursor-pointer pointer-events-auto"
                               title="Soi phóng to HD"
                             >
                               <span><AppIcon name="search" /></span>
@@ -425,7 +425,7 @@ export function RoomTemplateManagerModal({
                         {/* Meta info */}
                         <div className="p-2 border-t border-slate-200 bg-slate-50 pointer-events-auto">
                           <p
-                            className="truncate text-[11px] font-medium text-slate-700"
+                            className="truncate text-xs font-medium text-slate-700"
                             title={img.name || `Phòng Mẫu #${idx + 1}`}
                           >
                             {img.name || `Phòng Mẫu #${idx + 1}`}
@@ -436,7 +436,7 @@ export function RoomTemplateManagerModal({
                   })}
                 </div>
                 {images.length > 1 && (
-                  <p className="text-[11px] text-slate-600 italic">
+                  <p className="text-xs text-slate-600 italic">
                     <AppIcon name="info" /> Mẹo: Kéo thả các ảnh hoặc bấm nút ◀ ▶ để thay đổi thứ tự ưu tiên (Ảnh #1 ★ sẽ làm phôi mockup chính).
                   </p>
                 )}

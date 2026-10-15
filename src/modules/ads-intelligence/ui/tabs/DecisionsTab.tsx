@@ -61,7 +61,7 @@ export function DecisionsTab({
               }`}
             >
               <span>{tab.label}</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white font-mono font-bold">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white font-mono font-bold">
                 {tab.count}
               </span>
             </button>
@@ -111,13 +111,13 @@ export function DecisionsTab({
                     >
                       {card.decision}
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded font-mono uppercase bg-white text-slate-600 border border-slate-200">
+                    <span className="text-xs px-2 py-0.5 rounded font-mono uppercase bg-white text-slate-600 border border-slate-200">
                       {card.entity.type}: {card.entity.name}
                     </span>
                   </div>
 
                   <span
-                    className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                    className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${
                       card.priority === "HIGH"
                         ? "bg-rose-50 text-rose-700 border border-rose-200"
                         : "bg-amber-50 text-amber-700 border border-amber-200"
@@ -141,7 +141,7 @@ export function DecisionsTab({
                     {card.observations.slice(0, 3).map((obs, idx) => (
                       <div
                         key={idx}
-                        className="text-[10px] px-2 py-1 rounded bg-white border border-slate-200 text-slate-700 font-mono flex items-center gap-1"
+                        className="text-xs px-2 py-1 rounded bg-white border border-slate-200 text-slate-700 font-mono flex items-center gap-1"
                       >
                         <span className="text-slate-600">{obs.metric}:</span>
                         <strong className="text-blue-700">{String(obs.current)}</strong>

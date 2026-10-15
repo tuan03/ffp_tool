@@ -93,7 +93,7 @@ export function CustomerLivePreviewModal({
                   <h3 className="text-sm font-bold text-slate-900">
                     Live Storefront Preview (Góc nhìn Khách hàng)
                   </h3>
-                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 uppercase">
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-700 uppercase">
                     Interactive
                   </span>
                 </div>
@@ -161,7 +161,7 @@ export function CustomerLivePreviewModal({
                   >
                     {customText || "Nhập tên của bạn"}
                   </div>
-                  <span className="absolute top-1 left-1.5 text-[9px] font-mono text-blue-700 bg-slate-50 px-1 rounded">
+                  <span className="absolute top-1 left-1.5 text-xs font-mono text-blue-700 bg-slate-50 px-1 rounded">
                     Print Area
                   </span>
                 </div>
@@ -169,7 +169,7 @@ export function CustomerLivePreviewModal({
 
               {/* Live Status Hint */}
               <div className="mt-4 text-center">
-                <span className="text-[11px] text-slate-500 font-mono">
+                <span className="text-xs text-slate-500 font-mono">
                   Đang hiển thị mặt: <strong className="text-slate-700">{activeSurface?.name || "Front"}</strong> • Phôi in chuẩn vector
                 </span>
               </div>
@@ -210,7 +210,7 @@ export function CustomerLivePreviewModal({
                   {/* Font picker */}
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <div>
-                      <span className="text-[11px] text-slate-600 block mb-1">Kiểu chữ:</span>
+                      <span className="text-xs text-slate-600 block mb-1">Kiểu chữ:</span>
                       <select
                         value={selectedFont}
                         onChange={(e) => setSelectedFont(e.target.value)}
@@ -225,7 +225,7 @@ export function CustomerLivePreviewModal({
                     </div>
 
                     <div>
-                      <span className="text-[11px] text-slate-600 block mb-1">Màu chữ in:</span>
+                      <span className="text-xs text-slate-600 block mb-1">Màu chữ in:</span>
                       <div className="flex items-center gap-2">
                         <input
                           type="color"
@@ -251,7 +251,7 @@ export function CustomerLivePreviewModal({
                           {group.label || group.id}
                         </label>
                         {group.required && (
-                          <span className="text-[10px] text-rose-700 font-medium">Bắt buộc</span>
+                          <span className="text-xs text-rose-700 font-medium">Bắt buộc</span>
                         )}
                       </div>
 
@@ -284,7 +284,7 @@ export function CustomerLivePreviewModal({
                               )}
                               <span>{opt.label || opt.id}</span>
                               {opt.price?.amount ? (
-                                <span className="text-[10px] text-emerald-700 font-semibold">
+                                <span className="text-xs text-emerald-700 font-semibold">
                                   +${opt.price.amount}
                                 </span>
                               ) : null}
@@ -310,7 +310,7 @@ export function CustomerLivePreviewModal({
                 >
                   <AppIcon name="store" /> Thêm vào Giỏ hàng (${totalPrice.toFixed(2)})
                 </button>
-                <p className="text-[10px] text-center text-slate-500">
+                <p className="text-xs text-center text-slate-500">
                   Đây là màn hình xem trước. Dữ liệu khi khách bấm mua sẽ được đính kèm vào Line Item Properties của Shopify Order.
                 </p>
               </div>

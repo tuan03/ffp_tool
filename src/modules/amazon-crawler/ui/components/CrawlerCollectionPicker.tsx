@@ -23,12 +23,12 @@ export function CrawlerCollectionPicker({ collections, selectedIds, isLoading, o
   const selectedCollections = collections.filter((collection) => selectedIds.includes(collection.id));
 
   return (
-    <section aria-label="Chọn collections" className="min-w-0 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <section aria-label="Chọn collections" className="min-w-0 space-y-3 rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-medium text-slate-900">Collections <span className="text-xs font-normal text-slate-600">· {selectedIds.length} đã chọn</span></h3>
         <div className="flex flex-wrap gap-3 text-xs">
-          <button type="button" disabled={isLoading || collections.length === 0} onClick={onSelectAll} className="text-blue-700 hover:text-blue-700 disabled:opacity-50">Chọn tất cả ({collections.length})</button>
-          <button type="button" disabled={isLoading || selectedIds.length === 0} onClick={onClear} className="text-slate-600 hover:text-rose-700 disabled:opacity-50">Bỏ chọn hết</button>
+          <button type="button" disabled={isLoading || collections.length === 0} onClick={onSelectAll} className="min-h-8 text-blue-700 hover:text-blue-700 disabled:opacity-50">Chọn tất cả ({collections.length})</button>
+          <button type="button" disabled={isLoading || selectedIds.length === 0} onClick={onClear} className="min-h-8 text-slate-600 hover:text-rose-700 disabled:opacity-50">Bỏ chọn hết</button>
         </div>
       </div>
       {selectedCollections.length > 0 && !isLoading ? (
@@ -50,9 +50,9 @@ export function CrawlerCollectionPicker({ collections, selectedIds, isLoading, o
       ) : visibleCollections.length === 0 ? (
         <p role="status" className="text-sm text-slate-600">Không tìm thấy collection phù hợp.</p>
       ) : (
-        <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-1">
+        <div className="max-h-52 overflow-y-auto rounded-lg bg-slate-50 p-1">
           {visibleCollections.map((collection) => (
-            <label key={collection.id} className="flex cursor-pointer items-start gap-3 rounded-md px-2 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
+            <label key={collection.id} className={`flex cursor-pointer items-start gap-3 rounded-md px-2 py-2.5 text-sm transition-colors ${selectedIds.includes(collection.id) ? "bg-blue-50 text-blue-800" : "text-slate-700 hover:bg-slate-100"}`}>
               <input type="checkbox" aria-label={collection.title} checked={selectedIds.includes(collection.id)} onChange={() => onToggle(collection.id)} className="mt-0.5 shrink-0 accent-blue-300" />
               <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{collection.title}</span>
               {collection.productsCount !== undefined ? <span aria-hidden="true" className="shrink-0 text-xs text-slate-500">{collection.productsCount} SP</span> : null}

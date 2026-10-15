@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../shared/hooks/useDialogFocus";
 import { WorkerReviewHistoryPanel } from "../../../modules/custom-gpt-seo";
 import type { CustomGptClient } from "../../../modules/custom-gpt-seo";
 
@@ -64,25 +65,12 @@ export function ProductDetailDrawer({
   const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showRawJsonModal, setShowRawJsonModal] = useState(false);
+  const dialogRef = useDialogFocus({ isOpen: isOpen && product !== null, onClose });
+  const rawDialogRef = useDialogFocus({ isOpen: isOpen && product !== null && showRawJsonModal, onClose: () => setShowRawJsonModal(false) });
   const rawJsonString = useMemo(
     () => (product ? serializeProductRawJson(product) : ""),
     [product],
   );
-
-  // Close modal or drawer on Escape key
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        if (showRawJsonModal) {
-          setShowRawJsonModal(false);
-        } else if (isOpen) {
-          onClose();
-        }
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, showRawJsonModal]);
 
   if (!isOpen || !product) {
     return null;
@@ -163,10 +151,10 @@ export function ProductDetailDrawer({
     : [];
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Chi tiết sản phẩm SEO" className="fixed inset-0 z-50 overflow-hidden">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-50 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm transition-opacity"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -518,7 +506,7 @@ export function ProductDetailDrawer({
                 />
               ) : (
                 <div className="relative">
-                  <pre className="p-4 rounded-lg bg-white border border-slate-200 font-mono text-[11px] text-slate-700 overflow-x-auto max-h-72">
+                  <pre className="p-4 rounded-lg bg-white border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto max-h-72">
                     {product.productDescription.value}
                   </pre>
                   <button
@@ -574,7 +562,7 @@ export function ProductDetailDrawer({
                 {product.sourceCrawlProduct?.customization && (
                   <details className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <summary className="cursor-pointer font-semibold text-blue-700">Customization payload</summary>
-                    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] text-slate-600">{JSON.stringify(product.sourceCrawlProduct.customization, null, 2)}</pre>
+                    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-xs text-slate-600">{JSON.stringify(product.sourceCrawlProduct.customization, null, 2)}</pre>
                   </details>
                 )}
               </section>
@@ -633,12 +621,12 @@ export function ProductDetailDrawer({
                           <div>
                             <div className="flex items-center justify-between mb-1">
                               <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] font-bold text-slate-600 uppercase">
+                                <span className="text-xs font-bold text-slate-600 uppercase">
                                   Image Alt #{idx + 1}
                                 </span>
                                 <SourceBadge source={img.alt.source} />
                               </div>
-                              <span className="text-[10px] font-mono text-slate-500">
+                              <span className="text-xs font-mono text-slate-500">
                                 {img.alt.value.length} / 125 ký tự
                               </span>
                             </div>
@@ -651,8 +639,8 @@ export function ProductDetailDrawer({
 
                           {/* WebP info */}
                           <div className="flex items-center gap-2 pt-1 text-xs">
-                            <span className="text-slate-500 font-mono text-[11px]">WebP:</span>
-                            <span className="font-mono text-blue-700 text-[11px] truncate flex-1">
+                            <span className="text-slate-500 font-mono text-xs">WebP:</span>
+                            <span className="font-mono text-blue-700 text-xs truncate flex-1">
                               {img.webpUrl.value || img.webpFilename.value || (
                                 <span className="text-slate-500 italic font-sans">Chưa có WebP URL</span>
                               )}
@@ -662,7 +650,7 @@ export function ProductDetailDrawer({
                               <button
                                 type="button"
                                 onClick={() => handleCopy(img.webpUrl.value || img.webpFilename.value, `img-${idx}`)}
-                                className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
+                                className="px-2 py-0.5 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
                               >
                                 {copiedKey === `img-${idx}` ? "✓" : "Copy"}
                               </button>
@@ -685,7 +673,7 @@ export function ProductDetailDrawer({
                     AEO Suite (AI Search &amp; Overview Optimization)
                   </h3>
                 </div>
-                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-300">
+                <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
                   GEO / Perplexity / ChatGPT Search
                 </span>
               </div>
@@ -695,7 +683,7 @@ export function ProductDetailDrawer({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                     <span><AppIcon name="seo" /> AI Quick Summary</span>
-                    <span className="text-[10px] text-slate-500 font-normal">(AI Overviews snippet)</span>
+                    <span className="text-xs text-slate-500 font-normal">(AI Overviews snippet)</span>
                   </label>
                   {product.aeoQuickSummary && <SourceBadge source={product.aeoQuickSummary.source} />}
                 </div>
@@ -713,7 +701,7 @@ export function ProductDetailDrawer({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                     <span>❓ Strategic FAQ (Pre-purchase &amp; Differentiation)</span>
-                    <span className="text-[10px] text-slate-500 font-normal">
+                    <span className="text-xs text-slate-500 font-normal">
                       ({product.aeoFaq?.value?.length ?? 0} câu hỏi)
                     </span>
                   </label>
@@ -760,7 +748,7 @@ export function ProductDetailDrawer({
                   </div>
                 </div>
                 {product.aeoJsonLd?.value ? (
-                  <pre className="p-3 rounded-lg bg-white font-mono text-[11px] text-blue-700 overflow-x-auto max-h-48 border border-slate-200">
+                  <pre className="p-3 rounded-lg bg-white font-mono text-xs text-blue-700 overflow-x-auto max-h-48 border border-slate-200">
                     {product.aeoJsonLd.value}
                   </pre>
                 ) : (
@@ -782,7 +770,7 @@ export function ProductDetailDrawer({
                     </h3>
                   </div>
                   {product.sourcePinterestItem.storeId && (
-                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-300">
+                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
                       Store: {product.sourcePinterestItem.storeId.toUpperCase()}
                     </span>
                   )}
@@ -790,25 +778,25 @@ export function ProductDetailDrawer({
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                   <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-[11px]">Loại SP:</span>
+                    <span className="text-slate-600 block text-xs">Loại SP:</span>
                     <span className="font-medium text-slate-900">
                       {product.sourcePinterestItem.productType || "Rug"}
                     </span>
                   </div>
                   <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-[11px]">Nhà cung cấp:</span>
+                    <span className="text-slate-600 block text-xs">Nhà cung cấp:</span>
                     <span className="font-medium text-slate-900">
                       {product.sourcePinterestItem.vendor || "CHILLGEN"}
                     </span>
                   </div>
                   <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-[11px]">Giá cộng thêm:</span>
+                    <span className="text-slate-600 block text-xs">Giá cộng thêm:</span>
                     <span className="font-mono font-medium text-emerald-700">
                       +${(product.sourcePinterestItem.priceAddition ?? 0).toFixed(2)}
                     </span>
                   </div>
                   <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-[11px]">Compare-At:</span>
+                    <span className="text-slate-600 block text-xs">Compare-At:</span>
                     <span className="font-mono font-medium text-amber-700">
                       {product.sourcePinterestItem.discountPercent ? `Giảm ${product.sourcePinterestItem.discountPercent}%` : "0% (Không gạch)"}
                     </span>
@@ -816,7 +804,7 @@ export function ProductDetailDrawer({
                 </div>
 
                 {product.sourcePinterestItem.collectionIds && product.sourcePinterestItem.collectionIds.length > 0 && (
-                  <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">
+                  <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">
                     <span className="text-slate-600 font-medium">Collections đã gán: </span>
                     <span className="font-mono text-blue-700">
                       {product.sourcePinterestItem.collectionIds.length} collection(s)
@@ -833,14 +821,14 @@ export function ProductDetailDrawer({
                     </div>
                     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
                       <table className="w-full text-left text-xs text-slate-700">
-                        <thead className="bg-slate-50 text-[11px] uppercase text-slate-600 border-b border-slate-200">
+                        <thead className="bg-slate-50 text-xs uppercase text-slate-600 border-b border-slate-200">
                           <tr>
                             <th className="py-1.5 px-3">Tên biến thể</th>
                             <th className="py-1.5 px-3">Giá bán</th>
                             <th className="py-1.5 px-3">Giá gạch ngang</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
+                        <tbody className="divide-y divide-slate-200 font-mono text-xs">
                           {product.sourcePinterestItem.variants.map((v, vIdx) => (
                             <tr key={vIdx} className="hover:bg-slate-50">
                               <td className="py-1.5 px-3 text-slate-900 font-sans">{v.title || `Variant #${vIdx + 1}`}</td>
@@ -868,27 +856,27 @@ export function ProductDetailDrawer({
                       Bản In Xưởng (Shopify Metafields)
                     </h3>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-300">
+                  <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
                     {product.sourcePinterestItem.printMaster.dpi || 300} DPI • {product.sourcePinterestItem.printMaster.colorMode || "CMYK"}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-[11px]">Độ phân giải:</span>
+                    <span className="text-slate-600 block text-xs">Độ phân giải:</span>
                     <span className="font-mono font-medium text-slate-900">
                       {product.sourcePinterestItem.printMaster.widthPx} × {product.sourcePinterestItem.printMaster.heightPx} px
                     </span>
                   </div>
                   <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-[11px]">Metafield đích:</span>
+                    <span className="text-slate-600 block text-xs">Metafield đích:</span>
                     <span className="font-mono font-medium text-blue-700">
                       custom.print_specs
                     </span>
                   </div>
                 </div>
 
-                <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1">
+                <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-600 font-medium">Link file in gốc:</span>
                     {product.sourcePinterestItem.printMaster.cmykUrl || product.sourcePinterestItem.printMaster.rgbUrl ? (
@@ -904,10 +892,10 @@ export function ProductDetailDrawer({
                       </button>
                     ) : null}
                   </div>
-                  <p className="font-mono text-slate-700 truncate text-[10px]">
+                  <p className="font-mono text-slate-700 truncate text-xs">
                     {product.sourcePinterestItem.printMaster.cmykUrl || product.sourcePinterestItem.printMaster.rgbUrl || product.sourcePinterestItem.printMaster.localFilePath || "Đang tạo..."}
                   </p>
-                  <p className="text-[10px] text-blue-700 italic pt-1">
+                  <p className="text-xs text-blue-700 italic pt-1">
                     ✓ File in xưởng được bảo mật tuyệt đối, không hiển thị lên trang bán hàng cho khách xem.
                   </p>
                 </div>
@@ -949,7 +937,7 @@ export function ProductDetailDrawer({
                   </button>
                 </div>
               </div>
-              <pre className="p-4 rounded-lg bg-white border border-slate-200 font-mono text-[11px] text-blue-700 overflow-x-auto max-h-64 leading-relaxed select-all">
+              <pre className="p-4 rounded-lg bg-white border border-slate-200 font-mono text-xs text-blue-700 overflow-x-auto max-h-64 leading-relaxed select-all">
                 {rawJsonString}
               </pre>
             </div>
@@ -965,7 +953,8 @@ export function ProductDetailDrawer({
       {/* Full Raw JSON Modal */}
       {showRawJsonModal && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-50 backdrop-blur-sm animate-fadeIn"
+          ref={rawDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Raw JSON sản phẩm"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/30 backdrop-blur-sm"
           onClick={() => setShowRawJsonModal(false)}
         >
           <div

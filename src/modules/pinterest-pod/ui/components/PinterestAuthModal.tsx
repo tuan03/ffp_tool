@@ -256,7 +256,7 @@ export function PinterestAuthModal({
               <span>1. API Token (Quét Trends)</span>
               <span className={`inline-flex h-2 w-2 rounded-full ${isOAuthValid ? "bg-emerald-700 animate-pulse" : "bg-rose-600"}`} />
             </div>
-            <div className="mt-1.5 text-[11px]">
+            <div className="mt-1.5 text-xs">
               {isOAuthValid ? (
                 <div className="space-y-0.5 text-slate-700">
                   <p className="text-emerald-700 font-semibold">✓ Đã lưu token; quyền Trends sẽ được kiểm tra khi quét</p>
@@ -264,7 +264,7 @@ export function PinterestAuthModal({
                     <p className="text-slate-600">Tài khoản: @{authStatus.token_info.username}</p>
                   )}
                   {authStatus?.token_info?.has_refresh_token && (
-                    <p className="text-emerald-700 text-[10px]">Tự động gia hạn (Refresh Token: Có)</p>
+                    <p className="text-emerald-700 text-xs">Tự động gia hạn (Refresh Token: Có)</p>
                   )}
                 </div>
               ) : (
@@ -285,13 +285,13 @@ export function PinterestAuthModal({
               <span>2. Phiên duyệt trên Crawler Agent</span>
               <span className={`inline-flex h-2 w-2 rounded-full ${isBrowserLoggedIn ? "bg-emerald-700" : "bg-amber-700"}`} />
             </div>
-            <div className="mt-1.5 text-[11px]">
+            <div className="mt-1.5 text-xs">
               {isBrowserLoggedIn ? (
                 <p className="text-emerald-700 font-semibold">✓ {agentName ?? "Crawler agent"} đã lưu session</p>
               ) : (
                 <p className="text-amber-700 font-semibold">{isAgentConnected ? "! Agent chưa đăng nhập Pinterest" : "! Chưa có crawler agent online"}</p>
               )}
-              <p className="text-slate-600 text-[10px] mt-0.5">Trạng thái được báo từ máy agent, không phải trình duyệt trong VPS.</p>
+              <p className="text-slate-600 text-xs mt-0.5">Trạng thái được báo từ máy agent, không phải trình duyệt trong VPS.</p>
             </div>
           </div>
         </div>
@@ -375,7 +375,7 @@ export function PinterestAuthModal({
 
             {/* Fallback code exchange */}
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-600">
-              <label htmlFor="callback-input" className="font-bold text-slate-700 block mb-1 text-[11px]">
+              <label htmlFor="callback-input" className="font-bold text-slate-700 block mb-1 text-xs">
                 Hoặc dán URL chuyển hướng / Mã Authorization Code nếu cửa sổ không tự đóng:
               </label>
               <div className="flex gap-2 mt-1">
@@ -415,7 +415,7 @@ export function PinterestAuthModal({
                 placeholder="pina_HAA..."
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 font-mono focus:border-rose-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
               />
-              <span className="text-[11px] text-slate-500 mt-1 block">
+              <span className="text-xs text-slate-500 mt-1 block">
                 Token được tạo từ Pinterest Developer Portal (App 1595071 &gt; Generate Token).
               </span>
             </div>
@@ -457,7 +457,7 @@ export function PinterestAuthModal({
               </p>
               <div className="mt-3 rounded-lg border border-slate-300 bg-white p-3">
                 <p className="mb-2 font-semibold text-slate-700">Lệnh dự phòng nếu máy chưa có menu khay hệ thống:</p>
-                <code className="block overflow-x-auto whitespace-nowrap text-[11px] text-blue-700">{agentLoginCommand}</code>
+                <code className="block overflow-x-auto whitespace-nowrap text-xs text-blue-700">{agentLoginCommand}</code>
                 <button
                   type="button"
                   onClick={() => void navigator.clipboard.writeText(agentLoginCommand)}
@@ -465,7 +465,7 @@ export function PinterestAuthModal({
                 >
                   Sao chép lệnh đăng nhập Agent
                 </button>
-                <p className="mt-2 text-[10px] text-slate-500">Agent phiên bản mới tự cập nhật trạng thái lên Coordinator trong khoảng 10 giây, không cần restart.</p>
+                <p className="mt-2 text-xs text-slate-500">Agent phiên bản mới tự cập nhật trạng thái lên Coordinator trong khoảng 10 giây, không cần restart.</p>
               </div>
 
               {(isBrowserActive || authStatus?.browser_process_active) && (
@@ -477,11 +477,11 @@ export function PinterestAuthModal({
                     </span>
                     <span>Cửa sổ Chromium đang hoạt động trên màn hình!</span>
                   </div>
-                  <p className="mt-1.5 text-slate-700 text-[11px] leading-relaxed">
+                  <p className="mt-1.5 text-slate-700 text-xs leading-relaxed">
                     Vui lòng kiểm tra cửa sổ Chromium (biểu tượng trình duyệt trên thanh Dock / Taskbar).
                     Hãy hoàn tất <strong>đăng nhập tài khoản Pinterest</strong> của bạn tại đó.
                   </p>
-                  <p className="mt-1 text-[11px] text-blue-700 font-semibold">
+                  <p className="mt-1 text-xs text-blue-700 font-semibold">
                     <AppIcon name="info" /> Cửa sổ sẽ tự động đóng và hệ thống sẽ lập tức cập nhật trạng thái khi đăng nhập thành công.
                   </p>
                 </div>

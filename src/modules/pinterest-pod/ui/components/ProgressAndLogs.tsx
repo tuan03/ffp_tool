@@ -61,7 +61,7 @@ export function ProgressAndLogs({
         </div>
 
         {(agentName || jobId) && (
-          <div className="flex flex-wrap gap-2 text-[10px]">
+          <div className="flex flex-wrap gap-2 text-xs">
             {agentName && (
               <span className="rounded-full bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">
                 Máy thực thi: {agentName}
@@ -97,7 +97,7 @@ export function ProgressAndLogs({
           return (
             <div key={s.step} className="flex items-center gap-3 text-xs">
               <div
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
                   isDone
                     ? "bg-emerald-700 text-white"
                     : isCurrent
@@ -144,7 +144,7 @@ export function ProgressAndLogs({
             <button
               type="button"
               onClick={handleCopyLogs}
-              className="text-[11px] font-medium text-blue-700 hover:underline"
+              className="text-xs font-medium text-blue-700 hover:underline"
             >
               {copied ? "✓ Đã sao chép" : "Sao chép"}
             </button>
@@ -154,7 +154,7 @@ export function ProgressAndLogs({
         {isLogsExpanded && (
           <div
             ref={logsContainerRef}
-            className="max-h-52 min-h-28 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed text-slate-700"
+            className="max-h-52 min-h-28 overflow-y-auto p-3 font-mono text-xs leading-relaxed text-slate-700"
           >
             {logs.length === 0 ? (
               <p className="italic text-slate-500">Chưa có log từ hệ thống.</p>

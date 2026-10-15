@@ -112,14 +112,14 @@ export function SurfaceManager({
                     <button
                       type="button"
                       onClick={() => setEditingIndex(isEditing ? null : idx)}
-                      className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition whitespace-nowrap cursor-pointer"
+                      className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition whitespace-nowrap cursor-pointer"
                     >
                       {isEditing ? "Thu gọn" : "Chỉnh sửa"}
                     </button>
                     <button
                       type="button"
                       onClick={() => handleRemoveSurface(idx)}
-                      className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 transition whitespace-nowrap cursor-pointer"
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 transition whitespace-nowrap cursor-pointer"
                       title="Xóa mặt in"
                     >
                       Xóa
@@ -131,7 +131,7 @@ export function SurfaceManager({
                 {isEditing && (
                   <div className="space-y-3 pt-3 border-t border-slate-200 text-xs">
                     <div>
-                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
                         Tên mặt in
                       </label>
                       <input
@@ -143,7 +143,7 @@ export function SurfaceManager({
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
                         Link ảnh phôi (URL)
                       </label>
                       <input
@@ -158,7 +158,7 @@ export function SurfaceManager({
                     {/* Placements Section */}
                     <div className="pt-2 border-t border-slate-200">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-semibold text-slate-700">
+                        <span className="text-xs font-semibold text-slate-700">
                           Vùng in ({surface.placements?.length ?? 0})
                         </span>
                       </div>

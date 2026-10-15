@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../shared/hooks/useDialogFocus";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProductEditInput, SeoProductUiViewModel, ZoomImageItem } from "../types";
@@ -58,6 +59,7 @@ function EditModalInner({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const dialogRef = useDialogFocus({ isOpen: true, onClose: () => { if (!isSaving) onClose(); } });
 
   const wasAlreadySynced = Boolean(
     product.shopifySyncStatus === "synced" ||
@@ -95,7 +97,7 @@ function EditModalInner({
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50 backdrop-blur-sm flex items-center justify-center p-4">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Chỉnh sửa nội dung SEO" className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/30 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-2xl rounded-lg bg-white border border-slate-200 shadow-sm overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
@@ -125,7 +127,7 @@ function EditModalInner({
                 <p className="font-semibold text-blue-700">
                   Sản phẩm này đã đồng bộ trên Shopify Store ({product.storeId ? product.storeId.toUpperCase() : "STORE"})
                 </p>
-                <p className="text-[11px] text-blue-700 mt-0.5">
+                <p className="text-xs text-blue-700 mt-0.5">
                   Bản đã sync được giữ để xem lại; tạo bản SEO mới nếu cần thay đổi nội dung trên Shopify.
                 </p>
               </div>
@@ -254,7 +256,7 @@ function EditModalInner({
                         alt={currentAlt}
                         className="h-full w-full object-cover group-hover:scale-105 transition-transform"
                       />
-                      <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-[9px]">
+                      <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-xs">
                         <AppIcon name="search" />
                       </span>
                     </button>

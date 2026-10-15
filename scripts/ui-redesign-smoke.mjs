@@ -74,7 +74,7 @@ try {
   assert.equal(await page.getByRole("dialog").count(), 0);
 
   await page.goto(`${baseUrl}/auto-seo?storeId=capozen`, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: /Tải sản phẩm/ }).click();
+  await page.getByRole("button", { name: "Tải sản phẩm từ Shopify", exact: true }).click();
   await page.getByRole("table").waitFor();
   const productCheckbox = page.getByRole("table").getByRole("checkbox").last();
   await productCheckbox.check();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../shared/hooks/useDialogFocus";
 import { persistBrowserActiveStoreId, readActiveStoreId } from "../../../shared/active-store";
 import { resolveSeoQueueStoreId } from "../../../shared/seo-queue-navigation";
 
@@ -61,6 +62,8 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   viewingStore.current = storeId;
   const refreshController = useRef<AbortController | null>(null);
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const jobDialogRef = useDialogFocus({ isOpen: selectedJobId !== null, onClose: () => setSelectedJobId(null) });
 
   useEffect(() => {
     let isCurrent = true;
@@ -101,6 +104,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       });
     if (generation !== refreshGeneration.current) return;
     setQueue(nextQueue);
+    setLastRefreshedAt(new Date().toLocaleTimeString("vi-VN"));
   }, [client, offset, providerFilter, statusGroup, storeId]);
 
   useEffect(() => {
@@ -134,15 +138,6 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     return () => { cancelled = true; };
   }, [client, selectedJobId, storeId]);
 
-  useEffect(() => {
-    if (!selectedJobId) return;
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") setSelectedJobId(null);
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedJobId]);
-
   async function perform(operation: () => Promise<unknown>, successMessage: string): Promise<void> {
     setIsBusy(true);
     setNotice(null);
@@ -174,6 +169,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     setOffset(0);
     setSettings(null);
     setQueue(null);
+    setLastRefreshedAt(null);
     setSelectedJobId(null);
     setSelectedJob(null);
     setQuery("");
@@ -223,7 +219,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const canTransferSelectedJob = selectedJob ? TRANSFERABLE_STATUSES.some(status => status === selectedJob.status) : false;
 
   return (
-    <section className="space-y-6" aria-labelledby="seo-queue-title">
+    <section className="space-y-4" aria-labelledby="seo-queue-title">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
           <h1 id="seo-queue-title" className="text-2xl font-semibold tracking-tight text-slate-900">SEO Queue</h1>
@@ -235,6 +231,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở SEO Review →</Link>
         </div>
       </header>
+      <p role="status" className="text-xs text-slate-500">{isBusy ? "Đang cập nhật hàng đợi…" : lastRefreshedAt ? `Cập nhật lúc ${lastRefreshedAt} · Làm mới để lấy trạng thái mới nhất.` : "Chưa tải được trạng thái hàng đợi."}</p>
       <details open={isAgentPanelOpen} onToggle={event => setIsAgentPanelOpen(event.currentTarget.open)} className="rounded-lg border border-slate-200 p-4"><summary className="cursor-pointer font-medium text-blue-700">Kết nối Codex <span className="ml-2 text-sm font-normal text-slate-600">Máy xử lý & phiên chạy</span></summary>{isAgentPanelOpen && <AgentAccessPanel key={storeId} client={client} storeId={storeId} />}</details>
 
       {notice && (
@@ -336,8 +333,8 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       </details>
 
       {selectedJobId && (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="job-detail-title">
-          <button type="button" aria-label="Đóng chi tiết sản phẩm" onClick={() => setSelectedJobId(null)} className="absolute inset-0 bg-slate-50 backdrop-blur-sm" />
+        <div ref={jobDialogRef} tabIndex={-1} className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="job-detail-title">
+          <button type="button" tabIndex={-1} aria-label="Đóng chi tiết sản phẩm" onClick={() => setSelectedJobId(null)} className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" />
           <aside className="absolute inset-y-0 right-0 w-full max-w-2xl overflow-y-auto border-l border-slate-200 bg-white shadow-sm">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4 backdrop-blur"><div><p className="text-xs font-medium uppercase tracking-wide text-blue-700">Chi tiết sản phẩm</p><h2 id="job-detail-title" className="mt-1 max-w-lg truncate font-semibold text-slate-900">{selectedJob ? getJobSourceTitle(selectedJob) : "Đang tải…"}</h2></div><button type="button" aria-label="Đóng" onClick={() => setSelectedJobId(null)} className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-50 hover:text-slate-900">✕</button></div>
             {selectedJob ? <JobDetail client={client} job={selectedJob} storeId={storeId} isBusy={isBusy} canTransfer={canTransferSelectedJob} perform={perform} /> : <div className="space-y-3 p-5" aria-label="Đang tải chi tiết sản phẩm">{[1, 2, 3, 4].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-white" />)}</div>}
@@ -371,7 +368,7 @@ function JobDetail({ client, job, storeId, isBusy, canTransfer, perform }: JobDe
       <div className="flex flex-wrap items-center gap-2"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.badgeClassName}`}><span className={`h-1.5 w-1.5 rounded-full ${status.dotClassName}`} />{status.label}</span><span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700">{getProviderPresentation(job.settings.provider).label}</span><span className="font-mono text-xs text-slate-500">{job.id}</span></div>
       {job.error && <div className="rounded-lg border border-rose-200 bg-rose-50 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Lỗi gần nhất</p><p className="mt-2 text-sm leading-6 text-rose-700">{job.error}</p></div>}
       <section aria-labelledby="job-progress-title"><h3 id="job-progress-title" className="text-sm font-semibold text-slate-900">Tiến độ xử lý</h3><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{stages.map((stage, index) => { const isComplete = stage.key in job.checkpoints || job.status === "REVIEW_READY"; return <div key={stage.key} className={`rounded-lg border p-3 ${isComplete ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}><span className={`text-xs ${isComplete ? "text-emerald-700" : "text-slate-500"}`}>{isComplete ? "✓" : index + 1} {stage.label}</span></div>; })}</div></section>
-      <section aria-labelledby="job-images-title"><div className="flex items-center justify-between gap-3"><h3 id="job-images-title" className="text-sm font-semibold text-slate-900">Ảnh sản phẩm ({job.input.images.length})</h3><span className="text-xs text-slate-500">Bấm ảnh để mở kích thước đầy đủ</span></div>{job.input.images.length > 0 ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{job.input.images.map((image, index) => <a key={image.id} href={image.url} target="_blank" rel="noreferrer" className="group overflow-hidden rounded-lg border border-slate-200 bg-white"><img src={image.url} alt={`Ảnh sản phẩm ${index + 1}`} loading="lazy" className="h-36 w-full object-contain p-2 transition group-hover:scale-[1.02]" /><span className="block truncate border-t border-slate-200 px-2 py-1.5 font-mono text-[10px] text-slate-500">{job.id}/{image.id}</span></a>)}</div> : <p className="mt-3 rounded-lg bg-white p-4 text-sm text-slate-500">Sản phẩm này chưa có ảnh.</p>}</section>
+      <section aria-labelledby="job-images-title"><div className="flex items-center justify-between gap-3"><h3 id="job-images-title" className="text-sm font-semibold text-slate-900">Ảnh sản phẩm ({job.input.images.length})</h3><span className="text-xs text-slate-500">Bấm ảnh để mở kích thước đầy đủ</span></div>{job.input.images.length > 0 ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{job.input.images.map((image, index) => <a key={image.id} href={image.url} target="_blank" rel="noreferrer" className="group overflow-hidden rounded-lg border border-slate-200 bg-white"><img src={image.url} alt={`Ảnh sản phẩm ${index + 1}`} loading="lazy" className="h-36 w-full object-contain p-2 transition group-hover:scale-[1.02]" /><span className="block truncate border-t border-slate-200 px-2 py-1.5 font-mono text-xs text-slate-500">{job.id}/{image.id}</span></a>)}</div> : <p className="mt-3 rounded-lg bg-white p-4 text-sm text-slate-500">Sản phẩm này chưa có ảnh.</p>}</section>
       {canTransfer && <section className="rounded-lg border border-slate-200 bg-slate-50 p-4" aria-labelledby="transfer-provider-title"><h3 id="transfer-provider-title" className="text-sm font-semibold text-slate-900">Đổi AI xử lý cho sản phẩm này</h3><p className="mt-1 text-xs leading-5 text-slate-500">Nếu sản phẩm đang nằm trong một batch, hãy thu hồi batch trước khi chuyển.</p><div className="mt-3 flex flex-wrap gap-2">{(["gemini", "custom_gpt", "codex_mcp"] as const).map((provider: SeoProvider) => <button key={provider} type="button" disabled={isBusy || job.settings.provider === provider} onClick={() => void perform(() => client.transfer(storeId, job.id, provider), `Đã chuyển sang ${getProviderPresentation(provider).label}.`)} className={SECONDARY_BUTTON_CLASS_NAME}>{getProviderPresentation(provider).label}</button>)}</div></section>}
       <details className="rounded-lg border border-slate-200 bg-slate-50"><summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700">Dữ liệu checkpoint và kết quả</summary><pre className="max-h-96 overflow-auto border-t border-slate-200 p-4 text-xs leading-5 text-slate-600">{JSON.stringify({ checkpoints: job.checkpoints, result: job.result }, null, 2)}</pre></details>
       <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-5">{canRetryJob(job) && <button type="button" disabled={isBusy} onClick={() => void perform(() => client.retry(storeId, job.id), "Đã đưa sản phẩm vào xử lý lại.")} className={SECONDARY_BUTTON_CLASS_NAME}>Thử lại</button>}<Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở trong SEO Review →</Link></div>

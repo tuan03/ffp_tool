@@ -164,7 +164,7 @@ export function CandidateReviewGrid({
           }`}
         >
           <span>✓ Ứng viên Hợp lệ ({candidates.length})</span>
-          <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-700">
+          <span className="rounded bg-white px-1.5 py-0.5 text-xs text-slate-700">
             {directPrintableCount} Chuẩn 2D • {breakthroughCount} Đột phá
           </span>
         </button>
@@ -195,12 +195,12 @@ export function CandidateReviewGrid({
                   Bối cảnh Mockup: {roomTemplates.length > 0 ? `${roomTemplates.length} ảnh phòng tham chiếu` : "Tự động sinh ngẫu nhiên"}
                 </span>
                 {roomTemplates.length > 0 && (
-                  <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
+                  <span className="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-semibold text-blue-700">
                     Ghép phòng thực tế
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-600 mt-0.5">
+              <p className="text-xs text-slate-600 mt-0.5">
                 {roomTemplates.length > 0
                   ? "AI sẽ giữ nguyên căn phòng này và ghép hoa văn các mẫu đã chọn vào đúng vị trí sản phẩm."
                   : "Chưa có ảnh phòng mẫu riêng. Bạn có thể bấm nút 'Làm phòng' ở thẻ ảnh bên dưới hoặc tải ảnh từ máy tính!"}
@@ -219,7 +219,7 @@ export function CandidateReviewGrid({
                       <button
                         type="button"
                         onClick={() => onRemoveRoomTemplate(rt.id)}
-                        className="absolute inset-0 flex items-center justify-center bg-black/75 opacity-0 group-hover:opacity-100 transition text-[10px] font-bold text-white cursor-pointer"
+                        className="absolute inset-0 flex items-center justify-center bg-black/75 opacity-0 group-hover:opacity-100 transition text-xs font-bold text-white cursor-pointer"
                         title="Xóa phòng mẫu này"
                       >
                         ✕ Gỡ
@@ -228,7 +228,7 @@ export function CandidateReviewGrid({
                   </div>
                 ))}
                 {roomTemplates.length > 4 && (
-                  <span className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 border border-blue-300">
+                  <span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 border border-blue-300">
                     +{roomTemplates.length - 4}
                   </span>
                 )}

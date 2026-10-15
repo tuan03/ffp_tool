@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import { AppIcon } from "../../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../../shared/hooks/useDialogFocus";
 import type { AdsIntelligenceClient, MetaAdAccountInfo } from "../../types";
 
 export interface StoreProfileModalProps {
@@ -23,6 +24,7 @@ export function StoreProfileModal({
   const [showAdvancedJson, setShowAdvancedJson] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const dialogRef = useDialogFocus({ isOpen: true, onClose: () => { if (!saving) onClose(); } });
   const [copiedEmail, setCopiedEmail] = useState(false);
 
   // Meta Test State
@@ -255,7 +257,7 @@ export function StoreProfileModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Thiết lập Quảng cáo & Đo lường" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/30 backdrop-blur-sm">
       <div className="w-full max-w-2xl rounded-lg border border-blue-200 bg-white p-6 shadow-sm space-y-5 animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-slate-200 pb-4">
@@ -288,7 +290,7 @@ export function StoreProfileModal({
             {/* SECTION 1: META ADS */}
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                <span className="font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                <span className="font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wide text-xs">
                   <span>📘</span> 1. Tài khoản Meta Ads
                 </span>
                 <div className="flex items-center gap-2">
@@ -296,19 +298,19 @@ export function StoreProfileModal({
                     <button
                       type="button"
                       onClick={() => setManualMetaMode(!manualMetaMode)}
-                      className="text-[10px] text-blue-700 hover:text-blue-700 underline cursor-pointer"
+                      className="text-xs text-blue-700 hover:text-blue-700 underline cursor-pointer"
                     >
                       {manualMetaMode ? "📋 Chọn từ danh sách App" : "✏️ Nhập thủ công"}
                     </button>
                   )}
-                  <span className="text-[10px] text-slate-500">Tự động kết nối qua Meta Graph API</span>
+                  <span className="text-xs text-slate-500">Tự động kết nối qua Meta Graph API</span>
                 </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="font-semibold text-slate-900 flex items-center justify-between">
                   <span>Meta Ad Account <span className="text-rose-700">*</span></span>
-                  <span className="text-[10px] text-slate-600 font-normal">
+                  <span className="text-xs text-slate-600 font-normal">
                     {manualMetaMode || availableAccounts.length === 0
                       ? "Dãy số hoặc act_xxxxxxxxxxxxxxx"
                       : "Tự động phát hiện từ Meta App"}
@@ -376,14 +378,14 @@ export function StoreProfileModal({
                       </button>
                     </div>
                     {loadingAccounts && (
-                      <p className="text-[10px] text-blue-700 animate-pulse">Đang nạp danh sách Ad Accounts từ Meta App…</p>
+                      <p className="text-xs text-blue-700 animate-pulse">Đang nạp danh sách Ad Accounts từ Meta App…</p>
                     )}
                   </div>
                 )}
 
                 {metaTestResult && (
                   <div
-                    className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
+                    className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
                       metaTestResult.success
                         ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                         : "bg-rose-50 border-rose-200 text-rose-700"
@@ -402,7 +404,7 @@ export function StoreProfileModal({
               </div>
 
               <div className="space-y-1">
-                <label className="font-medium text-slate-700 text-[11px]">Múi giờ tài khoản Meta</label>
+                <label className="font-medium text-slate-700 text-xs">Múi giờ tài khoản Meta</label>
                 <input
                   type="text"
                   value={accountTimezone}
@@ -416,23 +418,23 @@ export function StoreProfileModal({
             {/* SECTION 2: GOOGLE ANALYTICS 4 (1 EMAIL DÙNG CHUNG) */}
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
               <div className="flex items-center justify-between border-b border-blue-200 pb-2">
-                <span className="font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                <span className="font-bold text-blue-700 flex items-center gap-1.5 uppercase tracking-wide text-xs">
                   <span><AppIcon name="chart" /></span> 2. Google Analytics 4 (GA4)
                 </span>
-                <span className="text-[10px] text-emerald-700 font-semibold">1 Email dùng chung cho tất cả store</span>
+                <span className="text-xs text-emerald-700 font-semibold">1 Email dùng chung cho tất cả store</span>
               </div>
 
               {/* Service Account Callout Banner */}
               <div className="p-3 rounded-lg bg-slate-50 border border-blue-200 space-y-2">
-                <p className="text-[11px] text-slate-700 leading-relaxed">
+                <p className="text-xs text-slate-700 leading-relaxed">
                   <AppIcon name="info" /> <strong>Không cần tạo file JSON:</strong> Chỉ cần vào Google Analytics của store này (<em>Admin ➔ Property Access Management</em>), bấm <strong>Add User</strong> và thêm email sau với quyền <strong>Viewer</strong>:
                 </p>
-                <div className="flex items-center justify-between gap-2 bg-white p-2 rounded border border-slate-200 font-mono text-[11px] text-blue-700">
+                <div className="flex items-center justify-between gap-2 bg-white p-2 rounded border border-slate-200 font-mono text-xs text-blue-700">
                   <span className="truncate select-all">{GA4_SERVICE_ACCOUNT_EMAIL}</span>
                   <button
                     type="button"
                     onClick={handleCopyEmail}
-                    className="shrink-0 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-sans text-[10px] font-semibold transition cursor-pointer"
+                    className="shrink-0 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-sans text-xs font-semibold transition cursor-pointer"
                   >
                     {copiedEmail ? "✓ Đã chép" : "📋 Sao chép email"}
                   </button>
@@ -442,7 +444,7 @@ export function StoreProfileModal({
               <div className="space-y-1.5">
                 <label className="font-semibold text-slate-900 flex items-center justify-between">
                   <span>GA4 Property ID (Dãy số)</span>
-                  <span className="text-[10px] text-slate-600 font-normal">Xem trong GA4 Property Settings</span>
+                  <span className="text-xs text-slate-600 font-normal">Xem trong GA4 Property Settings</span>
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -464,7 +466,7 @@ export function StoreProfileModal({
 
                 {ga4TestResult && (
                   <div
-                    className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 ${
+                    className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
                       ga4TestResult.success
                         ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                         : "bg-rose-50 border-rose-200 text-rose-700"
@@ -486,10 +488,10 @@ export function StoreProfileModal({
             {/* SECTION 3: ECONOMICS & RULES */}
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                <span className="font-bold text-amber-700 flex items-center gap-1.5 uppercase tracking-wide text-[11px]">
+                <span className="font-bold text-amber-700 flex items-center gap-1.5 uppercase tracking-wide text-xs">
                   <span><AppIcon name="ads" /></span> 3. Mục tiêu Kinh tế & Quyết định AI (Economics)
                 </span>
-                <span className="text-[10px] text-slate-600">Đã điền sẵn chuẩn ngành POD / Dropship</span>
+                <span className="text-xs text-slate-600">Đã điền sẵn chuẩn ngành POD / Dropship</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -503,7 +505,7 @@ export function StoreProfileModal({
                     placeholder="22.0"
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
-                  <p className="text-[10px] text-slate-600">Tiền ads tối đa cho 1 đơn (Mặc định: $22)</p>
+                  <p className="text-xs text-slate-600">Tiền ads tối đa cho 1 đơn (Mặc định: $22)</p>
                 </div>
 
                 <div className="space-y-1">
@@ -516,7 +518,7 @@ export function StoreProfileModal({
                     placeholder="2.2"
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
-                  <p className="text-[10px] text-slate-600">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ (Mặc định: 2.2x)</p>
+                  <p className="text-xs text-slate-600">Điểm hòa vốn để AI nhận biết ad lãi hay lỗ (Mặc định: 2.2x)</p>
                 </div>
               </div>
             </div>
@@ -526,7 +528,7 @@ export function StoreProfileModal({
               <button
                 type="button"
                 onClick={() => setShowAdvancedJson(!showAdvancedJson)}
-                className="text-[11px] text-slate-600 hover:text-blue-700 font-medium transition cursor-pointer flex items-center gap-1"
+                className="text-xs text-slate-600 hover:text-blue-700 font-medium transition cursor-pointer flex items-center gap-1"
               >
                 <span>{showAdvancedJson ? "▼" : "▶"}</span>
                 <span>Chế độ nâng cao (Xem / chỉnh sửa JSON trực tiếp)</span>
@@ -538,7 +540,7 @@ export function StoreProfileModal({
                     rows={8}
                     value={rawJson}
                     onChange={(e) => setRawJson(e.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-white p-3 text-blue-700 font-mono text-[11px] focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
+                    className="w-full rounded-lg border border-slate-200 bg-white p-3 text-blue-700 font-mono text-xs focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
                   />
                 </div>
               )}

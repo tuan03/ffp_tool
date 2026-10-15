@@ -73,7 +73,7 @@ export function SourceOriginBadge({
       {showStatusHint && (
         <span
           title={badgeConfig.hintTitle}
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border select-none ${badgeConfig.hintClass}`}
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border select-none ${badgeConfig.hintClass}`}
         >
           <span>{badgeConfig.hintIcon}</span>
           <span>{badgeConfig.hintLabel}</span>
@@ -88,12 +88,12 @@ export function SourceOriginBadge({
               ? `Store gốc: ${product.storeId} → Store đích khi sync: ${targetStoreId}`
               : `Gắn với Shopify Store: ${effectiveStore}`
           }
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono bg-slate-50 text-slate-700 border border-slate-300 select-none"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono bg-slate-50 text-slate-700 border border-slate-300 select-none"
         >
           <span><AppIcon name="store" /></span>
           <span>{product.storeId || targetStoreId}</span>
           {isDifferentTarget && (
-            <span className="text-amber-700 font-sans text-[10px]">➔ {targetStoreId}</span>
+            <span className="text-amber-700 font-sans text-xs">➔ {targetStoreId}</span>
           )}
         </span>
       )}

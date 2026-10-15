@@ -17,4 +17,7 @@ test("Review Studio presents the image and Amazon workflows as two steps", () =>
   assert.match(html, /kho ảnh nền và prompt phù hợp/);
   assert.match(html, /<h1[^>]*>Review Studio<\/h1>/);
   assert.match(html, /Store sản phẩm nhận review\/XLSX/);
+  assert.match(html, /aria-label="Quy trình Review Studio"/);
+  assert.match(html, /id="review-studio-reviews"[^>]*hidden=""/);
+  assert.match(html, /id="review-studio-images"/);
 });

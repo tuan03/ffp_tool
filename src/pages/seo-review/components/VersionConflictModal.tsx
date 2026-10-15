@@ -120,7 +120,7 @@ export function VersionConflictModal({
               <h3 id="version-conflict-title" className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <span>PHÁT HIỆN XUNG ĐỘT PHIÊN BẢN (SHOPIFY_VERSION_CONFLICT)</span>
               </h3>
-              <p className="text-[11px] text-amber-700">
+              <p className="text-xs text-amber-700">
                 Sản phẩm trên Shopify đã bị thay đổi kể từ khi tạo nội dung SEO. Vui lòng so sánh và chọn giải pháp bên dưới.
               </p>
             </div>
@@ -138,14 +138,14 @@ export function VersionConflictModal({
 
         {/* Diff Comparison Table */}
         <div className="p-5 overflow-y-auto flex-1 text-xs text-slate-700 space-y-4">
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-700">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
             <strong>Nguyên nhân:</strong> Phiên bản sản phẩm trên Shopify hiện tại (<code>{shopifyUpdatedAt}</code>) khác với phiên bản lúc tạo SEO (<code>{proposedUpdatedAt}</code>). Việc ghi đè tự động đã bị chặn để bảo vệ dữ liệu mới nhất trên Store.
           </div>
 
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wider font-semibold">
+                <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs uppercase tracking-wider font-semibold">
                   <th className="py-2.5 px-4 w-1/5">Trường dữ liệu</th>
                   <th className="py-2.5 px-4 w-2/5 border-l border-slate-200 text-blue-700">
                     <AppIcon name="store" /> Shopify Hiện Tại
@@ -155,7 +155,7 @@ export function VersionConflictModal({
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
+              <tbody className="divide-y divide-slate-200 font-mono text-xs">
                 {/* Updated At */}
                 <tr className="bg-rose-50">
                   <td className="py-2.5 px-4 font-semibold text-slate-700 font-sans">Thời gian cập nhật</td>
@@ -203,10 +203,10 @@ export function VersionConflictModal({
                 {/* SEO Description */}
                 <tr className="hover:bg-slate-50">
                   <td className="py-2.5 px-4 font-semibold text-slate-700 font-sans">SEO Description</td>
-                  <td className="py-2.5 px-4 border-l border-slate-200 text-slate-600 whitespace-pre-wrap font-sans text-[11px] leading-relaxed">
+                  <td className="py-2.5 px-4 border-l border-slate-200 text-slate-600 whitespace-pre-wrap font-sans text-xs leading-relaxed">
                     {shopifySeoDescription}
                   </td>
-                  <td className="py-2.5 px-4 border-l border-slate-200 text-emerald-700 whitespace-pre-wrap font-sans text-[11px] leading-relaxed">
+                  <td className="py-2.5 px-4 border-l border-slate-200 text-emerald-700 whitespace-pre-wrap font-sans text-xs leading-relaxed">
                     {proposedSeoDescription}
                   </td>
                 </tr>

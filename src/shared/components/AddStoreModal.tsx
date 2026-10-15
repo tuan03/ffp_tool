@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { AppIcon } from "./AppIcon";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 export interface AddedStoreInfo {
   readonly storeId: string;
   readonly shopDomain: string;
@@ -62,6 +63,7 @@ export function AddStoreModal({
     error?: string;
   } | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const dialogRef = useDialogFocus({ isOpen, onClose: handleClose });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -430,8 +432,11 @@ export function AddStoreModal({
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      aria-label={isEditMode ? "Chỉnh sửa Shopify Store" : "Thêm & Kết nối Shopify Store mới"}
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4 backdrop-blur-sm"
       role="dialog"
     >
       <div className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-lg border border-slate-300 bg-white p-6 shadow-sm text-slate-900">
@@ -453,6 +458,7 @@ export function AddStoreModal({
             </p>
           </div>
           <button
+            aria-label="Đóng cấu hình store"
             className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50"
             disabled={isLoading || isTesting}
             type="button"
@@ -487,7 +493,7 @@ export function AddStoreModal({
               <label className="grid gap-1 text-xs font-medium text-slate-700">
                 <span>
                   Store ID <span className="text-rose-700">*</span>
-                  {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Cố định)</span>}
+                  {isEditMode && <span className="text-xs text-slate-500 font-normal ml-1">(Cố định)</span>}
                 </span>
                 <input
                   className={`rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-mono ${
@@ -504,7 +510,7 @@ export function AddStoreModal({
                   value={storeId}
                   onChange={(e) => setStoreId(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
                 />
-                <span className="text-[10px] text-slate-500">Mã định danh duy nhất (chữ thường, số, dấu gạch)</span>
+                <span className="text-xs text-slate-500">Mã định danh duy nhất (chữ thường, số, dấu gạch)</span>
               </label>
 
               <label className="grid gap-1 text-xs font-medium text-slate-700">
@@ -524,7 +530,7 @@ export function AddStoreModal({
                   value={shopDomain}
                   onChange={(e) => setShopDomain(e.target.value)}
                 />
-                <span className="text-[10px] text-slate-500">Domain hoặc link admin myshopify</span>
+                <span className="text-xs text-slate-500">Domain hoặc link admin myshopify</span>
               </label>
             </div>
 
@@ -549,7 +555,7 @@ export function AddStoreModal({
                   </option>
                 ))}
               </select>
-              <span className="text-[10px] text-slate-500">
+              <span className="text-xs text-slate-500">
                 Profile quy định niche và các giới hạn nội dung; Store ID thực tế vẫn được giữ riêng cho queue và Shopify.
               </span>
             </label>
@@ -558,7 +564,7 @@ export function AddStoreModal({
             <label className="grid gap-1 text-xs font-medium text-slate-700">
               <span className="flex items-center justify-between">
                 <span>Loại sản phẩm chính (Niche / Product Types)</span>
-                <span className="text-[11px] font-normal text-slate-500">Tùy chọn</span>
+                <span className="text-xs font-normal text-slate-500">Tùy chọn</span>
               </span>
               <input
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 font-sans"
@@ -568,7 +574,7 @@ export function AddStoreModal({
                 value={productTypesInput}
                 onChange={(e) => setProductTypesInput(e.target.value)}
               />
-              <span className="text-[10px] text-slate-500">
+              <span className="text-xs text-slate-500">
                 Phân cách bằng dấu phẩy. Nếu để trống, hệ thống sẽ tự động quét từ store khi kiểm tra kết nối.
               </span>
             </label>
@@ -588,11 +594,11 @@ export function AddStoreModal({
                 >
                   <span className="text-xs font-bold flex items-center gap-1.5">
                     <span>🔑 Client Credentials</span>
-                    <span className="rounded bg-blue-50 px-1 py-0.2 text-[9px] text-blue-700 font-normal">
+                    <span className="rounded bg-blue-50 px-1 py-0.2 text-xs text-blue-700 font-normal">
                       Khuyên dùng
                     </span>
                   </span>
-                  <span className="text-[11px] text-slate-600 leading-tight">
+                  <span className="text-xs text-slate-600 leading-tight">
                     Tự động cấp & gia hạn token qua Partner App (không bao giờ hết hạn).
                   </span>
                 </button>
@@ -607,7 +613,7 @@ export function AddStoreModal({
                   }`}
                 >
                   <span className="text-xs font-bold">🎫 Static Access Token</span>
-                  <span className="text-[11px] text-slate-600 leading-tight">
+                  <span className="text-xs text-slate-600 leading-tight">
                     Dùng Admin API token tĩnh (bắt đầu bằng shpat_...).
                   </span>
                 </button>
@@ -636,7 +642,7 @@ export function AddStoreModal({
                   <label className="grid gap-1 text-xs font-medium text-slate-700">
                     <span>
                       Client Secret {!isEditMode && <span className="text-rose-700">*</span>}
-                      {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên bí mật cũ)</span>}
+                      {isEditMode && <span className="text-xs text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên bí mật cũ)</span>}
                     </span>
                     <div className="relative">
                       <input
@@ -667,7 +673,7 @@ export function AddStoreModal({
                   <label className="grid gap-1 text-xs font-medium text-slate-700">
                     <span>
                       Admin API Access Token {!isEditMode && <span className="text-rose-700">*</span>}
-                      {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên token cũ)</span>}
+                      {isEditMode && <span className="text-xs text-slate-500 font-normal ml-1">(Để trống nếu giữ nguyên token cũ)</span>}
                     </span>
                     <div className="relative">
                       <input
@@ -701,11 +707,11 @@ export function AddStoreModal({
                 <div>
                   <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                     <span>🌐 Proxy riêng cho Store</span>
-                    <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600 font-normal">
+                    <span className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-slate-600 font-normal">
                       Khuyên dùng cho Multi-Store
                     </span>
                   </label>
-                  <p className="text-[11px] text-slate-600 mt-0.5">
+                  <p className="text-xs text-slate-600 mt-0.5">
                     Mỗi store một IP proxy riêng biệt chống liên kết tài khoản (Fail-closed policy).
                   </p>
                 </div>
@@ -755,7 +761,7 @@ export function AddStoreModal({
                     <label className="grid gap-1 text-xs font-medium text-slate-700">
                       <span>
                         Proxy Password (tùy chọn)
-                        {isEditMode && <span className="text-[10px] text-slate-500 font-normal ml-1">(Để trống nếu giữ mật khẩu cũ)</span>}
+                        {isEditMode && <span className="text-xs text-slate-500 font-normal ml-1">(Để trống nếu giữ mật khẩu cũ)</span>}
                       </span>
                       <div className="relative">
                         <input

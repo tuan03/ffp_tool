@@ -38,7 +38,7 @@ export function TextInputEditor({
                 {input.label || `Trường chữ ${idx + 1}`}
               </span>
               <span
-                className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                   input.required
                     ? "bg-rose-50 border border-rose-200 text-rose-700"
                     : "bg-slate-50 text-slate-600"
@@ -59,7 +59,7 @@ export function TextInputEditor({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
                 Tên trường hiển thị
               </label>
               <input
@@ -72,7 +72,7 @@ export function TextInputEditor({
             </div>
 
             <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
                 Chữ gợi ý (Placeholder)
               </label>
               <input
@@ -85,7 +85,7 @@ export function TextInputEditor({
             </div>
 
             <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-1">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
                 Giới hạn số ký tự tối đa
               </label>
               <input

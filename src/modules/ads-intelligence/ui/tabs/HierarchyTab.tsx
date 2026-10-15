@@ -146,7 +146,7 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
       {/* Main Hierarchy Table */}
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
         <table className="w-full text-left text-xs">
-          <thead className="bg-white text-slate-600 uppercase text-[10px] font-mono border-b border-slate-200 select-none">
+          <thead className="bg-white text-slate-600 uppercase text-xs font-mono border-b border-slate-200 select-none">
             <tr>
               <th className="py-3 px-4 min-w-[240px]">Chiến dịch / Nhóm QC / Quảng cáo</th>
               <th
@@ -210,12 +210,12 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
                           <span>{camp.name}</span>
                         </span>
                       </td>
-                      <td className="py-3 px-3 text-slate-600 font-mono text-[11px]">
+                      <td className="py-3 px-3 text-slate-600 font-mono text-xs">
                         {formatDate(camp.createdTime)}
                       </td>
                       <td className="py-3 px-3">
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                          className={`text-xs px-2 py-0.5 rounded font-bold ${
                             camp.status === "ACTIVE"
                               ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                               : "bg-slate-50 text-slate-600"
@@ -267,11 +267,11 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
                                   <span className="text-blue-700 text-xs"><AppIcon name="folder" /></span>
                                   <span className="font-sans font-semibold text-slate-900">{adset.name}</span>
                                 </td>
-                                <td className="py-2.5 px-3 text-slate-500 font-mono text-[10px]">
+                                <td className="py-2.5 px-3 text-slate-500 font-mono text-xs">
                                   {formatDate(adset.createdTime)}
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  <span className="text-[10px] text-slate-600">{adset.effectiveStatus}</span>
+                                  <span className="text-xs text-slate-600">{adset.effectiveStatus}</span>
                                 </td>
                                 <td className="py-2.5 px-3 text-slate-500">
                                   {adset.dailyBudget ? `$${adset.dailyBudget}/ngày` : "Thừa hưởng"}
@@ -286,17 +286,17 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
                               {sortedAds.map((ad) => (
                                 <tr
                                   key={ad.id}
-                                  className="bg-slate-50 text-slate-600 hover:bg-slate-50 transition text-[11px]"
+                                  className="bg-slate-50 text-slate-600 hover:bg-slate-50 transition text-xs"
                                 >
                                   <td className="py-2 px-4 pl-14 flex items-center gap-2">
                                     <span className="text-slate-500">↳</span>
                                     <span className="text-slate-700">{ad.name}</span>
                                   </td>
-                                  <td className="py-2 px-3 text-slate-500 font-mono text-[10px]">
+                                  <td className="py-2 px-3 text-slate-500 font-mono text-xs">
                                     {formatDate(ad.createdTime)}
                                   </td>
                                   <td className="py-2 px-3">
-                                    <span className="text-[9px] text-slate-500">{ad.effectiveStatus}</span>
+                                    <span className="text-xs text-slate-500">{ad.effectiveStatus}</span>
                                   </td>
                                   <td className="py-2 px-3 text-slate-500">—</td>
                                   <td className="py-2 px-3 text-right text-slate-700">${ad.spend}</td>
@@ -326,7 +326,7 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
             className="px-5 py-2 rounded-lg bg-white border border-slate-200 hover:border-slate-300 text-xs font-semibold text-slate-700 hover:text-slate-900 transition cursor-pointer flex items-center gap-2 active:scale-95 shadow-sm"
           >
             <span>Hiển thị thêm 15 chiến dịch</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 font-mono">
+            <span className="text-xs px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 font-mono">
               Còn {processedCampaigns.length - displayLimit}
             </span>
           </button>

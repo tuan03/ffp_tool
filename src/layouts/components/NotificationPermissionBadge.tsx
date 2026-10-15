@@ -101,7 +101,7 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
           />
           <span>{isMuted ? "🔇 Chuông: Tắt" : "🔊 Chuông: Bật"}</span>
           {(status === "insecure-context" || status === "denied") && (
-            <span className="text-[10px] text-amber-700 font-mono hidden sm:inline">
+            <span className="text-xs text-amber-700 font-mono hidden sm:inline">
               (Desktop: Tắt)
             </span>
           )}
@@ -165,7 +165,7 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
             </div>
 
             {feedbackMsg && (
-              <p className="text-[11px] text-center font-medium text-emerald-700 animate-in fade-in">
+              <p className="text-xs text-center font-medium text-emerald-700 animate-in fade-in">
                 {feedbackMsg}
               </p>
             )}

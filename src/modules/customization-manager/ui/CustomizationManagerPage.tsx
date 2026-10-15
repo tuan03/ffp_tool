@@ -661,7 +661,7 @@ export function CustomizationManagerPage({
         {viewMode === "editor" && activeProduct && (
           <div className="space-y-6">
             {/* Studio Navigation & Action Bar */}
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm min-w-0">
+            <div aria-label="Thao tác chỉnh Customizer" className="sticky top-16 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm min-w-0">
               <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <button
                   type="button"
@@ -708,7 +708,7 @@ export function CustomizationManagerPage({
                     </svg>
                   </button>
                   {navProducts.length > 0 && currentProductIndex >= 0 && (
-                    <span className="px-2 text-[11px] font-mono font-medium text-slate-600 select-none">
+                    <span className="px-2 text-xs font-mono font-medium text-slate-600 select-none">
                       {currentProductIndex + 1}/{navProducts.length}
                     </span>
                   )}
@@ -752,7 +752,7 @@ export function CustomizationManagerPage({
                         </a>
                       )}
                     </div>
-                    <span className="text-[11px] text-slate-600 block truncate">
+                    <span className="text-xs text-slate-600 block truncate">
                       {activeProduct.handle ? `/${activeProduct.handle}` : activeProduct.id}
                     </span>
                   </div>
@@ -865,8 +865,8 @@ export function CustomizationManagerPage({
               /* UNIFIED 2-COLUMN STUDIO: Live Customer Preview on Left, Direct Controls on Right */
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                 {/* LEFT COLUMN: Customer Mockup Canvas & Live Preview (6/12) */}
-                <div className="lg:col-span-6 space-y-4">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 shadow-sm space-y-5">
+                <div className="lg:col-span-7 lg:sticky lg:top-40 space-y-4">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-5">
                     {/* Surface Switcher Pills */}
                     <div className="flex items-center gap-2 flex-wrap border-b border-slate-200 pb-4">
                       <span className="text-xs font-bold text-slate-700 uppercase tracking-wider mr-1">
@@ -889,7 +889,7 @@ export function CustomizationManagerPage({
                     </div>
 
                     {/* Interactive Mockup Container */}
-                    <div className="relative mx-auto w-full max-w-lg aspect-square rounded-lg overflow-hidden border border-slate-200 bg-white flex items-center justify-center shadow-inner group">
+                    <div className="relative mx-auto w-full max-w-2xl aspect-square rounded-lg overflow-hidden bg-slate-50 flex items-center justify-center group">
                       <img
                         src={previewMockupUrl}
                         alt={activeSurface?.name || "Mockup"}
@@ -912,12 +912,12 @@ export function CustomizationManagerPage({
                             <div className="flex items-center justify-between text-xs">
                               <span className="font-bold text-slate-900">
                                 {ti.label || "Customize Text"}{" "}
-                                <span className="text-[11px] font-normal text-slate-600">
+                                <span className="text-xs font-normal text-slate-600">
                                   {ti.required ? "(bắt buộc)" : "(optional)"}
                                 </span>
                               </span>
                               {ti.maxLength && (
-                                <span className="text-[11px] font-mono text-slate-500">
+                                <span className="text-xs font-mono text-slate-500">
                                   0/{ti.maxLength}
                                 </span>
                               )}
@@ -936,8 +936,8 @@ export function CustomizationManagerPage({
                 </div>
 
                 {/* RIGHT COLUMN: Direct Customizer Configuration (6/12) */}
-                <div className="lg:col-span-6 space-y-4">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 shadow-sm space-y-5">
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-5">
                     {/* Studio Sub-tabs */}
                     <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-lg border border-slate-200">
                       <button

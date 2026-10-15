@@ -1248,7 +1248,7 @@ export function ShopifyPricingConfigSection({
             <span><AppIcon name="settings" /> Cấu hình Shopify &amp; Định giá</span>
           </h2>
           <button
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
             disabled={disabled}
             title="Đặt lại cấu hình về mặc định"
             type="button"
@@ -1286,7 +1286,7 @@ export function ShopifyPricingConfigSection({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-slate-900">Shopify Store</label>
-              <span className="text-[11px] font-mono text-slate-600" title="Shopify Vendor">
+              <span className="text-xs font-mono text-slate-600" title="Shopify Vendor">
                 ({computedVendor})
               </span>
             </div>
@@ -1356,7 +1356,7 @@ export function ShopifyPricingConfigSection({
                 <span className="text-xs text-slate-700 font-mono">({selectedCollections.length})</span>
               )}
               {isLoadingCollections && (
-                <span className="text-[11px] text-slate-600 animate-pulse font-normal">Đang tải...</span>
+                <span className="text-xs text-slate-600 animate-pulse font-normal">Đang tải...</span>
               )}
             </label>
             <div className="flex items-center gap-2 text-xs">
@@ -1460,7 +1460,7 @@ export function ShopifyPricingConfigSection({
                     <span className={`truncate flex-1 ${isChecked ? "text-slate-900 font-medium" : ""}`}>
                       {c.title}
                     </span>
-                    <span className="text-[10px] text-slate-500 font-mono">{c.productsCount ?? 0}</span>
+                    <span className="text-xs text-slate-500 font-mono">{c.productsCount ?? 0}</span>
                   </label>
                 );
               })}
@@ -1509,7 +1509,7 @@ export function ShopifyPricingConfigSection({
                         e.stopPropagation();
                         handleRemoveProductType(pill);
                       }}
-                      className="hidden group-hover:inline-flex ml-0.5 text-[10px] text-slate-500 hover:text-rose-700 px-0.5 cursor-pointer"
+                      className="hidden group-hover:inline-flex ml-0.5 text-xs text-slate-500 hover:text-rose-700 px-0.5 cursor-pointer"
                       title={`Bỏ loại '${pill}' khỏi store ${currentStoreId}`}
                     >
                       ×
@@ -1726,7 +1726,7 @@ export function ShopifyPricingConfigSection({
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 font-mono text-[11px] text-slate-500">
+            <div className="flex items-center gap-2 font-mono text-xs text-slate-500">
               <span>{settings.storeId || "chillgen"}</span>
               {settings.productType && <span>• {settings.productType}</span>}
             </div>
@@ -1744,19 +1744,19 @@ export function ShopifyPricingConfigSection({
               <h3 className="text-sm font-semibold text-slate-900">
                 Bộ giá &amp; Biến thể sản phẩm (Variant &amp; Price Matrix)
               </h3>
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-mono font-medium text-blue-700 border border-blue-200">
+              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-mono font-medium text-blue-700 border border-blue-200">
                 {activeVariants.length} kích thước
               </span>
-              <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-bold text-blue-700 border border-slate-300">
+              <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-bold text-blue-700 border border-slate-300">
                 Store: {activeStoreId.toUpperCase()}
               </span>
               {currentPriceMode === "custom" && (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200">
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
                   ✍️ Tự set giá
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-600 mt-0.5">
+            <p className="text-xs text-slate-600 mt-0.5">
               Bộ giá và biến thể được <strong>phân lập riêng theo từng store</strong> (đang áp dụng cho <strong className="text-blue-700">{activeStoreId.toUpperCase()}</strong>). Khi chuyển store, cấu hình sẽ tự động chuyển đổi tương ứng để tránh nhầm lẫn.
             </p>
           </div>
@@ -1880,7 +1880,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={handleResetToProductTypePreset}
-                className="text-[11px] text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                className="text-xs text-slate-600 hover:text-slate-900 underline cursor-pointer"
               >
                 Về mẫu chuẩn
               </button>
@@ -1896,7 +1896,7 @@ export function ShopifyPricingConfigSection({
                 <span className="text-base">✍️</span>
                 <div>
                   <span className="font-bold text-amber-700 text-xs">Chế độ: Tự set giá thủ công</span>
-                  <p className="text-[11px] text-amber-700">
+                  <p className="text-xs text-amber-700">
                     Bảng giá của bạn được bảo lưu độc lập, không bị tự động reset khi chọn loại sản phẩm khác.
                   </p>
                 </div>
@@ -1906,7 +1906,7 @@ export function ShopifyPricingConfigSection({
                   <button
                     type="button"
                     onClick={handleSetDirectPricingZeroMarkup}
-                    className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-50 hover:text-slate-900 transition cursor-pointer"
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 hover:text-slate-900 transition cursor-pointer"
                     title="Đặt Giá cộng thêm = $0 để giá nhập trong bảng chính là giá bán trên Shopify"
                   >
                     <AppIcon name="ads" /> Đặt Giá cộng thêm = $0 (Giá bán trực tiếp)
@@ -1915,7 +1915,7 @@ export function ShopifyPricingConfigSection({
                 <button
                   type="button"
                   onClick={handleResetToBlankMatrix}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
                   title="Xóa trắng bảng giá để tự thêm kích thước từ đầu"
                 >
                   + Tạo bảng giá mới từ đầu
@@ -1923,7 +1923,7 @@ export function ShopifyPricingConfigSection({
                 <button
                   type="button"
                   onClick={handleResetToProductTypePreset}
-                  className="text-[11px] text-slate-600 hover:text-amber-700 underline cursor-pointer"
+                  className="text-xs text-slate-600 hover:text-amber-700 underline cursor-pointer"
                   title="Khôi phục về bộ giá mẫu ban đầu"
                 >
                   ↺ Về mẫu chuẩn
@@ -1943,7 +1943,7 @@ export function ShopifyPricingConfigSection({
                         key={p}
                         type="button"
                         onClick={() => setQuickSinglePrice(p)}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-mono transition cursor-pointer ${
+                        className={`rounded px-1.5 py-0.5 text-xs font-mono transition cursor-pointer ${
                           quickSinglePrice === p
                             ? "bg-amber-700 text-white font-bold"
                             : "bg-slate-50 text-slate-600 hover:text-slate-900"
@@ -1987,7 +1987,7 @@ export function ShopifyPricingConfigSection({
                         key={p}
                         type="button"
                         onClick={() => setQuickBulkPrice(p)}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-mono transition cursor-pointer ${
+                        className={`rounded px-1.5 py-0.5 text-xs font-mono transition cursor-pointer ${
                           quickBulkPrice === p
                             ? "bg-amber-700 text-white font-bold"
                             : "bg-slate-50 text-slate-600 hover:text-slate-900"
@@ -2027,7 +2027,7 @@ export function ShopifyPricingConfigSection({
         {/* Interactive Variant Table */}
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
           <table className="w-full text-left text-xs">
-            <thead className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-600">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
               <tr>
                 <th className="py-2.5 px-3 w-10 text-center">#</th>
                 <th className="py-2.5 px-3">Kích thước / Biến thể (Option)</th>
@@ -2047,7 +2047,7 @@ export function ShopifyPricingConfigSection({
 
                 return (
                   <tr key={variant.id || `${variant.label}-${idx}`} className="hover:bg-slate-50 transition">
-                    <td className="py-2 px-3 text-center text-slate-500 font-mono text-[11px]">
+                    <td className="py-2 px-3 text-center text-slate-500 font-mono text-xs">
                       {idx + 1}
                     </td>
                     <td className="py-2 px-3">
@@ -2206,7 +2206,7 @@ export function ShopifyPricingConfigSection({
                     <h3 className="font-semibold text-slate-900 text-sm">
                       Chọn sản phẩm mẫu trên store &ldquo;{activeStoreId}&rdquo;
                     </h3>
-                    <p className="text-[11px] text-slate-600">
+                    <p className="text-xs text-slate-600">
                       Hệ thống sẽ đọc toàn bộ kích thước và giá gốc của sản phẩm này để áp dụng cho thiết kế POD
                     </p>
                   </div>
@@ -2273,7 +2273,7 @@ export function ShopifyPricingConfigSection({
                         <p className="text-xs font-medium text-slate-900 truncate">
                           {p.title}
                         </p>
-                        <p className="text-[11px] text-slate-500 font-mono truncate">
+                        <p className="text-xs text-slate-500 font-mono truncate">
                           {p.productType ? `${p.productType} • ` : ""}{p.handle}
                         </p>
                       </div>

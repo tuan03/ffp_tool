@@ -30,7 +30,7 @@ export function ProductCardList(props: ProductCardListProps): React.JSX.Element 
         </button>}
         <div className="min-w-0 flex-1"><h2 className="line-clamp-3 h-15 text-sm font-semibold text-slate-900">{product.productTitle.value}</h2>
           <p className="mt-1 truncate text-xs text-slate-500">{product.asin || product.productId || product.id}</p>
-          <p className="mt-1 text-[11px] text-slate-500">{product.sourceOrigin === "distributed_crawler" ? "Crawler" : product.sourceOrigin === "pinterest_pod" ? "Pinterest POD" : "Auto SEO"}</p>
+          <p className="mt-1 text-xs text-slate-500">{product.sourceOrigin === "distributed_crawler" ? "Crawler" : product.sourceOrigin === "pinterest_pod" ? "Pinterest POD" : "Auto SEO"}</p>
         </div>
       </div>
       <div><ReviewStatusBadge product={product} /></div>

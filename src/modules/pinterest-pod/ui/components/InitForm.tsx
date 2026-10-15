@@ -283,7 +283,7 @@ export function InitForm({
             </p>
           </div>
         </div>
-        <span className="self-start rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 sm:self-center">
+        <span className="self-start rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 sm:self-center">
           Nhập một lần · Chạy xuyên suốt
         </span>
       </div>
@@ -291,7 +291,7 @@ export function InitForm({
       {/* 1. Primary Niche Input */}
       <div data-testid="step-one-topic" className="order-1 flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">A · Chủ đề và sản phẩm</p>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">A · Chủ đề và sản phẩm</p>
           <p className="mt-1 text-xs text-slate-600">Xác định nội dung cần nghiên cứu và phôi sản phẩm đích.</p>
         </div>
         <div className="flex items-center justify-between">
@@ -299,7 +299,7 @@ export function InitForm({
             <span>Từ khóa Pinterest niche / chủ đề xu hướng</span>
             <span className="text-rose-700">*</span>
           </label>
-          <span className="text-[11px] text-slate-600">Nhập bất kỳ sản phẩm hoặc phong cách nghệ thuật</span>
+          <span className="text-xs text-slate-600">Nhập bất kỳ sản phẩm hoặc phong cách nghệ thuật</span>
         </div>
 
         <div className="relative">
@@ -313,7 +313,7 @@ export function InitForm({
             className="w-full rounded-lg border border-slate-300 bg-white pl-3.5 pr-28 py-3 text-sm text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 disabled:opacity-50 font-medium"
           />
           {niche.trim() && (
-            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-lg bg-slate-50 border border-slate-300 px-2 py-1 text-[11px] text-blue-700 font-semibold shadow">
+            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-lg bg-slate-50 border border-slate-300 px-2 py-1 text-xs text-blue-700 font-semibold shadow">
               <span>{currentProductOption.icon}</span>
               <span>{currentProductOption.label.split(" ")[0]}</span>
             </div>
@@ -333,12 +333,12 @@ export function InitForm({
             <button
               type="button"
               onClick={handleResetToAutoInferred}
-              className="text-[11px] text-amber-700 hover:text-amber-700 underline font-medium"
+              className="text-xs text-amber-700 hover:text-amber-700 underline font-medium"
             >
               (Đang chọn thủ công - Bấm để tự động theo từ khóa)
             </button>
           ) : (
-            <span className="text-[11px] text-emerald-700 font-medium">
+            <span className="text-xs text-emerald-700 font-medium">
               ✓ Tự động nhận diện theo từ khóa
             </span>
           )}
@@ -356,13 +356,13 @@ export function InitForm({
           className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-slate-50"
         >
           <span>
-            <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">C · Cấu hình cào ảnh</span>
+            <span className="block text-xs font-bold uppercase tracking-[0.16em] text-blue-700">C · Cấu hình cào ảnh</span>
             <span className="mt-1 block text-xs text-slate-600">
               Crawler Agent sẽ thu thập <strong className="text-slate-900">{crawlCount} ảnh</strong> sau khi chọn Trend.
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-2">
-            <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">
+            <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
               {crawlCount} ảnh
             </span>
             <span className="text-xs font-bold text-slate-500">{isCrawlSettingsOpen ? "▲" : "▼"}</span>
@@ -375,7 +375,7 @@ export function InitForm({
               <label htmlFor="crawl-count-input" className="text-xs font-semibold text-slate-900">
                 Số lượng ảnh cào về từ Pinterest
               </label>
-              <span className="text-[11px] text-slate-600">10 – 500+ ảnh (Tùy chỉnh linh hoạt)</span>
+              <span className="text-xs text-slate-600">10 – 500+ ảnh (Tùy chỉnh linh hoạt)</span>
             </div>
 
             <div className="flex items-center gap-3 pt-1">
@@ -412,7 +412,7 @@ export function InitForm({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="text-[10px] text-slate-600 font-medium">Chọn nhanh:</span>
+              <span className="text-xs text-slate-600 font-medium">Chọn nhanh:</span>
               {[
                 { count: 40, label: "40 ảnh (~30s - Thử nhanh)" },
                 { count: 80, label: "80 ảnh (~1m - Chuẩn đề xuất)", highlight: true },
@@ -425,7 +425,7 @@ export function InitForm({
                   type="button"
                   disabled={isBusy}
                   onClick={() => onCrawlCountChange?.(preset.count)}
-                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
                     crawlCount === preset.count
                       ? "bg-blue-600 text-white font-bold shadow"
                       : preset.highlight
@@ -451,7 +451,7 @@ export function InitForm({
           className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-slate-50"
         >
           <span>
-            <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">D · Dữ liệu cho mockup</span>
+            <span className="block text-xs font-bold uppercase tracking-[0.16em] text-blue-700">D · Dữ liệu cho mockup</span>
             <span className="mt-1 block text-xs text-slate-600">
               {referenceImages.length > 0
                 ? `Đã tải ${referenceImages.length} ảnh phòng tham chiếu.`
@@ -459,7 +459,7 @@ export function InitForm({
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-2">
-            <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+            <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
               {referenceImages.length > 0 ? `${referenceImages.length} ảnh` : "Tùy chọn"}
             </span>
             <span className="text-xs font-bold text-slate-500">{isMockupSettingsOpen ? "▲" : "▼"}</span>
@@ -473,7 +473,7 @@ export function InitForm({
                 <span className="text-base">🛋️</span>
                 <div>
                   <h3 className="text-xs font-bold text-slate-900">Ảnh phòng / Bối cảnh mẫu để ghép Mockup AI</h3>
-                  <p className="text-[11px] text-slate-600 mt-0.5">
+                  <p className="text-xs text-slate-600 mt-0.5">
                     AI sẽ ghép hoa văn đã chọn vào sản phẩm trong ảnh phòng của bạn.
                   </p>
                 </div>
@@ -487,7 +487,7 @@ export function InitForm({
               maxImages={10}
             />
 
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-2.5 text-[11px] text-blue-700 leading-relaxed">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-2.5 text-xs text-blue-700 leading-relaxed">
               {referenceImages.length > 0 ? (
                 <span>
                   ✓ <strong>Chế độ ghép phòng chỉ định:</strong> AI sẽ giữ nguyên {referenceImages.length} căn phòng trên và ghép hoa văn đã chọn lên sản phẩm.
@@ -505,7 +505,7 @@ export function InitForm({
       {/* Dynamic Multi-Market Matrix Preset & Formula Bar */}
       <div data-testid="step-one-trend-scope" className="order-2 flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">B · Phạm vi Pinterest Trends</p>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">B · Phạm vi Pinterest Trends</p>
           <p className="mt-1 text-xs text-slate-600">Chọn nhanh phạm vi phân tích. Thị trường và loại xu hướng chi tiết nằm trong phần nâng cao.</p>
         </div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -514,11 +514,11 @@ export function InitForm({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-slate-900">Phạm vi phân tích hiện tại</h3>
-                <span className="rounded-full bg-blue-50 border border-blue-300 px-2 py-0.2 text-[9px] font-bold text-blue-700">
+                <span className="rounded-full bg-blue-50 border border-blue-300 px-2 py-0.2 text-xs font-bold text-blue-700">
                   {currentRegions.length} thị trường · {currentTrendTypes.length} loại xu hướng
                 </span>
               </div>
-              <p className="text-[11px] text-slate-600 mt-0.5">
+              <p className="text-xs text-slate-600 mt-0.5">
                 Tự do phối hợp {currentRegions.length} thị trường × {currentTrendTypes.length} loại xu hướng, hoàn toàn linh hoạt không cố định.
               </p>
             </div>
@@ -526,12 +526,12 @@ export function InitForm({
 
           {/* Quick Presets */}
           <div className="flex flex-wrap items-center gap-1.5 self-end sm:self-center">
-            <span className="text-[10px] text-slate-600 font-medium">Chọn nhanh:</span>
+            <span className="text-xs text-slate-600 font-medium">Chọn nhanh:</span>
             <button
               type="button"
               disabled={isBusy}
               onClick={() => handleApplyPreset("global")}
-              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-bold border transition cursor-pointer ${
                 currentRegions.length === 6 && currentTrendTypes.length === 3
                   ? "bg-blue-600 text-white border-blue-300 shadow font-extrabold"
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-300 hover:text-slate-900"
@@ -543,7 +543,7 @@ export function InitForm({
               type="button"
               disabled={isBusy}
               onClick={() => handleApplyPreset("na")}
-              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-bold border transition cursor-pointer ${
                 currentRegions.length === 2 && currentRegions.includes("US") && currentRegions.includes("CA") && currentTrendTypes.length === 2
                   ? "bg-blue-600 text-white border-blue-300 shadow font-extrabold"
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-300 hover:text-slate-900"
@@ -555,7 +555,7 @@ export function InitForm({
               type="button"
               disabled={isBusy}
               onClick={() => handleApplyPreset("eu")}
-              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-bold border transition cursor-pointer ${
                 currentRegions.length === 4 && currentRegions.includes("DE") && currentTrendTypes.length === 2
                   ? "bg-blue-600 text-white border-blue-300 shadow font-extrabold"
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-300 hover:text-slate-900"
@@ -567,7 +567,7 @@ export function InitForm({
               type="button"
               disabled={isBusy}
               onClick={() => handleApplyPreset("single")}
-              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold border transition cursor-pointer ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-bold border transition cursor-pointer ${
                 currentRegions.length === 1 && currentTrendTypes.length === 1
                   ? "bg-blue-600 text-white border-blue-300 shadow font-extrabold"
                   : "border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-300 hover:text-slate-900"
@@ -590,7 +590,7 @@ export function InitForm({
               <strong className="text-emerald-700 font-bold">{totalCalculatedQueries} lượt phân tích</strong>
             </span>
           </div>
-          <span className="text-[11px] text-slate-600 font-mono">
+          <span className="text-xs text-slate-600 font-mono">
             Dự kiến khoảng {estimatedSeconds} giây
           </span>
         </div>
@@ -599,7 +599,7 @@ export function InitForm({
       {/* Main Action Buttons */}
       <div data-testid="step-one-run-mode" className="order-6 flex flex-col gap-3 rounded-lg border border-slate-300 bg-slate-50 p-4">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">E · Chọn cách bắt đầu</p>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">E · Chọn cách bắt đầu</p>
           <p className="mt-1 text-xs text-slate-600">Pinterest Trends là luồng được đề xuất. Các phương án khác không dùng dữ liệu Trends chính thức.</p>
         </div>
         <button
@@ -616,14 +616,14 @@ export function InitForm({
                 : "Phân tích Pinterest Trends"}
             </span>
           </div>
-          <span className="text-[10px] text-blue-700 font-normal">
+          <span className="text-xs text-blue-700 font-normal">
             {canDiscoverOfficialTrends
               ? `${currentRegions.length} thị trường · ${currentTrendTypes.length} loại xu hướng · dữ liệu Pinterest API chính thức`
               : "Cần kết nối Pinterest OAuth trước"}
           </span>
         </button>
 
-        <div className="flex items-center gap-3 pt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+        <div className="flex items-center gap-3 pt-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
           <span className="h-px flex-1 bg-slate-50" />
           <span>Các phương án khác</span>
           <span className="h-px flex-1 bg-slate-50" />
@@ -640,7 +640,7 @@ export function InitForm({
               <span><AppIcon name="info" /></span>
               <span>Gợi ý chủ đề POD nội bộ</span>
             </div>
-            <span className="text-[10px] text-amber-700 font-normal">
+            <span className="text-xs text-amber-700 font-normal">
               Không phải dữ liệu Pinterest Trends, không có chỉ số tăng trưởng
             </span>
           </button>
@@ -655,7 +655,7 @@ export function InitForm({
               <span><AppIcon name="seo" /></span>
               <span>{jobStatus === "running" ? "Đang cào dữ liệu..." : "Quick Auto Crawl (Cào nhanh)"}</span>
             </div>
-            <span className="text-[10px] text-emerald-700 font-normal">
+            <span className="text-xs text-emerald-700 font-normal">
               Cào trực tiếp {crawlCount} ảnh Pinterest & chấm điểm AI tức thì
             </span>
           </button>
@@ -689,7 +689,7 @@ export function InitForm({
           <div className="flex items-center gap-2">
             <span><AppIcon name="settings" /></span>
             <span>Thiết lập phạm vi nâng cao ({currentRegions.length} thị trường • {currentTrendTypes.length} loại xu hướng)</span>
-            <span className="rounded bg-slate-50 px-2 py-0.5 text-[10px] text-blue-700 font-mono">
+            <span className="rounded bg-slate-50 px-2 py-0.5 text-xs text-blue-700 font-mono">
               {totalCalculatedQueries} lượt
             </span>
           </div>
@@ -704,7 +704,7 @@ export function InitForm({
             <div className="flex flex-col gap-2">
               <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
                 <span><AppIcon name="folder" /> Ghi đè loại phôi sản phẩm:</span>
-                <span className="text-[11px] text-slate-600">Chọn phôi in xưởng mong muốn</span>
+                <span className="text-xs text-slate-600">Chọn phôi in xưởng mong muốn</span>
               </label>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {PRODUCT_OPTIONS.map((opt) => {
@@ -732,7 +732,7 @@ export function InitForm({
                       <strong className={`text-xs font-bold ${isSelected ? "text-blue-700" : "text-slate-900"}`}>
                         {opt.label}
                       </strong>
-                      <span className="text-[9px] text-slate-600 line-clamp-1">{opt.standard}</span>
+                      <span className="text-xs text-slate-600 line-clamp-1">{opt.standard}</span>
                     </button>
                   );
                 })}
@@ -754,7 +754,7 @@ export function InitForm({
                       onSelectedRegionsChange?.(AVAILABLE_REGIONS.map((r) => r.code));
                       onRegionChange?.("ALL");
                     }}
-                    className="text-[10px] text-blue-700 hover:underline px-1 cursor-pointer"
+                    className="text-xs text-blue-700 hover:underline px-1 cursor-pointer"
                   >
                     Chọn tất cả
                   </button>
@@ -766,7 +766,7 @@ export function InitForm({
                       onSelectedRegionsChange?.(["US"]);
                       onRegionChange?.("US");
                     }}
-                    className="text-[10px] text-slate-600 hover:underline px-1 cursor-pointer"
+                    className="text-xs text-slate-600 hover:underline px-1 cursor-pointer"
                   >
                     Chỉ US
                   </button>
@@ -792,7 +792,7 @@ export function InitForm({
                         <span>{regItem.flag}</span>
                         <span className="truncate">{regItem.label}</span>
                       </span>
-                      <span className={`text-[10px] font-mono px-1 rounded ${isChecked ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-500"}`}>
+                      <span className={`text-xs font-mono px-1 rounded ${isChecked ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-500"}`}>
                         {regItem.code}
                       </span>
                     </button>
@@ -829,10 +829,10 @@ export function InitForm({
                           <span>{tItem.label}</span>
                         </span>
                         {isChecked && (
-                          <span className="text-[10px] text-blue-700 font-bold">✓ Bật</span>
+                          <span className="text-xs text-blue-700 font-bold">✓ Bật</span>
                         )}
                       </div>
-                      <span className="text-[10px] text-slate-600 font-normal">{tItem.desc}</span>
+                      <span className="text-xs text-slate-600 font-normal">{tItem.desc}</span>
                     </button>
                   );
                 })}
@@ -885,7 +885,7 @@ export function InitForm({
                   ({currentRegions.length} QG × {currentTrendTypes.length} loại xu hướng × {currentInterests.length || 1} ngành)
                 </span>
               </div>
-              <span className="text-[11px] text-slate-600 font-mono">
+              <span className="text-xs text-slate-600 font-mono">
                 Dự kiến khoảng {estimatedSeconds} giây
               </span>
             </div>

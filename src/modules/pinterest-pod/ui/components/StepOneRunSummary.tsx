@@ -47,7 +47,7 @@ export function StepOneRunSummary({
   return (
     <section className="rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm">
       <div className="border-b border-slate-200 pb-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">Tóm tắt lần chạy</p>
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Tóm tắt lần chạy</p>
         <h2 className="mt-1 text-base font-bold text-slate-900">Kiểm tra trước khi bắt đầu</h2>
       </div>
 
@@ -71,7 +71,7 @@ export function StepOneRunSummary({
             <p className="font-semibold text-slate-900">
               Pinterest API: {canDiscoverOfficialTrends ? "Sẵn sàng quét Trends" : "Chưa kết nối OAuth"}
             </p>
-            <p className="mt-0.5 text-[11px] leading-4 text-slate-500">Chỉ dùng cho dữ liệu Pinterest Trends chính thức.</p>
+            <p className="mt-0.5 text-xs leading-4 text-slate-500">Chỉ dùng cho dữ liệu Pinterest Trends chính thức.</p>
           </div>
         </div>
         <div className="flex items-start gap-2 border-t border-slate-200 pt-2 text-xs">
@@ -87,7 +87,7 @@ export function StepOneRunSummary({
                   ? "Sẵn sàng cào ảnh"
                   : "Chưa đăng nhập browser"}
             </p>
-            <p className="mt-0.5 text-[11px] leading-4 text-slate-500">Không chặn quét Trends; chỉ cần khi bắt đầu cào ảnh.</p>
+            <p className="mt-0.5 text-xs leading-4 text-slate-500">Không chặn quét Trends; chỉ cần khi bắt đầu cào ảnh.</p>
           </div>
         </div>
       </div>

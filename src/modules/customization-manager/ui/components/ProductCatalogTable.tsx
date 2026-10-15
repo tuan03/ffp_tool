@@ -241,7 +241,7 @@ export function ProductCatalogTable({
                 {filterMode === "collection" && "Collection"}
                 {filterMode === "asin" && "Amazon ASIN"}
               </span>
-              <span className="text-[10px] text-slate-600">▼</span>
+              <span className="text-xs text-slate-600">▼</span>
             </button>
 
             {/* Dropdown Menu */}
@@ -408,7 +408,7 @@ export function ProductCatalogTable({
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase tracking-wider text-[11px]">
+              <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase tracking-wider text-xs">
                 <tr>
                   <th className="py-4 pl-6 pr-4">Sản phẩm</th>
                   <th className="py-4 px-4 w-48 text-center">Trạng thái Tùy Biến</th>
@@ -456,7 +456,7 @@ export function ProductCatalogTable({
                             </h4>
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                               {product.handle && (
-                                <span className="text-[11px] text-slate-500 truncate">
+                                <span className="text-xs text-slate-500 truncate">
                                   /{product.handle}
                                 </span>
                               )}
@@ -466,7 +466,7 @@ export function ProductCatalogTable({
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-slate-500 hover:text-emerald-700 transition inline-flex items-center gap-0.5 text-[11px] font-medium"
+                                  className="text-slate-500 hover:text-emerald-700 transition inline-flex items-center gap-0.5 text-xs font-medium"
                                   title="Mở sản phẩm trong Shopify Admin"
                                 >
                                   <span>Shopify</span>
@@ -479,7 +479,7 @@ export function ProductCatalogTable({
                               )}
                               {asin && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded bg-amber-50 border border-amber-300 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-700 shadow-sm"
+                                  className="inline-flex items-center gap-1 rounded bg-amber-50 border border-amber-300 px-1.5 py-0.5 text-xs font-mono font-bold text-amber-700 shadow-sm"
                                   title={`Amazon ASIN: ${asin}`}
                                 >
                                   <span>🏷️</span>

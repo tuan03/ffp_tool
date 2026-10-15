@@ -102,6 +102,7 @@ export function ProductSplitView({
   // Keyboard navigation: ArrowLeft/ArrowUp for Prev, ArrowRight/ArrowDown for Next
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (document.querySelector('dialog[open], [role="dialog"]')) return;
       const activeTag = document.activeElement?.tagName?.toLowerCase();
       if (
         activeTag === "input" ||
@@ -136,7 +137,7 @@ export function ProductSplitView({
   function renderSeoStatusBadge(status: SeoProcessingStatus, isMock: boolean) {
     if (status === "completed") {
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-300">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-300">
           <span className="h-1 w-1 rounded-full bg-emerald-700" />
           Completed
           {isMock && <SourceBadge source="mock" />}
@@ -145,52 +146,33 @@ export function ProductSplitView({
     }
     if (status === "processing") {
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-300">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-300">
           Processing
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-300">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-700 border border-rose-300">
         Failed
       </span>
     );
   }
 
   function renderShopifySyncBadge(product: SeoProductUiViewModel) {
-    if (product.shopifySyncStatus === "queued") {
-      return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-300">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-700" />
-          <span>Chờ đẩy</span>
-        </span>
-      );
-    }
-    if (product.shopifySyncStatus === "syncing") {
-      return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-300 animate-pulse">
-          <svg className="animate-spin h-2.5 w-2.5 text-blue-700" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
-          <span>Đang đẩy...</span>
-        </span>
-      );
-    }
     if (product.shopifySyncStatus === "synced") {
       const isCrossStore = Boolean(
         currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
       );
       return (
         <span
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold ${
             isCrossStore
               ? "bg-amber-50 text-amber-700 border border-amber-300"
               : "bg-emerald-50 text-emerald-700 border border-emerald-300"
           }`}
         >
           <span className={`h-1.5 w-1.5 rounded-full ${isCrossStore ? "bg-amber-700" : "bg-emerald-700"}`} />
-          <span>{product.storeId ? `Đã đẩy (${product.storeId})` : "Đã đẩy Store"}</span>
+          <span>{product.storeId ? `Đích: ${product.storeId}` : "Đích Shopify"}</span>
           {product.shopifyAdminUrl ? (
             <a
               href={product.shopifyAdminUrl}
@@ -208,7 +190,7 @@ export function ProductSplitView({
     }
     if (product.shopifySyncStatus === "failed") {
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-300">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-700 border border-rose-300">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
           <span>Lỗi đẩy</span>
           {onViewSyncError && (
@@ -218,7 +200,7 @@ export function ProductSplitView({
                 e.stopPropagation();
                 onViewSyncError(product);
               }}
-              className="text-[10px] font-bold text-blue-700 hover:text-slate-900 underline ml-0.5 cursor-pointer"
+              className="text-xs font-bold text-blue-700 hover:text-slate-900 underline ml-0.5 cursor-pointer"
               title="Xem thông báo lỗi chi tiết"
             >
               Chi tiết
@@ -231,7 +213,7 @@ export function ProductSplitView({
                 e.stopPropagation();
                 onRetrySync(product.id);
               }}
-              className="text-[10px] font-bold text-rose-700 hover:text-slate-900 underline ml-0.5 cursor-pointer"
+              className="text-xs font-bold text-rose-700 hover:text-slate-900 underline ml-0.5 cursor-pointer"
             >
               Thử lại
             </button>
@@ -264,7 +246,7 @@ export function ProductSplitView({
           <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
             Danh sách ({products.length})
           </span>
-          <span className="text-[11px] text-slate-500">
+          <span className="text-xs text-slate-500">
             {activeIndex >= 0 ? `Đang chọn #${activeIndex + 1}` : "Chưa chọn"}
           </span>
         </div>
@@ -319,7 +301,7 @@ export function ProductSplitView({
                         className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
                         loading="lazy"
                       />
-                      <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-[10px]">
+                      <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-xs">
                         <AppIcon name="search" />
                       </span>
                     </button>
@@ -334,31 +316,22 @@ export function ProductSplitView({
                     <span className="text-xs font-semibold text-slate-900 truncate">
                       {product.productTitle.value}
                     </span>
-                    <span className="text-[10px] font-mono text-slate-500 flex-shrink-0">
+                    <span className="text-xs font-mono text-slate-500 flex-shrink-0">
                       #{idx + 1}
                     </span>
                   </div>
 
-                  <p className="text-[11px] text-blue-700 truncate font-mono">
+                  <p className="text-xs text-blue-700 truncate font-mono">
                     /{product.handle.value}
                   </p>
 
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     <SourceOriginBadge product={product} showStatusHint={false} targetStoreId={currentStoreId} />
                     <ReviewStatusBadge product={product} />
-                    {renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock")}
+                    {product.seoStatus.value !== "completed" ? renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock") : product.seoStatus.source === "mock" ? <SourceBadge source="mock" /> : null}
                     {renderShopifySyncBadge(product)}
-                    {product.isSyncing && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                        <svg className="animate-spin h-2.5 w-2.5 text-blue-700" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                        </svg>
-                        <span>Syncing</span>
-                      </span>
-                    )}
                     {product.isReverting && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
                         <svg className="animate-spin h-2.5 w-2.5 text-amber-700" viewBox="0 0 24 24" fill="none">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -366,23 +339,18 @@ export function ProductSplitView({
                         <span>Reverting</span>
                       </span>
                     )}
-                    {product.lastSyncedAt && product.reviewDecision === "approved" && !product.isSyncing && !product.isReverting && (
-                      <span className="text-[10px] text-emerald-700 font-medium" title={`Shopify Synced: ${new Date(product.lastSyncedAt).toLocaleString()}`}>
-                        ✓ Synced
-                      </span>
-                    )}
                     {product.lastRevertedAt && product.reviewDecision !== "approved" && !product.isSyncing && !product.isReverting && (
-                      <span className="text-[10px] text-amber-700 font-medium" title={`Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`}>
+                      <span className="text-xs text-amber-700 font-medium" title={`Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`}>
                         ↩ Reverted
                       </span>
                     )}
                     {product.syncError && !product.isSyncing && (
-                      <span className="text-[10px] text-rose-700 font-medium" title={product.syncError}>
+                      <span className="text-xs text-rose-700 font-medium" title={product.syncError}>
                         <AppIcon name="warning" /> Lỗi sync
                       </span>
                     )}
                     {product.revertError && !product.isReverting && (
-                      <span className="text-[10px] text-rose-700 font-medium" title={product.revertError}>
+                      <span className="text-xs text-rose-700 font-medium" title={product.revertError}>
                         <AppIcon name="warning" /> Lỗi hoàn tác
                       </span>
                     )}
@@ -408,7 +376,7 @@ export function ProductSplitView({
                   <h3 className="text-sm font-bold text-slate-900 truncate">
                     {activeProduct.productTitle.value}
                   </h3>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-600 font-mono">
+                  <div className="flex items-center gap-2 text-xs text-slate-600 font-mono">
                     <span>/{activeProduct.handle.value}</span>
                     {activeProduct.asin && <span>• ASIN: {activeProduct.asin}</span>}
                   </div>
@@ -452,7 +420,7 @@ export function ProductSplitView({
                   {renderShopifySyncBadge(activeProduct)}
                 </div>
                 <div className="flex items-center gap-2">
-                  {renderSeoStatusBadge(activeProduct.seoStatus.value, activeProduct.seoStatus.source === "mock")}
+                  {activeProduct.seoStatus.value !== "completed" ? renderSeoStatusBadge(activeProduct.seoStatus.value, activeProduct.seoStatus.source === "mock") : <span className="text-xs text-slate-500">SEO hoàn tất{activeProduct.seoStatus.source === "mock" ? <SourceBadge source="mock" /> : null}</span>}
                 </div>
               </div>
 
@@ -461,7 +429,7 @@ export function ProductSplitView({
                   <span className="flex items-center gap-1.5 font-medium">
                     <span>✓</span> Đã đồng bộ lên Shopify thành công
                   </span>
-                  <span className="font-mono text-[11px] text-emerald-700">
+                  <span className="font-mono text-xs text-emerald-700">
                     {new Date(activeProduct.lastSyncedAt).toLocaleTimeString()}
                   </span>
                 </div>
@@ -472,7 +440,7 @@ export function ProductSplitView({
                   <span className="flex items-center gap-1.5 font-medium">
                     <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
                   </span>
-                  <span className="font-mono text-[11px] text-amber-700">
+                  <span className="font-mono text-xs text-amber-700">
                     {new Date(activeProduct.lastRevertedAt).toLocaleTimeString()}
                   </span>
                 </div>
@@ -551,7 +519,7 @@ export function ProductSplitView({
                                   alt={img.alt.value}
                                   className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
                                 />
-                                <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-[10px]">
+                                <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-xs">
                                   <AppIcon name="search" />
                                 </span>
                               </button>
@@ -561,17 +529,17 @@ export function ProductSplitView({
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-[10px] font-bold text-slate-600 uppercase">
+                              <span className="text-xs font-bold text-slate-600 uppercase">
                                 Ảnh #{idx + 1}
                               </span>
                               <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-mono text-slate-600">
+                                <span className="text-xs font-mono text-slate-600">
                                   {img.alt.value.length}/125
                                 </span>
                                 <button
                                   type="button"
                                   onClick={() => handleCopy(img.alt.value, copyId)}
-                                  className="text-[10px] text-slate-600 hover:text-blue-700 cursor-pointer"
+                                  className="text-xs text-slate-600 hover:text-blue-700 cursor-pointer"
                                 >
                                   {copiedKey === copyId ? "✓" : "Copy"}
                                 </button>
@@ -595,7 +563,7 @@ export function ProductSplitView({
                     <AppIcon name="review" /> Mô tả sản phẩm
                   </span>
 
-                  <div className="flex items-center rounded-md bg-white p-0.5 border border-slate-200 text-[11px] font-medium">
+                  <div className="flex items-center rounded-md bg-white p-0.5 border border-slate-200 text-xs font-medium">
                     <button
                       type="button"
                       onClick={() => setDescriptionTab("formatted")}
@@ -630,7 +598,7 @@ export function ProductSplitView({
                   />
                 ) : (
                   <div className="relative">
-                    <pre className="p-3 rounded-lg bg-white border border-slate-200 font-mono text-[11px] text-slate-700 overflow-x-auto max-h-56">
+                    <pre className="p-3 rounded-lg bg-white border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto max-h-56">
                       {activeProduct.productDescription.value}
                     </pre>
                     <button
@@ -638,7 +606,7 @@ export function ProductSplitView({
                       onClick={() =>
                         handleCopy(activeProduct.productDescription.value, `desc-${activeProduct.id}`)
                       }
-                      className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
+                      className="absolute top-2 right-2 px-2 py-0.5 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
                     >
                       {copiedKey === `desc-${activeProduct.id}` ? "✓" : "Copy"}
                     </button>

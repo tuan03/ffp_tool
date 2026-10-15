@@ -273,7 +273,7 @@ export function CrawlerRunPanel({
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-xs font-bold ${
                       isPassed
                         ? "bg-emerald-700 text-white"
                         : isCurrent
@@ -285,9 +285,9 @@ export function CrawlerRunPanel({
                   >
                     {isPassed ? "✓" : isFailedStep ? "✕" : item.step}
                   </span>
-                  <span className="text-[11px] font-bold truncate">Bước {item.step}</span>
+                  <span className="text-xs font-bold truncate">Bước {item.step}</span>
                 </div>
-                <p className="text-[11px] font-medium leading-snug line-clamp-2">{item.name}</p>
+                <p className="text-xs font-medium leading-snug line-clamp-2">{item.name}</p>
               </div>
             );
           })}
@@ -331,7 +331,7 @@ export function CrawlerRunPanel({
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-700 animate-pulse" />
             <span className="text-xs font-semibold text-slate-900">Nhật ký xử lý (Live Crawler Logs)</span>
-            <span className="rounded bg-slate-50 px-1.5 py-0.2 text-[10px] font-mono text-slate-600">
+            <span className="rounded bg-slate-50 px-1.5 py-0.2 text-xs font-mono text-slate-600">
               {logs.length} dòng
             </span>
           </div>

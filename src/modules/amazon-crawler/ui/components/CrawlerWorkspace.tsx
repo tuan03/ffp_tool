@@ -2,29 +2,31 @@ import type { ReactNode } from "react";
 
 import { PageHeader } from "../../../../shared/components/PageHeader";
 
-export type CrawlerWorkspaceSection = "crawl" | "agents" | "diagnostics";
+export type CrawlerWorkspaceSection = "crawl" | "results" | "agents" | "diagnostics";
 
 interface CrawlerWorkspaceProps {
   section: CrawlerWorkspaceSection;
   onSectionChange: (section: CrawlerWorkspaceSection) => void;
   summary: ReactNode;
   crawl: ReactNode;
+  results?: ReactNode;
   agents: ReactNode;
   diagnostics: ReactNode;
 }
 
 const WORKSPACE_SECTIONS = [
   { id: "crawl", label: "Cào sản phẩm" },
+  { id: "results", label: "Phiên & kết quả" },
   { id: "agents", label: "Agent" },
   { id: "diagnostics", label: "Chẩn đoán & bảo trì" },
 ] as const;
 
 export function CrawlerWorkspace({
-  section, onSectionChange, summary, crawl, agents, diagnostics,
+  section, onSectionChange, summary, crawl, results, agents, diagnostics,
 }: CrawlerWorkspaceProps): React.JSX.Element {
   return (
     <div className="space-y-5">
-      <header className="space-y-4">
+      <header className="space-y-3">
         <PageHeader title="Distributed Crawler" description="Thu thập sản phẩm Amazon, theo dõi agent và bàn giao sang SEO Queue." />
         {summary}
         <nav aria-label="Khu vực crawler" className="flex flex-wrap gap-1 border-b border-slate-200 pb-2">
@@ -42,6 +44,7 @@ export function CrawlerWorkspace({
       </header>
       {/* Keep panels mounted: navigation must not discard configuration or audit drafts. */}
       <section id="crawler-panel-crawl" aria-label="Cào sản phẩm" hidden={section !== "crawl"} className="space-y-5">{crawl}</section>
+      <section id="crawler-panel-results" aria-label="Phiên và kết quả" hidden={section !== "results"} className="space-y-5">{results}</section>
       <section id="crawler-panel-agents" aria-label="Quản lý Agent" hidden={section !== "agents"} className="space-y-5">{agents}</section>
       <section id="crawler-panel-diagnostics" aria-label="Chẩn đoán và bảo trì" hidden={section !== "diagnostics"} className="space-y-5">{diagnostics}</section>
     </div>

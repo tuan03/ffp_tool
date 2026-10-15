@@ -1,6 +1,7 @@
 import React from "react";
 
 import { AppIcon } from "../../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../../shared/hooks/useDialogFocus";
 import type { DecisionCard } from "../../types";
 
 export interface DecisionDrawerProps {
@@ -16,6 +17,7 @@ export function DecisionDrawer({
   onTriggerGuardedWrite,
   onCreateBrief,
 }: DecisionDrawerProps): React.JSX.Element | null {
+  const dialogRef = useDialogFocus({ isOpen: card !== null, onClose });
   if (!card) return null;
 
   const isPause = card.decision === "PAUSE_CANDIDATE" || card.decision === "REDUCE_CANDIDATE";
@@ -32,7 +34,7 @@ export function DecisionDrawer({
     : "bg-slate-50 text-slate-700 border-slate-300";
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Chi tiết đề xuất quảng cáo" className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm">
       {/* Background click to close */}
       <div className="flex-1" onClick={onClose} aria-hidden="true" />
 
@@ -43,14 +45,14 @@ export function DecisionDrawer({
           <div className="flex items-start justify-between border-b border-slate-200 pb-4">
             <div>
               <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-slate-50 text-slate-700 border border-slate-300">
+                <span className="text-xs px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-slate-50 text-slate-700 border border-slate-300">
                   {card.entity.type}: {card.entity.id}
                 </span>
                 <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${decisionColor}`}>
                   {card.decision}
                 </span>
                 <span
-                  className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                  className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${
                     card.priority === "HIGH"
                       ? "bg-rose-50 text-rose-700 border border-rose-200"
                       : "bg-amber-50 text-amber-700 border border-amber-200"
@@ -58,7 +60,7 @@ export function DecisionDrawer({
                 >
                   Ưu tiên {card.priority}
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-50 text-slate-700 border border-slate-300">
+                <span className="text-xs px-2 py-0.5 rounded font-mono bg-slate-50 text-slate-700 border border-slate-300">
                   Độ tin cậy: <strong className="text-blue-700">{card.confidence}</strong>
                 </span>
               </div>
@@ -68,6 +70,7 @@ export function DecisionDrawer({
               </div>
             </div>
             <button
+              type="button"
               onClick={onClose}
               className="text-slate-600 hover:text-slate-900 p-1 rounded-lg hover:bg-slate-50 text-lg cursor-pointer"
               aria-label="Đóng bảng chi tiết"
@@ -94,7 +97,7 @@ export function DecisionDrawer({
               </h3>
               <div className="overflow-hidden rounded-lg border border-slate-200">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-white text-slate-600 text-[10px] uppercase font-mono border-b border-slate-200">
+                  <thead className="bg-white text-slate-600 text-xs uppercase font-mono border-b border-slate-200">
                     <tr>
                       <th className="py-2 px-3">Chỉ số</th>
                       <th className="py-2 px-3">Thực tế</th>
@@ -102,7 +105,7 @@ export function DecisionDrawer({
                       <th className="py-2 px-3">Đơn vị</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200 font-mono text-[11px] bg-slate-50">
+                  <tbody className="divide-y divide-slate-200 font-mono text-xs bg-slate-50">
                     {card.observations.map((obs, idx) => (
                       <tr key={idx} className="hover:bg-slate-50">
                         <td className="py-2 px-3 text-blue-700 font-semibold">{obs.metric}</td>
@@ -144,7 +147,7 @@ export function DecisionDrawer({
                 {card.missingEvidence.map((ev, idx) => (
                   <span
                     key={idx}
-                    className="text-[10px] px-2 py-0.5 rounded bg-white text-amber-700 border border-amber-200"
+                    className="text-xs px-2 py-0.5 rounded bg-white text-amber-700 border border-amber-200"
                   >
                     {ev}
                   </span>
@@ -156,7 +159,7 @@ export function DecisionDrawer({
           {/* Recommended Next Step & Blocked Actions */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-1">
-              <div className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
+              <div className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
                 <span>👉</span> Hành động đề xuất
               </div>
               <div className="text-xs text-slate-900 leading-relaxed">
@@ -165,7 +168,7 @@ export function DecisionDrawer({
             </div>
 
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 space-y-1">
-              <div className="text-[10px] font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
+              <div className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
                 <span>🚫</span> Hành động bị cấm (Blocked)
               </div>
               <ul className="text-xs text-slate-900 space-y-1">
@@ -180,7 +183,7 @@ export function DecisionDrawer({
           </div>
 
           {/* Review Trigger */}
-          <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+          <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
             <strong>Kích hoạt xem xét lại:</strong> {card.reviewTrigger}
           </div>
         </div>

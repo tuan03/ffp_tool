@@ -10,7 +10,7 @@ import type { AsinFilterWorkspace } from "../asin-filter-workspace";
 interface ShopifyAsinFilterPanelProps {
   readonly storeId: string;
   readonly filterShopifyAsins: ShopifyAsinFilter;
-  readonly onSelectAsin: (asin: string) => void;
+  readonly onSelectAsin: (asin: string) => Promise<boolean> | boolean | void;
   readonly isSelectionDisabled: boolean;
 }
 
@@ -162,7 +162,7 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                     className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 ${isLatest ? "border-blue-300 bg-blue-50" : hasAction ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
                   <div className="min-w-0">
                     <span className="font-mono text-sm text-slate-900">{asin}</span>
-                    {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px]">
+                    {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs">
                       {row?.copied ? <span className="text-emerald-700">✓ Đã copy</span> : null}
                       {row?.selected ? <span className="text-emerald-700">✓ Đã chọn cào</span> : null}
                       {row?.viewed ? <span className="text-emerald-700">✓ Đã xem</span> : null}
@@ -170,9 +170,9 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                     </div> : null}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button type="button" aria-label={`Chọn cào ${asin}`} disabled={isSelectionDisabled}
-                      onClick={() => { onSelectAsin(asin); handleMarkRow(asin, "selected"); setCopyMessage(`Ô cào hiện chỉ có ${asin}. Chọn collection rồi bấm Bắt đầu cào.`); }}
-                      className="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700 disabled:opacity-50">Cào</button>
+                    <button type="button" aria-label={`Dùng ASIN này ${asin}`} disabled={isSelectionDisabled}
+                      onClick={async () => { if (await onSelectAsin(asin) === false) return; handleMarkRow(asin, "selected"); setCopyMessage(`Đã đưa ${asin} vào ô nhập. Chọn collection rồi bấm Bắt đầu cào.`); }}
+                      className="min-h-8 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700 disabled:opacity-50">Dùng ASIN này</button>
                     <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
                       onClick={() => handleMarkRow(asin, "viewed")} onAuxClick={(event) => { if (event.button === 1) handleMarkRow(asin, "viewed"); }}
                       className="rounded border border-blue-200 px-2 py-1 text-xs text-blue-700">View ↗</a>

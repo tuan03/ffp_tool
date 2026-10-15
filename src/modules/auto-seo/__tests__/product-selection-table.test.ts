@@ -52,6 +52,14 @@ const mockProducts: readonly ShopifyProductForAutoSeoUi[] = [
   },
 ];
 
+test("Auto SEO empty state offers a load action at the point of need", () => {
+  const html = renderToStaticMarkup(React.createElement(ProductSelectionTable, {
+    products: [], selectedProductIds: [], onToggleSelect: () => {}, onOpenDetail: () => {},
+    onLoadProducts: () => {}, canLoadProducts: true,
+  }));
+  assert.match(html, /<button[^>]*>Tải sản phẩm từ Shopify<\/button>/);
+});
+
 interface RenderResult {
   captured: React.ReactElement<{ children: React.ReactNode[] }>;
   html: string;
@@ -920,7 +928,7 @@ test("ProductSelectionTable: status filter counts reflect total loaded products 
 });
 
 test("AutoSeoToolbar: enables Run Auto SEO and clear action only when items are selected", () => {
-  // Case 1: 0 items selected -> Run Auto SEO is disabled, '✕ Bỏ chọn' is omitted
+  // Unselected products show guidance, not a wall of disabled batch actions.
   const toolbarZero = AutoSeoToolbar({
     isLoadingProducts: false,
     isRunningAutoSeo: false,
@@ -935,6 +943,8 @@ test("AutoSeoToolbar: enables Run Auto SEO and clear action only when items are 
   const zeroHtml = renderToStaticMarkup(React.createElement(() => toolbarZero));
   assert.ok(zeroHtml.includes("Đã chọn:"));
   assert.ok(!zeroHtml.includes("✕ Bỏ chọn"));
+  assert.ok(!zeroHtml.includes("Run Auto SEO"));
+  assert.ok(zeroHtml.includes("Chọn sản phẩm để hiện thao tác SEO"));
   assert.ok(zeroHtml.includes("disabled"));
 
   // Case 2: 2 items selected -> Run Auto SEO is enabled and displays count, '✕ Bỏ chọn' is rendered

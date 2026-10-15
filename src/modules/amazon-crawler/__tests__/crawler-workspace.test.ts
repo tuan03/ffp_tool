@@ -12,6 +12,7 @@ function renderWorkspace(section: CrawlerWorkspaceSection): string {
     onSectionChange: () => {},
     summary: "Connection summary",
     crawl: createElement("input", { "aria-label": "ASIN draft", defaultValue: "B000000001" }),
+    results: "Current job results",
     agents: "Agent configuration draft",
     diagnostics: "Maintenance controls",
   }));
@@ -23,8 +24,17 @@ test("crawler workspace defaults to a focused crawl panel with separate navigati
   assert.match(markup, /Chẩn đoán &amp; bảo trì/);
   assert.match(markup, /id="crawler-panel-crawl"(?![^>]*hidden)/);
   assert.match(markup, /id="crawler-panel-agents"[^>]*hidden=""/);
+  assert.match(markup, /id="crawler-panel-results"[^>]*hidden=""/);
   assert.match(markup, /id="crawler-panel-diagnostics"[^>]*hidden=""/);
   assert.ok(markup.indexOf("ASIN draft") < markup.indexOf("Maintenance controls"));
+});
+
+test("results have their own panel without discarding configuration", () => {
+  const markup = renderWorkspace("results");
+  assert.match(markup, /id="crawler-panel-results"(?![^>]*hidden)/);
+  assert.match(markup, /id="crawler-panel-crawl"[^>]*hidden=""/);
+  assert.match(markup, /Current job results/);
+  assert.match(markup, /value="B000000001"/);
 });
 
 test("switching crawler sections keeps inactive forms mounted to preserve drafts", () => {

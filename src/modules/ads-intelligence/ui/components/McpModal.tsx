@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 
 import { AppIcon } from "../../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../../shared/hooks/useDialogFocus";
 import type { AdsIntelligenceClient, AdsGatewayStore, McpUserToken, McpAuditLog } from "../../types";
 
 export interface McpModalProps {
@@ -26,6 +27,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
   const [allStoresAllowed, setAllStoresAllowed] = useState(true);
   const [selectedStores, setSelectedStores] = useState<string[]>([]);
   const [creatingUser, setCreatingUser] = useState(false);
+  const dialogRef = useDialogFocus({ isOpen: true, onClose: () => { if (!creatingUser) onClose(); } });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createdUserSuccess, setCreatedUserSuccess] = useState<McpUserToken | null>(null);
 
@@ -133,7 +135,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
   const agyManualCommand = `agy mcp add --header "Authorization: Bearer ${currentToken}" ads-intelligence "${baseUrl}/mcp/ads"`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Kết nối MCP & quản lý truy cập" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/30 backdrop-blur-sm">
       <div className="w-full max-w-4xl rounded-lg border border-blue-200 bg-white p-5 sm:p-6 shadow-sm space-y-4 animate-in zoom-in-95 duration-200 max-h-[92vh] flex flex-col">
         
         {/* Header */}
@@ -222,7 +224,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                       ))}
                     </select>
                   ) : (
-                    <span className="text-amber-700 text-[11px]">
+                    <span className="text-amber-700 text-xs">
                       Chưa có token cá nhân nào. Hãy chuyển sang tab "Quản lý Nhân sự" để tạo token.
                     </span>
                   )}
@@ -235,7 +237,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="inline-block w-2 h-2 rounded-full bg-emerald-700 animate-pulse"></span>
                     <span className="text-emerald-700 font-bold text-xs">Lệnh cài đặt 1 chạm:</span>
-                    <div className="inline-flex rounded-lg bg-white border border-slate-300 p-0.5 text-[11px] font-semibold">
+                    <div className="inline-flex rounded-lg bg-white border border-slate-300 p-0.5 text-xs font-semibold">
                       <button
                         type="button"
                         onClick={() => setInstallerOs("windows")}
@@ -263,15 +265,15 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                   <button
                     type="button"
                     onClick={() => handleCopy(installCommand, "install")}
-                    className="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[11px] transition cursor-pointer flex items-center gap-1.5 shadow self-start sm:self-auto"
+                    className="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition cursor-pointer flex items-center gap-1.5 shadow self-start sm:self-auto"
                   >
                     {copiedText === "install" ? "✓ Đã sao chép!" : "📋 Sao chép Lệnh"}
                   </button>
                 </div>
-                <div className="rounded-lg bg-black/80 border border-slate-200 p-3 font-mono text-[11px] text-white break-all select-all">
+                <div className="rounded-lg bg-black/80 border border-slate-200 p-3 font-mono text-xs text-white break-all select-all">
                   {installCommand}
                 </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
+                <p className="text-xs text-slate-600 leading-relaxed">
                   {installerOs === "windows" ? (
                     <><AppIcon name="info" /> <b>Cách dùng:</b> Mở <b>PowerShell</b> trên máy tính Windows và dán lệnh trên rồi Enter. Script sẽ tự động nhận diện và cấu hình cho <b>Antigravity CLI (agy)</b>, <b>Codex (~/.codex/config.toml)</b> và <b>Claude Desktop</b>.</>
                   ) : (
@@ -282,7 +284,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
 
               {/* Manual Configuration for Antigravity & Codex */}
               <div className="space-y-3">
-                <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-[11px]">
+                <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-xs">
                   Cấu hình thủ công (Tùy chọn)
                 </h4>
 
@@ -294,12 +296,12 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                       <button
                         type="button"
                         onClick={() => handleCopy(agyManualCommand, "agy")}
-                        className="text-blue-700 hover:text-blue-700 text-[10px] cursor-pointer"
+                        className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
                       >
                         {copiedText === "agy" ? "✓ Đã copy" : "Copy"}
                       </button>
                     </div>
-                    <pre className="p-2 rounded bg-black/60 border border-slate-200 font-mono text-[10px] text-slate-700 overflow-x-auto whitespace-pre-wrap break-all">
+                    <pre className="p-2 rounded bg-black/60 border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap break-all">
                       {agyManualCommand}
                     </pre>
                   </div>
@@ -311,12 +313,12 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                       <button
                         type="button"
                         onClick={() => handleCopy(`[mcp_servers.ads_intelligence]\nurl = "${baseUrl}/mcp/ads"\nhttp_headers = { "Authorization" = "Bearer ${currentToken}" }`, "codex")}
-                        className="text-blue-700 hover:text-blue-700 text-[10px] cursor-pointer"
+                        className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
                       >
                         {copiedText === "codex" ? "✓ Đã copy" : "Copy"}
                       </button>
                     </div>
-                    <pre className="p-2 rounded bg-black/60 border border-slate-200 font-mono text-[10px] text-slate-700 overflow-x-auto whitespace-pre-wrap break-all">
+                    <pre className="p-2 rounded bg-black/60 border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap break-all">
 {`[mcp_servers.ads_intelligence]
 url = "${baseUrl}/mcp/ads"
 http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
@@ -326,7 +328,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
               </div>
 
               {/* Endpoint Specs */}
-              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5 font-mono text-[11px]">
+              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5 font-mono text-xs">
                 <div className="flex justify-between">
                   <span className="text-slate-500">MCP Stream Endpoint:</span>
                   <span className="text-blue-700 font-bold">{baseUrl}/mcp/ads</span>
@@ -354,7 +356,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                 <form onSubmit={handleCreateUser} className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-slate-600 text-[11px] font-medium">Tên nhân viên / Thiết bị:</label>
+                      <label className="text-slate-600 text-xs font-medium">Tên nhân viên / Thiết bị:</label>
                       <input
                         type="text"
                         placeholder="Ví dụ: Hiep Laptop, Y PC, Loi Macbook"
@@ -365,7 +367,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-600 text-[11px] font-medium">Vai trò (Role):</label>
+                      <label className="text-slate-600 text-xs font-medium">Vai trò (Role):</label>
                       <select
                         value={newUserRole}
                         onChange={(e) => setNewUserRole(e.target.value as any)}
@@ -380,7 +382,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
 
                   {/* Store RBAC Selection */}
                   <div className="space-y-2 pt-1">
-                    <label className="text-slate-600 text-[11px] font-medium block">
+                    <label className="text-slate-600 text-xs font-medium block">
                       Phân quyền Store (Store-level RBAC):
                     </label>
                     <div className="flex items-center gap-4">
@@ -429,7 +431,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                 }}
                                 className="rounded text-blue-600 focus:ring-blue-300"
                               />
-                              <span className="font-mono text-[11px]">{s.storeId}</span>
+                              <span className="font-mono text-xs">{s.storeId}</span>
                             </label>
                           );
                         })}
@@ -438,7 +440,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                   </div>
 
                   {createError && (
-                    <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[11px]">
+                    <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs">
                       {createError}
                     </div>
                   )}
@@ -464,12 +466,12 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                       <button
                         type="button"
                         onClick={() => handleCopy(createdUserSuccess.token, "new-token")}
-                        className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-700 text-white text-[10px] font-semibold transition cursor-pointer"
+                        className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-700 text-white text-xs font-semibold transition cursor-pointer"
                       >
                         {copiedText === "new-token" ? "✓ Đã copy token" : "Copy Token"}
                       </button>
                     </div>
-                    <div className="font-mono text-[11px] text-emerald-700 bg-black/60 p-2 rounded border border-emerald-200 break-all select-all">
+                    <div className="font-mono text-xs text-emerald-700 bg-black/60 p-2 rounded border border-emerald-200 break-all select-all">
                       {createdUserSuccess.token}
                     </div>
                   </div>
@@ -479,14 +481,14 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
               {/* Existing Users Table */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-[11px]">
+                  <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-xs">
                     Danh sách Nhân sự đã cấp quyền ({users.length})
                   </h4>
                   <button
                     type="button"
                     onClick={fetchUsers}
                     disabled={loadingUsers}
-                    className="text-blue-700 hover:text-blue-700 text-[11px] cursor-pointer"
+                    className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
                   >
                     {loadingUsers ? "Đang tải..." : "🔄 Làm mới"}
                   </button>
@@ -495,7 +497,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-[10px] uppercase font-semibold">
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs uppercase font-semibold">
                         <th className="p-2.5">Nhân viên</th>
                         <th className="p-2.5">Token</th>
                         <th className="p-2.5">Store được phép</th>
@@ -504,7 +506,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                         <th className="p-2.5 text-right">Thao tác</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 text-[11px]">
+                    <tbody className="divide-y divide-slate-200 text-xs">
                       {users.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="p-4 text-center text-slate-500">
@@ -518,15 +520,15 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                             <tr key={u.id} className="hover:bg-slate-50 transition">
                               <td className="p-2.5 font-medium text-slate-900">
                                 <div>{u.name}</div>
-                                <div className="text-[10px] text-slate-500 font-mono">{u.role}</div>
+                                <div className="text-xs text-slate-500 font-mono">{u.role}</div>
                               </td>
-                              <td className="p-2.5 font-mono text-[10px] text-slate-700">
+                              <td className="p-2.5 font-mono text-xs text-slate-700">
                                 <div className="flex items-center gap-1.5">
                                   <span>{u.token.slice(0, 16)}...{u.token.slice(-4)}</span>
                                   <button
                                     type="button"
                                     onClick={() => handleCopy(u.token, u.id)}
-                                    className="text-blue-700 hover:text-blue-700 text-[10px] cursor-pointer"
+                                    className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
                                   >
                                     {copiedText === u.id ? "✓" : "📋"}
                                   </button>
@@ -537,19 +539,19 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                   {u.allowedStores.map((s) => (
                                     <span
                                       key={s}
-                                      className="px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-mono"
+                                      className="px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs font-mono"
                                     >
                                       {s === "*" ? "Tất cả (*)" : s}
                                     </span>
                                   ))}
                                 </div>
                               </td>
-                              <td className="p-2.5 text-slate-600 text-[10px]">
+                              <td className="p-2.5 text-slate-600 text-xs">
                                 {u.lastUsedAt ? new Date(u.lastUsedAt).toLocaleString("vi-VN") : "Chưa gọi"}
                               </td>
                               <td className="p-2.5">
                                 <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                  className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                                     isRevoked
                                       ? "bg-rose-50 text-rose-700 border border-rose-200"
                                       : "bg-emerald-50 text-emerald-700 border border-emerald-200"
@@ -562,7 +564,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                 <button
                                   type="button"
                                   onClick={() => handleToggleRevoke(u.id)}
-                                  className={`px-2 py-1 rounded text-[10px] font-semibold cursor-pointer transition ${
+                                  className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer transition ${
                                     isRevoked
                                       ? "bg-emerald-50 hover:bg-emerald-50 text-emerald-700"
                                       : "bg-amber-50 hover:bg-amber-50 text-amber-700"
@@ -573,7 +575,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteUser(u.id)}
-                                  className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-50 text-rose-700 text-[10px] font-semibold cursor-pointer transition"
+                                  className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-50 text-rose-700 text-xs font-semibold cursor-pointer transition"
                                 >
                                   Xóa
                                 </button>
@@ -594,10 +596,10 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-[11px]">
+                  <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-xs">
                     Lịch sử Gọi Công cụ MCP (Real-time Tool Execution Audit)
                   </h4>
-                  <p className="text-[11px] text-slate-600">
+                  <p className="text-xs text-slate-600">
                     Ghi nhận minh bạch ai đã gọi công cụ gì, trên store nào và kết quả ra sao.
                   </p>
                 </div>
@@ -614,7 +616,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
               <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-[10px] uppercase font-semibold">
+                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs uppercase font-semibold">
                       <th className="p-2.5">Thời gian</th>
                       <th className="p-2.5">Nhân viên</th>
                       <th className="p-2.5">Công cụ (Tool Name)</th>
@@ -622,7 +624,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                       <th className="p-2.5">Kết quả</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200 text-[11px]">
+                  <tbody className="divide-y divide-slate-200 text-xs">
                     {auditLogs.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="p-4 text-center text-slate-500">
@@ -632,27 +634,27 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                     ) : (
                       auditLogs.map((log) => (
                         <tr key={log.id} className="hover:bg-slate-50 transition">
-                          <td className="p-2.5 text-slate-600 text-[10px] font-mono">
+                          <td className="p-2.5 text-slate-600 text-xs font-mono">
                             {new Date(log.timestamp).toLocaleString("vi-VN")}
                           </td>
                           <td className="p-2.5 font-medium text-slate-900">
                             {log.userName}
                           </td>
-                          <td className="p-2.5 font-mono text-[10px] text-blue-700 font-semibold">
+                          <td className="p-2.5 font-mono text-xs text-blue-700 font-semibold">
                             {log.toolName}
                           </td>
-                          <td className="p-2.5 font-mono text-[10px] text-blue-700">
+                          <td className="p-2.5 font-mono text-xs text-blue-700">
                             {log.storeId || "—"}
                           </td>
                           <td className="p-2.5">
                             {log.success ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                                 THÀNH CÔNG
                               </span>
                             ) : (
                               <span
                                 title={log.error}
-                                className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help"
+                                className="px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help"
                               >
                                 TỪ CHỐI / LỖI
                               </span>
@@ -671,7 +673,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
 
         {/* Footer */}
         <div className="border-t border-slate-200 pt-3 flex justify-between items-center shrink-0">
-          <div className="text-[11px] text-slate-500 font-mono">
+          <div className="text-xs text-slate-500 font-mono">
             FFP Ads Intelligence v1.0.0 • Safe MCP Architecture
           </div>
           <button

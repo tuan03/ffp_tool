@@ -91,7 +91,7 @@ export function CrawlerHandoffModal({
                   Đã bàn giao thành công payload {products.length} sản phẩm sang SEO + Content Pipeline!
                 </span>
               </div>
-              <span className="rounded bg-emerald-50 px-2 py-0.5 text-[10px] uppercase font-bold text-emerald-700">
+              <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs uppercase font-bold text-emerald-700">
                 HANDOFF COMPLETED
               </span>
             </div>
@@ -106,12 +106,12 @@ export function CrawlerHandoffModal({
               {products.map((p) => (
                 <div key={p.id} className="flex items-center justify-between p-3 text-xs">
                   <div className="flex items-center gap-3 pr-2">
-                    <span className="font-mono text-[11px] text-blue-700">
+                    <span className="font-mono text-xs text-blue-700">
                       {p.productDetails?.ASIN || p.parentAsin || p.id}
                     </span>
                     <span className="font-medium text-slate-900 line-clamp-1">{p.title}</span>
                   </div>
-                  <span className="text-slate-600 whitespace-nowrap text-[11px]">
+                  <span className="text-slate-600 whitespace-nowrap text-xs">
                     {p.variants.length} biến thể
                   </span>
                 </div>
@@ -134,7 +134,7 @@ export function CrawlerHandoffModal({
               </button>
             </div>
 
-            <pre className="max-h-60 overflow-auto rounded-lg border border-slate-200 bg-white p-4 font-mono text-[11px] text-emerald-700">
+            <pre className="max-h-60 overflow-auto rounded-lg border border-slate-200 bg-white p-4 font-mono text-xs text-emerald-700">
               {JSON.stringify(seoPayload, null, 2)}
             </pre>
           </div>

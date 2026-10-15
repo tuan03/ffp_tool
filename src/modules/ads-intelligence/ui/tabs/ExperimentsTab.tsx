@@ -77,14 +77,14 @@ export function ExperimentsTab({
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                 <span><AppIcon name="review" /></span> 1. Bản nháp (Draft)
               </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-slate-600">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-slate-600">
                 {draftBriefs.length}
               </span>
             </div>
 
             <div className="space-y-2.5">
               {draftBriefs.length === 0 ? (
-                <div className="text-[11px] text-slate-500 text-center py-6">
+                <div className="text-xs text-slate-500 text-center py-6">
                   Chưa có brief nào ở trạng thái nháp.
                 </div>
               ) : (
@@ -94,15 +94,15 @@ export function ExperimentsTab({
                     className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2 hover:border-slate-300 transition"
                   >
                     <div className="text-xs font-bold text-slate-900">{b.title}</div>
-                    <div className="text-[11px] text-slate-600 line-clamp-2">
+                    <div className="text-xs text-slate-600 line-clamp-2">
                       {b.creativeConcept.conceptSummary}
                     </div>
                     <div className="flex items-center justify-between pt-1 border-t border-slate-200">
-                      <span className="text-[10px] text-slate-500 font-mono">{b.creativeConcept.format}</span>
+                      <span className="text-xs text-slate-500 font-mono">{b.creativeConcept.format}</span>
                       <button
                         type="button"
                         onClick={() => void onApproveBrief(b.briefId)}
-                        className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-semibold hover:bg-blue-50 cursor-pointer"
+                        className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold hover:bg-blue-50 cursor-pointer"
                       >
                         ✓ Duyệt Brief
                       </button>
@@ -119,14 +119,14 @@ export function ExperimentsTab({
               <span className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
                 <span><AppIcon name="image" /></span> 2. Đã duyệt (Approved)
               </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-blue-700">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-blue-700">
                 {approvedBriefs.length}
               </span>
             </div>
 
             <div className="space-y-2.5">
               {approvedBriefs.length === 0 ? (
-                <div className="text-[11px] text-slate-500 text-center py-6">
+                <div className="text-xs text-slate-500 text-center py-6">
                   Không có brief chờ khởi tạo.
                 </div>
               ) : (
@@ -136,21 +136,21 @@ export function ExperimentsTab({
                     className="p-3 rounded-lg border border-blue-200 bg-slate-50 space-y-2"
                   >
                     <div className="text-xs font-bold text-slate-900">{b.title}</div>
-                    <div className="text-[10px] text-blue-700 font-mono">
+                    <div className="text-xs text-blue-700 font-mono">
                       Hook: {b.creativeConcept.hookAngle}
                     </div>
                     <div className="flex items-center justify-between pt-1 border-t border-slate-200">
                       <button
                         type="button"
                         onClick={() => onCopyMarkdown(b)}
-                        className="text-[10px] text-slate-600 hover:text-slate-900 cursor-pointer"
+                        className="text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
                       >
                         <AppIcon name="queue" /> Copy MD
                       </button>
                       <button
                         type="button"
                         onClick={() => void onCreateExperiment(b.briefId)}
-                        className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-semibold hover:bg-blue-50 cursor-pointer"
+                        className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold hover:bg-blue-50 cursor-pointer"
                       >
                         + Tạo Test
                       </button>
@@ -167,14 +167,14 @@ export function ExperimentsTab({
               <span className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
                 <span><AppIcon name="play" /></span> 3. Đang chạy test
               </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-blue-700">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-blue-700">
                 {activeExps.length}
               </span>
             </div>
 
             <div className="space-y-2.5">
               {activeExps.length === 0 ? (
-                <div className="text-[11px] text-slate-500 text-center py-6">
+                <div className="text-xs text-slate-500 text-center py-6">
                   Chưa có thử nghiệm nào đang live.
                 </div>
               ) : (
@@ -185,18 +185,18 @@ export function ExperimentsTab({
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-900">{exp.title}</span>
-                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200 font-mono font-bold">
+                      <span className="text-xs px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200 font-mono font-bold">
                         {exp.status}
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-600">
+                    <div className="text-xs text-slate-600">
                       Ngân sách: <strong>${exp.limits.budgetCapUsd}/ngày</strong> • Thời hạn: {exp.limits.reviewWindowDays} ngày
                     </div>
                     <div className="pt-1 border-t border-slate-200 flex justify-end">
                       <button
                         type="button"
                         onClick={() => onOpenOutcomeModal(exp)}
-                        className="px-2.5 py-1 rounded bg-blue-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold hover:border-emerald-300 cursor-pointer"
+                        className="px-2.5 py-1 rounded bg-blue-50 text-emerald-700 border border-emerald-200 text-xs font-bold hover:border-emerald-300 cursor-pointer"
                       >
                         🏆 Ghi nhận Kết quả
                       </button>
@@ -213,14 +213,14 @@ export function ExperimentsTab({
               <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
                 <span>🏆</span> 4. Tổng kết (Win/Loss)
               </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-emerald-700">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white font-mono font-bold text-emerald-700">
                 {completedExps.length}
               </span>
             </div>
 
             <div className="space-y-2.5">
               {completedExps.length === 0 ? (
-                <div className="text-[11px] text-slate-500 text-center py-6">
+                <div className="text-xs text-slate-500 text-center py-6">
                   Chưa có thử nghiệm hoàn tất.
                 </div>
               ) : (
@@ -236,7 +236,7 @@ export function ExperimentsTab({
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-900">{exp.title}</span>
                         <span
-                          className={`text-[9px] px-1.5 py-0.2 rounded font-bold font-mono ${
+                          className={`text-xs px-1.5 py-0.2 rounded font-bold font-mono ${
                             isWin
                               ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                               : "bg-rose-50 text-rose-700 border border-rose-200"
@@ -245,10 +245,10 @@ export function ExperimentsTab({
                           {exp.learning?.verdict || "COMPLETED"}
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-700 font-mono">
+                      <div className="text-xs text-slate-700 font-mono">
                         Biến thiên: <strong className="text-blue-700">{exp.results?.deltaPercent ?? 0}%</strong>
                       </div>
-                      <p className="text-[10px] text-slate-600 line-clamp-2">
+                      <p className="text-xs text-slate-600 line-clamp-2">
                         {exp.learning?.conclusion || "Không có ghi chú kết luận."}
                       </p>
                     </div>
@@ -278,11 +278,11 @@ export function ExperimentsTab({
               >
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-900">{b.title}</span>
-                  <span className="text-[10px] px-2 py-0.2 rounded bg-white font-mono text-blue-700 border border-slate-200">
+                  <span className="text-xs px-2 py-0.2 rounded bg-white font-mono text-blue-700 border border-slate-200">
                     {b.status}
                   </span>
                 </div>
-                <div className="text-slate-600 text-[11px] line-clamp-1">
+                <div className="text-slate-600 text-xs line-clamp-1">
                   {b.creativeConcept.hookAngle}
                 </div>
               </div>
@@ -317,7 +317,7 @@ export function ExperimentsTab({
                   </h4>
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-white text-slate-600 text-[10px] uppercase font-mono border-b border-slate-200">
+                      <thead className="bg-white text-slate-600 text-xs uppercase font-mono border-b border-slate-200">
                         <tr>
                           <th className="py-2 px-3">Thời gian</th>
                           <th className="py-2 px-3">Cảnh quay</th>

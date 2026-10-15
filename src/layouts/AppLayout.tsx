@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 
 import { environment } from "../config/environment";
+import { AppIcon } from "../shared/components/AppIcon";
 import {
   ACTIVE_STORE_CHANGED_EVENT,
   normalizeActiveStoreId,
@@ -16,6 +17,15 @@ import { readSidebarCollapsed, saveSidebarCollapsed } from "./sidebar-preference
 
 export function AppLayout(): React.JSX.Element {
   const location = useLocation();
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleViewportChange = (): void => { setIsMobileViewport(mediaQuery.matches); setIsMobileNavigationOpen(false); };
+    handleViewportChange();
+    mediaQuery.addEventListener("change", handleViewportChange);
+    return () => mediaQuery.removeEventListener("change", handleViewportChange);
+  }, []);
   const queryStoreId = useMemo(
     () => normalizeActiveStoreId(new URLSearchParams(location.search).get("storeId")),
     [location.search],
@@ -77,20 +87,22 @@ export function AppLayout(): React.JSX.Element {
   return (
     <div className="flex min-h-dvh items-start bg-white text-slate-900">
       <a href="#main-content" className="sr-only z-50 rounded-md bg-blue-600 px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Đi tới nội dung</a>
-      <AppSidebar activeStoreId={activeStoreId} isCollapsed={isSidebarCollapsed} onToggle={handleToggleSidebar} />
+      {isMobileNavigationOpen && isMobileViewport ? <button type="button" tabIndex={-1} aria-label="Đóng menu điều hướng" onClick={() => setIsMobileNavigationOpen(false)} className="fixed inset-0 z-50 bg-slate-900/30 backdrop-blur-sm md:hidden" /> : null}
+      <AppSidebar activeStoreId={activeStoreId} isCollapsed={isSidebarCollapsed} onToggle={handleToggleSidebar} isMobileViewport={isMobileViewport} isMobileOpen={isMobileNavigationOpen} onMobileClose={() => setIsMobileNavigationOpen(false)} />
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-6 backdrop-blur-sm">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-2 border-b border-slate-200 bg-white/95 px-4 backdrop-blur-sm md:gap-4 md:px-6">
+          <button type="button" aria-label="Mở menu điều hướng" aria-controls="app-navigation" aria-expanded={isMobileNavigationOpen} onClick={() => setIsMobileNavigationOpen(true)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-50 md:hidden"><AppIcon name="panel" className="h-5 w-5" /></button>
           <div className="flex min-w-0 items-center gap-2 text-xs">
-            <span className="text-slate-500">Không gian làm việc</span>
-            <span aria-hidden="true" className="text-slate-300">/</span>
+            <span className="hidden text-slate-500 lg:inline">Không gian làm việc</span>
+            <span aria-hidden="true" className="hidden text-slate-300 lg:inline">/</span>
             <span className="truncate font-medium text-slate-800">{pageTitle}</span>
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <NotificationPermissionBadge />
-            <span title="Môi trường ứng dụng" className={`rounded border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${environment === "mock" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>{environment}</span>
+            <span title="Môi trường ứng dụng" className={`rounded border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${environment === "mock" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>{environment}</span>
           </div>
         </header>
-        <main id="main-content" tabIndex={-1} className="min-w-0 px-6 py-6 outline-none 2xl:px-8">
+        <main id="main-content" tabIndex={-1} className="min-w-0 px-4 py-6 outline-none sm:px-6 2xl:px-8">
           <Outlet />
         </main>
       </div>

@@ -57,11 +57,11 @@ export function AutoSeoToolbar({
     : 0;
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 sm:p-5 shadow-sm backdrop-blur-sm space-y-4">
+    <div className={`space-y-3 rounded-lg border border-slate-200 bg-white p-4 ${selectedCount > 0 ? "sticky top-16 z-20 shadow-sm" : ""}`}>
       {/* Top Header Row: Store Selection & Data Synchronization */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Pipeline Info */}
-        <div className="space-y-1">
+        <div className="hidden space-y-1 2xl:block">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
               <span><AppIcon name="settings" /></span> Quy trình chọn lọc &amp; chuẩn bị dữ liệu SEO
@@ -191,7 +191,7 @@ export function AutoSeoToolbar({
           )}
 
           {eligibilityCounts && (
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium">
               <button
                 type="button"
                 onClick={() =>
@@ -262,7 +262,7 @@ export function AutoSeoToolbar({
         </div>
 
         {/* Right: create first SEO draft or a new revision for synced products. */}
-        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+        {selectedCount > 0 ? <div aria-label="Thao tác sản phẩm đã chọn" className="flex flex-wrap items-center gap-2 self-start md:self-auto">
           {onReSeo && (
             <button
               type="button"
@@ -291,7 +291,7 @@ export function AutoSeoToolbar({
               </>
             )}
           </button>
-        </div>
+        </div> : <p className="text-xs text-slate-500">Chọn sản phẩm để hiện thao tác SEO.</p>}
       </div>
     </div>
   );

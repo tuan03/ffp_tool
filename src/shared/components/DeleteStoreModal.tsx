@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { AppIcon } from "./AppIcon";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 export interface DeleteStoreModalProps {
   readonly isOpen: boolean;
   readonly storeId: string;
@@ -18,6 +19,7 @@ export function DeleteStoreModal({
 }: DeleteStoreModalProps): React.JSX.Element | null {
   const [isDeleting, setIsDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const dialogRef = useDialogFocus({ isOpen, onClose: () => { if (!isDeleting) onClose(); } });
 
   if (!isOpen) return null;
 
@@ -48,7 +50,8 @@ export function DeleteStoreModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-in fade-in duration-200"
+      ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Xóa Shopify Store"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isDeleting) {
           onClose();

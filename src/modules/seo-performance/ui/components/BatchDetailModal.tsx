@@ -158,10 +158,10 @@ export function BatchDetailModal({
                       <div className="mt-0.5 text-slate-500">{p.url}</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="rounded bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 font-mono">
+                      <span className="rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-700 font-mono">
                         {p.currentVersion}
                       </span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${badge.className}`}>
+                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${badge.className}`}>
                         {badge.label}
                       </span>
                     </div>

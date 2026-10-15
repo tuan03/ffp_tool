@@ -282,12 +282,12 @@ export function SeoHandoffModal({
                     : "Kết Quả Bàn Giao: Pinterest POD ➔ SEO + CONTENT"}
                 </span>
                 {viewMode === "select" && (
-                  <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                  <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-bold text-blue-700">
                     Bước 1/2: Phân nhóm &amp; duyệt ảnh
                   </span>
                 )}
                 {viewMode === "result" && (
-                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-bold text-emerald-700">
                     ✓ Đã bàn giao xong
                   </span>
                 )}
@@ -364,7 +364,7 @@ export function SeoHandoffModal({
                   <span className="flex items-center gap-1.5 font-semibold text-slate-900">
                     <span>🛍️ Store đích:</span>
                     <strong className="text-slate-900 font-mono">{payload.storeId || "chillgen"}</strong>
-                    {payload.vendor && <span className="text-[11px] text-slate-600">({payload.vendor})</span>}
+                    {payload.vendor && <span className="text-xs text-slate-600">({payload.vendor})</span>}
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="flex items-center gap-1">
@@ -391,13 +391,13 @@ export function SeoHandoffModal({
                   {payload.applyJeminisePreset && (
                     <>
                       <span className="text-slate-500">•</span>
-                      <span className="rounded bg-blue-50 border border-blue-200 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                      <span className="rounded bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-semibold text-blue-700">
                         Jeminise preset
                       </span>
                     </>
                   )}
                 </div>
-                <div className="text-[11px] text-slate-600 font-mono">
+                <div className="text-xs text-slate-600 font-mono">
                   Sẵn sàng bàn giao SEO Review
                 </div>
               </div>
@@ -424,11 +424,11 @@ export function SeoHandoffModal({
                           <div>
                             <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                               <span>{prod.title}</span>
-                              <span className="font-mono text-[11px] font-normal text-slate-600">
+                              <span className="font-mono text-xs font-normal text-slate-600">
                                 ({prod.id})
                               </span>
                             </h4>
-                            <p className="text-[11px] text-emerald-700 font-medium">
+                            <p className="text-xs text-emerald-700 font-medium">
                               {prod.badge || `${prod.widthPx}x${prod.heightPx} @ 300 DPI (CMYK)`}
                             </p>
                           </div>
@@ -447,14 +447,14 @@ export function SeoHandoffModal({
                           <button
                             type="button"
                             onClick={() => handleSelectProductMockups(prod)}
-                            className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-50 hover:text-slate-900 transition"
+                            className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:text-slate-900 transition"
                           >
                             ✓ Chọn hết SP này
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDeselectProductMockups(prod)}
-                            className="rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition"
+                            className="rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition"
                           >
                             ✕ Bỏ hết SP này
                           </button>
@@ -469,7 +469,7 @@ export function SeoHandoffModal({
                             <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
                               <span>🏭</span> Bản in xưởng
                             </span>
-                            <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-mono font-bold text-emerald-700">
+                            <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-mono font-bold text-emerald-700">
                               <AppIcon name="lock" /> 300 DPI
                             </span>
                           </div>
@@ -502,12 +502,12 @@ export function SeoHandoffModal({
                                 }
                               }}
                             />
-                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-white">
+                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-xs text-white">
                               <AppIcon name="search" /> Soi bản in
                             </div>
                           </div>
 
-                          <div className="flex flex-col gap-0.5 text-[10px] text-slate-600">
+                          <div className="flex flex-col gap-0.5 text-xs text-slate-600">
                             <p className="font-mono text-slate-700 truncate" title={prod.cmykFilename}>
                               {prod.cmykFilename}
                             </p>
@@ -550,7 +550,7 @@ export function SeoHandoffModal({
                                   </div>
 
                                   {/* Room Type badge */}
-                                  <div className="absolute top-2 right-2 z-10 rounded bg-black/80 px-1.5 py-0.5 text-[9px] font-bold text-white uppercase">
+                                  <div className="absolute top-2 right-2 z-10 rounded bg-black/80 px-1.5 py-0.5 text-xs font-bold text-white uppercase">
                                     {mockup.scene_type}
                                   </div>
 
@@ -569,18 +569,18 @@ export function SeoHandoffModal({
                                   <div className="p-2 flex flex-col gap-0.5">
                                     <div className="flex items-center justify-between">
                                       <span
-                                        className={`text-[10px] font-bold ${
+                                        className={`text-xs font-bold ${
                                           approved ? "text-emerald-700" : "text-slate-500"
                                         }`}
                                       >
                                         {approved ? "✓ Đã duyệt" : "✕ Bỏ qua"}
                                       </span>
-                                      <span className="text-[9px] text-slate-600 uppercase font-mono">
+                                      <span className="text-xs text-slate-600 uppercase font-mono">
                                         #{mIdx + 1}
                                       </span>
                                     </div>
                                     <p
-                                      className="text-[10px] text-slate-600 line-clamp-1"
+                                      className="text-xs text-slate-600 line-clamp-1"
                                       title={mockup.scene_description}
                                     >
                                       {mockup.scene_description}
@@ -611,7 +611,7 @@ export function SeoHandoffModal({
                       {currentResult.message}
                     </p>
                     {currentResult.savedPath && (
-                      <p className="text-[11px] font-mono text-emerald-700 break-all bg-emerald-50 rounded p-1.5 border border-emerald-200 mt-1">
+                      <p className="text-xs font-mono text-emerald-700 break-all bg-emerald-50 rounded p-1.5 border border-emerald-200 mt-1">
                         <AppIcon name="folder" /> Đường dẫn lưu: {currentResult.savedPath}
                       </p>
                     )}
@@ -622,23 +622,23 @@ export function SeoHandoffModal({
               {/* 4 Overview Stats Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
-                  <p className="text-[10px] text-slate-600 uppercase font-semibold">Workflow ID</p>
+                  <p className="text-xs text-slate-600 uppercase font-semibold">Workflow ID</p>
                   <p className="font-mono text-xs font-bold text-blue-700 truncate" title={payload.workflowId}>
                     {payload.workflowId}
                   </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
-                  <p className="text-[10px] text-slate-600 uppercase font-semibold">Tổng sản phẩm</p>
+                  <p className="text-xs text-slate-600 uppercase font-semibold">Tổng sản phẩm</p>
                   <p className="text-xs font-bold text-slate-900 uppercase">
                     {productGroups.length} {payload.productType}
                   </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
-                  <p className="text-[10px] text-slate-600 uppercase font-semibold">File in xưởng (CMYK)</p>
+                  <p className="text-xs text-slate-600 uppercase font-semibold">File in xưởng (CMYK)</p>
                   <p className="text-xs font-bold text-emerald-700">{productGroups.length} file chuẩn 300 DPI</p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
-                  <p className="text-[10px] text-slate-600 uppercase font-semibold">Mockup AI đã duyệt</p>
+                  <p className="text-xs text-slate-600 uppercase font-semibold">Mockup AI đã duyệt</p>
                   <p className="text-xs font-bold text-blue-700">{approvedMockupCount} ảnh cho phép</p>
                 </div>
               </div>

@@ -63,7 +63,7 @@ export function CompetitorsTab({
                   className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-900 font-semibold"
                 >
                   {w.pageName}{" "}
-                  <span className="text-blue-700 font-mono text-[11px]">({w.activeAdCount} active)</span>
+                  <span className="text-blue-700 font-mono text-xs">({w.activeAdCount} active)</span>
                 </span>
               ))
             ) : (
@@ -140,11 +140,11 @@ export function CompetitorsTab({
 
                   {/* Badges on Thumbnail */}
                   <div className="pointer-events-none absolute top-2 left-2 flex items-center gap-1.5">
-                    <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase bg-slate-50 text-blue-700 border border-slate-300">
+                    <span className="text-xs px-2 py-0.5 rounded font-mono font-bold uppercase bg-slate-50 text-blue-700 border border-slate-300">
                       {ad.mediaType}
                     </span>
                     {isLongObservedAd && (
-                      <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
+                      <span className="text-xs px-2 py-0.5 rounded font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
                         <span>🔥</span>
                         <span>{ad.daysActive} ngày (thời gian theo nguồn)</span>
                       </span>
@@ -156,7 +156,7 @@ export function CompetitorsTab({
                 <div className="p-4 space-y-2.5">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-bold text-slate-900">{ad.pageName}</span>
-                    <span className="text-slate-500 font-mono text-[10px]">
+                    <span className="text-slate-500 font-mono text-xs">
                       {ad.daysActive} ngày chạy
                     </span>
                   </div>
@@ -173,15 +173,15 @@ export function CompetitorsTab({
                     {/^\d+$/.test(ad.archiveAdId) && <a href={`https://www.facebook.com/ads/library/?id=${ad.archiveAdId}`} target="_blank" rel="noreferrer" className="underline">Mở quảng cáo gốc</a>}
                     {/^https?:\/\//.test(ad.landingUrl) && <a href={ad.landingUrl} target="_blank" rel="noreferrer" className="underline">Xem sản phẩm</a>}
                   </div>
-                  <p className="text-[11px] text-slate-600">Trạng thái tại lúc thu thập: {ad.status === "ACTIVE" ? "Đang hoạt động" : "Đã ngừng hoạt động"}</p>
-                  <p className="text-[11px] text-slate-500">Mức kiểm tra: {ad.inspectionLevel === "SAMPLED_FRAMES" ? "Đã xem khung hình mẫu; chưa đánh giá toàn bộ âm thanh" : ad.inspectionLevel === "IMAGE_REVIEWED" ? "Đã xem ảnh" : ad.inspectionLevel}</p>
+                  <p className="text-xs text-slate-600">Trạng thái tại lúc thu thập: {ad.status === "ACTIVE" ? "Đang hoạt động" : "Đã ngừng hoạt động"}</p>
+                  <p className="text-xs text-slate-500">Mức kiểm tra: {ad.inspectionLevel === "SAMPLED_FRAMES" ? "Đã xem khung hình mẫu; chưa đánh giá toàn bộ âm thanh" : ad.inspectionLevel === "IMAGE_REVIEWED" ? "Đã xem ảnh" : ad.inspectionLevel}</p>
 
                   {/* Taxonomy Tags */}
                   <div className="flex flex-wrap gap-1 pt-1">
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-white text-blue-700 border border-blue-200">
+                    <span className="text-xs px-2 py-0.5 rounded bg-white text-blue-700 border border-blue-200">
                       Hook: {ad.taxonomy.hookType}
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200">
+                    <span className="text-xs px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200">
                       Angle: {ad.taxonomy.angle}
                     </span>
                   </div>
@@ -190,7 +190,7 @@ export function CompetitorsTab({
 
               {/* Bottom CTA */}
               <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-                <span className="text-[10px] text-slate-500 font-mono">
+                <span className="text-xs text-slate-500 font-mono">
                   ID: {ad.archiveAdId.slice(0, 10)}...
                 </span>
                 <button
@@ -216,7 +216,7 @@ export function CompetitorsTab({
             className="px-5 py-2.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-50 text-blue-700 font-semibold text-xs shadow-md transition cursor-pointer flex items-center gap-2 active:scale-95"
           >
             <span>Hiển thị thêm (+12 mẫu)</span>
-            <span className="text-[11px] text-slate-600 font-mono">(Còn {remainingCount} mẫu)</span>
+            <span className="text-xs text-slate-600 font-mono">(Còn {remainingCount} mẫu)</span>
           </button>
         </div>
       )}
@@ -242,12 +242,12 @@ export function CompetitorsTab({
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-900">{gap.patternName}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                    <span className="text-xs px-2 py-0.5 rounded font-mono font-bold bg-amber-50 text-amber-700 border border-amber-200">
                       {gap.ownStatus}
                     </span>
                   </div>
                   <p className="text-xs text-slate-700 leading-relaxed">{gap.whyTestNext}</p>
-                  <div className="text-[11px] text-blue-700 bg-blue-50 p-2 rounded border border-blue-200">
+                  <div className="text-xs text-blue-700 bg-blue-50 p-2 rounded border border-blue-200">
                     <strong>Ý tưởng kịch bản:</strong> {gap.suggestedBrief.storyboardIdea}
                   </div>
                 </div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
+import { persistBrowserActiveStoreId } from "../../../shared/active-store";
 import { notifyUser } from "../../../shared/utils";
 
 import {
@@ -44,6 +45,7 @@ import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
 import { CrawlerStoreVendorField } from "./components/CrawlerStoreVendorField";
 import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
 import { replaceCrawlerInputWithAsin } from "./asin-filter-input";
+import { analyzeCrawlerInput } from "./crawler-input";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
 import type { CrawlerWorkspaceSection } from "./components/CrawlerWorkspace";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "./client-presence";
@@ -227,6 +229,10 @@ export function AmazonCrawlerPage({
 }: AmazonCrawlerPageProps): React.JSX.Element {
   const navigate = useNavigate();
   const [workspaceSection, setWorkspaceSection] = useState<CrawlerWorkspaceSection>("crawl");
+  const [isAsinFilterOpen, setIsAsinFilterOpen] = useState(false);
+  const [pendingFilterAsin, setPendingFilterAsin] = useState<string | null>(null);
+  const pendingAsinResolver = useRef<((isSelected: boolean) => void) | null>(null);
+  const crawlerInputRef = useRef<HTMLTextAreaElement>(null);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [isHistoryAllStores, setIsHistoryAllStores] = useState(false);
   const [isProductDetailsOpen, setIsProductDetailsOpen] = useState(false);
@@ -387,6 +393,7 @@ export function AmazonCrawlerPage({
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
     [urlText],
   );
+  const inputAnalysis = useMemo(() => analyzeCrawlerInput(urlText), [urlText]);
   const resultProducts = output?.products ?? liveProducts;
   const durableSeoHandoffSummary = lastJobId
     ? jobs.find((job) => job.jobId === lastJobId)?.seoQueueHandoff ?? output?.seoQueueHandoff
@@ -1202,6 +1209,14 @@ export function AmazonCrawlerPage({
   }, [availableStores, currentStoreId]);
 
   const activeStoreId = selectedStoreProfile?.storeId || settings.storeId || "capozen";
+  useEffect(() => { persistBrowserActiveStoreId(activeStoreId); }, [activeStoreId]);
+  useEffect(() => {
+    setPendingFilterAsin(null);
+    return () => {
+      pendingAsinResolver.current?.(false);
+      pendingAsinResolver.current = null;
+    };
+  }, [activeStoreId]);
   const hasSavedStoreVendor = storeVendor.storeId === activeStoreId && Boolean(storeVendor.vendor?.trim());
   const activeShopDomain = selectedStoreProfile?.shopDomain || `${activeStoreId}.myshopify.com`;
 
@@ -1374,6 +1389,10 @@ export function AmazonCrawlerPage({
   }
 
   async function handleStart(): Promise<void> {
+    if (inputAnalysis.invalidEntries.length > 0) {
+      crawlerInputRef.current?.focus();
+      return;
+    }
     if (!hasSavedStoreVendor) {
       setAsinPreflightError("Nhập và lưu Vendor Shopify cho store trước khi cào.");
       return;
@@ -1798,7 +1817,7 @@ export function AmazonCrawlerPage({
         ) : null}
         {isLoadingClients ? <p className="mt-3 text-sm text-slate-600">Đang kiểm tra client...</p> : null}
         {clientError ? <p className="mt-3 text-sm text-rose-700" role="alert">{clientError}</p> : null}
-        {lastClientRefreshAt !== null ? <p className="mt-1 text-[11px] text-slate-500">Lần cập nhật danh sách agent: {new Date(lastClientRefreshAt).toLocaleTimeString()}{isClientSnapshotStale ? " · dữ liệu hiển thị là snapshot cũ; thao tác agent tạm khóa" : ""}</p> : null}
+        {lastClientRefreshAt !== null ? <p className="mt-1 text-xs text-slate-500">Lần cập nhật danh sách agent: {new Date(lastClientRefreshAt).toLocaleTimeString()}{isClientSnapshotStale ? " · dữ liệu hiển thị là snapshot cũ; thao tác agent tạm khóa" : ""}</p> : null}
         {amazonCrawlerAdmissionGate ? (
           <div className={`mt-4 rounded-lg border p-3 ${admissionGate?.state === "STOPPED" ? "border-rose-200 bg-rose-50" : "border-slate-300 bg-slate-50"}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1907,7 +1926,7 @@ export function AmazonCrawlerPage({
                     <summary className="cursor-pointer text-xs text-slate-700">Cấu hình agent · desired v{client.desiredConfigVersion ?? 0} / applied v{client.appliedConfigVersion ?? 0}</summary>
                     {(() => {
                       const config = agentConfigDrafts[client.id] ?? client.desiredAgentConfig ?? DEFAULT_AMAZON_CRAWLER_AGENT_CONFIG;
-                      return <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                      return <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                         {(["maxConcurrentInputs", "heartbeatIntervalSeconds", "clientOfflineAfterSeconds", "leaseSeconds"] as const).map((field) => <label key={field} className="text-slate-600">
                           {field}<input type="number" min={1} value={config[field]} onChange={(event) => updateAgentConfig(client.id, (current) => ({ ...current, [field]: Number(event.target.value) }))}
                             className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1 text-slate-900" />
@@ -1934,7 +1953,7 @@ export function AmazonCrawlerPage({
                   </div>
                   <details className="mt-3 space-y-2 rounded border border-slate-200 p-3">
                     <summary className="cursor-pointer text-sm text-slate-600">Quản trị nâng cao</summary>
-                    <label className="block text-[11px] text-slate-700" htmlFor={`pending-purge-tasks-${client.id}`}>
+                    <label className="block text-xs text-slate-700" htmlFor={`pending-purge-tasks-${client.id}`}>
                       Purge assignment chưa chạy (nhập task ID, cách nhau bằng dấu phẩy hoặc dòng mới)
                     </label>
                     <textarea id={`pending-purge-tasks-${client.id}`} rows={2}
@@ -1949,7 +1968,7 @@ export function AmazonCrawlerPage({
                       }}
                       className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
                       placeholder="task-id-1, task-id-2" />
-                    <label className="block text-[11px] text-slate-700" htmlFor={`pending-purge-reason-${client.id}`}>Lý do</label>
+                    <label className="block text-xs text-slate-700" htmlFor={`pending-purge-reason-${client.id}`}>Lý do</label>
                     <input id={`pending-purge-reason-${client.id}`} value={purgeReasons[client.id] ?? ""}
                       onChange={(event) => setPurgeReasons((current) => ({ ...current, [client.id]: event.target.value }))}
                       className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
@@ -1958,13 +1977,13 @@ export function AmazonCrawlerPage({
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
                         || !client.isConnected || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentSelfTest(client)}
-                        className="rounded border border-blue-200 px-2 py-1 text-[11px] text-blue-700 disabled:opacity-50">
+                        className="rounded border border-blue-200 px-2 py-1 text-xs text-blue-700 disabled:opacity-50">
                         Chạy self-test
                       </button>
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
                         || client.desiredExecutionState !== "RUNNING" || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentDrain(client)}
-                        className="rounded border border-blue-200 px-2 py-1 text-[11px] text-blue-700 disabled:opacity-50">
+                        className="rounded border border-blue-200 px-2 py-1 text-xs text-blue-700 disabled:opacity-50">
                         DRAIN agent
                       </button>
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale
@@ -1972,7 +1991,7 @@ export function AmazonCrawlerPage({
                         || client.appliedExecutionState !== "DRAINED" || client.activeTasks !== 0
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentUpdate(client)}
-                        className="rounded border border-emerald-200 px-2 py-1 text-[11px] text-emerald-700 disabled:opacity-50">
+                        className="rounded border border-emerald-200 px-2 py-1 text-xs text-emerald-700 disabled:opacity-50">
                         Cập nhật đã DRAINED
                       </button>
                       {canRollbackLatestUpdate ?
@@ -1981,50 +2000,50 @@ export function AmazonCrawlerPage({
                           || client.appliedExecutionState !== "DRAINED" || client.activeTasks !== 0
                           || (purgeReasons[client.id] ?? "").trim().length < 10}
                           onClick={() => void handleAgentRollback(client)}
-                          className="rounded border border-rose-200 px-2 py-1 text-[11px] text-rose-700 disabled:opacity-50">
+                          className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 disabled:opacity-50">
                           Rollback bản cập nhật lỗi
                         </button> : null}
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_WORKERS")}
-                        className="rounded border border-amber-200 px-2 py-1 text-[11px] text-amber-700 disabled:opacity-50">
+                        className="rounded border border-amber-200 px-2 py-1 text-xs text-amber-700 disabled:opacity-50">
                         Restart workers
                       </button>
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || !client.isConnected || client.appliedExecutionState !== "PAUSED"
                         || (purgeReasons[client.id] ?? "").trim().length < 10}
                         onClick={() => void handleAgentRestart(client, "RESTART_AGENT")}
-                        className="rounded border border-rose-200 px-2 py-1 text-[11px] text-rose-700 disabled:opacity-50">
+                        className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 disabled:opacity-50">
                         Restart agent
                       </button>
-                      <span className="text-[10px] text-slate-500">Cần online + PAUSED, không task chạy và lý do audit ≥10 ký tự.</span>
+                      <span className="text-xs text-slate-500">Cần online + PAUSED, không task chạy và lý do audit ≥10 ký tự.</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.appliedExecutionState !== "PAUSED"}
                         onClick={() => void handlePendingPurgePreview(client)}
-                        className="rounded border border-amber-200 px-2 py-1 text-[11px] text-amber-700 disabled:opacity-50">
+                        className="rounded border border-amber-200 px-2 py-1 text-xs text-amber-700 disabled:opacity-50">
                         {commandBusyClientId === client.id ? "Đang kiểm tra…" : "Kiểm tra phạm vi"}
                       </button>
                       <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || client.appliedExecutionState !== "PAUSED"}
                         onClick={() => void handlePurgeAllLocalPreview(client)}
-                        className="rounded border border-rose-200 px-2 py-1 text-[11px] text-rose-700 disabled:opacity-50">
+                        className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 disabled:opacity-50">
                         Preview purge-all
                       </button>
-                      {purgePreviews[client.id] ? <span className="text-[11px] text-slate-700">
+                      {purgePreviews[client.id] ? <span className="text-xs text-slate-700">
                         {purgePreviews[client.id].scope === "all-local" ? "Toàn agent: " : "Scope IDs: "}
                         {purgePreviews[client.id].pendingCount} pending · {purgePreviews[client.id].ineligibleCount} không hợp lệ
                       </span> : null}
                       {purgePreviews[client.id]?.pendingCount && purgePreviews[client.id]?.ineligibleCount === 0 ?
                         <button type="button" disabled={commandBusyClientId !== null || isClientSnapshotStale || (purgeReasons[client.id] ?? "").trim().length < 10}
                           onClick={() => void handlePendingPurge(client)}
-                        className="rounded border border-rose-200 px-2 py-1 text-[11px] text-rose-700 disabled:opacity-50">
+                        className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 disabled:opacity-50">
                           {purgePreviews[client.id].scope === "all-local" ? "Purge all local" : "Purge pending"}
                         </button> : null}
                     </div>
-                    <p className="text-[10px] text-slate-500">Chỉ thao tác khi agent PAUSED; task đang chạy và outbox không bị xóa.</p>
+                    <p className="text-xs text-slate-500">Chỉ thao tác khi agent PAUSED; task đang chạy và outbox không bị xóa.</p>
                   {(commandHistories[client.id] ?? []).slice(-3).reverse().map((command) => {
                     const result = command.events.map((event) => event.detail.result).find((value): value is Record<string, unknown> =>
                       typeof value === "object" && value !== null && !Array.isArray(value));
-                    return <div key={command.commandId} className="mt-2 text-[11px] text-slate-600">
+                    return <div key={command.commandId} className="mt-2 text-xs text-slate-600">
                       #{command.sequence} {command.type === "PAUSE" ? "Tạm dừng" : command.type === "RESUME" ? "Tiếp tục"
                         : command.type === "DRAIN" ? "Drain agent"
                         : command.type === "RUN_SELF_TEST" ? "Self-test agent"
@@ -2056,7 +2075,7 @@ export function AmazonCrawlerPage({
                       {command.error ? <p className="text-rose-700">{command.error}</p> : null}
                     </div>;
                   })}
-                  {commandHistoryErrors[client.id] ? <p role="status" className="mt-2 text-[11px] text-amber-700">Không tải được trạng thái lệnh mới; lịch sử bên dưới có thể đã cũ.</p> : null}
+                  {commandHistoryErrors[client.id] ? <p role="status" className="mt-2 text-xs text-amber-700">Không tải được trạng thái lệnh mới; lịch sử bên dưới có thể đã cũ.</p> : null}
                   </details>
                 </div> : null}
               </article>
@@ -2088,7 +2107,7 @@ export function AmazonCrawlerPage({
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-sm text-slate-600">Phạm vi
-              <select aria-label="Phạm vi lịch sử" value={isHistoryAllStores ? "all" : "current"} onChange={(event) => { setIsHistoryAllStores(event.target.value === "all"); setJobPage(0); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-900">
+              <select aria-label="Phạm vi lịch sử" value={isHistoryAllStores ? "all" : "current"} onChange={(event) => { setIsHistoryAllStores(event.target.value === "all"); setJobPage(0); }} className="min-w-0 max-w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-900">
                 <option value="current">Store đang chọn</option><option value="all">Tất cả store</option>
               </select>
             </label>
@@ -2291,7 +2310,7 @@ export function AmazonCrawlerPage({
                   return (
                     <button
                       key={product.id}
-                      className={`grid w-full grid-cols-[3.5rem_1fr] gap-3 rounded-lg border p-2 text-left ${isSelected ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50 hover:border-slate-300"}`}
+                      className={`grid w-full grid-cols-[3.5rem_minmax(0,1fr)] gap-3 rounded-lg border p-2 text-left ${isSelected ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50 hover:border-slate-300"}`}
                       type="button"
                       onClick={() => handleSelectProduct(product.id)}
                     >
@@ -2300,7 +2319,7 @@ export function AmazonCrawlerPage({
                         <span className="block truncate text-sm font-semibold text-slate-900">{product.title}</span>
                         <span className="mt-1 block text-xs text-slate-600">{product.splitContext.attribute && product.splitContext.value ? `${product.splitContext.attribute}: ${product.splitContext.value}` : product.parentAsin}</span>
                         <span className="mt-1 block text-xs text-slate-600">{product.sourceVariants.length} biến thể nguồn · {product.variants.length} biến thể cuối · Nhấn để xem ảnh và chi tiết</span>
-                        <span className="mt-1 flex flex-wrap gap-1 text-[11px]">
+                        <span className="mt-1 flex flex-wrap gap-1 text-xs">
                           {product.customization ? <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">Customize</span> : null}
                           {product.preset ? <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">{product.preset}</span> : null}
                           <span className={`rounded px-1.5 py-0.5 ${handoffState === "handed_over" ? "bg-emerald-50 text-emerald-700" : handoffState === "not_handed_over" ? "bg-rose-50 text-rose-700" : "bg-blue-50 text-blue-700"}`}>{crawlerSeoHandoffLabel(product.pipeline)}</span>
@@ -2371,7 +2390,7 @@ export function AmazonCrawlerPage({
                     </div>
                   ) : null}
                   {activeTab === "source" ? (
-                    <div className="space-y-2">{selectedProduct.sourceVariants.map((variant) => <div key={variant.asin} className="rounded-lg border border-slate-200 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{variant.asin}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}{variant.priceInference.isInferred ? " · inferred" : ""}</span></div><p className="mt-1 text-slate-700">{optionLabel(variant.options)}</p>{variant.diagnostics ? <p className="mt-1 text-xs text-slate-500">Fetch: {variant.diagnostics.fetchMode} · {variant.diagnostics.attempts} attempts{variant.diagnostics.captchaEncountered ? " · CAPTCHA" : ""}</p> : null}{variant.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-700"><AppIcon name="warning" /> {warning}</p>)}{variant.diagnostics?.fetchTrace ? <details className="mt-2"><summary className="cursor-pointer text-xs font-semibold text-blue-700">Fetch debug</summary><pre className="mt-2 max-h-72 overflow-auto rounded bg-white p-3 text-[11px] text-slate-700">{JSON.stringify(variant.diagnostics.fetchTrace, null, 2)}</pre></details> : null}</div>)}</div>
+                    <div className="space-y-2">{selectedProduct.sourceVariants.map((variant) => <div key={variant.asin} className="rounded-lg border border-slate-200 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{variant.asin}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}{variant.priceInference.isInferred ? " · inferred" : ""}</span></div><p className="mt-1 text-slate-700">{optionLabel(variant.options)}</p>{variant.diagnostics ? <p className="mt-1 text-xs text-slate-500">Fetch: {variant.diagnostics.fetchMode} · {variant.diagnostics.attempts} attempts{variant.diagnostics.captchaEncountered ? " · CAPTCHA" : ""}</p> : null}{variant.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-700"><AppIcon name="warning" /> {warning}</p>)}{variant.diagnostics?.fetchTrace ? <details className="mt-2"><summary className="cursor-pointer text-xs font-semibold text-blue-700">Fetch debug</summary><pre className="mt-2 max-h-72 overflow-auto rounded bg-white p-3 text-xs text-slate-700">{JSON.stringify(variant.diagnostics.fetchTrace, null, 2)}</pre></details> : null}</div>)}</div>
                   ) : null}
                   {activeTab === "final" ? (
                     <div className="max-h-[42rem] space-y-2 overflow-auto pr-1">{selectedProduct.variants.map((variant) => <div key={variant.id} className="rounded-lg border border-slate-200 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong className="break-all">{variant.sku}</strong><span>{moneyLabel(variant.price?.raw, variant.price?.amount)}</span></div><p className="mt-1 text-slate-700">{optionLabel(variant.options)}</p><p className="mt-1 text-xs text-slate-500">Source: {variant.sourceAsin ?? "preset"} · Base: {variant.price && variant.surcharge ? `$${(variant.price.amount - variant.surcharge.amount).toFixed(2)}` : moneyLabel(variant.price?.raw, variant.price?.amount)} · Surcharge: {moneyLabel(variant.surcharge?.raw, variant.surcharge?.amount)}</p></div>)}</div>
@@ -2396,7 +2415,7 @@ export function AmazonCrawlerPage({
     </>
   );
 
-  const isStartDisabled = !hasSavedStoreVendor || urls.length === 0 || isRunning || isCheckingAsins || isJobSnapshotStale
+  const isStartDisabled = !hasSavedStoreVendor || urls.length === 0 || inputAnalysis.invalidEntries.length > 0 || isRunning || isCheckingAsins || isJobSnapshotStale
     || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED"
     || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0));
   const inlineHandoff = resolveInlineCrawlerHandoff({
@@ -2407,21 +2426,50 @@ export function AmazonCrawlerPage({
     resultStoreId: output?.settings.storeId || "capozen",
     summary: seoHandoffSummary,
   });
-  const startCrawlButton = <><button className="rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white disabled:opacity-50"
-    disabled={isStartDisabled} type="button" onClick={() => void handleStart()}>
+  const startBlockers = [
+    !hasSavedStoreVendor ? "Nhập và lưu Vendor cho store này." : null,
+    urls.length === 0 ? "Nhập ít nhất một URL Amazon hoặc ASIN." : null,
+    inputAnalysis.invalidEntries.length > 0 ? `Sửa ${inputAnalysis.invalidEntries.length} dòng chưa hợp lệ.` : null,
+    isCheckingAsins ? "Đang kiểm tra ASIN trước khi tạo phiên." : null,
+    isRunning || coordinatorActiveJob !== undefined ? "Đang có phiên cào. Xem tiến độ tại Phiên & kết quả." : null,
+    isJobSnapshotStale ? "Chưa xác minh được trạng thái phiên; đang kết nối lại." : null,
+    admissionGate?.state === "STOPPED" ? "Hệ thống đã ngừng nhận task mới. Mở Agent để kiểm tra." : null,
+    amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0)
+      ? isLoadingClients ? "Đang kiểm tra kết nối Agent." : isClientSnapshotStale ? "Kết nối Agent chưa được xác minh." : "Chưa có Agent kết nối."
+      : null,
+  ].filter((reason): reason is string => reason !== null);
+  const startCrawlButton = <button className="min-h-10 shrink-0 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+    aria-describedby="crawler-start-readiness" disabled={isStartDisabled} type="button" onClick={() => void handleStart()}>
     {isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}
-  </button>
-    {inlineHandoff ? <p role="status" aria-label="Kết quả bàn giao phiên vừa cào"
-      className={`min-w-0 text-xs leading-relaxed ${inlineHandoff.tone === "success" ? "text-emerald-700" : "text-amber-700"}`}>
-      <span aria-hidden="true">{inlineHandoff.tone === "success" ? "✓ " : "! "}</span>{inlineHandoff.label}
-    </p> : null}
-  </>;
+  </button>;
 
-  function handleSelectFilterAsin(asin: string): void {
-    if (isRunning || isCheckingAsins) return;
+  function applyFilterAsin(asin: string): void {
     setCrawlerUrlText(replaceCrawlerInputWithAsin(urlText, asin));
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
+    setIsAsinFilterOpen(false);
+    setPendingFilterAsin(null);
+  }
+
+  async function handleSelectFilterAsin(asin: string): Promise<boolean> {
+    if (isRunning || isCheckingAsins) return false;
+    if (urlText.trim() && urlText.trim().toUpperCase() !== asin.toUpperCase()) {
+      setPendingFilterAsin(asin);
+      return new Promise<boolean>(resolve => {
+        pendingAsinResolver.current?.(false);
+        pendingAsinResolver.current = resolve;
+      });
+    }
+    applyFilterAsin(asin);
+    return true;
+  }
+
+  function handleResolveFilterAsin(shouldReplace: boolean): void {
+    const canReplace = shouldReplace && pendingFilterAsin !== null && !isRunning && !isCheckingAsins;
+    if (canReplace) applyFilterAsin(pendingFilterAsin);
+    pendingAsinResolver.current?.(canReplace);
+    pendingAsinResolver.current = null;
+    setPendingFilterAsin(null);
   }
 
   return (
@@ -2449,12 +2497,14 @@ export function AmazonCrawlerPage({
 
         </>}
         crawl={<>
-          <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
-          <section className="grid min-w-0 items-start gap-5 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:p-5" aria-label="Tạo phiên cào">
+          <section className="grid min-w-0 items-start gap-5 pb-4 xl:grid-cols-2" aria-label="Tạo phiên cào">
             <div className="min-w-0 space-y-4">
       <label className="grid gap-2 text-sm font-medium text-slate-900">
         Amazon URLs hoặc ASIN, mỗi dòng một giá trị
         <textarea
+          ref={crawlerInputRef}
+          aria-describedby="crawler-input-summary"
+          aria-invalid={inputAnalysis.invalidEntries.length > 0}
           className="min-h-32 rounded-lg border border-slate-300 bg-white p-3 font-mono text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
           placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
           value={urlText}
@@ -2465,9 +2515,15 @@ export function AmazonCrawlerPage({
           }}
         />
       </label>
-              <div className="flex flex-wrap items-center gap-3">
-        {startCrawlButton}
+              <div id="crawler-input-summary" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600">
+                <span>{inputAnalysis.lineCount} dòng · <strong className="font-medium text-slate-900">{inputAnalysis.validCount} ASIN hợp lệ, không trùng</strong></span>
+                {inputAnalysis.duplicateCount > 0 ? <button type="button" disabled={isRunning || isCheckingAsins} className="min-h-8 text-blue-700 underline underline-offset-4 disabled:opacity-50" onClick={() => setCrawlerUrlText(inputAnalysis.deduplicatedText)}>Bỏ {inputAnalysis.duplicateCount} dòng trùng</button> : null}
               </div>
+              {inputAnalysis.invalidEntries.length > 0 ? <details className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <summary className="cursor-pointer font-medium">{inputAnalysis.invalidEntries.length} dòng cần sửa</summary>
+                <ul className="mt-2 max-h-32 space-y-1 overflow-auto break-all">{inputAnalysis.invalidEntries.map((entry) => <li key={entry.line}>Dòng {entry.line}: {entry.value}</li>)}</ul>
+              </details> : null}
+              <button type="button" aria-haspopup="dialog" onClick={() => setIsAsinFilterOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"><AppIcon name="search" />Kiểm tra ASIN trên Shopify</button>
 
           {coordinatorActiveJob ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -2477,7 +2533,7 @@ export function AmazonCrawlerPage({
             </div>
           ) : isRunning && !amazonCrawlerJobs ? <button type="button" onClick={() => { if (window.confirm("Dừng phiên cào hiện tại?")) void handleStop(); }} className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700">Dừng phiên cào</button> : null}
 
-              <p className="text-xs leading-relaxed text-slate-600">Tạm dừng phiên cào: không nhận ASIN mới sau khi task hiện tại kết thúc an toàn. Kết quả đã lưu và xử lý ảnh được giữ lại.</p>
+              {isRunning || coordinatorActiveJob ? <p className="text-xs leading-relaxed text-slate-600">Tạm dừng phiên cào: không nhận ASIN mới sau khi task hiện tại kết thúc an toàn. Kết quả đã lưu và xử lý ảnh được giữ lại. Thao tác này khác với ngừng nhận task toàn hệ thống tại Agent.</p> : null}
             </div>
             <div className="min-w-0 space-y-4">
 
@@ -2579,29 +2635,19 @@ export function AmazonCrawlerPage({
       </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-700">{imageProfileMessage}</p> : null}
             </div>
-              <details className="min-w-0 rounded-lg border border-slate-200 bg-white p-4">
-                <summary className="cursor-pointer text-sm font-medium text-slate-900">Collection, loại sản phẩm & định giá
+              <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 border-t border-slate-200 pt-5 xl:col-span-2">
+                <h2 className="text-base font-semibold tracking-tight text-slate-900">Collection, loại sản phẩm & định giá
                   <span className="mt-1 block text-xs font-normal text-slate-600">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
-                </summary>
-                <label className="my-4 flex items-start gap-3 rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-slate-900">
-                  <input type="checkbox" className="mt-1" checked={settings.autoSyncAfterSeo ?? true}
-                    onChange={(event) => {
-                      const enabled = event.target.checked;
-                      updateSetting("autoSyncAfterSeo", enabled);
-                    }} />
-                  <span>Tự sync sau Codex SEO
-                    <span className="mt-1 block text-xs text-slate-600">Chờ SEO và ảnh hoàn tất, tự sync và bật các Sales Channels được phép. Áp dụng cho job mới của store này; SEO Review vẫn giữ để theo dõi.</span>
-                  </span>
-                </label>
+                </h2>
                 <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
-      <section className="min-w-0 space-y-4 [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+      <section className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
+        <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-slate-900 tracking-tight">
               Áp dụng cho store: {activeStoreId}
             </h2>
             <button
-              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isRunning}
               title="Đặt lại cấu hình về mặc định"
               type="button"
@@ -2624,9 +2670,11 @@ export function AmazonCrawlerPage({
 
 
         {/* Row 1: Collection & Product Type */}
-        <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="contents">
+          <div className="min-w-0 lg:row-span-2">
           <CrawlerCollectionPicker key={activeStoreId} collections={availableCollections} selectedIds={activeCollectionIds}
             isLoading={isLoadingCollections} onToggle={toggleCollection} onSelectAll={handleSelectAllCollections} onClear={handleClearCollections} />
+          </div>
 
           {/* Product Type selector */}
           <div className="min-w-0 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -2673,7 +2721,7 @@ export function AmazonCrawlerPage({
                           e.stopPropagation();
                           handleRemoveProductType(pill);
                         }}
-                        className="hidden group-hover:inline-flex ml-0.5 text-[10px] text-slate-500 hover:text-rose-700 px-0.5"
+                        className="hidden group-hover:inline-flex ml-0.5 text-xs text-slate-500 hover:text-rose-700 px-0.5"
                         title={`Bỏ loại '${pill}' khỏi store ${currentStoreId}`}
                       >
                         ×
@@ -2737,12 +2785,14 @@ export function AmazonCrawlerPage({
             <div className="grid min-w-0 gap-1.5 sm:grid-cols-2">
               <input
                 type="text"
+                aria-label="Loại sản phẩm"
                 placeholder="Hoặc nhập loại khác..."
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 text-sm placeholder:text-slate-500"
                 value={settings.productType || ""}
                 onChange={(e) => updateSetting("productType", e.target.value)}
               />
               <select
+                aria-label="Chọn loại sản phẩm"
                 className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 text-xs cursor-pointer"
                 value={settings.productType || ""}
                 onChange={(e) => {
@@ -2887,7 +2937,7 @@ export function AmazonCrawlerPage({
           const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
 
           return (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-2.5 text-xs text-slate-600 lg:col-span-2">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-slate-700">
                   Ví dụ gốc $20.00:
@@ -2902,7 +2952,7 @@ export function AmazonCrawlerPage({
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 font-mono text-[11px] text-slate-500">
+              <div className="flex items-center gap-2 font-mono text-xs text-slate-500">
                 <span>{settings.storeId || "capozen"}</span>
                 {settings.productType && <span>• {settings.productType}</span>}
               </div>
@@ -2910,9 +2960,16 @@ export function AmazonCrawlerPage({
           );
         })()}
       </section></div>
-              </details>
-            <div className="min-w-0 space-y-3">
-      <button className="text-sm font-semibold text-blue-700" type="button" onClick={toggleCrawlerAdvancedOpen}>
+                <label className="flex items-start gap-3 text-sm text-slate-900">
+                  <input type="checkbox" className="mt-1" checked={settings.autoSyncAfterSeo ?? true}
+                    onChange={(event) => updateSetting("autoSyncAfterSeo", event.target.checked)} />
+                  <span>Tự sync sau Codex SEO
+                    <span className="mt-1 block max-w-[85ch] text-xs leading-5 text-slate-600">Chờ SEO và ảnh hoàn tất, tự sync và bật các Sales Channels được phép. Áp dụng cho job mới của store này; SEO Review vẫn giữ để theo dõi.</span>
+                  </span>
+                </label>
+              </section>
+            <div className="min-w-0 space-y-3 xl:col-span-2">
+      <button aria-expanded={isAdvancedOpen} className="min-h-9 text-sm font-medium text-slate-600 hover:text-slate-900" type="button" onClick={toggleCrawlerAdvancedOpen}>
         {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
       </button>
       {isAdvancedOpen ? (
@@ -2945,15 +3002,18 @@ export function AmazonCrawlerPage({
         </div>
       ) : null}
             </div>
-            <div aria-label="Bắt đầu sau thiết lập" className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
-              {startCrawlButton}
-            </div>
           </section>
-          <div className="min-w-0 xl:sticky xl:top-24">
+          <CrawlerDialog title="Kiểm tra ASIN trên Shopify" isOpen={isAsinFilterOpen} onClose={() => setIsAsinFilterOpen(false)}>
             <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
               onSelectAsin={handleSelectFilterAsin} isSelectionDisabled={isRunning || isCheckingAsins} />
-          </div>
-          </div>
+          </CrawlerDialog>
+          <CrawlerDialog title="Thay danh sách cào?" isOpen={pendingFilterAsin !== null} onClose={() => handleResolveFilterAsin(false)}>
+            <p className="text-sm leading-6 text-slate-600">Danh sách hiện tại có {urls.length} dòng. Dùng ASIN {pendingFilterAsin} sẽ thay toàn bộ danh sách này. Collection và giá vẫn giữ nguyên; thao tác này chưa bắt đầu cào.</p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={() => handleResolveFilterAsin(false)} className="min-h-9 rounded-lg border border-slate-300 px-4 py-2 text-sm">Giữ danh sách hiện tại</button>
+              <button type="button" disabled={isRunning || isCheckingAsins} onClick={() => handleResolveFilterAsin(true)} className="min-h-9 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Thay bằng ASIN này</button>
+            </div>
+          </CrawlerDialog>
       {asinPreflightError ? <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{asinPreflightError}</p> : null}
       {asinPreflightMatches.length > 0 ? (
         <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
@@ -3029,6 +3089,26 @@ export function AmazonCrawlerPage({
           <p className="mt-1">{handoverError}</p>
         </div>
       )}
+          <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
+            <div className="w-full min-w-0 text-xs text-slate-600 lg:w-auto lg:flex-1">
+              <p className="mb-1 font-medium text-slate-900">{activeStoreId} · {inputAnalysis.validCount} ASIN · {activeCollectionIds.length} collection · {settings.productType || "Loại gốc Amazon"}</p>
+              <div id="crawler-start-readiness" aria-label="Điều kiện bắt đầu cào" role="status">{startBlockers.length > 0 ? startBlockers.join(" ") : "Sẵn sàng. Hệ thống sẽ kiểm tra ASIN trước khi tạo phiên."}</div>
+              {inlineHandoff ? <p role="status" aria-label="Kết quả bàn giao phiên vừa cào" className={`mt-1 text-xs leading-5 ${inlineHandoff.tone === "success" ? "text-emerald-700" : "text-amber-700"}`}>{inlineHandoff.label}</p> : null}
+            </div>
+            <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
+              {!hasSavedStoreVendor ? <button type="button" className="min-h-9 text-sm text-blue-700" onClick={() => document.getElementById("crawler-store-vendor")?.focus()}>Nhập Vendor</button> : null}
+              <button type="button" className="min-h-9 text-sm text-slate-600 hover:text-slate-900" onClick={() => setWorkspaceSection("results")}>{progress ? `${progress.completed}/${progress.total} link · ` : ""}Phiên & kết quả →</button>
+              {startCrawlButton}
+            </div>
+          </div>
+          {error ? <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+        </>}
+        results={<>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-lg font-semibold tracking-tight text-slate-900">Phiên & kết quả</h2><p className="mt-1 text-sm text-slate-600">Cào xong, bàn giao SEO Queue và đồng bộ Shopify là các bước riêng biệt.</p></div>
+            <button type="button" onClick={() => setWorkspaceSection("crawl")} className="min-h-9 rounded-lg border border-slate-300 px-3 py-2 text-sm">← Về cấu hình cào</button>
+          </div>
+          {!progress && !output && resultProducts.length === 0 ? <p className="rounded-lg bg-slate-50 p-5 text-sm text-slate-600">Chưa có kết quả trong phiên này. Nhập link và chọn collection tại Cào sản phẩm để bắt đầu.</p> : null}
       {progress === null ? null : (
         <div className={`space-y-4 rounded-lg border p-4 ${progress.phase === "captcha" ? "border-amber-300 bg-amber-50" : "border-slate-300 bg-slate-50"}`}>
           <div>
@@ -3098,7 +3178,7 @@ export function AmazonCrawlerPage({
                     {(progressItem.activeVariants ?? []).length === 0 ? null : (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {(progressItem.activeVariants ?? []).map((variant) => (
-                          <span className="rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-700" key={variant.asin}>
+                          <span className="rounded bg-slate-50 px-2 py-1 text-xs text-slate-700" key={variant.asin}>
                             {optionLabel(variant.options)} · {variant.asin}
                           </span>
                         ))}

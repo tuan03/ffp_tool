@@ -140,7 +140,7 @@ export function ConnectionsSyncView({
             </div>
             <div>
               <span className="text-slate-600">Quyền Scopes đã cấp:</span>
-              <ul className="mt-1 list-disc list-inside space-y-0.5 text-[11px] text-slate-600 font-mono">
+              <ul className="mt-1 list-disc list-inside space-y-0.5 text-xs text-slate-600 font-mono">
                 {data.gsc.grantedScopes.map(scope => (
                   <li key={scope} className="truncate" title={scope}>
                     {scope.replace("https://www.googleapis.com/auth/", "")}
@@ -226,7 +226,7 @@ export function ConnectionsSyncView({
               <div className="text-xs font-semibold text-blue-700">Cấu hình Google Analytics 4 (GA4)</div>
               <div className="space-y-2">
                 <div>
-                  <label className="block text-[11px] text-slate-600 mb-1">
+                  <label className="block text-xs text-slate-600 mb-1">
                     GA4 Property ID (chỉ gồm số, ví dụ 549055707):
                   </label>
                   <input
@@ -238,7 +238,7 @@ export function ConnectionsSyncView({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-600 mb-1">
+                  <label className="block text-xs text-slate-600 mb-1">
                     Hostname Scope (tên miền đo lường):
                   </label>
                   <input
@@ -328,7 +328,7 @@ export function ConnectionsSyncView({
             </div>
             <div>
               <span className="text-slate-600">Quyền Scopes đã cấp:</span>
-              <ul className="mt-1 list-disc list-inside space-y-0.5 text-[11px] text-slate-600 font-mono">
+              <ul className="mt-1 list-disc list-inside space-y-0.5 text-xs text-slate-600 font-mono">
                 {data.ga4.grantedScopes.map(scope => (
                   <li key={scope} className="truncate" title={scope}>
                     {scope.replace("https://www.googleapis.com/auth/", "")}
@@ -359,7 +359,7 @@ export function ConnectionsSyncView({
               </button>
             </div>
             {(!data.ga4.propertyId || data.ga4.status === "NOT_CONFIGURED") && (
-              <p className="w-full text-[11px] text-amber-700 mt-1">
+              <p className="w-full text-xs text-amber-700 mt-1">
                 <AppIcon name="warning" /> Vui lòng bấm <strong>Cấu hình GA4</strong> để lưu Property ID trước khi đồng bộ.
               </p>
             )}
@@ -407,7 +407,7 @@ export function ConnectionsSyncView({
                   </td>
                   <td className="px-4 py-2.5">
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                      className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
                         job.status === "done"
                           ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                           : job.status === "failed"

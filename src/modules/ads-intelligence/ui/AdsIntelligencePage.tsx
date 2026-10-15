@@ -720,12 +720,14 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
 
       {Object.keys(sourceErrors).length > 0 && (
         <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
-          <p>Store {currentStoreId}: một số nguồn chưa có dữ liệu xác minh. Không dùng dữ liệu mẫu thay thế.</p>
-          <ul className="mt-2 space-y-1">{Object.entries(sourceErrors).map(([source, message]) => <li key={source}>{source}: {message}</li>)}</ul>
+          <p>Store {currentStoreId}: {Object.keys(sourceErrors).length} nguồn chưa có dữ liệu xác minh. Không dùng dữ liệu mẫu thay thế.</p>
+          <details className="mt-2"><summary className="cursor-pointer text-xs font-medium">Xem nguồn bị ảnh hưởng & chi tiết kết nối</summary>
+            <ul className="mt-3 space-y-2 break-words text-xs">{Object.entries(sourceErrors).map(([source, message]) => <li key={source}><strong>{source}:</strong> {message}</li>)}</ul>
+          </details>
         </div>
       )}
       {loading && <p role="status" className="text-xs text-slate-600">Đang tải dữ liệu…</p>}
-      {!loading && isRevalidating && <p role="status" className="text-[11px] text-blue-700 animate-pulse"><AppIcon name="seo" /> Đang làm mới dữ liệu nền…</p>}
+      {!loading && isRevalidating && <p role="status" className="text-xs text-blue-700 animate-pulse"><AppIcon name="seo" /> Đang làm mới dữ liệu nền…</p>}
       {summary && <p className="text-xs text-slate-600">Kỳ Meta: {summary.periodStart} → {summary.periodEnd} · {summary.timezone} · {summary.currency}</p>}
       {summary?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700">{warning}</p>)}
       {reconciliation && <p className="text-xs text-slate-600">{reconciliation.shopify.source}</p>}
@@ -758,7 +760,7 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
           >
             <AppIcon name={tab.icon} /><span>{tab.label}</span>
             {tab.badge !== null && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white text-slate-600 border border-slate-200 font-mono font-bold">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white text-slate-600 border border-slate-200 font-mono font-bold">
                 {tab.badge}
               </span>
             )}

@@ -124,7 +124,7 @@ export function HeaderBar({
           <span>2. Duyệt Ứng viên</span>
           {candidateCount > 0 && (
             <span
-              className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+              className={`rounded-full px-1.5 py-0.2 text-xs font-bold ${
                 currentStage === 2 ? "bg-white text-amber-700" : "bg-amber-50 text-amber-700"
               }`}
             >
@@ -158,7 +158,7 @@ export function HeaderBar({
           </span>
           <span>3. Thành phẩm</span>
           {isProducing && (
-            <span className="animate-pulse text-[10px] text-amber-700">
+            <span className="animate-pulse text-xs text-amber-700">
               ●
             </span>
           )}
@@ -181,17 +181,17 @@ export function HeaderBar({
                   {activeRun.niche || activeRun.title || activeJobId}
                 </span>
                 {activeRun.status === "completed" && (
-                  <span className="rounded bg-emerald-50 px-1.5 py-0.2 text-[10px] font-bold text-emerald-700 border border-emerald-200 whitespace-nowrap">
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.2 text-xs font-bold text-emerald-700 border border-emerald-200 whitespace-nowrap">
                     ✓ Thành phẩm
                   </span>
                 )}
                 {activeRun.status === "ready_for_review" && (
-                  <span className="rounded bg-amber-50 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 border border-amber-200 whitespace-nowrap">
+                  <span className="rounded bg-amber-50 px-1.5 py-0.2 text-xs font-bold text-amber-700 border border-amber-200 whitespace-nowrap">
                     <AppIcon name="clock" /> Chờ duyệt
                   </span>
                 )}
                 {activeRun.status === "running" && (
-                  <span className="rounded bg-blue-50 px-1.5 py-0.2 text-[10px] font-bold text-blue-700 border border-blue-200 whitespace-nowrap">
+                  <span className="rounded bg-blue-50 px-1.5 py-0.2 text-xs font-bold text-blue-700 border border-blue-200 whitespace-nowrap">
                     <AppIcon name="refresh" /> Đang chạy
                   </span>
                 )}
@@ -202,7 +202,7 @@ export function HeaderBar({
               <span className="text-slate-600">+ Chọn / Tạo Job mới</span>
             )}
           </div>
-          <span className="text-[10px] text-slate-600">▼</span>
+          <span className="text-xs text-slate-600">▼</span>
         </button>
 
         {/* Floating Dropdown Panel */}
@@ -220,13 +220,13 @@ export function HeaderBar({
               <span className="text-lg">➕</span>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-blue-700">Bắt đầu đợt quét mới</p>
-                <p className="text-[10px] text-slate-600 font-normal">Cấu hình từ khóa và quét Pinterest từ đầu</p>
+                <p className="text-xs text-slate-600 font-normal">Cấu hình từ khóa và quét Pinterest từ đầu</p>
               </div>
             </button>
 
             <div className="border-t border-slate-200" />
 
-            <div className="px-2 py-1 text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between">
+            <div className="px-2 py-1 text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between">
               <span>Lịch sử Job &amp; Thư mục Run</span>
               <span className="rounded-full bg-slate-50 px-2 py-0.2 text-slate-700">{recentRuns.length}</span>
             </div>
@@ -262,11 +262,11 @@ export function HeaderBar({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <strong className="truncate font-semibold text-slate-900 text-xs">{rNiche}</strong>
-                          <span className="rounded bg-slate-50 px-1.5 py-0.2 text-[9px] text-slate-600 uppercase font-semibold">
+                          <span className="rounded bg-slate-50 px-1.5 py-0.2 text-xs text-slate-600 uppercase font-semibold">
                             {r.product || r.productType || "rug"}
                           </span>
                         </div>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px]">
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
                           {isCompleted && (
                             <span className="text-emerald-700 font-bold">✓ Thành phẩm</span>
                           )}
@@ -282,7 +282,7 @@ export function HeaderBar({
                           {r.mockupCount && r.mockupCount > 0 ? (
                             <span className="text-blue-700">• {r.mockupCount} Mockup</span>
                           ) : null}
-                          <code className="text-slate-500 font-mono text-[9px] truncate">{targetId}</code>
+                          <code className="text-slate-500 font-mono text-xs truncate">{targetId}</code>
                         </div>
                       </div>
                       {isSelected && <span className="text-blue-700 font-bold text-sm">✓</span>}

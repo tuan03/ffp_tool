@@ -260,7 +260,7 @@ export function BulkCustomizerEditor({
                     <div className="mt-1 text-xs text-blue-700">
                       {group.entries.length} sản phẩm · {group.fields.filter((field) => field.kind === "surface").length} mặt in · {group.fields.filter((field) => field.kind !== "surface").length} trường
                     </div>
-                    <div className="mt-2 line-clamp-2 text-[11px] text-slate-600">
+                    <div className="mt-2 line-clamp-2 text-xs text-slate-600">
                       {group.fields.map((field) => field.label).join(" · ") || "Không còn cấu hình"}
                     </div>
                   </button>
@@ -324,7 +324,7 @@ export function BulkCustomizerEditor({
                       <h4 className="text-xs font-bold uppercase tracking-wide text-blue-700">
                         Mặt in ({selectedGroup.fields.filter((field) => field.kind === "surface").length})
                       </h4>
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-xs text-slate-500">
                         Ảnh đại diện từ một sản phẩm trong nhóm
                       </span>
                     </div>

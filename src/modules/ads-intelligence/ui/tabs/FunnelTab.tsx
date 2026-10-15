@@ -54,9 +54,9 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
         </div>
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 pt-2">
           {steps.map(step => <div key={step.label} className={`rounded-lg border p-3 space-y-1.5 ${step.color}`}>
-            <span className="text-[10px] font-bold uppercase">{step.label}</span>
+            <span className="text-xs font-bold uppercase">{step.label}</span>
             <div className="text-xl font-bold font-mono">{step.value ?? missing}</div>
-            <div className="text-[10px] text-slate-600">{step.source}</div>
+            <div className="text-xs text-slate-600">{step.source}</div>
           </div>)}
         </div>
         <div className="p-3 rounded-lg bg-slate-50 border border-slate-300 text-xs text-slate-700">
@@ -70,7 +70,7 @@ export function FunnelTab({ reconciliation, summary }: FunnelTabProps): React.JS
         </div>
         <div className="overflow-x-auto rounded-lg border border-slate-200">
           <table className="w-full text-left text-xs">
-            <thead className="bg-white text-slate-600 uppercase text-[10px] font-mono border-b border-slate-200">
+            <thead className="bg-white text-slate-600 uppercase text-xs font-mono border-b border-slate-200">
               <tr>{["Chỉ số đối soát", "Meta Ads", "Google Analytics 4 · Meta trả phí", "Shopify Store", "Độ chênh lệch & Phân tích"].map(label => <th scope="col" key={label} className="py-2.5 px-4">{label}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-slate-200 font-mono text-xs">

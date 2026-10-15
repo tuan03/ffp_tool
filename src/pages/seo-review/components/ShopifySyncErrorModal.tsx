@@ -74,7 +74,7 @@ export function ShopifySyncErrorModal({
               <h3 className="text-sm font-bold text-slate-900">
                 Chi tiết lỗi đồng bộ Shopify Store
               </h3>
-              <p className="text-[11px] text-rose-700">
+              <p className="text-xs text-rose-700">
                 Sản phẩm không thể đẩy lên Store chính thành công
               </p>
             </div>
@@ -93,13 +93,13 @@ export function ShopifySyncErrorModal({
         <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs text-slate-700">
           {/* Product info summary */}
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-1.5">
-            <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
+            <div className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
               Sản phẩm bị lỗi
             </div>
             <div className="font-semibold text-slate-900 text-sm leading-snug">
               {product.productTitle.value}
             </div>
-            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 font-mono pt-1">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 font-mono pt-1">
               <span>Handle: /{product.handle.value}</span>
               {product.asin && <span>• ASIN: {product.asin}</span>}
               {product.productId && <span>• Product ID: {product.productId}</span>}
@@ -110,19 +110,19 @@ export function ShopifySyncErrorModal({
           {/* Raw Error Message */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-rose-700">
+              <span className="text-xs font-bold uppercase tracking-wider text-rose-700">
                 Nội dung lỗi chi tiết (Error Payload)
               </span>
               <button
                 type="button"
                 onClick={handleCopy}
-                className="px-2 py-1 rounded bg-slate-50 hover:bg-slate-100 text-slate-700 transition text-[11px] flex items-center gap-1 cursor-pointer"
+                className="px-2 py-1 rounded bg-slate-50 hover:bg-slate-100 text-slate-700 transition text-xs flex items-center gap-1 cursor-pointer"
               >
                 <span>{copied ? "✓" : "📋"}</span>
                 <span>{copied ? "Đã sao chép" : "Copy nội dung lỗi"}</span>
               </button>
             </div>
-            <div className="rounded-lg border border-rose-200 bg-white p-3.5 font-mono text-[11px] text-rose-700 whitespace-pre-wrap leading-relaxed break-words select-all max-h-64 overflow-y-auto">
+            <div className="rounded-lg border border-rose-200 bg-white p-3.5 font-mono text-xs text-rose-700 whitespace-pre-wrap leading-relaxed break-words select-all max-h-64 overflow-y-auto">
               {errorMessage}
             </div>
           </div>
@@ -133,7 +133,7 @@ export function ShopifySyncErrorModal({
               <span><AppIcon name="info" /></span>
               <span>Gợi ý khắc phục:</span>
             </div>
-            <ul className="list-disc pl-4 space-y-1 text-[11px] text-amber-700 leading-relaxed">
+            <ul className="list-disc pl-4 space-y-1 text-xs text-amber-700 leading-relaxed">
               <li>
                 Kiểm tra kết nối và quyền hạn của app/store trong tab Cài đặt Store (`write_products`, `write_files`, `write_metafields`).
               </li>

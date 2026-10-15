@@ -44,13 +44,13 @@ export function AdsHeader({
                   onMouseEnter={() => setShowMaturityTooltip(true)}
                   onMouseLeave={() => setShowMaturityTooltip(false)}
                   onClick={() => setShowMaturityTooltip((v) => !v)}
-                  className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-50 transition cursor-help font-medium"
+                  className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-50 transition cursor-help font-medium"
                 >
                   <span><AppIcon name="warning" /></span>
                   <span>Chưa đủ 7 ngày (Provisional)</span>
                 </button>
               ) : (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
                   Kỳ báo cáo đã qua 7 ngày
                 </span>
               )}
@@ -60,7 +60,7 @@ export function AdsHeader({
                   <div className="font-semibold text-amber-700 flex items-center gap-1.5">
                     <span><AppIcon name="lock" /></span> Cổng kiểm soát độ chín chuyển đổi
                   </div>
-                  <p className="text-[11px] text-slate-700 leading-relaxed">
+                  <p className="text-xs text-slate-700 leading-relaxed">
                     Kỳ báo cáo ({summary?.periodStart} → {summary?.periodEnd}) kết thúc trong vòng 7 ngày gần nhất. Chuyển đổi Meta và hoàn tiền Shopify chưa đóng sổ hoàn toàn. Quyết định scale lớn bị khóa an toàn.
                   </p>
                 </div>
@@ -76,7 +76,7 @@ export function AdsHeader({
       {/* Control Actions & Store Switcher */}
       <div className="flex items-center gap-2.5 flex-wrap">
         {/* Source status indicator pill */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px]">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs">
           <span
             className={`inline-block h-2 w-2 rounded-full ${
               !summary ? "bg-slate-200" : summary.fromCache ? "bg-amber-700" : "bg-emerald-700"
@@ -86,7 +86,7 @@ export function AdsHeader({
             {!summary ? "Chưa có dữ liệu Meta" : summary.fromCache ? "Dữ liệu đã lưu tạm" : "Meta API"}
           </span>
           {summary?.cachedAt && (
-            <span className="text-slate-500 font-mono text-[10px]">
+            <span className="text-slate-500 font-mono text-xs">
               {new Date(summary.cachedAt).toLocaleTimeString("vi-VN", {
                 hour: "2-digit",
                 minute: "2-digit",

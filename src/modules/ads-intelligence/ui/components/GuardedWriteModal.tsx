@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 
 import { AppIcon } from "../../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../../shared/hooks/useDialogFocus";
 export interface GuardedWriteProposal {
   readonly proposalId: string;
   readonly action: "PAUSE" | "ADJUST_BUDGET";
@@ -34,6 +35,7 @@ export function GuardedWriteModal({
   onExecute,
 }: GuardedWriteModalProps): React.JSX.Element | null {
   const [confirmed, setConfirmed] = useState(false);
+  const dialogRef = useDialogFocus({ isOpen: proposal !== null, onClose: () => { if (!executing) onClose(); } });
 
   if (!proposal) return null;
 
@@ -41,7 +43,7 @@ export function GuardedWriteModal({
   const isBudget = proposal.action === "ADJUST_BUDGET";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Xác nhận Guarded Write" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/30 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-lg border border-slate-300 bg-white p-6 shadow-sm space-y-5 animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-slate-200 pb-4">
@@ -59,6 +61,8 @@ export function GuardedWriteModal({
             </div>
           </div>
           <button
+            type="button"
+            disabled={executing}
             onClick={onClose}
             className="text-slate-600 hover:text-slate-900 p-1 rounded-lg text-lg cursor-pointer"
             aria-label="Đóng"
@@ -82,7 +86,7 @@ export function GuardedWriteModal({
               </div>
               <p className="text-xs mt-1 leading-relaxed">{executionResult.message}</p>
               {executionResult.auditLogId && (
-                <div className="text-[11px] font-mono mt-2 text-slate-600">
+                <div className="text-xs font-mono mt-2 text-slate-600">
                   Mã kiểm toán (Audit ID): {executionResult.auditLogId}
                 </div>
               )}
@@ -130,14 +134,14 @@ export function GuardedWriteModal({
                     <span className="text-slate-600">${proposal.currentBudget}/ngày</span>
                     <span className="text-blue-700">&rarr;</span>
                     <span className="text-emerald-700">${proposal.proposedBudget}/ngày</span>
-                    <span className="text-[10px] text-emerald-700 font-normal">(+20% max)</span>
+                    <span className="text-xs text-emerald-700 font-normal">(+20% max)</span>
                   </div>
                 </div>
               )}
 
               <div className="space-y-1 text-xs">
                 <span className="text-slate-600">Lý do & Bằng chứng:</span>
-                <div className="text-slate-700 bg-white p-2 rounded border border-slate-200 text-[11px] leading-relaxed">
+                <div className="text-slate-700 bg-white p-2 rounded border border-slate-200 text-xs leading-relaxed">
                   {proposal.reason}
                 </div>
               </div>
@@ -148,7 +152,7 @@ export function GuardedWriteModal({
               <div className="font-semibold text-amber-700 flex items-center gap-1.5">
                 <span><AppIcon name="lock" /></span> Hàng rào an toàn 3 lớp (Safety Fence)
               </div>
-              <ul className="text-[11px] text-amber-700 list-disc list-inside space-y-0.5">
+              <ul className="text-xs text-amber-700 list-disc list-inside space-y-0.5">
                 <li>Giới hạn ngân sách tối đa +20% mỗi lần tăng.</li>
                 <li>Kiểm tra độ trôi trạng thái (State drift check) trước khi ghi.</li>
                 <li>Tự động ghi sổ nhật ký kiểm toán (Audit Trail) có chữ ký số.</li>

@@ -81,11 +81,11 @@ export function OptionGroupEditor({
                       {group.label || group.id}
                     </span>
                     {group.required && (
-                      <span className="rounded bg-rose-50 border border-rose-200 px-1.5 py-0.5 text-[10px] text-rose-700 font-medium">
+                      <span className="rounded bg-rose-50 border border-rose-200 px-1.5 py-0.5 text-xs text-rose-700 font-medium">
                         Bắt buộc
                       </span>
                     )}
-                    <span className="text-[11px] text-slate-500">
+                    <span className="text-xs text-slate-500">
                       ({group.options?.length ?? 0} tùy chọn)
                     </span>
                   </div>
@@ -108,7 +108,7 @@ export function OptionGroupEditor({
                     {/* Basic Group Settings */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
                           Tên nhóm
                         </label>
                         <input
@@ -126,7 +126,7 @@ export function OptionGroupEditor({
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
                           Kiểu hiển thị
                         </label>
                         <select

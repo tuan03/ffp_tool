@@ -75,7 +75,7 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
               )}
             </div>
             {image.badge && (
-              <span className="rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-[10px] font-bold text-blue-700 whitespace-nowrap">
+              <span className="rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-xs font-bold text-blue-700 whitespace-nowrap">
                 {image.badge}
               </span>
             )}
@@ -165,7 +165,7 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
               {image.tags.slice(0, 5).map((tag) => (
                 <span
                   key={tag}
-                  className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-700"
+                  className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-slate-700"
                 >
                   #{tag}
                 </span>

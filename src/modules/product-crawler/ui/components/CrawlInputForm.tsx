@@ -137,7 +137,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
                   <div className="text-rose-700 space-y-0.5">
                     ✕ Phát hiện {invalidRows.length} mục không hợp lệ:
                     {invalidRows.map((r, i) => (
-                      <div key={i} className="pl-3 text-[11px] text-rose-700">
+                      <div key={i} className="pl-3 text-xs text-rose-700">
                         • &quot;{r.raw}&quot;: {r.error}
                       </div>
                     ))}
@@ -166,7 +166,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
                   />
                   <div>
                     <span className="text-xs font-semibold text-slate-900 block">Variant Group (Khuyên dùng)</span>
-                    <span className="text-[11px] text-slate-600 block mt-0.5">
+                    <span className="text-xs text-slate-600 block mt-0.5">
                       Cào toàn bộ nhóm biến thể, kích cỡ, màu sắc và tùy biến liên quan của sản phẩm.
                     </span>
                   </div>
@@ -183,7 +183,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
                   />
                   <div>
                     <span className="text-xs font-semibold text-slate-900 block">Exact ASIN</span>
-                    <span className="text-[11px] text-slate-600 block mt-0.5">
+                    <span className="text-xs text-slate-600 block mt-0.5">
                       Chỉ cào đúng ASIN được chỉ định, bỏ qua ma trận biến thể phụ.
                     </span>
                   </div>
@@ -223,7 +223,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
           {isAdvancedOpen && (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Mã ZIP Amazon</label>
+                <label className="text-xs text-slate-600 block mb-1">Mã ZIP Amazon</label>
                 <input
                   type="text"
                   value={options.amazonZip ?? "10001"}
@@ -233,7 +233,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Luồng sản phẩm (Product Threads)</label>
+                <label className="text-xs text-slate-600 block mb-1">Luồng sản phẩm (Product Threads)</label>
                 <input
                   type="number"
                   min={1}
@@ -245,7 +245,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Luồng biến thể (Variant Threads)</label>
+                <label className="text-xs text-slate-600 block mb-1">Luồng biến thể (Variant Threads)</label>
                 <input
                   type="number"
                   min={1}
@@ -257,7 +257,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Max Matrix Variants</label>
+                <label className="text-xs text-slate-600 block mb-1">Max Matrix Variants</label>
                 <input
                   type="number"
                   min={5}
@@ -269,7 +269,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Số tab trình duyệt (Browser Tabs)</label>
+                <label className="text-xs text-slate-600 block mb-1">Số tab trình duyệt (Browser Tabs)</label>
                 <input
                   type="number"
                   min={1}
@@ -281,7 +281,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Captcha Timeout (giây)</label>
+                <label className="text-xs text-slate-600 block mb-1">Captcha Timeout (giây)</label>
                 <input
                   type="number"
                   min={10}
@@ -293,7 +293,7 @@ export function CrawlInputForm({ isLoading, onSubmit }: CrawlInputFormProps): Re
               </div>
 
               <div>
-                <label className="text-[11px] text-slate-600 block mb-1">Profile Slug</label>
+                <label className="text-xs text-slate-600 block mb-1">Profile Slug</label>
                 <input
                   type="text"
                   value={options.profileSlug ?? "default"}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
+import { useDialogFocus } from "../../../shared/hooks/useDialogFocus";
 import type { ZoomImageItem } from "../types";
 
 export interface ImageZoomModalProps {
@@ -20,6 +21,7 @@ export function ImageZoomModal({
   const [isZoomed, setIsZoomed] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
+  const dialogRef = useDialogFocus({ isOpen: isOpen && images.length > 0, onClose });
 
   // Sync currentIndex when initialIndex or images changes
   useEffect(() => {
@@ -28,16 +30,6 @@ export function ImageZoomModal({
     setIsZoomed(false);
     setImageError(false);
   }, [initialIndex, images]);
-
-  // Lock body scroll when modal is open
-  useEffect(() => {
-    if (!isOpen) return;
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = originalOverflow;
-    };
-  }, [isOpen]);
 
   const handlePrev = useCallback(() => {
     if (images.length <= 1) return;
@@ -106,10 +98,11 @@ export function ImageZoomModal({
 
   return (
     <div
+      ref={dialogRef} tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-label="Phóng to ảnh chi tiết"
-      className="fixed inset-0 z-50 flex flex-col bg-slate-50 p-2 sm:p-4 md:p-6 animate-fadeIn select-none"
+      className="fixed inset-0 z-[80] flex flex-col bg-white p-2 sm:p-4 md:p-6 select-none"
     >
       {/* Top Header Bar */}
       <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-200 text-slate-900">
@@ -122,7 +115,7 @@ export function ImageZoomModal({
               {activeImage.title || "Chi tiết hình ảnh sản phẩm"}
             </h3>
             {images.length > 1 && (
-              <p className="text-[11px] font-mono text-blue-700">
+              <p className="text-xs font-mono text-blue-700">
                 Ảnh {currentIndex + 1} / {images.length}
               </p>
             )}
@@ -248,7 +241,7 @@ export function ImageZoomModal({
         {/* SEO Alt Text Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2">
           <div className="flex items-start sm:items-center gap-2 min-w-0 flex-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 flex-shrink-0">
+            <span className="text-xs font-bold uppercase tracking-wider text-blue-700 flex-shrink-0">
               🏷️ SEO Alt:
             </span>
             {altText ? (
@@ -264,7 +257,7 @@ export function ImageZoomModal({
 
           <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-center">
             <span
-              className={`text-[11px] font-mono px-2 py-0.5 rounded ${
+              className={`text-xs font-mono px-2 py-0.5 rounded ${
                 altLength > 125
                   ? "bg-amber-50 text-amber-700 border border-amber-300"
                   : altLength > 0
@@ -279,7 +272,7 @@ export function ImageZoomModal({
               <button
                 type="button"
                 onClick={() => handleCopy(altText, "alt")}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-700 hover:text-blue-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-300 transition"
+                className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-blue-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-300 transition"
               >
                 {copiedKey === "alt" ? "✓ Đã copy Alt" : "📋 Copy Alt"}
               </button>
