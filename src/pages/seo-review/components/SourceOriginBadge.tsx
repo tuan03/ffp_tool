@@ -22,11 +22,11 @@ export function SourceOriginBadge({
   let badgeConfig = {
     label: "Distributed Crawl",
     icon: "⚡",
-    badgeClass: "bg-blue-50 text-blue-700 border-blue-200 ",
+    badgeClass: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 ",
     dotClass: "bg-blue-600",
     hintLabel: "Đã SEO sẵn",
     hintTitle: "Sản phẩm đã hoàn thiện SEO trong pipeline cào, sẵn sàng cập nhật hoặc phê duyệt đồng bộ.",
-    hintClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    hintClass: "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800",
     hintIcon: "✓",
   };
 
@@ -34,22 +34,22 @@ export function SourceOriginBadge({
     badgeConfig = {
       label: "Pinterest POD",
       icon: "🎨",
-      badgeClass: "bg-blue-50 text-blue-700 border-blue-200 ",
+      badgeClass: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 ",
       dotClass: "bg-blue-600",
       hintLabel: "Cần duyệt lại",
       hintTitle: "Sản phẩm thiết kế từ Pinterest POD, cần duyệt lại tiêu đề, mô tả và ảnh in trước khi đồng bộ.",
-      hintClass: "bg-amber-50 text-amber-700 border-amber-200",
+      hintClass: "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
       hintIcon: "⏳",
     };
   } else if (origin === "auto_seo") {
     badgeConfig = {
       label: "Auto SEO",
       icon: "🤖",
-      badgeClass: "bg-blue-50 text-blue-700 border-blue-200 ",
+      badgeClass: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 ",
       dotClass: "bg-blue-600",
       hintLabel: "Cần duyệt lại",
       hintTitle: "Sản phẩm tuyển chọn từ Auto SEO, cần duyệt lại nội dung SEO trước khi đồng bộ.",
-      hintClass: "bg-amber-50 text-amber-700 border-amber-200",
+      hintClass: "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
       hintIcon: "⏳",
     };
   }
@@ -88,12 +88,12 @@ export function SourceOriginBadge({
               ? `Store gốc: ${product.storeId} → Store đích khi sync: ${targetStoreId}`
               : `Gắn với Shopify Store: ${effectiveStore}`
           }
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono bg-slate-50 text-slate-700 border border-slate-300 select-none"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 select-none"
         >
           <span><AppIcon name="store" /></span>
           <span>{product.storeId || targetStoreId}</span>
           {isDifferentTarget && (
-            <span className="text-amber-700 font-sans text-xs">➔ {targetStoreId}</span>
+            <span className="text-amber-700 dark:text-amber-300 font-sans text-xs">➔ {targetStoreId}</span>
           )}
         </span>
       )}

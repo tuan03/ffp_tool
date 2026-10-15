@@ -238,18 +238,18 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
   return (
     <div className="space-y-6">
       {/* Top Breadcrumb & Title Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-700 pb-5">
         <div>
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-400">
             <span>Shopify FFP Tool</span>
             <span>/</span>
-            <span className="text-blue-700">Product Crawler</span>
+            <span className="text-blue-700 dark:text-blue-300">Product Crawler</span>
           </div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-2.5 mt-1">
+          <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2.5 mt-1">
             <span><AppIcon name="store" /></span>
             <span>Amazon Product Crawler</span>
           </h1>
-          <p className="text-xs text-slate-600 mt-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             Thu thập thông tin sản phẩm, ma trận biến thể và cấu hình tùy biến từ Amazon chuẩn hóa cho pipeline tiếp theo.
           </p>
         </div>
@@ -259,22 +259,22 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
             <button
               type="button"
               onClick={handleResetNewJob}
-              className="rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-1.5 text-xs font-semibold text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition"
             >
               + Tạo phiên cào mới
             </button>
           )}
 
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs">
-            <span className="text-slate-600">Nguồn:</span>
-            <span className="font-semibold text-amber-700">Amazon US</span>
+          <div className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs">
+            <span className="text-slate-600 dark:text-slate-400">Nguồn:</span>
+            <span className="font-semibold text-amber-700 dark:text-amber-300">Amazon US</span>
           </div>
         </div>
       </div>
 
       {/* Global Error Banner */}
       {errorMessage && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 flex items-center justify-between">
+        <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-4 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-base"><AppIcon name="warning" /></span>
             <span>{errorMessage}</span>
@@ -282,7 +282,7 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
           <button
             type="button"
             onClick={() => setErrorMessage(null)}
-            className="text-rose-700 hover:text-rose-700 font-bold"
+            className="text-rose-700 dark:text-rose-300 hover:text-rose-700 dark:hover:text-rose-300 font-bold"
           >
             ✕
           </button>
@@ -290,17 +290,17 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
       )}
 
       {/* 3-Stage Progress Step Indicator */}
-      <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-xs font-medium">
+      <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-1.5 text-xs font-medium">
         <button
           type="button"
           onClick={() => setActiveStage(1)}
           className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 transition ${
             activeStage === 1
-              ? "bg-blue-50 text-blue-700 font-bold border border-blue-300 shadow-sm"
-              : "text-slate-600 hover:text-slate-900"
+              ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-300 dark:border-blue-800 shadow-sm"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-xs">1</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-xs">1</span>
           <span>Nhập nguồn (Input)</span>
         </button>
 
@@ -310,11 +310,11 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
           onClick={() => setActiveStage(2)}
           className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 transition disabled:opacity-40 disabled:cursor-not-allowed ${
             activeStage === 2
-              ? "bg-blue-50 text-blue-700 font-bold border border-blue-300 shadow-sm"
-              : "text-slate-600 hover:text-slate-900"
+              ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-300 dark:border-blue-800 shadow-sm"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-xs">2</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-xs">2</span>
           <span>Đang cào (Running)</span>
           {jobStatus === "running" && <span className="h-2 w-2 rounded-full bg-blue-600 animate-pulse" />}
         </button>
@@ -325,13 +325,13 @@ export function ProductCrawlerPage({ client }: ProductCrawlerPageProps): React.J
           onClick={() => setActiveStage(3)}
           className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 transition disabled:opacity-40 disabled:cursor-not-allowed ${
             activeStage === 3
-              ? "bg-blue-50 text-blue-700 font-bold border border-blue-300 shadow-sm"
-              : "text-slate-600 hover:text-slate-900"
+              ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-300 dark:border-blue-800 shadow-sm"
+              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
           }`}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 text-xs">3</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-xs">3</span>
           <span>Kết quả & Bàn giao ({products.length})</span>
-          {products.length > 0 && <span className="text-xs text-emerald-700 font-bold">✓</span>}
+          {products.length > 0 && <span className="text-xs text-emerald-700 dark:text-emerald-300 font-bold">✓</span>}
         </button>
       </div>
 

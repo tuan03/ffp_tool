@@ -9,7 +9,7 @@ function ProductThumbnail({ url, title }: { readonly url?: string | null; readon
   if (!url || hasError) {
     return (
       <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-blue-50 text-slate-600 shadow-inner"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 dark:border-slate-700 bg-blue-50 dark:bg-blue-950/60 text-slate-600 dark:text-slate-400 shadow-inner"
         title={title}
       >
         <svg className="h-5 w-5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -24,7 +24,7 @@ function ProductThumbnail({ url, title }: { readonly url?: string | null; readon
       src={url}
       alt={title}
       onError={() => setHasError(true)}
-      className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-300 shadow-sm"
+      className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-300 dark:border-slate-700 shadow-sm"
       loading="lazy"
     />
   );
@@ -55,14 +55,14 @@ export function BenchmarkTable({
 }: BenchmarkTableProps): React.JSX.Element {
   const renderSortIndicator = (column: string): React.JSX.Element | null => {
     if (sortBy !== column) return null;
-    return <span className="ml-1 text-blue-700">{sortDir === "asc" ? "▲" : "▼"}</span>;
+    return <span className="ml-1 text-blue-700 dark:text-blue-300">{sortDir === "asc" ? "▲" : "▼"}</span>;
   };
 
   const headerButton = (column: string, title: string) => (
     <button
       type="button"
       onClick={() => onSort?.(column)}
-      className="inline-flex items-center text-xs font-semibold text-slate-700 transition hover:text-blue-700"
+      className="inline-flex items-center text-xs font-semibold text-slate-700 dark:text-slate-300 transition hover:text-blue-700 dark:hover:text-blue-300"
     >
       {title}
       {renderSortIndicator(column)}
@@ -70,13 +70,13 @@ export function BenchmarkTable({
   );
 
   return (
-    <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
+    <div className="relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shadow-sm">
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm text-slate-700">
-          <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
+        <table className="w-full text-left text-sm text-slate-700 dark:text-slate-300">
+          <thead className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs uppercase tracking-wider text-slate-600 dark:text-slate-400">
             <tr>
               {/* 1. Product (Sticky Left) */}
-              <th scope="col" className="sticky left-0 z-20 bg-white px-4 py-3 min-w-[240px]">
+              <th scope="col" className="sticky left-0 z-20 bg-white dark:bg-slate-900 px-4 py-3 min-w-[240px]">
                 {headerButton("title", "Sản phẩm (Product)")}
               </th>
 
@@ -126,25 +126,25 @@ export function BenchmarkTable({
               </th>
 
               {/* 11. Action (Sticky Right) */}
-              <th scope="col" className="sticky right-0 z-20 bg-white px-4 py-3 min-w-[130px] text-center">
+              <th scope="col" className="sticky right-0 z-20 bg-white dark:bg-slate-900 px-4 py-3 min-w-[130px] text-center">
                 Hành động
               </th>
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-slate-200">
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
             {loading ? (
               <tr>
-                <td colSpan={11} className="p-8 text-center text-slate-600">
+                <td colSpan={11} className="p-8 text-center text-slate-600 dark:text-slate-400">
                   <div className="flex items-center justify-center gap-2">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" />
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 dark:border-blue-800 border-t-transparent" />
                     <span>Đang tính toán benchmark và nạp dữ liệu...</span>
                   </div>
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={11} className="p-8 text-center text-slate-600">
+                <td colSpan={11} className="p-8 text-center text-slate-600 dark:text-slate-400">
                   Không tìm thấy sản phẩm nào phù hợp với bộ lọc hiện tại.
                 </td>
               </tr>
@@ -157,21 +157,21 @@ export function BenchmarkTable({
                 );
 
                 return (
-                  <tr key={item.productId} className="group transition hover:bg-slate-50">
+                  <tr key={item.productId} className="group transition hover:bg-slate-50 dark:hover:bg-slate-700">
                     {/* 1. Product (Sticky Left) */}
-                    <td className="sticky left-0 z-10 bg-white px-4 py-3 group-hover:bg-slate-100">
+                    <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 px-4 py-3 group-hover:bg-slate-100 dark:group-hover:bg-slate-700">
                       <div className="flex items-center gap-3">
                         <ProductThumbnail url={item.thumbnailUrl} title={item.title} />
                         <div className="min-w-0">
                           <button
                             type="button"
                             onClick={() => onSelectProduct(item)}
-                            className="truncate text-left font-medium text-slate-900 transition hover:text-blue-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                            className="truncate text-left font-medium text-slate-900 dark:text-slate-100 transition hover:text-blue-700 dark:hover:text-blue-300 hover:underline focus-visible:ring-2 focus-visible:ring-blue-600/30"
                             title={item.title}
                           >
                             {item.title}
                           </button>
-                          <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+                          <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                             <span className="truncate max-w-[160px]" title={item.url}>
                               {item.url.replace(/^https?:\/\/[^/]+/, "")}
                             </span>
@@ -179,7 +179,7 @@ export function BenchmarkTable({
                               href={item.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-blue-700 hover:text-blue-700"
+                              className="text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300"
                               title="Mở storefront"
                             >
                               ↗
@@ -195,15 +195,15 @@ export function BenchmarkTable({
                         <span
                           className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
                             item.currentVersion === "v0"
-                              ? "bg-slate-50 text-slate-700 border border-slate-300"
-                              : "bg-blue-50 text-blue-700 border border-blue-200"
+                              ? "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700"
+                              : "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
                           }`}
                         >
                           {item.currentVersion}
                         </span>
                         {item.hasExternalDrift && (
                           <span
-                            className="rounded bg-amber-50 px-1.5 py-0.2 text-xs text-amber-700 border border-amber-200"
+                            className="rounded bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.2 text-xs text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
                             title="Nội dung trên storefront đã bị thay đổi ngoài snapshot"
                           >
                             External Drift
@@ -213,7 +213,7 @@ export function BenchmarkTable({
                           <button
                             type="button"
                             onClick={() => onSelectBatch?.(item.batchId!)}
-                            className="text-xs text-blue-700 hover:underline"
+                            className="text-xs text-blue-700 dark:text-blue-300 hover:underline"
                             title={`Xem batch: ${item.batchId}`}
                           >
                             {item.batchId}
@@ -226,46 +226,46 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.seoAge != null ? (
                         <div>
-                          <span className="font-semibold text-slate-900">{item.seoAge}d</span>
-                          <div className="text-xs text-slate-500">
+                          <span className="font-semibold text-slate-900 dark:text-slate-100">{item.seoAge}d</span>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
                             {item.coverageDays}/{item.targetDays}d
                           </div>
                         </div>
                       ) : (
-                        <span className="text-slate-500">—</span>
+                        <span className="text-slate-500 dark:text-slate-400">—</span>
                       )}
                     </td>
 
                     {/* 4. Clicks Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-bold text-slate-900">
+                      <div className="font-bold text-slate-900 dark:text-slate-100">
                         {item.clicks.after.toLocaleString("vi-VN")}
                       </div>
                       <div className="text-xs">
                         {item.clicks.isNewActivity ? (
-                          <span className="text-blue-700">New activity</span>
+                          <span className="text-blue-700 dark:text-blue-300">New activity</span>
                         ) : item.clicks.deltaAbsolute != null ? (
                           <span
                             className={
                               item.clicks.deltaAbsolute > 0
-                                ? "text-emerald-700"
+                                ? "text-emerald-700 dark:text-emerald-300"
                                 : item.clicks.deltaAbsolute < 0
-                                  ? "text-rose-700"
-                                  : "text-slate-600"
+                                  ? "text-rose-700 dark:text-rose-300"
+                                  : "text-slate-600 dark:text-slate-400"
                             }
                           >
                             {item.clicks.deltaAbsolute > 0 ? "+" : ""}
                             {item.clicks.deltaAbsolute} ({formatPercent(item.clicks.deltaPercent)})
                           </span>
                         ) : (
-                          <span className="text-slate-500">Δ —</span>
+                          <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                         )}
                       </div>
                     </td>
 
                     {/* 5. Impressions Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-bold text-slate-900">
+                      <div className="font-bold text-slate-900 dark:text-slate-100">
                         {item.impressions.after.toLocaleString("vi-VN")}
                       </div>
                       <div className="text-xs">
@@ -273,10 +273,10 @@ export function BenchmarkTable({
                           <span
                             className={
                               item.impressions.deltaAbsolute > 0
-                                ? "text-emerald-700"
+                                ? "text-emerald-700 dark:text-emerald-300"
                                 : item.impressions.deltaAbsolute < 0
-                                  ? "text-rose-700"
-                                  : "text-slate-600"
+                                  ? "text-rose-700 dark:text-rose-300"
+                                  : "text-slate-600 dark:text-slate-400"
                             }
                           >
                             {item.impressions.deltaAbsolute > 0 ? "+" : ""}
@@ -284,14 +284,14 @@ export function BenchmarkTable({
                             {formatPercent(item.impressions.deltaPercent)})
                           </span>
                         ) : (
-                          <span className="text-slate-500">Δ —</span>
+                          <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                         )}
                       </div>
                     </td>
 
                     {/* 6. CTR Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-semibold text-slate-900">
+                      <div className="font-semibold text-slate-900 dark:text-slate-100">
                         {item.ctr.after != null ? `${(item.ctr.after * 100).toFixed(2)}%` : "—"}
                       </div>
                       <div className="text-xs">
@@ -299,16 +299,16 @@ export function BenchmarkTable({
                           <span
                             className={
                               item.ctr.deltaPercentagePoints > 0
-                                ? "text-emerald-700"
+                                ? "text-emerald-700 dark:text-emerald-300"
                                 : item.ctr.deltaPercentagePoints < 0
-                                  ? "text-rose-700"
-                                  : "text-slate-600"
+                                  ? "text-rose-700 dark:text-rose-300"
+                                  : "text-slate-600 dark:text-slate-400"
                             }
                           >
                             {formatPp(item.ctr.deltaPercentagePoints)}
                           </span>
                         ) : (
-                          <span className="text-slate-500">Δ —</span>
+                          <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                         )}
                       </div>
                     </td>
@@ -317,7 +317,7 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.position.after != null ? (
                         <div>
-                          <div className="text-xs text-slate-700">
+                          <div className="text-xs text-slate-700 dark:text-slate-300">
                             {item.position.before != null
                               ? `${item.position.before.toFixed(1)} → ${item.position.after.toFixed(1)}`
                               : item.position.after.toFixed(1)}
@@ -327,37 +327,37 @@ export function BenchmarkTable({
                               <span
                                 className={
                                   item.position.improvement > 0
-                                    ? "text-emerald-700 font-medium"
+                                    ? "text-emerald-700 dark:text-emerald-300 font-medium"
                                     : item.position.improvement < 0
-                                      ? "text-rose-700 font-medium"
-                                      : "text-slate-600"
+                                      ? "text-rose-700 dark:text-rose-300 font-medium"
+                                      : "text-slate-600 dark:text-slate-400"
                                 }
                               >
                                 {item.position.improvement > 0 ? "+" : ""}
                                 {item.position.improvement.toFixed(1)} bậc
                               </span>
                             ) : (
-                              <span className="text-slate-500">Δ —</span>
+                              <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                             )}
                           </div>
                         </div>
                       ) : (
-                        <span className="text-slate-500">—</span>
+                        <span className="text-slate-500 dark:text-slate-400">—</span>
                       )}
                     </td>
 
                     {/* 8. Queries Δ */}
                     <td className="px-3 py-3 text-right">
-                      <div className="font-semibold text-slate-900">{item.queries.afterCount}</div>
+                      <div className="font-semibold text-slate-900 dark:text-slate-100">{item.queries.afterCount}</div>
                       <div className="text-xs">
                         {item.queries.delta != null ? (
                           <span
                             className={
                               item.queries.delta > 0
-                                ? "text-emerald-700"
+                                ? "text-emerald-700 dark:text-emerald-300"
                                 : item.queries.delta < 0
-                                  ? "text-rose-700"
-                                  : "text-slate-600"
+                                  ? "text-rose-700 dark:text-rose-300"
+                                  : "text-slate-600 dark:text-slate-400"
                             }
                             title={`Mới: +${item.queries.newlyObserved} · Mất: -${item.queries.noLongerObserved} · Trùng khớp: ${item.queries.matchedCount}`}
                           >
@@ -365,7 +365,7 @@ export function BenchmarkTable({
                             {item.queries.delta}
                           </span>
                         ) : (
-                          <span className="text-slate-500">Δ —</span>
+                          <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                         )}
                       </div>
                     </td>
@@ -374,14 +374,14 @@ export function BenchmarkTable({
                     <td className="px-3 py-3 text-right">
                       {item.organicSessions.isGscQueryFilterApplied ? (
                         <span
-                          className="text-xs text-amber-700 italic"
+                          className="text-xs text-amber-700 dark:text-amber-300 italic"
                           title="GSC query filter is not supported by this GA4 report (Rule 12.7: từ khóa GSC không map trực tiếp vào phiên GA4)"
                         >
                           N/A (Query filter)
                         </span>
                       ) : item.organicSessions.after != null ? (
                         <div>
-                          <div className="font-semibold text-slate-900">
+                          <div className="font-semibold text-slate-900 dark:text-slate-100">
                             {item.organicSessions.after.toLocaleString("vi-VN")}
                           </div>
                           <div className="text-xs">
@@ -389,10 +389,10 @@ export function BenchmarkTable({
                               <span
                                 className={
                                   item.organicSessions.deltaAbsolute > 0
-                                    ? "text-emerald-700"
+                                    ? "text-emerald-700 dark:text-emerald-300"
                                     : item.organicSessions.deltaAbsolute < 0
-                                      ? "text-rose-700"
-                                      : "text-slate-600"
+                                      ? "text-rose-700 dark:text-rose-300"
+                                      : "text-slate-600 dark:text-slate-400"
                                 }
                               >
                                 {item.organicSessions.deltaAbsolute > 0 ? "+" : ""}
@@ -400,12 +400,12 @@ export function BenchmarkTable({
                                 {formatPercent(item.organicSessions.deltaPercent)})
                               </span>
                             ) : (
-                              <span className="text-slate-500">Δ —</span>
+                              <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                             )}
                           </div>
                         </div>
                       ) : (
-                        <span className="text-slate-500">Δ —</span>
+                        <span className="text-slate-500 dark:text-slate-400">Δ —</span>
                       )}
                     </td>
 
@@ -420,13 +420,13 @@ export function BenchmarkTable({
                     </td>
 
                     {/* 11. Action (Sticky Right) */}
-                    <td className="sticky right-0 z-10 bg-white px-4 py-3 text-center group-hover:bg-slate-100">
+                    <td className="sticky right-0 z-10 bg-white dark:bg-slate-900 px-4 py-3 text-center group-hover:bg-slate-100 dark:group-hover:bg-slate-700">
                       {item.action.type === "SEND_TO_AUTO_SEO" ? (
                         <button
                           type="button"
                           onClick={() => onSendToAutoSeo?.(item)}
                           disabled={!item.action.enabled || loading}
-                          className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-40"
+                          className="rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 transition hover:bg-blue-50 dark:hover:bg-blue-950/80 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo draft yêu cầu Auto-SEO qua checkpoint"}
                         >
                           Send to Auto-SEO
@@ -436,7 +436,7 @@ export function BenchmarkTable({
                           type="button"
                           onClick={() => (onAutoSeo ? onAutoSeo(item) : onSelectProduct(item))}
                           disabled={!item.action.enabled || loading}
-                          className="rounded-lg border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-40"
+                          className="rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 transition hover:bg-blue-50 dark:hover:bg-blue-950/80 disabled:opacity-40"
                           title={item.action.disabledReason ?? "Tạo Auto-SEO cho sản phẩm baseline v0"}
                         >
                           {item.action.label}
@@ -446,7 +446,7 @@ export function BenchmarkTable({
                           type="button"
                           onClick={() => onSelectProduct(item)}
                           disabled={loading}
-                          className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-40"
+                          className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 transition hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-40"
                         >
                           {item.action.label}
                         </button>

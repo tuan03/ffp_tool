@@ -71,42 +71,42 @@ export function getStatusBadge(
   if (technicalFlags.length > 0) {
     return {
       label: "Cần kiểm tra kỹ thuật",
-      className: "bg-blue-50 text-blue-700 border-blue-200",
+      className: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800",
       description: `Lỗi kỹ thuật hoặc trạng thái index: ${technicalFlags.join(", ")}`,
     };
   }
   if (measurementStatus === "CONTENT_CHANGED") {
     return {
       label: "External Changes",
-      className: "bg-amber-50 text-amber-700 border-amber-200",
+      className: "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
       description: "Nội dung storefront thực tế đã bị chỉnh sửa ngoài snapshot của phiên bản FFP",
     };
   }
   if (measurementStatus === "BASELINE") {
     return {
       label: "Baseline · v0",
-      className: "bg-slate-50 text-slate-700 border-slate-300",
+      className: "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700",
       description: "Phiên bản gốc ban đầu (v0). Chưa có phiên bản SEO trước để so sánh hiệu quả.",
     };
   }
   if (measurementStatus === "WAITING_FOR_CRAWL") {
     return {
       label: "Chờ Google crawl",
-      className: "bg-blue-50 text-blue-700 border-blue-200",
+      className: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800",
       description: "Phiên bản mới đã xuất bản nhưng Google URL Inspection chưa quan sát được lần crawl sau ngày public.",
     };
   }
   if (measurementStatus === "COLLECTING") {
     return {
       label: "Đang thu thập",
-      className: "bg-blue-50 text-blue-700 border-blue-200",
+      className: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800",
       description: "Chưa đủ số ngày hoàn tất trong cửa sổ quan sát After (settling + window days).",
     };
   }
   if (measurementStatus === "INSUFFICIENT_DATA") {
     return {
       label: "Thiếu dữ liệu",
-      className: "bg-slate-50 text-slate-600 border-slate-300",
+      className: "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700",
       description: "Lượng hiển thị hoặc lượt nhấp chưa đạt ngưỡng tín hiệu tối thiểu theo cấu hình.",
     };
   }
@@ -114,31 +114,31 @@ export function getStatusBadge(
     case "IMPROVING":
       return {
         label: "Đang cải thiện",
-        className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        className: "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800",
         description: "Lượt nhấp tìm kiếm Google tăng ít nhất 20% và tối thiểu 10 lượt nhấp tuyệt đối.",
       };
     case "DECLINING":
       return {
         label: "Suy giảm",
-        className: "bg-rose-50 text-rose-700 border-rose-200",
+        className: "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800",
         description: "Lượt nhấp tìm kiếm Google giảm ít nhất 20% và tối thiểu 10 lượt nhấp tuyệt đối.",
       };
     case "MIXED":
       return {
         label: "Tín hiệu trái chiều",
-        className: "bg-amber-50 text-amber-700 border-amber-200",
+        className: "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
         description: "Có tín hiệu khác chiều (ví dụ: impressions tăng mạnh nhưng CTR hoặc position matched queries giảm).",
       };
     case "STABLE":
       return {
         label: "Ổn định",
-        className: "bg-slate-50 text-slate-700 border-slate-300",
+        className: "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700",
         description: "Hiệu suất dao động trong biên độ bình thường, chưa vượt ngưỡng biến động.",
       };
     default:
       return {
         label: "Chưa đánh giá",
-        className: "bg-white text-slate-600 border-slate-200",
+        className: "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700",
         description: "Chưa có đủ điều kiện để đánh giá hiệu quả.",
       };
   }

@@ -97,29 +97,29 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
   return (
     <div className="space-y-4">
       {/* Controls Bar: Search, Status Filter, Counter */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Search box */}
           <div className="relative">
-            <span className="absolute left-2.5 top-2 text-slate-500 text-xs"><AppIcon name="search" /></span>
+            <span className="absolute left-2.5 top-2 text-slate-500 dark:text-slate-400 text-xs"><AppIcon name="search" /></span>
             <input
               type="text"
               placeholder="Tìm theo tên hoặc ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="rounded-lg border border-slate-300 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 w-56"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-8 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800 w-56"
             />
           </div>
 
           {/* Status Toggle */}
-          <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+          <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5 text-xs">
             <button
               type="button"
               onClick={() => setStatusFilter("ALL")}
               className={`px-2.5 py-1 rounded-md transition font-medium cursor-pointer ${
                 statusFilter === "ALL"
-                  ? "bg-slate-50 text-blue-700 font-semibold"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300 font-semibold"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
               }`}
             >
               Tất cả ({campaigns.length})
@@ -129,8 +129,8 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
               onClick={() => setStatusFilter("ACTIVE")}
               className={`px-2.5 py-1 rounded-md transition font-medium cursor-pointer ${
                 statusFilter === "ACTIVE"
-                  ? "bg-slate-50 text-emerald-700 font-semibold"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-slate-50 dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
               }`}
             >
               Chỉ Đang chạy
@@ -138,20 +138,20 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
           </div>
         </div>
 
-        <div className="text-xs text-slate-600">
+        <div className="text-xs text-slate-600 dark:text-slate-400">
           Hiển thị <strong>{Math.min(visibleCampaigns.length, processedCampaigns.length)}</strong> trên <strong>{processedCampaigns.length}</strong> chiến dịch Meta
         </div>
       </div>
 
       {/* Main Hierarchy Table */}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shadow-sm">
         <table className="w-full text-left text-xs">
-          <thead className="bg-white text-slate-600 uppercase text-xs font-mono border-b border-slate-200 select-none">
+          <thead className="bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 uppercase text-xs font-mono border-b border-slate-200 dark:border-slate-700 select-none">
             <tr>
               <th className="py-3 px-4 min-w-[240px]">Chiến dịch / Nhóm QC / Quảng cáo</th>
               <th
                 onClick={() => handleSort("createdTime")}
-                className="py-3 px-3 cursor-pointer hover:text-blue-700 transition"
+                className="py-3 px-3 cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition"
               >
                 Ngày tạo {sortField === "createdTime" && (sortDirection === "desc" ? "↓" : "↑")}
               </th>
@@ -159,34 +159,34 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
               <th className="py-3 px-3">Ngân sách</th>
               <th
                 onClick={() => handleSort("spend")}
-                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 transition"
+                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition"
               >
                 Chi tiêu {sortField === "spend" && (sortDirection === "desc" ? "↓" : "↑")}
               </th>
               <th
                 onClick={() => handleSort("purchases")}
-                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 transition"
+                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition"
               >
                 Purchases {sortField === "purchases" && (sortDirection === "desc" ? "↓" : "↑")}
               </th>
               <th
                 onClick={() => handleSort("cpa")}
-                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 transition"
+                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition"
               >
                 CPA {sortField === "cpa" && (sortDirection === "desc" ? "↓" : "↑")}
               </th>
               <th
                 onClick={() => handleSort("roas")}
-                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 transition"
+                className="py-3 px-3 text-right cursor-pointer hover:text-blue-700 dark:hover:text-blue-300 transition"
               >
                 ROAS {sortField === "roas" && (sortDirection === "desc" ? "↓" : "↑")}
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200 font-mono text-xs">
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-700 font-mono text-xs">
             {visibleCampaigns.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
+                <td colSpan={8} className="py-8 text-center text-slate-500 dark:text-slate-400 font-sans">
                   Không tìm thấy chiến dịch nào phù hợp với bộ lọc.
                 </td>
               </tr>
@@ -196,39 +196,39 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
                 return (
                   <React.Fragment key={camp.id}>
                     {/* Campaign Level Row */}
-                    <tr className="bg-slate-50 hover:bg-slate-100 transition">
+                    <tr className="bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
                       <td className="py-3 px-4 flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => toggleCampaign(camp.id)}
-                          className="text-slate-600 hover:text-slate-900 p-0.5 rounded cursor-pointer"
+                          className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 p-0.5 rounded cursor-pointer"
                         >
                           {isExpanded ? "▼" : "▶"}
                         </button>
-                        <span className="font-sans font-bold text-slate-900 flex items-center gap-1.5">
+                        <span className="font-sans font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                           <span><AppIcon name="folder" /></span>
                           <span>{camp.name}</span>
                         </span>
                       </td>
-                      <td className="py-3 px-3 text-slate-600 font-mono text-xs">
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-400 font-mono text-xs">
                         {formatDate(camp.createdTime)}
                       </td>
                       <td className="py-3 px-3">
                         <span
                           className={`text-xs px-2 py-0.5 rounded font-bold ${
                             camp.status === "ACTIVE"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : "bg-slate-50 text-slate-600"
+                              ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                              : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
                           }`}
                         >
                           {camp.status}
                         </span>
                       </td>
-                      <td className="py-3 px-3 text-slate-700">${camp.dailyBudget || "—"}/ngày</td>
-                      <td className="py-3 px-3 text-right font-bold text-slate-900">${camp.spend}</td>
-                      <td className="py-3 px-3 text-right font-bold text-emerald-700">{camp.purchases}</td>
-                      <td className="py-3 px-3 text-right text-blue-700">${camp.cpa || "—"}</td>
-                      <td className="py-3 px-3 text-right text-blue-700 font-bold">{camp.roas || "—"}×</td>
+                      <td className="py-3 px-3 text-slate-700 dark:text-slate-300">${camp.dailyBudget || "—"}/ngày</td>
+                      <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-slate-100">${camp.spend}</td>
+                      <td className="py-3 px-3 text-right font-bold text-emerald-700 dark:text-emerald-300">{camp.purchases}</td>
+                      <td className="py-3 px-3 text-right text-blue-700 dark:text-blue-300">${camp.cpa || "—"}</td>
+                      <td className="py-3 px-3 text-right text-blue-700 dark:text-blue-300 font-bold">{camp.roas || "—"}×</td>
                     </tr>
 
                     {/* Ad Sets & Ads */}
@@ -262,47 +262,47 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
                           return (
                             <React.Fragment key={adset.id}>
                               {/* AdSet Row */}
-                              <tr className="bg-slate-50 text-slate-700 hover:bg-slate-100 transition">
+                              <tr className="bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
                                 <td className="py-2.5 px-4 pl-9 flex items-center gap-2">
-                                  <span className="text-blue-700 text-xs"><AppIcon name="folder" /></span>
-                                  <span className="font-sans font-semibold text-slate-900">{adset.name}</span>
+                                  <span className="text-blue-700 dark:text-blue-300 text-xs"><AppIcon name="folder" /></span>
+                                  <span className="font-sans font-semibold text-slate-900 dark:text-slate-100">{adset.name}</span>
                                 </td>
-                                <td className="py-2.5 px-3 text-slate-500 font-mono text-xs">
+                                <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400 font-mono text-xs">
                                   {formatDate(adset.createdTime)}
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  <span className="text-xs text-slate-600">{adset.effectiveStatus}</span>
+                                  <span className="text-xs text-slate-600 dark:text-slate-400">{adset.effectiveStatus}</span>
                                 </td>
-                                <td className="py-2.5 px-3 text-slate-500">
+                                <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400">
                                   {adset.dailyBudget ? `$${adset.dailyBudget}/ngày` : "Thừa hưởng"}
                                 </td>
-                                <td className="py-2.5 px-3 text-right text-slate-900">${adset.spend}</td>
-                                <td className="py-2.5 px-3 text-right text-emerald-700">{adset.purchases}</td>
-                                <td className="py-2.5 px-3 text-right text-blue-700">${adset.cpa || "—"}</td>
-                                <td className="py-2.5 px-3 text-right text-blue-700">{adset.roas || "—"}×</td>
+                                <td className="py-2.5 px-3 text-right text-slate-900 dark:text-slate-100">${adset.spend}</td>
+                                <td className="py-2.5 px-3 text-right text-emerald-700 dark:text-emerald-300">{adset.purchases}</td>
+                                <td className="py-2.5 px-3 text-right text-blue-700 dark:text-blue-300">${adset.cpa || "—"}</td>
+                                <td className="py-2.5 px-3 text-right text-blue-700 dark:text-blue-300">{adset.roas || "—"}×</td>
                               </tr>
 
                               {/* Ads under AdSet */}
                               {sortedAds.map((ad) => (
                                 <tr
                                   key={ad.id}
-                                  className="bg-slate-50 text-slate-600 hover:bg-slate-50 transition text-xs"
+                                  className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 transition text-xs"
                                 >
                                   <td className="py-2 px-4 pl-14 flex items-center gap-2">
-                                    <span className="text-slate-500">↳</span>
-                                    <span className="text-slate-700">{ad.name}</span>
+                                    <span className="text-slate-500 dark:text-slate-400">↳</span>
+                                    <span className="text-slate-700 dark:text-slate-300">{ad.name}</span>
                                   </td>
-                                  <td className="py-2 px-3 text-slate-500 font-mono text-xs">
+                                  <td className="py-2 px-3 text-slate-500 dark:text-slate-400 font-mono text-xs">
                                     {formatDate(ad.createdTime)}
                                   </td>
                                   <td className="py-2 px-3">
-                                    <span className="text-xs text-slate-500">{ad.effectiveStatus}</span>
+                                    <span className="text-xs text-slate-500 dark:text-slate-400">{ad.effectiveStatus}</span>
                                   </td>
-                                  <td className="py-2 px-3 text-slate-500">—</td>
-                                  <td className="py-2 px-3 text-right text-slate-700">${ad.spend}</td>
-                                  <td className="py-2 px-3 text-right text-emerald-700">{ad.purchases}</td>
-                                  <td className="py-2 px-3 text-right text-blue-700">${ad.cpa || "—"}</td>
-                                  <td className="py-2 px-3 text-right text-blue-700">{ad.roas || "—"}×</td>
+                                  <td className="py-2 px-3 text-slate-500 dark:text-slate-400">—</td>
+                                  <td className="py-2 px-3 text-right text-slate-700 dark:text-slate-300">${ad.spend}</td>
+                                  <td className="py-2 px-3 text-right text-emerald-700 dark:text-emerald-300">{ad.purchases}</td>
+                                  <td className="py-2 px-3 text-right text-blue-700 dark:text-blue-300">${ad.cpa || "—"}</td>
+                                  <td className="py-2 px-3 text-right text-blue-700 dark:text-blue-300">{ad.roas || "—"}×</td>
                                 </tr>
                               ))}
                             </React.Fragment>
@@ -323,17 +323,17 @@ export function HierarchyTab({ campaigns }: HierarchyTabProps): React.JSX.Elemen
           <button
             type="button"
             onClick={() => setDisplayLimit((prev) => prev + 15)}
-            className="px-5 py-2 rounded-lg bg-white border border-slate-200 hover:border-slate-300 text-xs font-semibold text-slate-700 hover:text-slate-900 transition cursor-pointer flex items-center gap-2 active:scale-95 shadow-sm"
+            className="px-5 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer flex items-center gap-2 active:scale-95 shadow-sm"
           >
             <span>Hiển thị thêm 15 chiến dịch</span>
-            <span className="text-xs px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 font-mono">
+            <span className="text-xs px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
               Còn {processedCampaigns.length - displayLimit}
             </span>
           </button>
           <button
             type="button"
             onClick={() => setDisplayLimit(processedCampaigns.length)}
-            className="px-4 py-2 rounded-lg bg-slate-50 border border-slate-200 hover:border-slate-300 text-xs text-slate-600 hover:text-slate-900 transition cursor-pointer active:scale-95"
+            className="px-4 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-700 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer active:scale-95"
           >
             Hiển thị tất cả
           </button>

@@ -136,26 +136,26 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
 
   return (
     <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Kết nối MCP & quản lý truy cập" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/30 backdrop-blur-sm">
-      <div className="w-full max-w-4xl rounded-lg border border-blue-200 bg-white p-5 sm:p-6 shadow-sm space-y-4 animate-in zoom-in-95 duration-200 max-h-[92vh] flex flex-col">
+      <div className="w-full max-w-4xl rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm space-y-4 animate-in zoom-in-95 duration-200 max-h-[92vh] flex flex-col">
         
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-200 pb-4 shrink-0">
+        <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-700 pb-4 shrink-0">
           <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-50 text-2xl shadow-sm ">
+            <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/60 text-2xl shadow-sm ">
               <AppIcon name="code" />
             </span>
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 FFP Ads Intelligence MCP — Multi-User & 1-Click Setup
               </h3>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 Phân quyền theo từng nhân sự (RBAC), theo dõi Tool Call Audit Trail và cài đặt 1 chạm cho Antigravity CLI / Codex / Claude Desktop
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-600 hover:text-slate-900 p-1 rounded-lg text-lg cursor-pointer transition"
+            className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 p-1 rounded-lg text-lg cursor-pointer transition"
             aria-label="Đóng"
           >
             ✕
@@ -163,14 +163,14 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs font-semibold shrink-0">
+        <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 pb-2 text-xs font-semibold shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab("install")}
             className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-2 ${
               activeTab === "install"
                 ? "bg-blue-600 text-white shadow-md "
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700"
             }`}
           >
             <AppIcon name="seo" /> Cài đặt 1-Click Client
@@ -181,7 +181,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
             className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-2 ${
               activeTab === "users"
                 ? "bg-blue-600 text-white shadow-md "
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700"
             }`}
           >
             👥 Quản lý Nhân sự & Cấp Token ({users.length})
@@ -192,7 +192,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
             className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-2 ${
               activeTab === "audit"
                 ? "bg-blue-600 text-white shadow-md "
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700"
             }`}
           >
             📜 Nhật ký Audit Trail
@@ -206,16 +206,16 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
           {activeTab === "install" && (
             <div className="space-y-4">
               {/* Select User Token */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5 space-y-2">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <label className="text-slate-700 font-semibold flex items-center gap-1.5">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold flex items-center gap-1.5">
                     <span>👤</span> Chọn Token Nhân sự để sinh lệnh cài đặt:
                   </label>
                   {users.length > 0 ? (
                     <select
                       value={selectedUserToken}
                       onChange={(e) => setSelectedUserToken(e.target.value)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-blue-700 font-mono focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                      className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 font-mono focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                     >
                       {users.map((u) => (
                         <option key={u.id} value={u.token}>
@@ -224,7 +224,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                       ))}
                     </select>
                   ) : (
-                    <span className="text-amber-700 text-xs">
+                    <span className="text-amber-700 dark:text-amber-300 text-xs">
                       Chưa có token cá nhân nào. Hãy chuyển sang tab "Quản lý Nhân sự" để tạo token.
                     </span>
                   )}
@@ -232,19 +232,19 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
               </div>
 
               {/* 1-Click Multi-OS Command Box */}
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-4 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="inline-block w-2 h-2 rounded-full bg-emerald-700 animate-pulse"></span>
-                    <span className="text-emerald-700 font-bold text-xs">Lệnh cài đặt 1 chạm:</span>
-                    <div className="inline-flex rounded-lg bg-white border border-slate-300 p-0.5 text-xs font-semibold">
+                    <span className="text-emerald-700 dark:text-emerald-300 font-bold text-xs">Lệnh cài đặt 1 chạm:</span>
+                    <div className="inline-flex rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-0.5 text-xs font-semibold">
                       <button
                         type="button"
                         onClick={() => setInstallerOs("windows")}
                         className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
                           installerOs === "windows"
                             ? "bg-blue-600 text-white shadow"
-                            : "text-slate-600 hover:text-slate-900"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                       >
                         <span>🪟</span> Windows (PowerShell)
@@ -255,7 +255,7 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                         className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
                           installerOs === "unix"
                             ? "bg-blue-600 text-white shadow"
-                            : "text-slate-600 hover:text-slate-900"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                       >
                         <span>🍎 / 🐧</span> macOS &amp; Linux (Bash)
@@ -270,10 +270,10 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
                     {copiedText === "install" ? "✓ Đã sao chép!" : "📋 Sao chép Lệnh"}
                   </button>
                 </div>
-                <div className="rounded-lg bg-black/80 border border-slate-200 p-3 font-mono text-xs text-white break-all select-all">
+                <div className="rounded-lg bg-black/80 border border-slate-200 dark:border-slate-700 p-3 font-mono text-xs text-white break-all select-all">
                   {installCommand}
                 </div>
-                <p className="text-xs text-slate-600 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                   {installerOs === "windows" ? (
                     <><AppIcon name="info" /> <b>Cách dùng:</b> Mở <b>PowerShell</b> trên máy tính Windows và dán lệnh trên rồi Enter. Script sẽ tự động nhận diện và cấu hình cho <b>Antigravity CLI (agy)</b>, <b>Codex (~/.codex/config.toml)</b> và <b>Claude Desktop</b>.</>
                   ) : (
@@ -284,41 +284,41 @@ export function McpModal({ onClose, client, stores = [] }: McpModalProps): React
 
               {/* Manual Configuration for Antigravity & Codex */}
               <div className="space-y-3">
-                <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-xs">
+                <h4 className="font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider text-xs">
                   Cấu hình thủ công (Tùy chọn)
                 </h4>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Antigravity CLI */}
-                  <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-                    <div className="flex items-center justify-between font-bold text-slate-900">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-2">
+                    <div className="flex items-center justify-between font-bold text-slate-900 dark:text-slate-100">
                       <span><AppIcon name="seo" /> Google Antigravity CLI</span>
                       <button
                         type="button"
                         onClick={() => handleCopy(agyManualCommand, "agy")}
-                        className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
+                        className="text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 text-xs cursor-pointer"
                       >
                         {copiedText === "agy" ? "✓ Đã copy" : "Copy"}
                       </button>
                     </div>
-                    <pre className="p-2 rounded bg-black/60 border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap break-all">
+                    <pre className="p-2 rounded bg-black/60 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-700 dark:text-slate-300 overflow-x-auto whitespace-pre-wrap break-all">
                       {agyManualCommand}
                     </pre>
                   </div>
 
                   {/* Codex config.toml */}
-                  <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-                    <div className="flex items-center justify-between font-bold text-slate-900">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-2">
+                    <div className="flex items-center justify-between font-bold text-slate-900 dark:text-slate-100">
                       <span>💻 Codex (~/.codex/config.toml)</span>
                       <button
                         type="button"
                         onClick={() => handleCopy(`[mcp_servers.ads_intelligence]\nurl = "${baseUrl}/mcp/ads"\nhttp_headers = { "Authorization" = "Bearer ${currentToken}" }`, "codex")}
-                        className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
+                        className="text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 text-xs cursor-pointer"
                       >
                         {copiedText === "codex" ? "✓ Đã copy" : "Copy"}
                       </button>
                     </div>
-                    <pre className="p-2 rounded bg-black/60 border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap break-all">
+                    <pre className="p-2 rounded bg-black/60 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-700 dark:text-slate-300 overflow-x-auto whitespace-pre-wrap break-all">
 {`[mcp_servers.ads_intelligence]
 url = "${baseUrl}/mcp/ads"
 http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
@@ -328,18 +328,18 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
               </div>
 
               {/* Endpoint Specs */}
-              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5 font-mono text-xs">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-1.5 font-mono text-xs">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">MCP Stream Endpoint:</span>
-                  <span className="text-blue-700 font-bold">{baseUrl}/mcp/ads</span>
+                  <span className="text-slate-500 dark:text-slate-400">MCP Stream Endpoint:</span>
+                  <span className="text-blue-700 dark:text-blue-300 font-bold">{baseUrl}/mcp/ads</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Protocol Spec:</span>
-                  <span className="text-blue-700">2024-11-05 (Streamable HTTP JSON-RPC 2.0)</span>
+                  <span className="text-slate-500 dark:text-slate-400">Protocol Spec:</span>
+                  <span className="text-blue-700 dark:text-blue-300">2024-11-05 (Streamable HTTP JSON-RPC 2.0)</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Total Tools Available:</span>
-                  <span className="text-emerald-700 font-bold">37 Tools (Read, Research, Guarded Writes, Briefs, Experiments)</span>
+                  <span className="text-slate-500 dark:text-slate-400">Total Tools Available:</span>
+                  <span className="text-emerald-700 dark:text-emerald-300 font-bold">37 Tools (Read, Research, Guarded Writes, Briefs, Experiments)</span>
                 </div>
               </div>
             </div>
@@ -349,29 +349,29 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
           {activeTab === "users" && (
             <div className="space-y-4">
               {/* Add New User Token Form */}
-              <div className="rounded-lg border border-blue-200 bg-slate-50 p-4 space-y-3">
-                <h4 className="font-bold text-slate-900 flex items-center gap-2">
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-slate-800 p-4 space-y-3">
+                <h4 className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                   <span>➕</span> Cấp Token MCP Mới Cho Nhân Viên
                 </h4>
                 <form onSubmit={handleCreateUser} className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-slate-600 text-xs font-medium">Tên nhân viên / Thiết bị:</label>
+                      <label className="text-slate-600 dark:text-slate-400 text-xs font-medium">Tên nhân viên / Thiết bị:</label>
                       <input
                         type="text"
                         placeholder="Ví dụ: Hiep Laptop, Y PC, Loi Macbook"
                         value={newUserName}
                         onChange={(e) => setNewUserName(e.target.value)}
                         required
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                        className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-600 text-xs font-medium">Vai trò (Role):</label>
+                      <label className="text-slate-600 dark:text-slate-400 text-xs font-medium">Vai trò (Role):</label>
                       <select
                         value={newUserRole}
                         onChange={(e) => setNewUserRole(e.target.value as any)}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                        className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                       >
                         <option value="media_buyer">Media Buyer (Đọc KPI, Sinh Brief, Quản lý Thử nghiệm)</option>
                         <option value="viewer">Viewer (Chỉ đọc số liệu, không sinh brief/thử nghiệm)</option>
@@ -382,41 +382,41 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
 
                   {/* Store RBAC Selection */}
                   <div className="space-y-2 pt-1">
-                    <label className="text-slate-600 text-xs font-medium block">
+                    <label className="text-slate-600 dark:text-slate-400 text-xs font-medium block">
                       Phân quyền Store (Store-level RBAC):
                     </label>
                     <div className="flex items-center gap-4">
-                      <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
+                      <label className="flex items-center gap-2 text-slate-700 dark:text-slate-300 cursor-pointer">
                         <input
                           type="radio"
                           name="storeAccess"
                           checked={allStoresAllowed}
                           onChange={() => setAllStoresAllowed(true)}
-                          className="text-blue-600 focus:ring-blue-300"
+                          className="text-blue-600 dark:text-blue-400 focus:ring-blue-300 dark:focus:ring-blue-400"
                         />
                         <span>Tất cả các Stores (*)</span>
                       </label>
-                      <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
+                      <label className="flex items-center gap-2 text-slate-700 dark:text-slate-300 cursor-pointer">
                         <input
                           type="radio"
                           name="storeAccess"
                           checked={!allStoresAllowed}
                           onChange={() => setAllStoresAllowed(false)}
-                          className="text-blue-600 focus:ring-blue-300"
+                          className="text-blue-600 dark:text-blue-400 focus:ring-blue-300 dark:focus:ring-blue-400"
                         />
                         <span>Chỉ các Store được chọn</span>
                       </label>
                     </div>
 
                     {!allStoresAllowed && (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-2.5 rounded-lg bg-white border border-slate-200">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
                         {stores.map((s) => {
                           const checked = selectedStores.includes(s.storeId);
                           return (
                             <label
                               key={s.storeId}
                               className={`flex items-center gap-2 p-1.5 rounded cursor-pointer transition ${
-                                checked ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:text-slate-900"
+                                checked ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                               }`}
                             >
                               <input
@@ -429,7 +429,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                     setSelectedStores(selectedStores.filter((id) => id !== s.storeId));
                                   }
                                 }}
-                                className="rounded text-blue-600 focus:ring-blue-300"
+                                className="rounded text-blue-600 dark:text-blue-400 focus:ring-blue-300 dark:focus:ring-blue-400"
                               />
                               <span className="font-mono text-xs">{s.storeId}</span>
                             </label>
@@ -440,7 +440,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                   </div>
 
                   {createError && (
-                    <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                    <div className="p-2 rounded bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs">
                       {createError}
                     </div>
                   )}
@@ -458,20 +458,20 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
 
                 {/* Show Newly Created Token Callout */}
                 {createdUserSuccess && (
-                  <div className="mt-3 p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 space-y-2 animate-in fade-in">
+                  <div className="mt-3 p-3.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 space-y-2 animate-in fade-in">
                     <div className="flex items-center justify-between">
-                      <span className="text-emerald-700 font-bold text-xs flex items-center gap-1.5">
+                      <span className="text-emerald-700 dark:text-emerald-300 font-bold text-xs flex items-center gap-1.5">
                         <span>🎉</span> Đã tạo thành công Token cho {createdUserSuccess.name}!
                       </span>
                       <button
                         type="button"
                         onClick={() => handleCopy(createdUserSuccess.token, "new-token")}
-                        className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-700 text-white text-xs font-semibold transition cursor-pointer"
+                        className="px-2.5 py-1 rounded bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-700 text-white text-xs font-semibold transition cursor-pointer"
                       >
                         {copiedText === "new-token" ? "✓ Đã copy token" : "Copy Token"}
                       </button>
                     </div>
-                    <div className="font-mono text-xs text-emerald-700 bg-black/60 p-2 rounded border border-emerald-200 break-all select-all">
+                    <div className="font-mono text-xs text-emerald-700 dark:text-emerald-300 bg-black/60 p-2 rounded border border-emerald-200 dark:border-emerald-800 break-all select-all">
                       {createdUserSuccess.token}
                     </div>
                   </div>
@@ -481,23 +481,23 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
               {/* Existing Users Table */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-xs">
+                  <h4 className="font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider text-xs">
                     Danh sách Nhân sự đã cấp quyền ({users.length})
                   </h4>
                   <button
                     type="button"
                     onClick={fetchUsers}
                     disabled={loadingUsers}
-                    className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
+                    className="text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 text-xs cursor-pointer"
                   >
                     {loadingUsers ? "Đang tải..." : "🔄 Làm mới"}
                   </button>
                 </div>
 
-                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs uppercase font-semibold">
+                      <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs uppercase font-semibold">
                         <th className="p-2.5">Nhân viên</th>
                         <th className="p-2.5">Token</th>
                         <th className="p-2.5">Store được phép</th>
@@ -506,10 +506,10 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                         <th className="p-2.5 text-right">Thao tác</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 text-xs">
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700 text-xs">
                       {users.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-4 text-center text-slate-500">
+                          <td colSpan={6} className="p-4 text-center text-slate-500 dark:text-slate-400">
                             Chưa có nhân viên nào được cấp token cá nhân.
                           </td>
                         </tr>
@@ -517,18 +517,18 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                         users.map((u) => {
                           const isRevoked = u.status === "REVOKED";
                           return (
-                            <tr key={u.id} className="hover:bg-slate-50 transition">
-                              <td className="p-2.5 font-medium text-slate-900">
+                            <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                              <td className="p-2.5 font-medium text-slate-900 dark:text-slate-100">
                                 <div>{u.name}</div>
-                                <div className="text-xs text-slate-500 font-mono">{u.role}</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">{u.role}</div>
                               </td>
-                              <td className="p-2.5 font-mono text-xs text-slate-700">
+                              <td className="p-2.5 font-mono text-xs text-slate-700 dark:text-slate-300">
                                 <div className="flex items-center gap-1.5">
                                   <span>{u.token.slice(0, 16)}...{u.token.slice(-4)}</span>
                                   <button
                                     type="button"
                                     onClick={() => handleCopy(u.token, u.id)}
-                                    className="text-blue-700 hover:text-blue-700 text-xs cursor-pointer"
+                                    className="text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 text-xs cursor-pointer"
                                   >
                                     {copiedText === u.id ? "✓" : "📋"}
                                   </button>
@@ -539,22 +539,22 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                   {u.allowedStores.map((s) => (
                                     <span
                                       key={s}
-                                      className="px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs font-mono"
+                                      className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-mono"
                                     >
                                       {s === "*" ? "Tất cả (*)" : s}
                                     </span>
                                   ))}
                                 </div>
                               </td>
-                              <td className="p-2.5 text-slate-600 text-xs">
+                              <td className="p-2.5 text-slate-600 dark:text-slate-400 text-xs">
                                 {u.lastUsedAt ? new Date(u.lastUsedAt).toLocaleString("vi-VN") : "Chưa gọi"}
                               </td>
                               <td className="p-2.5">
                                 <span
                                   className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                                     isRevoked
-                                      ? "bg-rose-50 text-rose-700 border border-rose-200"
-                                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                      ? "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800"
+                                      : "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
                                   }`}
                                 >
                                   {isRevoked ? "ĐÃ THU HỒI" : "HOẠT ĐỘNG"}
@@ -566,8 +566,8 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                   onClick={() => handleToggleRevoke(u.id)}
                                   className={`px-2 py-1 rounded text-xs font-semibold cursor-pointer transition ${
                                     isRevoked
-                                      ? "bg-emerald-50 hover:bg-emerald-50 text-emerald-700"
-                                      : "bg-amber-50 hover:bg-amber-50 text-amber-700"
+                                      ? "bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300"
+                                      : "bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-50 dark:hover:bg-amber-950/80 text-amber-700 dark:text-amber-300"
                                   }`}
                                 >
                                   {isRevoked ? "Khôi phục" : "Thu hồi"}
@@ -575,7 +575,7 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteUser(u.id)}
-                                  className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-50 text-rose-700 text-xs font-semibold cursor-pointer transition"
+                                  className="px-2 py-1 rounded bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-50 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-semibold cursor-pointer transition"
                                 >
                                   Xóa
                                 </button>
@@ -596,10 +596,10 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-semibold text-blue-700 uppercase tracking-wider text-xs">
+                  <h4 className="font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider text-xs">
                     Lịch sử Gọi Công cụ MCP (Real-time Tool Execution Audit)
                   </h4>
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
                     Ghi nhận minh bạch ai đã gọi công cụ gì, trên store nào và kết quả ra sao.
                   </p>
                 </div>
@@ -607,16 +607,16 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                   type="button"
                   onClick={fetchAudit}
                   disabled={loadingAudit}
-                  className="px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-blue-700 text-xs font-semibold cursor-pointer transition flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 text-xs font-semibold cursor-pointer transition flex items-center gap-1.5"
                 >
                   {loadingAudit ? "Đang tải..." : "🔄 Làm mới"}
                 </button>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs uppercase font-semibold">
+                    <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs uppercase font-semibold">
                       <th className="p-2.5">Thời gian</th>
                       <th className="p-2.5">Nhân viên</th>
                       <th className="p-2.5">Công cụ (Tool Name)</th>
@@ -624,37 +624,37 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
                       <th className="p-2.5">Kết quả</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200 text-xs">
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700 text-xs">
                     {auditLogs.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="p-4 text-center text-slate-500">
+                        <td colSpan={5} className="p-4 text-center text-slate-500 dark:text-slate-400">
                           Chưa có lượt gọi tool nào được ghi nhận.
                         </td>
                       </tr>
                     ) : (
                       auditLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-slate-50 transition">
-                          <td className="p-2.5 text-slate-600 text-xs font-mono">
+                        <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                          <td className="p-2.5 text-slate-600 dark:text-slate-400 text-xs font-mono">
                             {new Date(log.timestamp).toLocaleString("vi-VN")}
                           </td>
-                          <td className="p-2.5 font-medium text-slate-900">
+                          <td className="p-2.5 font-medium text-slate-900 dark:text-slate-100">
                             {log.userName}
                           </td>
-                          <td className="p-2.5 font-mono text-xs text-blue-700 font-semibold">
+                          <td className="p-2.5 font-mono text-xs text-blue-700 dark:text-blue-300 font-semibold">
                             {log.toolName}
                           </td>
-                          <td className="p-2.5 font-mono text-xs text-blue-700">
+                          <td className="p-2.5 font-mono text-xs text-blue-700 dark:text-blue-300">
                             {log.storeId || "—"}
                           </td>
                           <td className="p-2.5">
                             {log.success ? (
-                              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                                 THÀNH CÔNG
                               </span>
                             ) : (
                               <span
                                 title={log.error}
-                                className="px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 cursor-help"
+                                className="px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 cursor-help"
                               >
                                 TỪ CHỐI / LỖI
                               </span>
@@ -672,14 +672,14 @@ http_headers = { "Authorization" = "Bearer ${currentToken}" }`}
         </div>
 
         {/* Footer */}
-        <div className="border-t border-slate-200 pt-3 flex justify-between items-center shrink-0">
-          <div className="text-xs text-slate-500 font-mono">
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 flex justify-between items-center shrink-0">
+          <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
             FFP Ads Intelligence v1.0.0 • Safe MCP Architecture
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-900 font-semibold text-xs transition cursor-pointer"
+            className="px-4 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 font-semibold text-xs transition cursor-pointer"
           >
             Đóng
           </button>

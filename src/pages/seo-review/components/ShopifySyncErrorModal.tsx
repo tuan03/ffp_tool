@@ -58,23 +58,23 @@ export function ShopifySyncErrorModal({
     : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-50 dark:bg-slate-800 backdrop-blur-sm animate-fadeIn">
       {/* Modal Dialog Card */}
       <div
-        className="w-full max-w-2xl rounded-lg border border-rose-300 bg-white shadow-sm overflow-hidden flex flex-col max-h-[90vh] animate-scaleUp"
+        className="w-full max-w-2xl rounded-lg border border-rose-300 dark:border-rose-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden flex flex-col max-h-[90vh] animate-scaleUp"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-4 bg-blue-50 border-b border-rose-200 flex items-center justify-between gap-3">
+        <div className="p-4 bg-blue-50 dark:bg-blue-950/60 border-b border-rose-200 dark:border-rose-800 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-700 font-bold text-base border border-rose-300">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-base border border-rose-300 dark:border-rose-800">
               <AppIcon name="warning" />
             </span>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                 Chi tiết lỗi đồng bộ Shopify Store
               </h3>
-              <p className="text-xs text-rose-700">
+              <p className="text-xs text-rose-700 dark:text-rose-300">
                 Sản phẩm không thể đẩy lên Store chính thành công
               </p>
             </div>
@@ -82,7 +82,7 @@ export function ShopifySyncErrorModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition"
+            className="rounded-lg p-1.5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700 transition"
             title="Đóng"
           >
             ✕
@@ -90,16 +90,16 @@ export function ShopifySyncErrorModal({
         </div>
 
         {/* Body */}
-        <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs text-slate-700">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs text-slate-700 dark:text-slate-300">
           {/* Product info summary */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-1.5">
-            <div className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
+          <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5 space-y-1.5">
+            <div className="text-xs text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">
               Sản phẩm bị lỗi
             </div>
-            <div className="font-semibold text-slate-900 text-sm leading-snug">
+            <div className="font-semibold text-slate-900 dark:text-slate-100 text-sm leading-snug">
               {product.productTitle.value}
             </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 font-mono pt-1">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-400 font-mono pt-1">
               <span>Handle: /{product.handle.value}</span>
               {product.asin && <span>• ASIN: {product.asin}</span>}
               {product.productId && <span>• Product ID: {product.productId}</span>}
@@ -110,30 +110,30 @@ export function ShopifySyncErrorModal({
           {/* Raw Error Message */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-rose-700">
+              <span className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
                 Nội dung lỗi chi tiết (Error Payload)
               </span>
               <button
                 type="button"
                 onClick={handleCopy}
-                className="px-2 py-1 rounded bg-slate-50 hover:bg-slate-100 text-slate-700 transition text-xs flex items-center gap-1 cursor-pointer"
+                className="px-2 py-1 rounded bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition text-xs flex items-center gap-1 cursor-pointer"
               >
                 <span>{copied ? "✓" : "📋"}</span>
                 <span>{copied ? "Đã sao chép" : "Copy nội dung lỗi"}</span>
               </button>
             </div>
-            <div className="rounded-lg border border-rose-200 bg-white p-3.5 font-mono text-xs text-rose-700 whitespace-pre-wrap leading-relaxed break-words select-all max-h-64 overflow-y-auto">
+            <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-white dark:bg-slate-900 p-3.5 font-mono text-xs text-rose-700 dark:text-rose-300 whitespace-pre-wrap leading-relaxed break-words select-all max-h-64 overflow-y-auto">
               {errorMessage}
             </div>
           </div>
 
           {/* Troubleshooting hints */}
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 space-y-1.5 text-amber-700">
-            <div className="font-semibold text-amber-700 flex items-center gap-1.5">
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3.5 space-y-1.5 text-amber-700 dark:text-amber-300">
+            <div className="font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
               <span><AppIcon name="info" /></span>
               <span>Gợi ý khắc phục:</span>
             </div>
-            <ul className="list-disc pl-4 space-y-1 text-xs text-amber-700 leading-relaxed">
+            <ul className="list-disc pl-4 space-y-1 text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
               <li>
                 Kiểm tra kết nối và quyền hạn của app/store trong tab Cài đặt Store (`write_products`, `write_files`, `write_metafields`).
               </li>
@@ -148,12 +148,12 @@ export function ShopifySyncErrorModal({
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
+        <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition cursor-pointer"
+              className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold transition cursor-pointer"
             >
               Đóng
             </button>
@@ -164,7 +164,7 @@ export function ShopifySyncErrorModal({
                   onDelete(product.id);
                   onClose();
                 }}
-                className="px-3.5 py-2 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-50 text-rose-700 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm "
+                className="px-3.5 py-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-50 dark:hover:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm "
                 title="Xóa sản phẩm này khỏi danh sách SEO Review"
               >
                 <span><AppIcon name="trash" /></span>

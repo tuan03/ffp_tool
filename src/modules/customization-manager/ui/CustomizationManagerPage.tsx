@@ -551,20 +551,20 @@ export function CustomizationManagerPage({
     "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&auto=format&fit=crop&q=80";
 
   return (
-    <div className="min-w-0 bg-white text-slate-900">
+    <div className="min-w-0 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
       <div className="space-y-6">
         {/* VIEW MODE 1: CATALOG VIEW */}
         {viewMode === "catalog" && (
           <div className="space-y-6">
             {/* Header: Store Selector & Module Title */}
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-700 pb-5">
               <div className="space-y-1">
                 <div className="flex items-center gap-3">
                   <div>
-                    <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                    <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
                       Customizer
                     </h1>
-                    <p className="mt-1.5 text-sm text-slate-600">
+                    <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
                       Xem trực quan giao diện khách hàng và chỉnh sửa cấu hình in ấn theo sản phẩm
                     </p>
                   </div>
@@ -573,7 +573,7 @@ export function CustomizationManagerPage({
 
               {/* Store Selector */}
               <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                   Cửa hàng:
                 </span>
                 <select
@@ -587,7 +587,7 @@ export function CustomizationManagerPage({
                     setSearchParams({ storeId: e.target.value });
                   }}
                   disabled={isLoadingStores}
-                  className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-blue-700 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer shadow-inner min-w-[220px]"
+                  className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2.5 text-xs font-bold text-blue-700 dark:text-blue-300 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 cursor-pointer shadow-inner min-w-[220px]"
                 >
                   {stores.map((s) => (
                     <option key={s.storeId} value={s.storeId}>
@@ -603,27 +603,27 @@ export function CustomizationManagerPage({
               <div
                 className={`rounded-lg border p-4 text-xs flex items-center justify-between shadow-md ${
                   statusMessage.type === "success"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
                     : statusMessage.type === "error"
-                      ? "border-rose-200 bg-rose-50 text-rose-700"
-                      : "border-blue-200 bg-blue-50 text-blue-700"
+                      ? "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300"
+                      : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
                 }`}
               >
                 <span className="font-medium">{statusMessage.text}</span>
                 <button
                   type="button"
                   onClick={() => setStatusMessage(null)}
-                  className="text-slate-600 hover:text-slate-900 ml-4 font-bold"
+                  className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 ml-4 font-bold"
                 >
                   ✕
                 </button>
               </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
               <div>
-                <div className="text-sm font-bold text-slate-900">Sửa Customizer cho nhiều sản phẩm</div>
-                <div className="mt-1 text-xs text-slate-600">
+                <div className="text-sm font-bold text-slate-900 dark:text-slate-100">Sửa Customizer cho nhiều sản phẩm</div>
+                <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                   Nhóm sản phẩm có cùng mặt in và trường tùy chọn rồi chỉnh một lần cho cả nhóm.
                 </div>
               </div>
@@ -661,7 +661,7 @@ export function CustomizationManagerPage({
         {viewMode === "editor" && activeProduct && (
           <div className="space-y-6">
             {/* Studio Navigation & Action Bar */}
-            <div aria-label="Thao tác chỉnh Customizer" className="sticky top-16 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm min-w-0">
+            <div aria-label="Thao tác chỉnh Customizer" className="sticky top-16 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 p-3 shadow-sm backdrop-blur-sm min-w-0">
               <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
                 <button
                   type="button"
@@ -669,19 +669,19 @@ export function CustomizationManagerPage({
                     setViewMode("catalog");
                     setSearchParams({ storeId: selectedStoreId });
                   }}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition cursor-pointer shadow-sm flex-shrink-0"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer shadow-sm flex-shrink-0"
                 >
                   <span>←</span>
                   <span>Danh Sách Sản Phẩm</span>
                 </button>
 
                 {/* Quick Next/Prev Product Navigation */}
-                <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200 shadow-inner flex-shrink-0">
+                <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 shadow-inner flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => handleNavigateProduct("prev")}
                     disabled={!hasPrevProduct || isLoadingConfig}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
                     title={
                       hasPrevProduct
                         ? `Sản phẩm trước: ${navProducts[currentProductIndex - 1]?.title}`
@@ -696,7 +696,7 @@ export function CustomizationManagerPage({
                     type="button"
                     onClick={() => handleNavigateProduct("next")}
                     disabled={!hasNextProduct || isLoadingConfig}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-25 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
                     title={
                       hasNextProduct
                         ? `Sản phẩm tiếp theo: ${navProducts[currentProductIndex + 1]?.title}`
@@ -708,16 +708,16 @@ export function CustomizationManagerPage({
                     </svg>
                   </button>
                   {navProducts.length > 0 && currentProductIndex >= 0 && (
-                    <span className="px-2 text-xs font-mono font-medium text-slate-600 select-none">
+                    <span className="px-2 text-xs font-mono font-medium text-slate-600 dark:text-slate-400 select-none">
                       {currentProductIndex + 1}/{navProducts.length}
                     </span>
                   )}
                 </div>
 
-                <div className="h-6 w-px bg-slate-50 hidden sm:block flex-shrink-0" />
+                <div className="h-6 w-px bg-slate-50 dark:bg-slate-800 hidden sm:block flex-shrink-0" />
 
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="h-10 w-10 flex-shrink-0 rounded-lg overflow-hidden border border-slate-300 bg-white">
+                  <div className="h-10 w-10 flex-shrink-0 rounded-lg overflow-hidden border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
                     <img
                       src={
                         activeProduct.featuredImage?.url ||
@@ -731,7 +731,7 @@ export function CustomizationManagerPage({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 min-w-0">
                       <h2
-                        className="text-sm font-bold text-slate-900 truncate"
+                        className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate"
                         title={activeProduct.title}
                       >
                         {activeProduct.title}
@@ -741,7 +741,7 @@ export function CustomizationManagerPage({
                           href={activeProductAdminUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-slate-600 hover:text-emerald-700 transition flex-shrink-0 inline-flex items-center"
+                          className="text-slate-600 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-300 transition flex-shrink-0 inline-flex items-center"
                           title="Mở sản phẩm này trong Shopify Admin"
                         >
                           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -752,7 +752,7 @@ export function CustomizationManagerPage({
                         </a>
                       )}
                     </div>
-                    <span className="text-xs text-slate-600 block truncate">
+                    <span className="text-xs text-slate-600 dark:text-slate-400 block truncate">
                       {activeProduct.handle ? `/${activeProduct.handle}` : activeProduct.id}
                     </span>
                   </div>
@@ -766,11 +766,11 @@ export function CustomizationManagerPage({
                     href={activeProductAdminUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50 hover:border-emerald-300 hover:text-slate-900 transition cursor-pointer shadow-md group"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-3.5 py-2.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/80 hover:border-emerald-300 dark:hover:border-emerald-800 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer shadow-md group"
                     title="Mở sản phẩm này trong Shopify Admin (tab mới)"
                   >
                     <svg
-                      className="w-4 h-4 text-emerald-700 group-hover:scale-110 transition-transform flex-shrink-0"
+                      className="w-4 h-4 text-emerald-700 dark:text-emerald-300 group-hover:scale-110 transition-transform flex-shrink-0"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -784,7 +784,7 @@ export function CustomizationManagerPage({
                     </svg>
                     <span>Shopify Admin</span>
                     <svg
-                      className="w-3.5 h-3.5 text-emerald-700 group-hover:text-slate-900 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform flex-shrink-0"
+                      className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-300 group-hover:text-slate-900 dark:group-hover:text-slate-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform flex-shrink-0"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -804,7 +804,7 @@ export function CustomizationManagerPage({
                     type="button"
                     onClick={() => handleDeleteConfig()}
                     disabled={isDeleting}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/80 transition cursor-pointer"
                   >
                     <span><AppIcon name="trash" /></span>
                     <span>{isDeleting ? "Đang xóa..." : "Xóa Customizer"}</span>
@@ -828,17 +828,17 @@ export function CustomizationManagerPage({
               <div
                 className={`rounded-lg border p-4 text-xs flex items-center justify-between shadow-md ${
                   statusMessage.type === "success"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
                     : statusMessage.type === "error"
-                      ? "border-rose-200 bg-rose-50 text-rose-700"
-                      : "border-blue-200 bg-blue-50 text-blue-700"
+                      ? "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300"
+                      : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
                 }`}
               >
                 <span className="font-medium">{statusMessage.text}</span>
                 <button
                   type="button"
                   onClick={() => setStatusMessage(null)}
-                  className="text-slate-600 hover:text-slate-900 ml-4 font-bold"
+                  className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 ml-4 font-bold"
                 >
                   ✕
                 </button>
@@ -847,17 +847,17 @@ export function CustomizationManagerPage({
 
             {/* If product has no customization yet */}
             {isLoadingConfig ? (
-              <div className="p-20 text-center space-y-3 rounded-lg border border-slate-200 bg-slate-50">
+              <div className="p-20 text-center space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
                 <span className="inline-block animate-spin text-3xl"><AppIcon name="clock" /></span>
-                <p className="text-xs text-slate-600">Đang nạp cấu hình tùy biến của sản phẩm...</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400">Đang nạp cấu hình tùy biến của sản phẩm...</p>
               </div>
             ) : !customization ? (
-              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-16 text-center space-y-3">
+              <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-16 text-center space-y-3">
                 <span className="text-4xl block"><AppIcon name="image" /></span>
-                <h3 className="text-base font-bold text-slate-900">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
                   Sản phẩm này chưa có cấu hình tùy biến
                 </h3>
-                <p className="text-xs text-slate-600 max-w-md mx-auto">
+                <p className="text-xs text-slate-600 dark:text-slate-400 max-w-md mx-auto">
                   Sản phẩm này hiện chưa có Metafield Amazon Customizer trên Shopify.
                 </p>
               </div>
@@ -866,10 +866,10 @@ export function CustomizationManagerPage({
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                 {/* LEFT COLUMN: Customer Mockup Canvas & Live Preview (6/12) */}
                 <div className="lg:col-span-7 lg:sticky lg:top-40 space-y-4">
-                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-5">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-5">
                     {/* Surface Switcher Pills */}
-                    <div className="flex items-center gap-2 flex-wrap border-b border-slate-200 pb-4">
-                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider mr-1">
+                    <div className="flex items-center gap-2 flex-wrap border-b border-slate-200 dark:border-slate-700 pb-4">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mr-1">
                         Mặt in:
                       </span>
                       {surfaces.map((s, idx) => (
@@ -880,7 +880,7 @@ export function CustomizationManagerPage({
                           className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                             activeSurfaceIndex === idx
                               ? "bg-blue-600 text-white shadow-md "
-                              : "border border-slate-200 bg-white text-slate-600 hover:text-slate-900"
+                              : "border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                           }`}
                         >
                           {s.name || `Mặt in ${idx + 1}`}
@@ -889,7 +889,7 @@ export function CustomizationManagerPage({
                     </div>
 
                     {/* Interactive Mockup Container */}
-                    <div className="relative mx-auto w-full max-w-2xl aspect-square rounded-lg overflow-hidden bg-slate-50 flex items-center justify-center group">
+                    <div className="relative mx-auto w-full max-w-2xl aspect-square rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800 flex items-center justify-center group">
                       <img
                         src={previewMockupUrl}
                         alt={activeSurface?.name || "Mockup"}
@@ -907,17 +907,17 @@ export function CustomizationManagerPage({
                         {textInputs.map((ti) => (
                           <div
                             key={ti.id}
-                            className="rounded-lg border border-slate-200 bg-white p-3.5 space-y-2 shadow-inner"
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3.5 space-y-2 shadow-inner"
                           >
                             <div className="flex items-center justify-between text-xs">
-                              <span className="font-bold text-slate-900">
+                              <span className="font-bold text-slate-900 dark:text-slate-100">
                                 {ti.label || "Customize Text"}{" "}
-                                <span className="text-xs font-normal text-slate-600">
+                                <span className="text-xs font-normal text-slate-600 dark:text-slate-400">
                                   {ti.required ? "(bắt buộc)" : "(optional)"}
                                 </span>
                               </span>
                               {ti.maxLength && (
-                                <span className="text-xs font-mono text-slate-500">
+                                <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
                                   0/{ti.maxLength}
                                 </span>
                               )}
@@ -926,7 +926,7 @@ export function CustomizationManagerPage({
                               type="text"
                               placeholder={ti.placeholder || "The Smiths Family"}
                               disabled
-                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 placeholder-slate-500 cursor-not-allowed select-none"
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 placeholder-slate-500 dark:placeholder:text-slate-400 cursor-not-allowed select-none"
                             />
                           </div>
                         ))}
@@ -937,16 +937,16 @@ export function CustomizationManagerPage({
 
                 {/* RIGHT COLUMN: Direct Customizer Configuration (6/12) */}
                 <div className="lg:col-span-5 space-y-4">
-                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-5">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-5">
                     {/* Studio Sub-tabs */}
-                    <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-lg border border-slate-200">
+                    <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
                       <button
                         type="button"
                         onClick={() => setStudioTab("surfaces")}
                         className={`flex-1 py-2 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
                           studioTab === "surfaces"
                             ? "bg-blue-600 text-white shadow-md "
-                            : "text-slate-600 hover:text-slate-900"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                       >
                         <AppIcon name="image" /> Mặt In ({surfaces.length})
@@ -958,7 +958,7 @@ export function CustomizationManagerPage({
                         className={`flex-1 py-2 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
                           studioTab === "options"
                             ? "bg-blue-600 text-white shadow-md "
-                            : "text-slate-600 hover:text-slate-900"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                       >
                         <AppIcon name="image" /> Tùy Chọn ({totalOptionsCount})
@@ -970,7 +970,7 @@ export function CustomizationManagerPage({
                         className={`px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
                           studioTab === "raw"
                             ? "bg-blue-600 text-white shadow-md "
-                            : "text-slate-600 hover:text-slate-900"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                         title="Xem cấu trúc Metafield JSON"
                       >
@@ -994,7 +994,7 @@ export function CustomizationManagerPage({
                     {studioTab === "options" && (
                       <div className="space-y-3">
                         {totalOptionsCount === 0 ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-xs text-slate-600">
+                          <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-8 text-center text-xs text-slate-600 dark:text-slate-400">
                             Sản phẩm này chưa có trường tùy biến nào.
                           </div>
                         ) : (
@@ -1019,13 +1019,13 @@ export function CustomizationManagerPage({
                     {/* Sub-tab 3: Clean Raw Metafield JSON */}
                     {studioTab === "raw" && (
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between text-xs text-slate-600">
-                          <span>Metafield: <strong className="text-blue-700">custom.amazon_customizer</strong></span>
-                          <span className="font-mono text-slate-600">
+                        <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                          <span>Metafield: <strong className="text-blue-700 dark:text-blue-300">custom.amazon_customizer</strong></span>
+                          <span className="font-mono text-slate-600 dark:text-slate-400">
                             {payloadValidation.byteSize} bytes
                           </span>
                         </div>
-                        <pre className="max-h-96 overflow-auto rounded-lg border border-slate-200 bg-white p-4 text-xs font-mono text-blue-700">
+                        <pre className="max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-xs font-mono text-blue-700 dark:text-blue-300">
                           {JSON.stringify(customization, null, 2)}
                         </pre>
                       </div>

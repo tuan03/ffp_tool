@@ -53,7 +53,7 @@ export function AgentKeysPage() {
     } finally { setIsBusy(false); }
   }
 
-  const inputClass = "rounded border border-slate-300 bg-white p-2";
+  const inputClass = "rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-2";
   return <main className="flex max-w-4xl flex-col gap-4">
     <PageHeader title="Crawler Agent Keys" description="Quản lý quyền kết nối và danh tính của các máy chạy crawler." />
     <p>Chỉ operator quản lý key. Mật khẩu và key chỉ giữ trong bộ nhớ trang, không lưu browser storage.
@@ -68,19 +68,19 @@ export function AgentKeysPage() {
       <Button variant="primary" disabled={isBusy} onClick={() => void handleAction("create")}>Tạo key</Button>
       <Button onClick={() => { setPassword(""); setRawKey(""); setKeys([]); setKeyTotal(0); setKeyOffset(0); setHasLoaded(false); setIsKeySnapshotStale(false); }}>Xóa thông tin khỏi trang</Button></div>
     {isBusy && <p role="status">Đang xử lý…</p>}
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {isKeySnapshotStale ? <p role="status" className="text-amber-700">Danh sách key bên dưới là snapshot cũ; thao tác rotate/rebind/revoke đã khóa cho đến khi tải lại thành công.</p> : null}
-    {rawKey && <section className="flex flex-col gap-2 rounded border border-amber-300 p-4"><p>Key chỉ hiển thị một lần. Lưu riêng an toàn, không đưa vào Git/chat.</p>
+    {error && <p role="alert" className="text-red-700 dark:text-red-300">{error}</p>}
+    {isKeySnapshotStale ? <p role="status" className="text-amber-700 dark:text-amber-300">Danh sách key bên dưới là snapshot cũ; thao tác rotate/rebind/revoke đã khóa cho đến khi tải lại thành công.</p> : null}
+    {rawKey && <section className="flex flex-col gap-2 rounded border border-amber-300 dark:border-amber-800 p-4"><p>Key chỉ hiển thị một lần. Lưu riêng an toàn, không đưa vào Git/chat.</p>
       <label>Agent Key<input readOnly autoComplete="off" className={`${inputClass} w-full`} value={rawKey} /></label>
       <button type="button" onClick={() => setRawKey("")}>Đã lưu, đóng key</button></section>}
     {hasLoaded && keys.length === 0 && <p>Chưa có key.</p>}
-    <ul className="flex flex-col gap-3">{keys.map((key) => <li key={key.id} className="rounded border border-slate-300 p-3">
+    <ul className="flex flex-col gap-3">{keys.map((key) => <li key={key.id} className="rounded border border-slate-300 dark:border-slate-700 p-3">
       <p>{key.name} — {key.status} — {key.agentId ?? "Chưa đăng ký"}</p>
       <div className="flex gap-4"><button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("rotate", key.id)}>Rotate</button>
         <button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("rotate", key.id, true)}>Rebind</button>
         <button type="button" disabled={isBusy || isKeySnapshotStale} onClick={() => void handleAction("revoke", key.id)}>Revoke</button></div>
     </li>)}</ul>
-    {hasLoaded && keyTotal > keyPageSize ? <div className="flex items-center justify-end gap-3 text-sm text-slate-600">
+    {hasLoaded && keyTotal > keyPageSize ? <div className="flex items-center justify-end gap-3 text-sm text-slate-600 dark:text-slate-400">
       <button type="button" disabled={isBusy || keyOffset === 0} onClick={() => void handleAction("list", undefined, false, Math.max(0, keyOffset - keyPageSize))}>Trước</button>
       <span>{keyOffset + 1}–{Math.min(keyOffset + keys.length, keyTotal)} / {keyTotal}</span>
       <button type="button" disabled={isBusy || keyOffset + keys.length >= keyTotal} onClick={() => void handleAction("list", undefined, false, keyOffset + keyPageSize)}>Sau</button>

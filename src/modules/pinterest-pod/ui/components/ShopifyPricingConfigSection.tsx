@@ -274,10 +274,10 @@ function NumberSetting({
   readonly onChange: (value: number) => void;
 }): React.JSX.Element {
   return (
-    <label className="grid gap-1 text-sm text-slate-700">
+    <label className="grid gap-1 text-sm text-slate-700 dark:text-slate-300">
       {label}
       <input
-        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"
+        className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100"
         max={max}
         min={min}
         type="number"
@@ -1240,15 +1240,15 @@ export function ShopifyPricingConfigSection({
   }
 
   return (
-    <section className="rounded-lg border border-slate-300 bg-slate-50 p-5 sm:p-6 shadow-sm space-y-5">
+    <section className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 sm:p-6 shadow-sm space-y-5">
       {/* Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-slate-900 tracking-tight flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
             <span><AppIcon name="settings" /> Cấu hình Shopify &amp; Định giá</span>
           </h2>
           <button
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-400 transition-colors hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
             disabled={disabled}
             title="Đặt lại cấu hình về mặc định"
             type="button"
@@ -1271,7 +1271,7 @@ export function ShopifyPricingConfigSection({
           </button>
         </div>
         {settings.storeId && (
-          <div className="flex items-center gap-2 text-xs text-slate-600 font-mono">
+          <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 font-mono">
             <span>{settings.storeId}</span>
             {settings.productType && <span>• {settings.productType}</span>}
             {selectedCollections.length > 0 && <span>• {selectedCollections.length} collections</span>}
@@ -1282,11 +1282,11 @@ export function ShopifyPricingConfigSection({
       {/* Row 1: Store, Collection & Product Type */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* 1. Store selector */}
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+        <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-slate-900">Shopify Store</label>
-              <span className="text-xs font-mono text-slate-600" title="Shopify Vendor">
+              <label className="text-sm font-medium text-slate-900 dark:text-slate-100">Shopify Store</label>
+              <span className="text-xs font-mono text-slate-600 dark:text-slate-400" title="Shopify Vendor">
                 ({computedVendor})
               </span>
             </div>
@@ -1294,7 +1294,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={() => setIsEditStoreOpen(true)}
-                className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 shadow-xs transition-all hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-xs transition-all hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
                 title={`Chỉnh sửa cấu hình App hoặc Proxy của store ${activeStoreId}`}
               >
                 <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -1309,7 +1309,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={() => setIsDeleteStoreOpen(true)}
-                className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 shadow-xs transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-md border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 px-2 py-1 text-xs font-medium text-rose-700 dark:text-rose-300 shadow-xs transition-all hover:border-rose-300 dark:hover:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/80 hover:text-rose-700 dark:hover:text-rose-300 cursor-pointer"
                 title={`Xóa store ${activeStoreId} khỏi danh sách`}
               >
                 <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -1324,7 +1324,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={() => setIsAddStoreOpen(true)}
-                className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 shadow-xs transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-slate-900 cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-md border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-2 py-1 text-xs font-semibold text-blue-700 dark:text-blue-300 shadow-xs transition-all hover:border-blue-300 dark:hover:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950/80 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
                 title="Thêm và kết nối Shopify Store mới"
               >
                 <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
@@ -1335,7 +1335,7 @@ export function ShopifyPricingConfigSection({
             </div>
           </div>
           <select
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 text-sm cursor-pointer"
+            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 text-sm cursor-pointer"
             value={settings.storeId || "chillgen"}
             onChange={(e) => handleStoreChange(e.target.value)}
           >
@@ -1348,15 +1348,15 @@ export function ShopifyPricingConfigSection({
         </div>
 
         {/* 2. Collection multi-selector */}
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+        <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
+            <label className="text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
               <span>Collections</span>
               {selectedCollections.length > 0 && (
-                <span className="text-xs text-slate-700 font-mono">({selectedCollections.length})</span>
+                <span className="text-xs text-slate-700 dark:text-slate-300 font-mono">({selectedCollections.length})</span>
               )}
               {isLoadingCollections && (
-                <span className="text-xs text-slate-600 animate-pulse font-normal">Đang tải...</span>
+                <span className="text-xs text-slate-600 dark:text-slate-400 animate-pulse font-normal">Đang tải...</span>
               )}
             </label>
             <div className="flex items-center gap-2 text-xs">
@@ -1364,7 +1364,7 @@ export function ShopifyPricingConfigSection({
                 <button
                   type="button"
                   onClick={handleClearCollections}
-                  className="text-slate-600 hover:text-rose-700 transition-colors cursor-pointer"
+                  className="text-slate-600 dark:text-slate-400 hover:text-rose-700 dark:hover:text-rose-300 transition-colors cursor-pointer"
                 >
                   Bỏ chọn hết
                 </button>
@@ -1373,7 +1373,7 @@ export function ShopifyPricingConfigSection({
                   <button
                     type="button"
                     onClick={handleSelectAllCollections}
-                    className="text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                    className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
                   >
                     Chọn tất cả
                   </button>
@@ -1388,13 +1388,13 @@ export function ShopifyPricingConfigSection({
               {selectedCollections.map((col) => (
                 <span
                   key={col.id}
-                  className="inline-flex items-center gap-1 rounded bg-slate-50 border border-slate-300 px-2 py-0.5 text-xs text-slate-900"
+                  className="inline-flex items-center gap-1 rounded bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 px-2 py-0.5 text-xs text-slate-900 dark:text-slate-100"
                 >
                   <span className="truncate max-w-[130px]">{col.title}</span>
                   <button
                     type="button"
                     onClick={() => toggleCollection(col.id)}
-                    className="text-slate-600 hover:text-rose-700 ml-0.5 text-xs cursor-pointer"
+                    className="text-slate-600 dark:text-slate-400 hover:text-rose-700 dark:hover:text-rose-300 ml-0.5 text-xs cursor-pointer"
                     title="Bỏ chọn"
                   >
                     ✕
@@ -1407,7 +1407,7 @@ export function ShopifyPricingConfigSection({
           {/* Add Collection dropdown */}
           <div className="grid grid-cols-[1fr_auto] gap-1.5">
             <select
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 disabled:opacity-50 text-sm cursor-pointer"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 disabled:opacity-50 text-sm cursor-pointer"
               disabled={isLoadingCollections || availableCollections.length === 0}
               value=""
               onChange={(e) => {
@@ -1432,8 +1432,8 @@ export function ShopifyPricingConfigSection({
               onClick={() => setIsCollectionListOpen(!isCollectionListOpen)}
               className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
                 isCollectionListOpen
-                  ? "border-slate-300 bg-slate-100 text-slate-900"
-                  : "border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                  ? "border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                  : "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
               }`}
               title="Bật/tắt danh sách checklist"
             >
@@ -1443,24 +1443,24 @@ export function ShopifyPricingConfigSection({
 
           {/* Expandable Checklist */}
           {isCollectionListOpen && availableCollections.length > 0 && (
-            <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs">
+            <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-xs">
               {availableCollections.map((c) => {
                 const isChecked = activeCollectionIds.includes(c.id);
                 return (
                   <label
                     key={c.id}
-                    className="flex items-center gap-2 text-slate-700 hover:text-slate-900 cursor-pointer py-0.5 select-none"
+                    className="flex items-center gap-2 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer py-0.5 select-none"
                   >
                     <input
                       type="checkbox"
                       checked={isChecked}
                       onChange={() => toggleCollection(c.id)}
-                      className="rounded border-slate-300 text-slate-600 focus:ring-0 cursor-pointer"
+                      className="rounded border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 focus:ring-0 cursor-pointer"
                     />
-                    <span className={`truncate flex-1 ${isChecked ? "text-slate-900 font-medium" : ""}`}>
+                    <span className={`truncate flex-1 ${isChecked ? "text-slate-900 dark:text-slate-100 font-medium" : ""}`}>
                       {c.title}
                     </span>
-                    <span className="text-xs text-slate-500 font-mono">{c.productsCount ?? 0}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">{c.productsCount ?? 0}</span>
                   </label>
                 );
               })}
@@ -1469,19 +1469,19 @@ export function ShopifyPricingConfigSection({
         </div>
 
         {/* 3. Product Type selector */}
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3.5 sm:col-span-2 lg:col-span-1">
+        <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5 sm:col-span-2 lg:col-span-1">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-slate-900">Loại sản phẩm</label>
+            <label className="text-sm font-medium text-slate-900 dark:text-slate-100">Loại sản phẩm</label>
             {settings.productType ? (
               <button
                 type="button"
                 onClick={() => handleProductTypeChange("Rug")}
-                className="text-xs text-slate-600 hover:text-rose-700 transition-colors cursor-pointer"
+                className="text-xs text-slate-600 dark:text-slate-400 hover:text-rose-700 dark:hover:text-rose-300 transition-colors cursor-pointer"
               >
                 Mặc định Rug
               </button>
             ) : (
-              <span className="text-xs text-slate-500">Mặc định</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">Mặc định</span>
             )}
           </div>
 
@@ -1495,8 +1495,8 @@ export function ShopifyPricingConfigSection({
                     type="button"
                     className={`rounded px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
                       isActive
-                        ? "bg-slate-100 text-slate-950 font-semibold shadow-xs"
-                        : "bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-slate-100 dark:bg-slate-700 text-slate-950 dark:text-slate-100 font-semibold shadow-xs"
+                        : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
                     }`}
                     onClick={() => handleProductTypeChange(isActive ? "" : pill)}
                   >
@@ -1509,7 +1509,7 @@ export function ShopifyPricingConfigSection({
                         e.stopPropagation();
                         handleRemoveProductType(pill);
                       }}
-                      className="hidden group-hover:inline-flex ml-0.5 text-xs text-slate-500 hover:text-rose-700 px-0.5 cursor-pointer"
+                      className="hidden group-hover:inline-flex ml-0.5 text-xs text-slate-500 dark:text-slate-400 hover:text-rose-700 dark:hover:text-rose-300 px-0.5 cursor-pointer"
                       title={`Bỏ loại '${pill}' khỏi store ${currentStoreId}`}
                     >
                       ×
@@ -1521,7 +1521,7 @@ export function ShopifyPricingConfigSection({
 
             {/* Inline Add Button or Input */}
             {isAddingNewType ? (
-              <div className="inline-flex items-center gap-1 rounded bg-slate-50 px-2 py-0.5 text-xs border border-slate-300 shadow-xs">
+              <div className="inline-flex items-center gap-1 rounded bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-xs border border-slate-300 dark:border-slate-700 shadow-xs">
                 <input
                   type="text"
                   autoFocus
@@ -1537,12 +1537,12 @@ export function ShopifyPricingConfigSection({
                       setNewProductTypeInput("");
                     }
                   }}
-                  className="w-20 bg-transparent text-xs text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 placeholder:text-slate-500"
+                  className="w-20 bg-transparent text-xs text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 placeholder:text-slate-500 dark:placeholder:text-slate-400"
                 />
                 <button
                   type="button"
                   onClick={() => handleAddProductType(newProductTypeInput)}
-                  className="text-xs text-slate-700 font-bold hover:text-slate-900 cursor-pointer"
+                  className="text-xs text-slate-700 dark:text-slate-300 font-bold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
                 >
                   ✓
                 </button>
@@ -1552,7 +1552,7 @@ export function ShopifyPricingConfigSection({
                     setIsAddingNewType(false);
                     setNewProductTypeInput("");
                   }}
-                  className="text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
+                  className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
                 >
                   ✕
                 </button>
@@ -1561,7 +1561,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={() => setIsAddingNewType(true)}
-                className="rounded border border-dashed border-slate-300 bg-slate-50 px-2 py-0.5 text-xs text-slate-600 hover:border-slate-300 hover:text-slate-900 transition-colors cursor-pointer"
+                className="rounded border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-xs text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
                 title={`Thêm loại sản phẩm mới cho store ${currentStoreId}`}
               >
                 + Thêm
@@ -1574,12 +1574,12 @@ export function ShopifyPricingConfigSection({
             <input
               type="text"
               placeholder="Hoặc nhập loại khác..."
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 text-sm placeholder:text-slate-500"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 text-sm placeholder:text-slate-500 dark:placeholder:text-slate-400"
               value={settings.productType || ""}
               onChange={(e) => handleProductTypeChange(e.target.value)}
             />
             <select
-              className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 text-xs cursor-pointer"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1.5 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 text-xs cursor-pointer"
               value={settings.productType || ""}
               onChange={(e) => {
                 if (e.target.value) {
@@ -1609,9 +1609,9 @@ export function ShopifyPricingConfigSection({
       {/* Row 2: Price Addition & Compare-At Discount */}
       <div className="grid gap-4 sm:grid-cols-2">
         {/* Price Addition */}
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+        <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-slate-900">Giá cộng thêm ($)</label>
+            <label className="text-sm font-medium text-slate-900 dark:text-slate-100">Giá cộng thêm ($)</label>
             <div className="flex flex-wrap gap-1">
               {[
                 { label: "+$0", value: 0 },
@@ -1625,8 +1625,8 @@ export function ShopifyPricingConfigSection({
                   type="button"
                   className={`rounded px-2 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
                     settings.priceAddition === btn.value
-                      ? "bg-slate-100 text-slate-950 shadow-xs"
-                      : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      ? "bg-slate-100 dark:bg-slate-700 text-slate-950 dark:text-slate-100 shadow-xs"
+                      : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                   }`}
                   onClick={() => updateSetting("priceAddition", btn.value)}
                 >
@@ -1636,13 +1636,13 @@ export function ShopifyPricingConfigSection({
             </div>
           </div>
           <div className="relative">
-            <span className="absolute left-3 top-2 text-sm text-slate-500 pointer-events-none font-mono">$</span>
+            <span className="absolute left-3 top-2 text-sm text-slate-500 dark:text-slate-400 pointer-events-none font-mono">$</span>
             <input
               type="number"
               step="0.01"
               min="0"
               placeholder="0.00"
-              className="w-full rounded-lg border border-slate-300 bg-white pl-7 pr-3 py-2 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 font-mono text-sm"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-7 pr-3 py-2 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 font-mono text-sm"
               value={settings.priceAddition ?? 0}
               onChange={(e) => {
                 const val = Math.max(0, Number(e.target.value) || 0);
@@ -1653,14 +1653,14 @@ export function ShopifyPricingConfigSection({
         </div>
 
         {/* Compare-At Discount % */}
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+        <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-slate-900">Giá gạch ngang (Compare-At)</label>
-            <span className="text-xs font-mono text-slate-700 font-semibold">{settings.discountPercent ?? 0}%</span>
+            <label className="text-sm font-medium text-slate-900 dark:text-slate-100">Giá gạch ngang (Compare-At)</label>
+            <span className="text-xs font-mono text-slate-700 dark:text-slate-300 font-semibold">{settings.discountPercent ?? 0}%</span>
           </div>
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <select
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 text-sm cursor-pointer"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 text-sm cursor-pointer"
               value={
                 [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95].includes(
                   settings.discountPercent ?? 0,
@@ -1691,14 +1691,14 @@ export function ShopifyPricingConfigSection({
                 min="0"
                 max="95"
                 placeholder="%"
-                className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-2 pr-6 text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 font-mono text-sm text-right"
+                className="w-20 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-2 pr-6 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 font-mono text-sm text-right"
                 value={settings.discountPercent ?? 0}
                 onChange={(e) => {
                   const val = Math.min(95, Math.max(0, Number(e.target.value) || 0));
                   updateSetting("discountPercent", val);
                 }}
               />
-              <span className="absolute right-2 top-2 text-xs text-slate-500 pointer-events-none">%</span>
+              <span className="absolute right-2 top-2 text-xs text-slate-500 dark:text-slate-400 pointer-events-none">%</span>
             </div>
           </div>
         </div>
@@ -1713,20 +1713,20 @@ export function ShopifyPricingConfigSection({
         const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
 
         return (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-2.5 text-xs text-slate-600 dark:text-slate-400">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-slate-700">Ví dụ gốc $20.00:</span>
-              <span className="text-slate-900 font-mono">
-                Bán <strong className="text-slate-900">${selling.toFixed(2)}</strong>
+              <span className="text-slate-700 dark:text-slate-300">Ví dụ gốc $20.00:</span>
+              <span className="text-slate-900 dark:text-slate-100 font-mono">
+                Bán <strong className="text-slate-900 dark:text-slate-100">${selling.toFixed(2)}</strong>
               </span>
               {compareAt !== undefined && (
-                <span className="text-slate-600 font-mono">
+                <span className="text-slate-600 dark:text-slate-400 font-mono">
                   Gạch ngang: <span className="line-through">${compareAt.toFixed(2)}</span>
-                  <span className="ml-1 text-slate-700 font-semibold">(-{discount}%)</span>
+                  <span className="ml-1 text-slate-700 dark:text-slate-300 font-semibold">(-{discount}%)</span>
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 font-mono text-xs text-slate-500">
+            <div className="flex items-center gap-2 font-mono text-xs text-slate-500 dark:text-slate-400">
               <span>{settings.storeId || "chillgen"}</span>
               {settings.productType && <span>• {settings.productType}</span>}
             </div>
@@ -1735,34 +1735,34 @@ export function ShopifyPricingConfigSection({
       })()}
 
       {/* Row 3: Bộ giá & Biến thể sản phẩm (Price Set & Variant Matrix) */}
-      <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
         {/* Header with Title and Mode Switcher */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-base">🏷️</span>
-              <h3 className="text-sm font-semibold text-slate-900">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Bộ giá &amp; Biến thể sản phẩm (Variant &amp; Price Matrix)
               </h3>
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-mono font-medium text-blue-700 border border-blue-200">
+              <span className="rounded-full bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 text-xs font-mono font-medium text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                 {activeVariants.length} kích thước
               </span>
-              <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-bold text-blue-700 border border-slate-300">
+              <span className="rounded-full bg-slate-50 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-bold text-blue-700 dark:text-blue-300 border border-slate-300 dark:border-slate-700">
                 Store: {activeStoreId.toUpperCase()}
               </span>
               {currentPriceMode === "custom" && (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
+                <span className="rounded-full bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                   ✍️ Tự set giá
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-600 mt-0.5">
-              Bộ giá và biến thể được <strong>phân lập riêng theo từng store</strong> (đang áp dụng cho <strong className="text-blue-700">{activeStoreId.toUpperCase()}</strong>). Khi chuyển store, cấu hình sẽ tự động chuyển đổi tương ứng để tránh nhầm lẫn.
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+              Bộ giá và biến thể được <strong>phân lập riêng theo từng store</strong> (đang áp dụng cho <strong className="text-blue-700 dark:text-blue-300">{activeStoreId.toUpperCase()}</strong>). Khi chuyển store, cấu hình sẽ tự động chuyển đổi tương ứng để tránh nhầm lẫn.
             </p>
           </div>
 
           {/* Mode Switcher Tabs */}
-          <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-lg bg-slate-50 border border-slate-200">
+          <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
             {/* Tab 1: Preset */}
             <button
               type="button"
@@ -1770,7 +1770,7 @@ export function ShopifyPricingConfigSection({
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 currentPriceMode === "preset"
                   ? "bg-blue-600 text-white shadow-xs"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-white"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-white dark:hover:bg-slate-900"
               }`}
             >
               <span><AppIcon name="queue" /> Bộ giá mẫu</span>
@@ -1783,7 +1783,7 @@ export function ShopifyPricingConfigSection({
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 currentPriceMode === "store_product"
                   ? "bg-blue-600 text-white shadow-xs"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-white"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-white dark:hover:bg-slate-900"
               }`}
             >
               <span><AppIcon name="store" /> Sao chép Store</span>
@@ -1795,8 +1795,8 @@ export function ShopifyPricingConfigSection({
               onClick={() => handleSwitchMode("custom")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 currentPriceMode === "custom"
-                  ? "bg-blue-50 text-slate-950 shadow-xs"
-                  : "text-amber-700 hover:text-amber-700 hover:bg-amber-50"
+                  ? "bg-blue-50 dark:bg-blue-950/60 text-slate-950 dark:text-slate-100 shadow-xs"
+                  : "text-amber-700 dark:text-amber-300 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/80"
               }`}
             >
               <span>✍️ Tự set giá thủ công</span>
@@ -1806,11 +1806,11 @@ export function ShopifyPricingConfigSection({
 
         {/* Sub-bar for PRESET mode */}
         {currentPriceMode === "preset" && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2.5 text-xs">
             <div className="flex items-center gap-2">
-              <span className="text-slate-600 font-medium">Bộ giá ({activeStoreId.toUpperCase()}):</span>
+              <span className="text-slate-600 dark:text-slate-400 font-medium">Bộ giá ({activeStoreId.toUpperCase()}):</span>
               <select
-                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 cursor-pointer"
+                className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800 cursor-pointer"
                 value={settings.priceSetPresetId || storeFilteredPresets[0]?.id}
                 onChange={(e) => handleApplyPreset(e.target.value)}
               >
@@ -1835,7 +1835,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={handleSaveCurrentAsStorePreset}
-                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:text-slate-900 transition cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/80 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
                 title={`Lưu cấu hình biến thể hiện tại thành bộ giá riêng cho store ${activeStoreId.toUpperCase()}`}
               >
                 <span><AppIcon name="download" /> Lưu thành mẫu của {activeStoreId.toUpperCase()}</span>
@@ -1843,7 +1843,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={handleResetToProductTypePreset}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
                 title="Khôi phục bộ giá mặc định cho loại sản phẩm hiện tại"
               >
                 <span>↺ Đặt lại theo loại SP</span>
@@ -1854,12 +1854,12 @@ export function ShopifyPricingConfigSection({
 
         {/* Sub-bar for STORE PRODUCT mode */}
         {currentPriceMode === "store_product" && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2.5 text-xs text-blue-700">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-2.5 text-xs text-blue-700 dark:text-blue-300">
             <div className="flex items-center gap-2">
               <span className="text-base"><AppIcon name="store" /></span>
               {settings.storeSampleProductTitle ? (
                 <span>
-                  Đang dùng bộ giá sao chép từ SP Store: <strong className="text-slate-900">{settings.storeSampleProductTitle}</strong>
+                  Đang dùng bộ giá sao chép từ SP Store: <strong className="text-slate-900 dark:text-slate-100">{settings.storeSampleProductTitle}</strong>
                 </span>
               ) : (
                 <span>Chưa chọn sản phẩm mẫu nào trên store {activeStoreId}.</span>
@@ -1880,7 +1880,7 @@ export function ShopifyPricingConfigSection({
               <button
                 type="button"
                 onClick={handleResetToProductTypePreset}
-                className="text-xs text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 underline cursor-pointer"
               >
                 Về mẫu chuẩn
               </button>
@@ -1890,13 +1890,13 @@ export function ShopifyPricingConfigSection({
 
         {/* Sub-bar for CUSTOM (TỰ SET GIÁ THỦ CÔNG) mode */}
         {currentPriceMode === "custom" && (
-          <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-300 pb-2.5">
+          <div className="space-y-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-300 dark:border-amber-800 pb-2.5">
               <div className="flex items-center gap-2">
                 <span className="text-base">✍️</span>
                 <div>
-                  <span className="font-bold text-amber-700 text-xs">Chế độ: Tự set giá thủ công</span>
-                  <p className="text-xs text-amber-700">
+                  <span className="font-bold text-amber-700 dark:text-amber-300 text-xs">Chế độ: Tự set giá thủ công</span>
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
                     Bảng giá của bạn được bảo lưu độc lập, không bị tự động reset khi chọn loại sản phẩm khác.
                   </p>
                 </div>
@@ -1906,7 +1906,7 @@ export function ShopifyPricingConfigSection({
                   <button
                     type="button"
                     onClick={handleSetDirectPricingZeroMarkup}
-                    className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 hover:text-slate-900 transition cursor-pointer"
+                    className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/80 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
                     title="Đặt Giá cộng thêm = $0 để giá nhập trong bảng chính là giá bán trên Shopify"
                   >
                     <AppIcon name="ads" /> Đặt Giá cộng thêm = $0 (Giá bán trực tiếp)
@@ -1915,7 +1915,7 @@ export function ShopifyPricingConfigSection({
                 <button
                   type="button"
                   onClick={handleResetToBlankMatrix}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
+                  className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer"
                   title="Xóa trắng bảng giá để tự thêm kích thước từ đầu"
                 >
                   + Tạo bảng giá mới từ đầu
@@ -1923,7 +1923,7 @@ export function ShopifyPricingConfigSection({
                 <button
                   type="button"
                   onClick={handleResetToProductTypePreset}
-                  className="text-xs text-slate-600 hover:text-amber-700 underline cursor-pointer"
+                  className="text-xs text-slate-600 dark:text-slate-400 hover:text-amber-700 dark:hover:text-amber-300 underline cursor-pointer"
                   title="Khôi phục về bộ giá mẫu ban đầu"
                 >
                   ↺ Về mẫu chuẩn
@@ -1934,9 +1934,9 @@ export function ShopifyPricingConfigSection({
             {/* Quick Pricing Tools */}
             <div className="grid gap-3 sm:grid-cols-2">
               {/* Tool 1: Single Price */}
-              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-slate-50 p-3 text-xs">
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-slate-50 dark:bg-slate-800 p-3 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-900">1. Đặt 1 mức giá duy nhất (1 Size):</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">1. Đặt 1 mức giá duy nhất (1 Size):</span>
                   <div className="flex gap-1">
                     {[19.99, 24.99, 29.99, 39.99, 49.99].map((p) => (
                       <button
@@ -1946,7 +1946,7 @@ export function ShopifyPricingConfigSection({
                         className={`rounded px-1.5 py-0.5 text-xs font-mono transition cursor-pointer ${
                           quickSinglePrice === p
                             ? "bg-amber-700 text-white font-bold"
-                            : "bg-slate-50 text-slate-600 hover:text-slate-900"
+                            : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                       >
                         ${p}
@@ -1956,21 +1956,21 @@ export function ShopifyPricingConfigSection({
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1">
-                    <span className="absolute left-2.5 top-1.5 text-slate-500 pointer-events-none font-mono">$</span>
+                    <span className="absolute left-2.5 top-1.5 text-slate-500 dark:text-slate-400 pointer-events-none font-mono">$</span>
                     <input
                       type="number"
                       step="0.01"
                       min="0"
                       value={quickSinglePrice}
                       onChange={(e) => setQuickSinglePrice(Math.max(0, Number(e.target.value) || 0))}
-                      className="w-full rounded border border-slate-300 bg-white pl-6 pr-2 py-1.5 text-xs text-slate-900 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-amber-300"
+                      className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-6 pr-2 py-1.5 text-xs text-slate-900 dark:text-slate-100 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-amber-300 dark:focus:border-amber-800"
                       placeholder="29.99"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => handleApplySinglePrice(quickSinglePrice)}
-                    className="rounded bg-blue-50 px-3 py-1.5 font-bold text-slate-950 transition cursor-pointer shrink-0 shadow-xs"
+                    className="rounded bg-blue-50 dark:bg-blue-950/60 px-3 py-1.5 font-bold text-slate-950 dark:text-slate-100 transition cursor-pointer shrink-0 shadow-xs"
                   >
                     <AppIcon name="seo" /> Áp dụng làm 1 giá duy nhất
                   </button>
@@ -1978,9 +1978,9 @@ export function ShopifyPricingConfigSection({
               </div>
 
               {/* Tool 2: Bulk Uniform Price */}
-              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-slate-50 p-3 text-xs">
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-slate-50 dark:bg-slate-800 p-3 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-900">2. Đặt đồng giá cho mọi kích thước:</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">2. Đặt đồng giá cho mọi kích thước:</span>
                   <div className="flex gap-1">
                     {[29.99, 39.99, 49.99, 69.99, 99.99].map((p) => (
                       <button
@@ -1990,7 +1990,7 @@ export function ShopifyPricingConfigSection({
                         className={`rounded px-1.5 py-0.5 text-xs font-mono transition cursor-pointer ${
                           quickBulkPrice === p
                             ? "bg-amber-700 text-white font-bold"
-                            : "bg-slate-50 text-slate-600 hover:text-slate-900"
+                            : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                         }`}
                       >
                         ${p}
@@ -2000,21 +2000,21 @@ export function ShopifyPricingConfigSection({
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1">
-                    <span className="absolute left-2.5 top-1.5 text-slate-500 pointer-events-none font-mono">$</span>
+                    <span className="absolute left-2.5 top-1.5 text-slate-500 dark:text-slate-400 pointer-events-none font-mono">$</span>
                     <input
                       type="number"
                       step="0.01"
                       min="0"
                       value={quickBulkPrice}
                       onChange={(e) => setQuickBulkPrice(Math.max(0, Number(e.target.value) || 0))}
-                      className="w-full rounded border border-slate-300 bg-white pl-6 pr-2 py-1.5 text-xs text-slate-900 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-amber-300"
+                      className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-6 pr-2 py-1.5 text-xs text-slate-900 dark:text-slate-100 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-amber-300 dark:focus:border-amber-800"
                       placeholder="29.99"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => handleApplyBulkPrice(quickBulkPrice)}
-                    className="rounded bg-slate-50 border border-amber-300 px-3 py-1.5 font-semibold text-amber-700 hover:bg-amber-50 hover:text-slate-900 transition cursor-pointer shrink-0 shadow-xs"
+                    className="rounded bg-slate-50 dark:bg-slate-800 border border-amber-300 dark:border-amber-800 px-3 py-1.5 font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/80 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer shrink-0 shadow-xs"
                   >
                     <AppIcon name="seo" /> Áp dụng đồng giá {activeVariants.length} kích thước
                   </button>
@@ -2025,9 +2025,9 @@ export function ShopifyPricingConfigSection({
         )}
 
         {/* Interactive Variant Table */}
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
           <table className="w-full text-left text-xs">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
+            <thead className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs uppercase tracking-wider text-slate-600 dark:text-slate-400">
               <tr>
                 <th className="py-2.5 px-3 w-10 text-center">#</th>
                 <th className="py-2.5 px-3">Kích thước / Biến thể (Option)</th>
@@ -2037,7 +2037,7 @@ export function ShopifyPricingConfigSection({
                 <th className="py-2.5 px-3 w-16 text-center">Xóa</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
               {activeVariants.map((variant, idx) => {
                 const base = Number(variant.basePrice) || 0;
                 const addition = settings.priceAddition ?? 0;
@@ -2046,8 +2046,8 @@ export function ShopifyPricingConfigSection({
                 const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
 
                 return (
-                  <tr key={variant.id || `${variant.label}-${idx}`} className="hover:bg-slate-50 transition">
-                    <td className="py-2 px-3 text-center text-slate-500 font-mono text-xs">
+                  <tr key={variant.id || `${variant.label}-${idx}`} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                    <td className="py-2 px-3 text-center text-slate-500 dark:text-slate-400 font-mono text-xs">
                       {idx + 1}
                     </td>
                     <td className="py-2 px-3">
@@ -2055,13 +2055,13 @@ export function ShopifyPricingConfigSection({
                         type="text"
                         value={variant.label}
                         onChange={(e) => handleUpdateVariant(idx, { label: e.target.value })}
-                        className="w-full rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
+                        className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
                         placeholder="VD: 36x60 inch..."
                       />
                     </td>
                     <td className="py-2 px-3">
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1.5 text-slate-500 pointer-events-none font-mono text-xs">$</span>
+                        <span className="absolute left-2.5 top-1.5 text-slate-500 dark:text-slate-400 pointer-events-none font-mono text-xs">$</span>
                         <input
                           type="number"
                           step="0.01"
@@ -2072,14 +2072,14 @@ export function ShopifyPricingConfigSection({
                               basePrice: Math.max(0, Number(e.target.value) || 0),
                             })
                           }
-                          className="w-full rounded border border-slate-300 bg-white pl-6 pr-2 py-1 text-xs text-slate-900 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
+                          className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-6 pr-2 py-1 text-xs text-slate-900 dark:text-slate-100 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
                           title="Giá gốc cơ sở"
                         />
                       </div>
                     </td>
                     <td className="py-2 px-3">
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1.5 text-slate-500 pointer-events-none font-mono text-xs">$</span>
+                        <span className="absolute left-2.5 top-1.5 text-slate-500 dark:text-slate-400 pointer-events-none font-mono text-xs">$</span>
                         <input
                           type="number"
                           step="0.01"
@@ -2090,16 +2090,16 @@ export function ShopifyPricingConfigSection({
                             const nextBase = Math.max(0, nextSelling - (settings.priceAddition ?? 0));
                             handleUpdateVariant(idx, { basePrice: Number(nextBase.toFixed(2)) });
                           }}
-                          className="w-full rounded border border-slate-300 bg-white pl-6 pr-2 py-1 text-xs text-slate-900 font-mono font-semibold focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-amber-300"
+                          className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-6 pr-2 py-1 text-xs text-slate-900 dark:text-slate-100 font-mono font-semibold focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-amber-300 dark:focus:border-amber-800"
                           title="Giá bán cuối trên Shopify (Gõ trực tiếp vào đây để tự set giá bán)"
                         />
                       </div>
                     </td>
-                    <td className="py-2 px-3 font-mono text-slate-600">
+                    <td className="py-2 px-3 font-mono text-slate-600 dark:text-slate-400">
                       {compareAt !== undefined ? (
                         <span className="line-through">${compareAt.toFixed(2)}</span>
                       ) : (
-                        <span className="text-slate-500">—</span>
+                        <span className="text-slate-500 dark:text-slate-400">—</span>
                       )}
                     </td>
                     <td className="py-2 px-3 text-center">
@@ -2107,7 +2107,7 @@ export function ShopifyPricingConfigSection({
                         type="button"
                         onClick={() => handleRemoveVariant(idx)}
                         disabled={activeVariants.length <= 1}
-                        className="rounded p-1 text-slate-500 hover:text-rose-700 hover:bg-rose-50 transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                        className="rounded p-1 text-slate-500 dark:text-slate-400 hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/80 transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                         title="Xóa biến thể này"
                       >
                         ✕
@@ -2123,18 +2123,18 @@ export function ShopifyPricingConfigSection({
         {/* Add Row or Quick Action Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
           {isAddingVariant ? (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 p-2 text-xs w-full sm:w-auto">
-              <span className="text-slate-600 font-medium">Biến thể mới:</span>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-xs w-full sm:w-auto">
+              <span className="text-slate-600 dark:text-slate-400 font-medium">Biến thể mới:</span>
               <input
                 type="text"
                 autoFocus
                 placeholder="Tên kích thước (VD: 72x96)..."
                 value={newVariantLabel}
                 onChange={(e) => setNewVariantLabel(e.target.value)}
-                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-600/30 placeholder:text-slate-500 focus:border-blue-300 w-44"
+                className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 w-44"
               />
               <div className="relative">
-                <span className="absolute left-2 top-1 text-slate-500 pointer-events-none font-mono text-xs">$</span>
+                <span className="absolute left-2 top-1 text-slate-500 dark:text-slate-400 pointer-events-none font-mono text-xs">$</span>
                 <input
                   type="number"
                   step="0.01"
@@ -2142,7 +2142,7 @@ export function ShopifyPricingConfigSection({
                   placeholder="Giá gốc"
                   value={newVariantPrice}
                   onChange={(e) => setNewVariantPrice(Math.max(0, Number(e.target.value) || 0))}
-                  className="w-24 rounded border border-slate-300 bg-white pl-5 pr-2 py-1 text-xs text-slate-900 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
+                  className="w-24 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-5 pr-2 py-1 text-xs text-slate-900 dark:text-slate-100 font-mono focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
                 />
               </div>
               <button
@@ -2158,7 +2158,7 @@ export function ShopifyPricingConfigSection({
                   setIsAddingVariant(false);
                   setNewVariantLabel("");
                 }}
-                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                className="rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
               >
                 ✕ Hủy
               </button>
@@ -2167,7 +2167,7 @@ export function ShopifyPricingConfigSection({
             <button
               type="button"
               onClick={() => setIsAddingVariant(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-slate-300 hover:text-slate-900 transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
             >
               <span>+ Thêm kích thước / biến thể</span>
             </button>
@@ -2177,16 +2177,16 @@ export function ShopifyPricingConfigSection({
             <button
               type="button"
               onClick={handleSaveCurrentAsStorePreset}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 hover:text-slate-900 transition cursor-pointer shadow-xs"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-3 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/80 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer shadow-xs"
               title={`Lưu cấu hình kích thước và giá hiện tại thành mẫu riêng cho store ${activeStoreId.toUpperCase()}`}
             >
               <span><AppIcon name="download" /> Lưu bộ giá riêng cho store {activeStoreId.toUpperCase()}</span>
             </button>
 
-            <div className="flex items-center gap-3 text-xs text-slate-600 font-mono">
+            <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-400 font-mono">
               <span>
                 Dải giá bán:{" "}
-                <strong className="text-slate-900">
+                <strong className="text-slate-900 dark:text-slate-100">
                   ${Math.min(...activeVariants.map((v) => (Number(v.basePrice) || 0) + (settings.priceAddition ?? 0))).toFixed(2)} - $
                   {Math.max(...activeVariants.map((v) => (Number(v.basePrice) || 0) + (settings.priceAddition ?? 0))).toFixed(2)}
                 </strong>
@@ -2198,15 +2198,15 @@ export function ShopifyPricingConfigSection({
         {/* Modal / Flyout for Store Product Search */}
         {isStoreSearchOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-            <div className="w-full max-w-xl rounded-lg border border-slate-300 bg-white p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <div className="w-full max-w-xl rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="text-lg"><AppIcon name="search" /></span>
                   <div>
-                    <h3 className="font-semibold text-slate-900 text-sm">
+                    <h3 className="font-semibold text-slate-900 dark:text-slate-100 text-sm">
                       Chọn sản phẩm mẫu trên store &ldquo;{activeStoreId}&rdquo;
                     </h3>
-                    <p className="text-xs text-slate-600">
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
                       Hệ thống sẽ đọc toàn bộ kích thước và giá gốc của sản phẩm này để áp dụng cho thiết kế POD
                     </p>
                   </div>
@@ -2214,7 +2214,7 @@ export function ShopifyPricingConfigSection({
                 <button
                   type="button"
                   onClick={() => setIsStoreSearchOpen(false)}
-                  className="rounded-lg p-1 text-slate-600 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                  className="rounded-lg p-1 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
                 >
                   ✕
                 </button>
@@ -2235,7 +2235,7 @@ export function ShopifyPricingConfigSection({
                       void loadStoreProducts(storeSearchQuery);
                     }
                   }}
-                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300"
+                  className="flex-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
                 />
                 <button
                   type="button"
@@ -2248,32 +2248,32 @@ export function ShopifyPricingConfigSection({
               </div>
 
               {storeProductLoadError && (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
+                <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-2.5 text-xs text-rose-700 dark:text-rose-300">
                   <AppIcon name="warning" /> {storeProductLoadError}
                 </div>
               )}
 
               {/* Product list */}
-              <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-200">
+              <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-200 dark:divide-slate-700">
                 {isLoadingStoreProducts ? (
-                  <div className="py-8 text-center text-xs text-slate-600 animate-pulse">
+                  <div className="py-8 text-center text-xs text-slate-600 dark:text-slate-400 animate-pulse">
                     Đang tải danh sách sản phẩm từ Shopify store {activeStoreId}...
                   </div>
                 ) : storeProducts.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-slate-500">
+                  <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
                     Không tìm thấy sản phẩm nào trên store {activeStoreId}. Hãy thử tìm từ khóa khác.
                   </div>
                 ) : (
                   storeProducts.map((p) => (
                     <div
                       key={p.id}
-                      className="flex items-center justify-between gap-3 pt-2 pb-1 hover:bg-slate-50 px-2 rounded-lg transition"
+                      className="flex items-center justify-between gap-3 pt-2 pb-1 hover:bg-slate-50 dark:hover:bg-slate-700 px-2 rounded-lg transition"
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-slate-900 truncate">
+                        <p className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">
                           {p.title}
                         </p>
-                        <p className="text-xs text-slate-500 font-mono truncate">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
                           {p.productType ? `${p.productType} • ` : ""}{p.handle}
                         </p>
                       </div>
@@ -2281,7 +2281,7 @@ export function ShopifyPricingConfigSection({
                         type="button"
                         disabled={isLoadingProductVariants}
                         onClick={() => void handleSelectStoreProduct(p)}
-                        className="rounded-md bg-slate-50 border border-slate-300 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-700 hover:text-white transition cursor-pointer shrink-0 disabled:opacity-50"
+                        className="rounded-md bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-700 hover:text-white transition cursor-pointer shrink-0 disabled:opacity-50"
                       >
                         {isLoadingProductVariants ? "Đang nạp..." : "Lấy bộ giá →"}
                       </button>
@@ -2290,11 +2290,11 @@ export function ShopifyPricingConfigSection({
                 )}
               </div>
 
-              <div className="flex justify-end border-t border-slate-200 pt-3">
+              <div className="flex justify-end border-t border-slate-200 dark:border-slate-700 pt-3">
                 <button
                   type="button"
                   onClick={() => setIsStoreSearchOpen(false)}
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  className="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
                 >
                   Đóng
                 </button>
@@ -2306,10 +2306,10 @@ export function ShopifyPricingConfigSection({
 
       {/* Row 4: Profile & Image Processing */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-1 text-sm text-slate-700">
+        <label className="grid gap-1 text-sm text-slate-700 dark:text-slate-300">
           Profile
           <select
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 cursor-pointer"
+            className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 cursor-pointer"
             value={settings.profileSlug}
             onChange={(event) => {
               const nextProfile = event.target.value === "jeminise" ? "jeminise" : "default";
@@ -2325,7 +2325,7 @@ export function ShopifyPricingConfigSection({
             <option value="jeminise">Jeminise</option>
           </select>
         </label>
-        <label className="flex items-center gap-3 self-end rounded-lg border border-slate-300 p-2 text-sm text-slate-900 cursor-pointer">
+        <label className="flex items-center gap-3 self-end rounded-lg border border-slate-300 dark:border-slate-700 p-2 text-sm text-slate-900 dark:text-slate-100 cursor-pointer">
           <input
             checked={settings.applyJeminisePreset}
             disabled={settings.profileSlug !== "jeminise"}
@@ -2334,10 +2334,10 @@ export function ShopifyPricingConfigSection({
           />
           Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
         </label>
-        <label className="grid gap-1 text-sm text-slate-700">
+        <label className="grid gap-1 text-sm text-slate-700 dark:text-slate-300">
           Xử lý ảnh
           <select
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 cursor-pointer"
+            className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 cursor-pointer"
             value={settings.imageProfileSlug}
             onChange={(event) => {
               const slug = event.target.value;
@@ -2355,14 +2355,14 @@ export function ShopifyPricingConfigSection({
         </label>
         <div className="flex items-end gap-2">
           <button
-            className="rounded-lg border border-blue-200 px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 transition cursor-pointer"
+            className="rounded-lg border border-blue-200 dark:border-blue-800 px-3 py-2 text-sm text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/80 transition cursor-pointer"
             type="button"
             onClick={() => setIsImageProfileEditorOpen((open) => !open)}
           >
             Cấu hình ảnh
           </button>
           <button
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 transition cursor-pointer"
+            className="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer"
             type="button"
             onClick={() => void handleCreateImageProfile()}
           >
@@ -2373,16 +2373,16 @@ export function ShopifyPricingConfigSection({
 
       {/* Image Profile Editor Popup */}
       {isImageProfileEditorOpen && editingImageProfile ? (
-        <section className="space-y-4 rounded-lg border border-blue-200 bg-slate-50 p-4">
+        <section className="space-y-4 rounded-lg border border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-slate-800 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold text-blue-700">Image profile · {editingImageProfile.slug}</h2>
-            <span className="text-xs text-slate-500">Revision {editingImageProfile.revision}</span>
+            <h2 className="font-semibold text-blue-700 dark:text-blue-300">Image profile · {editingImageProfile.slug}</h2>
+            <span className="text-xs text-slate-500 dark:text-slate-400">Revision {editingImageProfile.revision}</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="grid gap-1 text-sm">
               Tên
               <input
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-slate-900"
+                className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100"
                 value={editingImageProfile.name}
                 onChange={(event) => setEditingImageProfile({ ...editingImageProfile, name: event.target.value })}
               />
@@ -2398,7 +2398,7 @@ export function ShopifyPricingConfigSection({
             <label className="grid gap-2 text-sm">
               Logo PNG/JPEG/WebP
               {editingImageProfile.logoUrl ? (
-                <span className="flex h-24 items-center justify-center overflow-hidden rounded-lg border border-slate-300 bg-white/90 p-2">
+                <span className="flex h-24 items-center justify-center overflow-hidden rounded-lg border border-slate-300 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-2">
                   <img
                     alt={`Logo hiện tại của ${editingImageProfile.name}`}
                     className="max-h-full max-w-full object-contain"
@@ -2406,7 +2406,7 @@ export function ShopifyPricingConfigSection({
                   />
                 </span>
               ) : (
-                <span className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-300 text-xs text-slate-500">
+                <span className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400">
                   Chưa có logo
                 </span>
               )}
@@ -2474,7 +2474,7 @@ export function ShopifyPricingConfigSection({
             <label className="grid gap-1 text-sm">
               Fit
               <select
-                className="rounded border border-slate-300 bg-white px-3 py-2"
+                className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
                 value={editingImageProfile.output.fit}
                 onChange={(event) =>
                   setEditingImageProfile({
@@ -2493,7 +2493,7 @@ export function ShopifyPricingConfigSection({
             <label className="grid gap-1 text-sm">
               Background
               <input
-                className="h-10 rounded border border-slate-300 bg-white"
+                className="h-10 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
                 type="color"
                 value={editingImageProfile.output.background}
                 onChange={(event) =>
@@ -2521,7 +2521,7 @@ export function ShopifyPricingConfigSection({
             <label className="grid gap-1 text-sm">
               Vị trí logo
               <select
-                className="rounded border border-slate-300 bg-white px-3 py-2"
+                className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
                 value={editingImageProfile.logo.position}
                 onChange={(event) =>
                   setEditingImageProfile({
@@ -2567,7 +2567,7 @@ export function ShopifyPricingConfigSection({
           {imageProfilePreview ? (
             <img
               alt="Image processing preview"
-              className="max-h-80 rounded-lg border border-slate-300 object-contain"
+              className="max-h-80 rounded-lg border border-slate-300 dark:border-slate-700 object-contain"
               src={imageProfilePreview}
             />
           ) : null}
@@ -2580,7 +2580,7 @@ export function ShopifyPricingConfigSection({
               Lưu profile
             </button>
             <button
-              className="rounded border border-rose-200 px-4 py-2 text-rose-700 disabled:opacity-40 hover:bg-rose-50 transition cursor-pointer"
+              className="rounded border border-rose-200 dark:border-rose-800 px-4 py-2 text-rose-700 dark:text-rose-300 disabled:opacity-40 hover:bg-rose-50 dark:hover:bg-rose-950/80 transition cursor-pointer"
               disabled={editingImageProfile.slug === "default"}
               type="button"
               onClick={() => void handleDeleteImageProfile()}
@@ -2588,7 +2588,7 @@ export function ShopifyPricingConfigSection({
               Xóa profile
             </button>
           </div>
-          {imageProfileMessage ? <p className="text-sm text-amber-700">{imageProfileMessage}</p> : null}
+          {imageProfileMessage ? <p className="text-sm text-amber-700 dark:text-amber-300">{imageProfileMessage}</p> : null}
         </section>
       ) : null}
 

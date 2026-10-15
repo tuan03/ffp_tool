@@ -1045,7 +1045,7 @@ export function PinterestPodStudio({
       <PageHeader title="Pinterest POD Studio" description="Khám phá xu hướng, duyệt mẫu và chuẩn bị thiết kế POD cho sản phẩm." />
       {/* Error Banner */}
       {errorMessage && (
-        <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 shadow-sm">
+        <div className="flex items-center justify-between rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-4 text-xs text-rose-700 dark:text-rose-300 shadow-sm">
           <div className="flex items-center gap-2">
             <span className="text-base"><AppIcon name="warning" /></span>
             <span>{errorMessage}</span>
@@ -1053,7 +1053,7 @@ export function PinterestPodStudio({
           <button
             type="button"
             onClick={() => setErrorMessage(null)}
-            className="text-rose-700 hover:text-slate-900"
+            className="text-rose-700 dark:text-rose-300 hover:text-slate-900 dark:hover:text-slate-100"
           >
             ✕
           </button>
@@ -1082,7 +1082,7 @@ export function PinterestPodStudio({
         onOpenAgentInstall={() => setIsAgentInstallModalOpen(true)}
       />
 
-      {agentLoadError && <p role="alert" className="text-rose-700">{agentLoadError}</p>}
+      {agentLoadError && <p role="alert" className="text-rose-700 dark:text-rose-300">{agentLoadError}</p>}
       <CrawlerAgentsPanel
         agents={crawlerAgents}
         isLoading={isLoadingAgents}
@@ -1095,18 +1095,18 @@ export function PinterestPodStudio({
         <div className="flex flex-col gap-5 animate-in fade-in duration-200">
           {/* Active Job Alert Banner with Stop & Unlock */}
           {(jobStatus === "running" || jobStatus === "producing") && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-lg border border-blue-300 bg-blue-50 p-4 text-xs shadow-sm">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-4 text-xs shadow-sm">
               <div className="flex items-center gap-3">
                 <span className="relative flex h-3 w-3">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-600 opacity-75" />
                   <span className="relative inline-flex h-3 w-3 rounded-full bg-blue-600" />
                 </span>
                 <div>
-                  <p className="font-bold text-blue-700 text-sm">
+                  <p className="font-bold text-blue-700 dark:text-blue-300 text-sm">
                     {jobStatus === "producing" ? "Đang sản xuất thiết kế POD..." : "Đang tiến hành cào mẫu & phân tích xu hướng Pinterest..."}
                   </p>
-                  <p className="text-xs text-slate-600">
-                    Job ID: <span className="font-mono text-blue-700">{jobId || "Đang khởi tạo"}</span> • Bạn có thể theo dõi tiến độ chi tiết ở cột bên phải.
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Job ID: <span className="font-mono text-blue-700 dark:text-blue-300">{jobId || "Đang khởi tạo"}</span> • Bạn có thể theo dõi tiến độ chi tiết ở cột bên phải.
                   </p>
                 </div>
               </div>
@@ -1114,7 +1114,7 @@ export function PinterestPodStudio({
                 <button
                   type="button"
                   onClick={() => void handleStopJob()}
-                  className="flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-2 font-bold text-rose-700 transition hover:bg-rose-50 hover:text-slate-900 hover:border-rose-300 cursor-pointer shadow"
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 px-3.5 py-2 font-bold text-rose-700 dark:text-rose-300 transition hover:bg-rose-50 dark:hover:bg-rose-950/80 hover:text-slate-900 dark:hover:text-slate-100 hover:border-rose-300 dark:hover:border-rose-800 cursor-pointer shadow"
                 >
                   <span>⏹</span>
                   <span>Dừng tiến trình & Mở khóa Form</span>
@@ -1125,14 +1125,14 @@ export function PinterestPodStudio({
 
           {/* Quick link banner if candidate review is already available */}
           {hasStage2 && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-xs text-amber-700 shadow-md">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-4 text-xs text-amber-700 dark:text-amber-300 shadow-md">
               <div className="flex items-center gap-2.5">
                 <span className="text-lg"><AppIcon name="info" /></span>
                 <div>
-                  <p className="font-bold text-amber-700">
+                  <p className="font-bold text-amber-700 dark:text-amber-300">
                     Đã có {candidates.length} mẫu ứng viên sẵn sàng duyệt trong job này!
                   </p>
-                  <p className="text-xs text-amber-700">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
                     Bạn có thể chuyển ngay sang Bước 2 để lọc và chọn mẫu in xưởng.
                   </p>
                 </div>
@@ -1140,7 +1140,7 @@ export function PinterestPodStudio({
               <button
                 type="button"
                 onClick={() => handleSelectStage(2)}
-                className="flex items-center gap-1.5 rounded-lg bg-blue-50 px-4 py-2 font-bold text-slate-950 shadow-md transition cursor-pointer"
+                className="flex items-center gap-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 px-4 py-2 font-bold text-slate-950 dark:text-slate-100 shadow-md transition cursor-pointer"
               >
                 <span>Chuyển sang Bước 2: Duyệt mẫu</span>
                 <span>➔</span>
@@ -1251,32 +1251,32 @@ export function PinterestPodStudio({
       {currentStage === 2 && (
         <div ref={stage2Ref} className="flex flex-col gap-4 animate-in fade-in duration-200">
           {/* Breadcrumb Context Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2 text-slate-600">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-slate-600 dark:text-slate-400">
               <button
                 type="button"
                 onClick={() => handleSelectStage(1)}
-                className="flex items-center gap-1 font-semibold text-blue-700 hover:text-blue-700 hover:underline cursor-pointer"
+                className="flex items-center gap-1 font-semibold text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 hover:underline cursor-pointer"
               >
                 <span>←</span>
                 <span>Quay lại Bước 1</span>
               </button>
               <span>•</span>
               <span>
-                Niche: <strong className="text-slate-900">&ldquo;{niche}&rdquo;</strong>
+                Niche: <strong className="text-slate-900 dark:text-slate-100">&ldquo;{niche}&rdquo;</strong>
               </span>
               <span>•</span>
               <span>
-                Sản phẩm: <strong className="text-slate-900 uppercase">{product}</strong>
+                Sản phẩm: <strong className="text-slate-900 dark:text-slate-100 uppercase">{product}</strong>
               </span>
               <span>•</span>
               <span>
-                Tổng số: <strong className="text-blue-700">{candidates.length} mẫu</strong>
+                Tổng số: <strong className="text-blue-700 dark:text-blue-300">{candidates.length} mẫu</strong>
               </span>
               {jobId && (
                 <>
                   <span>•</span>
-                  <code className="text-xs text-slate-600 font-mono">{jobId}</code>
+                  <code className="text-xs text-slate-600 dark:text-slate-400 font-mono">{jobId}</code>
                 </>
               )}
             </div>
@@ -1285,7 +1285,7 @@ export function PinterestPodStudio({
               <button
                 type="button"
                 onClick={() => handleSelectStage(3)}
-                className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 font-semibold text-emerald-700 hover:bg-emerald-50 transition shadow-xs cursor-pointer"
+                className="flex items-center gap-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-3 py-1.5 font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/80 transition shadow-xs cursor-pointer"
               >
                 <span>Xem Thành phẩm đã có</span>
                 <span>➔</span>

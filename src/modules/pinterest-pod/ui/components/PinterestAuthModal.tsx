@@ -208,21 +208,21 @@ export function PinterestAuthModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="pinterest-auth-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 dark:bg-slate-800 backdrop-blur-sm p-4 animate-in fade-in duration-150"
     >
-      <div className="relative flex w-full max-w-2xl flex-col rounded-lg border border-slate-300 bg-white p-6 shadow-sm">
+      <div className="relative flex w-full max-w-2xl flex-col rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 shadow-sm">
         {/* Modal Header */}
-        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+        <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-700 pb-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-700 font-bold text-base">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-base">
                 🔑
               </span>
-              <h2 id="pinterest-auth-modal-title" className="text-lg font-bold text-slate-900">
+              <h2 id="pinterest-auth-modal-title" className="text-lg font-bold text-slate-900 dark:text-slate-100">
                 Quản lý Xác thực & Đăng nhập Pinterest
               </h2>
             </div>
-            <p className="mt-1 text-xs text-slate-600">
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
               Kết nối API Token để quét Pinterest Trends và phiên trình duyệt để tải ảnh mẫu chất lượng cao.
             </p>
           </div>
@@ -230,14 +230,14 @@ export function PinterestAuthModal({
             type="button"
             onClick={onClose}
             aria-label="Đóng cửa sổ"
-            className="rounded-lg p-1.5 text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+            className="rounded-lg p-1.5 text-slate-600 dark:text-slate-400 transition hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
           >
             ✕
           </button>
         </div>
 
         {authStatus?.oauth_config_error && (
-          <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+          <div className="mb-4 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3 text-xs font-semibold text-rose-700 dark:text-rose-300">
             Cấu hình OAuth chưa hoàn chỉnh: {authStatus.oauth_config_error}
           </div>
         )}
@@ -248,8 +248,8 @@ export function PinterestAuthModal({
           <div
             className={`rounded-lg border p-3 text-xs transition ${
               isOAuthValid
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-rose-200 bg-rose-50 text-rose-700"
+                ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                : "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300"
             }`}
           >
             <div className="flex items-center justify-between font-bold">
@@ -258,17 +258,17 @@ export function PinterestAuthModal({
             </div>
             <div className="mt-1.5 text-xs">
               {isOAuthValid ? (
-                <div className="space-y-0.5 text-slate-700">
-                  <p className="text-emerald-700 font-semibold">✓ Đã lưu token; quyền Trends sẽ được kiểm tra khi quét</p>
+                <div className="space-y-0.5 text-slate-700 dark:text-slate-300">
+                  <p className="text-emerald-700 dark:text-emerald-300 font-semibold">✓ Đã lưu token; quyền Trends sẽ được kiểm tra khi quét</p>
                   {authStatus?.token_info?.username && (
-                    <p className="text-slate-600">Tài khoản: @{authStatus.token_info.username}</p>
+                    <p className="text-slate-600 dark:text-slate-400">Tài khoản: @{authStatus.token_info.username}</p>
                   )}
                   {authStatus?.token_info?.has_refresh_token && (
-                    <p className="text-emerald-700 text-xs">Tự động gia hạn (Refresh Token: Có)</p>
+                    <p className="text-emerald-700 dark:text-emerald-300 text-xs">Tự động gia hạn (Refresh Token: Có)</p>
                   )}
                 </div>
               ) : (
-                <p className="text-rose-700 font-semibold">✕ Chưa có token (Bắt buộc để quét Trends)</p>
+                <p className="text-rose-700 dark:text-rose-300 font-semibold">✕ Chưa có token (Bắt buộc để quét Trends)</p>
               )}
             </div>
           </div>
@@ -277,8 +277,8 @@ export function PinterestAuthModal({
           <div
             className={`rounded-lg border p-3 text-xs transition ${
               isBrowserLoggedIn
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-amber-200 bg-amber-50 text-amber-700"
+                ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300"
             }`}
           >
             <div className="flex items-center justify-between font-bold">
@@ -287,11 +287,11 @@ export function PinterestAuthModal({
             </div>
             <div className="mt-1.5 text-xs">
               {isBrowserLoggedIn ? (
-                <p className="text-emerald-700 font-semibold">✓ {agentName ?? "Crawler agent"} đã lưu session</p>
+                <p className="text-emerald-700 dark:text-emerald-300 font-semibold">✓ {agentName ?? "Crawler agent"} đã lưu session</p>
               ) : (
-                <p className="text-amber-700 font-semibold">{isAgentConnected ? "! Agent chưa đăng nhập Pinterest" : "! Chưa có crawler agent online"}</p>
+                <p className="text-amber-700 dark:text-amber-300 font-semibold">{isAgentConnected ? "! Agent chưa đăng nhập Pinterest" : "! Chưa có crawler agent online"}</p>
               )}
-              <p className="text-slate-600 text-xs mt-0.5">Trạng thái được báo từ máy agent, không phải trình duyệt trong VPS.</p>
+              <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5">Trạng thái được báo từ máy agent, không phải trình duyệt trong VPS.</p>
             </div>
           </div>
         </div>
@@ -301,15 +301,15 @@ export function PinterestAuthModal({
           <div
             className={`mb-4 flex items-center justify-between rounded-lg p-3 text-xs font-semibold ${
               feedback.type === "success"
-                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border border-rose-200 bg-rose-50 text-rose-700"
+                ? "border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+                : "border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300"
             }`}
           >
             <span>{feedback.message}</span>
             <button
               type="button"
               onClick={() => setFeedback(null)}
-              className="text-slate-600 hover:text-slate-900"
+              className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               ✕
             </button>
@@ -317,14 +317,14 @@ export function PinterestAuthModal({
         )}
 
         {/* Tab Selection */}
-        <div className="flex items-center gap-1 border-b border-slate-200 pb-2 text-xs font-semibold">
+        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 pb-2 text-xs font-semibold">
           <button
             type="button"
             onClick={() => setActiveTab("oauth")}
             className={`rounded-lg px-3 py-1.5 transition cursor-pointer ${
               activeTab === "oauth"
-                ? "bg-rose-50 text-rose-700 font-bold border border-rose-300"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                ? "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold border border-rose-300 dark:border-rose-800"
+                : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
             }`}
           >
             <AppIcon name="seo" /> Kết nối 1-Click (OAuth)
@@ -334,8 +334,8 @@ export function PinterestAuthModal({
             onClick={() => setActiveTab("manual")}
             className={`rounded-lg px-3 py-1.5 transition cursor-pointer ${
               activeTab === "manual"
-                ? "bg-rose-50 text-rose-700 font-bold border border-rose-300"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                ? "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold border border-rose-300 dark:border-rose-800"
+                : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
             }`}
           >
             <AppIcon name="review" /> Dán Token Thủ Công
@@ -345,8 +345,8 @@ export function PinterestAuthModal({
             onClick={() => setActiveTab("browser")}
             className={`rounded-lg px-3 py-1.5 transition cursor-pointer ${
               activeTab === "browser"
-                ? "bg-rose-50 text-rose-700 font-bold border border-rose-300"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                ? "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold border border-rose-300 dark:border-rose-800"
+                : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
             }`}
           >
             🌐 Trình duyệt Cào ảnh
@@ -356,9 +356,9 @@ export function PinterestAuthModal({
         {/* Tab 1: OAuth Flow */}
         {activeTab === "oauth" && (
           <div className="mt-4 flex flex-col gap-4 text-xs">
-            <div className="rounded-lg bg-slate-50 p-4 border border-slate-200">
-              <h3 className="font-bold text-slate-900 text-sm">Ủy quyền chính thức từ Pinterest</h3>
-              <p className="mt-1 text-slate-600 leading-relaxed">
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-4 border border-slate-200 dark:border-slate-700">
+              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">Ủy quyền chính thức từ Pinterest</h3>
+              <p className="mt-1 text-slate-600 dark:text-slate-400 leading-relaxed">
                 Bấm nút bên dưới để mở trang đăng nhập Pinterest. Sau khi bạn chọn <strong>Authorize (Ủy quyền)</strong>, token sẽ được tự động đồng bộ về hệ thống FFP.
               </p>
               <div className="mt-4">
@@ -374,8 +374,8 @@ export function PinterestAuthModal({
             </div>
 
             {/* Fallback code exchange */}
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-600">
-              <label htmlFor="callback-input" className="font-bold text-slate-700 block mb-1 text-xs">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-400">
+              <label htmlFor="callback-input" className="font-bold text-slate-700 dark:text-slate-300 block mb-1 text-xs">
                 Hoặc dán URL chuyển hướng / Mã Authorization Code nếu cửa sổ không tự đóng:
               </label>
               <div className="flex gap-2 mt-1">
@@ -385,13 +385,13 @@ export function PinterestAuthModal({
                   value={callbackUrlOrCode}
                   onChange={(e) => setCallbackUrlOrCode(e.target.value)}
                   placeholder="http://localhost:4000/api/v1/oauth/pinterest/callback?code=..."
-                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-rose-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                  className="flex-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:border-rose-300 dark:focus:border-rose-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                 />
                 <button
                   type="button"
                   disabled={isSaving || !callbackUrlOrCode.trim()}
                   onClick={() => void handleExchangeCode()}
-                  className="rounded-lg bg-slate-100 px-4 py-1.5 font-bold text-slate-900 hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
+                  className="rounded-lg bg-slate-100 dark:bg-slate-700 px-4 py-1.5 font-bold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer"
                 >
                   {isSaving ? "Đang lưu..." : "Xác nhận & Lưu"}
                 </button>
@@ -404,8 +404,8 @@ export function PinterestAuthModal({
         {activeTab === "manual" && (
           <div className="mt-4 flex flex-col gap-3 text-xs">
             <div>
-              <label htmlFor="access-token-input" className="font-bold text-slate-700 block mb-1">
-                Pinterest Access Token <span className="text-rose-700">*</span>:
+              <label htmlFor="access-token-input" className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                Pinterest Access Token <span className="text-rose-700 dark:text-rose-300">*</span>:
               </label>
               <input
                 id="access-token-input"
@@ -413,15 +413,15 @@ export function PinterestAuthModal({
                 value={manualAccessToken}
                 onChange={(e) => setManualAccessToken(e.target.value)}
                 placeholder="pina_HAA..."
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 font-mono focus:border-rose-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-slate-100 font-mono focus:border-rose-300 dark:focus:border-rose-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
               />
-              <span className="text-xs text-slate-500 mt-1 block">
+              <span className="text-xs text-slate-500 dark:text-slate-400 mt-1 block">
                 Token được tạo từ Pinterest Developer Portal (App 1595071 &gt; Generate Token).
               </span>
             </div>
 
             <div>
-              <label htmlFor="refresh-token-input" className="font-bold text-slate-700 block mb-1">
+              <label htmlFor="refresh-token-input" className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                 Refresh Token (Tùy chọn - để tự động gia hạn):
               </label>
               <input
@@ -430,7 +430,7 @@ export function PinterestAuthModal({
                 value={manualRefreshToken}
                 onChange={(e) => setManualRefreshToken(e.target.value)}
                 placeholder="pinr_..."
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 font-mono focus:border-rose-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-slate-100 font-mono focus:border-rose-300 dark:focus:border-rose-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
               />
             </div>
 
@@ -450,38 +450,38 @@ export function PinterestAuthModal({
         {/* Tab 3: Browser Session */}
         {activeTab === "browser" && (
           <div className="mt-4 flex flex-col gap-4 text-xs">
-            <div className="rounded-lg bg-slate-50 p-4 border border-slate-200">
-              <h3 className="font-bold text-slate-900 text-sm">Phiên Pinterest trên máy Crawler Agent</h3>
-              <p className="mt-1 text-slate-600 leading-relaxed">
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-4 border border-slate-200 dark:border-slate-700">
+              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">Phiên Pinterest trên máy Crawler Agent</h3>
+              <p className="mt-1 text-slate-600 dark:text-slate-400 leading-relaxed">
                 Phiên trình duyệt phải được tạo trên chính máy đang chạy Crawler Agent. Nhấp chuột phải biểu tượng FFP cạnh đồng hồ Windows, sau đó chọn <strong>Đăng nhập Pinterest</strong>.
               </p>
-              <div className="mt-3 rounded-lg border border-slate-300 bg-white p-3">
-                <p className="mb-2 font-semibold text-slate-700">Lệnh dự phòng nếu máy chưa có menu khay hệ thống:</p>
-                <code className="block overflow-x-auto whitespace-nowrap text-xs text-blue-700">{agentLoginCommand}</code>
+              <div className="mt-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+                <p className="mb-2 font-semibold text-slate-700 dark:text-slate-300">Lệnh dự phòng nếu máy chưa có menu khay hệ thống:</p>
+                <code className="block overflow-x-auto whitespace-nowrap text-xs text-blue-700 dark:text-blue-300">{agentLoginCommand}</code>
                 <button
                   type="button"
                   onClick={() => void navigator.clipboard.writeText(agentLoginCommand)}
-                  className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-semibold text-blue-700 hover:bg-blue-50"
+                  className="mt-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-3 py-1.5 font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/80"
                 >
                   Sao chép lệnh đăng nhập Agent
                 </button>
-                <p className="mt-2 text-xs text-slate-500">Agent phiên bản mới tự cập nhật trạng thái lên Coordinator trong khoảng 10 giây, không cần restart.</p>
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Agent phiên bản mới tự cập nhật trạng thái lên Coordinator trong khoảng 10 giây, không cần restart.</p>
               </div>
 
               {(isBrowserActive || authStatus?.browser_process_active) && (
-                <div className="mt-3 rounded-lg border border-blue-300 bg-blue-50 p-3.5 text-blue-700 animate-in fade-in duration-200">
-                  <div className="flex items-center gap-2 font-bold text-blue-700">
+                <div className="mt-3 rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-3.5 text-blue-700 dark:text-blue-300 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2 font-bold text-blue-700 dark:text-blue-300">
                     <span className="relative flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-600 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600" />
                     </span>
                     <span>Cửa sổ Chromium đang hoạt động trên màn hình!</span>
                   </div>
-                  <p className="mt-1.5 text-slate-700 text-xs leading-relaxed">
+                  <p className="mt-1.5 text-slate-700 dark:text-slate-300 text-xs leading-relaxed">
                     Vui lòng kiểm tra cửa sổ Chromium (biểu tượng trình duyệt trên thanh Dock / Taskbar).
                     Hãy hoàn tất <strong>đăng nhập tài khoản Pinterest</strong> của bạn tại đó.
                   </p>
-                  <p className="mt-1 text-xs text-blue-700 font-semibold">
+                  <p className="mt-1 text-xs text-blue-700 dark:text-blue-300 font-semibold">
                     <AppIcon name="info" /> Cửa sổ sẽ tự động đóng và hệ thống sẽ lập tức cập nhật trạng thái khi đăng nhập thành công.
                   </p>
                 </div>
@@ -499,7 +499,7 @@ export function PinterestAuthModal({
                   className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
                 >
                   {(isLoggingIn || isBrowserActive || (authStatus?.browser_process_active ?? false)) && (
-                    <svg className="animate-spin h-3.5 w-3.5 text-slate-900" viewBox="0 0 24 24" fill="none">
+                    <svg className="animate-spin h-3.5 w-3.5 text-slate-900 dark:text-slate-100" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                     </svg>
@@ -515,7 +515,7 @@ export function PinterestAuthModal({
                 <button
                   type="button"
                   onClick={() => void onRefreshStatus()}
-                  className="rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 font-semibold text-slate-900 hover:bg-slate-100 cursor-pointer"
+                  className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-2.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
                 >
                   Kiểm tra lại trạng thái
                 </button>
@@ -525,11 +525,11 @@ export function PinterestAuthModal({
         )}
 
         {/* Footer */}
-        <div className="mt-6 flex justify-end border-t border-slate-200 pt-3">
+        <div className="mt-6 flex justify-end border-t border-slate-200 dark:border-slate-700 pt-3">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+            className="rounded-lg bg-slate-50 dark:bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
           >
             Đóng
           </button>

@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 export function NotFoundPage(): React.JSX.Element {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <p className="text-5xl font-extrabold text-blue-700">404</p>
-      <h1 className="mt-3 text-xl font-bold text-slate-900">Trang không tồn tại</h1>
-      <p className="mt-2 text-sm text-slate-600">
+      <p className="text-5xl font-extrabold text-blue-700 dark:text-blue-300">404</p>
+      <h1 className="mt-3 text-xl font-bold text-slate-900 dark:text-slate-100">Trang không tồn tại</h1>
+      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
         Đường dẫn bạn yêu cầu không khả dụng hoặc đã được di chuyển.
       </p>
       <Link

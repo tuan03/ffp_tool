@@ -25,11 +25,11 @@ export function CrawlerDialog({ title, isOpen, onClose, children }: CrawlerDialo
       aria-labelledby={headingId}
       onCancel={onClose}
       onClose={onClose}
-      className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-5xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-900/30"
+      className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-5xl overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0 text-slate-900 dark:text-slate-100 shadow-xl backdrop:bg-slate-900/30"
     >
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3">
         <h2 id={headingId} className="min-w-0 truncate font-semibold">{title}</h2>
-        <button type="button" onClick={onClose} className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">Đóng</button>
+        <button type="button" onClick={onClose} className="shrink-0 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">Đóng</button>
       </div>
       <div className="p-4 sm:p-5">{children}</div>
     </dialog>

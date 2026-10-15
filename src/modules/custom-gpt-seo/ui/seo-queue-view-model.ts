@@ -37,43 +37,43 @@ const PROVIDER_PRESENTATIONS: Record<SeoProvider, ProviderPresentation> = {
 const STATUS_PRESENTATIONS: Record<GptJobStatus, StatusPresentation> = {
   PENDING: {
     label: "Chờ xử lý",
-    badgeClassName: "border-slate-300 bg-slate-50 text-slate-900",
-    dotClassName: "bg-slate-200",
+    badgeClassName: "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100",
+    dotClassName: "bg-slate-200 dark:bg-slate-700",
   },
   IN_PROGRESS: {
     label: "Đang xử lý",
-    badgeClassName: "border-blue-200 bg-blue-50 text-blue-700",
+    badgeClassName: "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300",
     dotClassName: "bg-blue-600",
   },
   WAITING_INPUT: {
     label: "Cần xử lý",
-    badgeClassName: "border-amber-200 bg-amber-50 text-amber-700",
+    badgeClassName: "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300",
     dotClassName: "bg-amber-700",
   },
   VALIDATING: {
     label: "Đang kiểm tra",
-    badgeClassName: "border-blue-200 bg-blue-50 text-blue-700",
+    badgeClassName: "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300",
     dotClassName: "bg-blue-600",
   },
   NEEDS_CHANGES: {
     label: "Cần chỉnh sửa",
-    badgeClassName: "border-orange-200 bg-orange-50 text-orange-700",
+    badgeClassName: "border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300",
     dotClassName: "bg-orange-700",
   },
   REVIEW_READY: {
     label: "Sẵn sàng duyệt",
-    badgeClassName: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    badgeClassName: "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300",
     dotClassName: "bg-emerald-700",
   },
   FAILED: {
     label: "Lỗi xử lý",
-    badgeClassName: "border-rose-200 bg-rose-50 text-rose-700",
+    badgeClassName: "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300",
     dotClassName: "bg-rose-600",
   },
   CANCELLED: {
     label: "Đã hủy",
-    badgeClassName: "border-slate-300 bg-white text-slate-600",
-    dotClassName: "bg-slate-100",
+    badgeClassName: "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400",
+    dotClassName: "bg-slate-100 dark:bg-slate-700",
   },
 };
 
@@ -94,31 +94,31 @@ const SUMMARY_DEFINITIONS: readonly Omit<QueueSummary, "count">[] = [
     key: "waiting",
     label: "Chờ xử lý",
     description: "Đang đợi AI nhận việc",
-    accentClassName: "text-slate-900",
+    accentClassName: "text-slate-900 dark:text-slate-100",
   },
   {
     key: "processing",
     label: "Đang xử lý",
     description: "AI đang phân tích và viết",
-    accentClassName: "text-blue-700",
+    accentClassName: "text-blue-700 dark:text-blue-300",
   },
   {
     key: "attention",
     label: "Cần xử lý",
     description: "Cần bổ sung, sửa hoặc thử lại",
-    accentClassName: "text-amber-700",
+    accentClassName: "text-amber-700 dark:text-amber-300",
   },
   {
     key: "ready",
     label: "Sẵn sàng duyệt",
     description: "Có thể mở SEO Review",
-    accentClassName: "text-emerald-700",
+    accentClassName: "text-emerald-700 dark:text-emerald-300",
   },
   {
     key: "cancelled",
     label: "Đã hủy",
     description: "Không còn trong luồng xử lý",
-    accentClassName: "text-slate-500",
+    accentClassName: "text-slate-500 dark:text-slate-400",
   },
 ];
 
@@ -141,8 +141,8 @@ export function getStatusPresentation(status: string): StatusPresentation {
   if (status in STATUS_PRESENTATIONS) return STATUS_PRESENTATIONS[status as GptJobStatus];
   return {
     label: status.replaceAll("_", " "),
-    badgeClassName: "border-slate-300 bg-white text-slate-700",
-    dotClassName: "bg-slate-200",
+    badgeClassName: "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300",
+    dotClassName: "bg-slate-200 dark:bg-slate-700",
   };
 }
 

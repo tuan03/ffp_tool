@@ -10,7 +10,7 @@ interface ComparisonTableProps {
 export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps): React.JSX.Element {
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-8 text-center text-xs text-slate-600">
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-8 text-center text-xs text-slate-600 dark:text-slate-400">
         Chưa có dữ liệu so sánh 4 bước cho job này.
       </div>
     );
@@ -18,7 +18,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="text-xs text-slate-600">
+      <div className="text-xs text-slate-600 dark:text-slate-400">
         Đối chiếu trực quan từng thiết kế qua 4 công đoạn (nhấp vào bất kỳ ảnh nào để soi HD 100%): từ ảnh cào Pinterest gốc, phôi bóc tách nền trắng, file in CMYK 300 DPI, đến phối cảnh mockup phòng AI.
       </div>
 
@@ -27,11 +27,11 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
           <div
             key={row.index}
             style={{ contentVisibility: "auto", containIntrinsicSize: "0 220px" }}
-            className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 shadow"
+            className="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 shadow"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-              <span className="font-bold text-sm text-blue-700">{row.product_label}</span>
-              <span className="rounded bg-slate-50 px-2 py-0.5 text-xs text-slate-600 font-mono">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
+              <span className="font-bold text-sm text-blue-700 dark:text-blue-300">{row.product_label}</span>
+              <span className="rounded bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-xs text-slate-600 dark:text-slate-400 font-mono">
                 Thành phẩm #{row.index}
               </span>
             </div>
@@ -40,7 +40,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 items-center">
               {/* Step 1: Ảnh gốc */}
               <div
-                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5 transition hover:border-slate-300 cursor-pointer"
+                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2.5 transition hover:border-slate-300 dark:hover:border-slate-700 cursor-pointer"
                 onClick={() =>
                   onPreviewImage?.({
                     url: row.source_url,
@@ -51,10 +51,10 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                 }
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                     1. Ảnh gốc Pinterest
                   </span>
-                  <span className="text-xs text-slate-600 opacity-0 group-hover:opacity-100 transition">
+                  <span className="text-xs text-slate-600 dark:text-slate-400 opacity-0 group-hover:opacity-100 transition">
                     <AppIcon name="search" /> Soi
                   </span>
                 </div>
@@ -79,7 +79,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
 
               {/* Step 2: Phôi bóc tách */}
               <div
-                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5 transition hover:border-slate-300 cursor-pointer"
+                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2.5 transition hover:border-slate-300 dark:hover:border-slate-700 cursor-pointer"
                 onClick={() => {
                   const cutoutUrl = row.cutout_white_url ?? row.cutout_url ?? row.source_url;
                   onPreviewImage?.({
@@ -91,10 +91,10 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                 }}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                     2. Phôi bóc tách (Trắng)
                   </span>
-                  <span className="text-xs text-slate-600 opacity-0 group-hover:opacity-100 transition">
+                  <span className="text-xs text-slate-600 dark:text-slate-400 opacity-0 group-hover:opacity-100 transition">
                     <AppIcon name="search" /> Soi
                   </span>
                 </div>
@@ -119,7 +119,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
 
               {/* Step 3: File CMYK 300DPI */}
               <div
-                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5 transition hover:border-blue-300 cursor-pointer"
+                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2.5 transition hover:border-blue-300 dark:hover:border-blue-800 cursor-pointer"
                 onClick={() =>
                   onPreviewImage?.({
                     url: row.final_print_url,
@@ -133,10 +133,10 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                 }
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-blue-700 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
                     3. File CMYK 300 DPI
                   </span>
-                  <span className="text-xs text-blue-700 opacity-0 group-hover:opacity-100 transition">
+                  <span className="text-xs text-blue-700 dark:text-blue-300 opacity-0 group-hover:opacity-100 transition">
                     <AppIcon name="search" /> Soi HD
                   </span>
                 </div>
@@ -161,7 +161,7 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
 
               {/* Step 4: Mockup Phòng Khách AI */}
               <div
-                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2.5 transition hover:border-blue-300 cursor-pointer"
+                className="group flex flex-col gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2.5 transition hover:border-blue-300 dark:hover:border-blue-800 cursor-pointer"
                 onClick={() => {
                   const mockupUrl = row.ai_background_urls[0] ?? row.final_print_url;
                   onPreviewImage?.({
@@ -174,10 +174,10 @@ export function ComparisonTable({ rows, onPreviewImage }: ComparisonTableProps):
                 }}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-blue-700 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
                     4. Mockup Phòng AI
                   </span>
-                  <span className="text-xs text-blue-700 opacity-0 group-hover:opacity-100 transition">
+                  <span className="text-xs text-blue-700 dark:text-blue-300 opacity-0 group-hover:opacity-100 transition">
                     <AppIcon name="search" /> Soi HD
                   </span>
                 </div>

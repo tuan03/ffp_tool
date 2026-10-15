@@ -76,7 +76,7 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
           type="button"
           onClick={() => void handlePrimaryClick()}
           title="Nhấn để cho phép nhận thông báo âm thanh và desktop khi hoàn thành tác vụ"
-          className="flex items-center gap-1.5 rounded-full border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-50 hover:text-blue-700 cursor-pointer animate-pulse"
+          className="flex items-center gap-1.5 rounded-full border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 transition hover:bg-blue-50 dark:hover:bg-blue-950/80 hover:text-blue-700 dark:hover:text-blue-300 cursor-pointer animate-pulse"
         >
           <span className="text-sm"><AppIcon name="bell" /></span>
           <span>Bật thông báo</span>
@@ -88,20 +88,20 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
           title="Bấm để thử âm thanh chuông hoặc cấu hình thông báo"
           className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition cursor-pointer ${
             isMuted
-              ? "border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-50 hover:text-slate-700"
-              : "border-slate-300 bg-slate-50 text-slate-900 hover:border-blue-300 hover:bg-slate-50"
+              ? "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-300"
+              : "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:border-blue-300 dark:hover:border-blue-800 hover:bg-slate-50 dark:hover:bg-slate-700"
           }`}
         >
           <span
             className={`inline-block h-2 w-2 rounded-full ${
               isMuted
-                ? "bg-slate-200"
+                ? "bg-slate-200 dark:bg-slate-700"
                 : "bg-emerald-700 shadow-sm "
             }`}
           />
           <span>{isMuted ? "🔇 Chuông: Tắt" : "🔊 Chuông: Bật"}</span>
           {(status === "insecure-context" || status === "denied") && (
-            <span className="text-xs text-amber-700 font-mono hidden sm:inline">
+            <span className="text-xs text-amber-700 dark:text-amber-300 font-mono hidden sm:inline">
               (Desktop: Tắt)
             </span>
           )}
@@ -110,19 +110,19 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
 
       {/* Settings & Info Popover Modal */}
       {isOpenModal && (
-        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-lg border border-slate-300 bg-white p-4 shadow-sm z-50 text-slate-900 animate-in fade-in slide-in-from-top-2">
+        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-sm z-50 text-slate-900 dark:text-slate-100 animate-in fade-in slide-in-from-top-2">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
             <div className="flex items-center gap-2">
               <span className="text-base"><AppIcon name="bell" /></span>
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wide">
                 Cài đặt & Kiểm tra Thông báo
               </h3>
             </div>
             <button
               type="button"
               onClick={() => setIsOpenModal(false)}
-              className="text-slate-600 hover:text-slate-900 rounded p-1 text-xs"
+              className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 rounded p-1 text-xs"
             >
               ✕
             </button>
@@ -131,14 +131,14 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
           {/* Quick Sound Test Actions */}
           <div className="mt-3 flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-700 font-medium">Âm thanh chuông báo:</span>
+              <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">Âm thanh chuông báo:</span>
               <button
                 type="button"
                 onClick={handleToggleMute}
                 className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
                   isMuted
-                    ? "bg-slate-50 text-slate-600 border border-slate-300 hover:text-slate-900"
-                    : "bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                    ? "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
+                    : "bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/80"
                 }`}
               >
                 {isMuted ? "🔇 Đang tắt (Bấm để bật)" : "🔊 Đang bật"}
@@ -149,7 +149,7 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
               <button
                 type="button"
                 onClick={() => handleTestSound("chime")}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 py-2 text-xs font-semibold text-blue-700 dark:text-blue-300 transition hover:bg-blue-50 dark:hover:bg-blue-950/80 cursor-pointer"
               >
                 <span><AppIcon name="bell" /></span>
                 <span>Thử chuông hoàn tất</span>
@@ -157,7 +157,7 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
               <button
                 type="button"
                 onClick={() => handleTestSound("alert")}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300 transition hover:bg-amber-50 dark:hover:bg-amber-950/80 cursor-pointer"
               >
                 <span><AppIcon name="warning" /></span>
                 <span>Thử chuông báo động</span>
@@ -165,7 +165,7 @@ export function NotificationPermissionBadge(): React.JSX.Element | null {
             </div>
 
             {feedbackMsg && (
-              <p className="text-xs text-center font-medium text-emerald-700 animate-in fade-in">
+              <p className="text-xs text-center font-medium text-emerald-700 dark:text-emerald-300 animate-in fade-in">
                 {feedbackMsg}
               </p>
             )}

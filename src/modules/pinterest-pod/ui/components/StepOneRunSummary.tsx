@@ -26,9 +26,9 @@ interface SummaryRowProps {
 
 function SummaryRow({ label, value }: SummaryRowProps): React.JSX.Element {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-slate-200 py-2.5 last:border-b-0">
-      <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className="max-w-[65%] text-right text-xs font-semibold text-slate-900">{value}</dd>
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 dark:border-slate-700 py-2.5 last:border-b-0">
+      <dt className="text-xs text-slate-500 dark:text-slate-400">{label}</dt>
+      <dd className="max-w-[65%] text-right text-xs font-semibold text-slate-900 dark:text-slate-100">{value}</dd>
     </div>
   );
 }
@@ -45,10 +45,10 @@ export function StepOneRunSummary({
   isAgentBrowserLoggedIn,
 }: StepOneRunSummaryProps): React.JSX.Element {
   return (
-    <section className="rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm">
-      <div className="border-b border-slate-200 pb-3">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">Tóm tắt lần chạy</p>
-        <h2 className="mt-1 text-base font-bold text-slate-900">Kiểm tra trước khi bắt đầu</h2>
+    <section className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 shadow-sm">
+      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">Tóm tắt lần chạy</p>
+        <h2 className="mt-1 text-base font-bold text-slate-900 dark:text-slate-100">Kiểm tra trước khi bắt đầu</h2>
       </div>
 
       <dl className="mt-2">
@@ -62,24 +62,24 @@ export function StepOneRunSummary({
         />
       </dl>
 
-      <div className="mt-4 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="mt-4 space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3">
         <div className="flex items-start gap-2 text-xs">
           <span
             className={`mt-1 h-2 w-2 shrink-0 rounded-full ${canDiscoverOfficialTrends ? "bg-emerald-700" : "bg-amber-700"}`}
           />
           <div>
-            <p className="font-semibold text-slate-900">
+            <p className="font-semibold text-slate-900 dark:text-slate-100">
               Pinterest API: {canDiscoverOfficialTrends ? "Sẵn sàng quét Trends" : "Chưa kết nối OAuth"}
             </p>
-            <p className="mt-0.5 text-xs leading-4 text-slate-500">Chỉ dùng cho dữ liệu Pinterest Trends chính thức.</p>
+            <p className="mt-0.5 text-xs leading-4 text-slate-500 dark:text-slate-400">Chỉ dùng cho dữ liệu Pinterest Trends chính thức.</p>
           </div>
         </div>
-        <div className="flex items-start gap-2 border-t border-slate-200 pt-2 text-xs">
+        <div className="flex items-start gap-2 border-t border-slate-200 dark:border-slate-700 pt-2 text-xs">
           <span
-            className={`mt-1 h-2 w-2 shrink-0 rounded-full ${isAgentConnected && isAgentBrowserLoggedIn ? "bg-emerald-700" : "bg-slate-200"}`}
+            className={`mt-1 h-2 w-2 shrink-0 rounded-full ${isAgentConnected && isAgentBrowserLoggedIn ? "bg-emerald-700" : "bg-slate-200 dark:bg-slate-700"}`}
           />
           <div>
-            <p className="font-semibold text-slate-900">
+            <p className="font-semibold text-slate-900 dark:text-slate-100">
               Crawler Agent:{" "}
               {!isAgentConnected
                 ? "Chưa kết nối"
@@ -87,7 +87,7 @@ export function StepOneRunSummary({
                   ? "Sẵn sàng cào ảnh"
                   : "Chưa đăng nhập browser"}
             </p>
-            <p className="mt-0.5 text-xs leading-4 text-slate-500">Không chặn quét Trends; chỉ cần khi bắt đầu cào ảnh.</p>
+            <p className="mt-0.5 text-xs leading-4 text-slate-500 dark:text-slate-400">Không chặn quét Trends; chỉ cần khi bắt đầu cào ảnh.</p>
           </div>
         </div>
       </div>

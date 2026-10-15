@@ -55,27 +55,27 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 dark:bg-slate-800 p-4 animate-in fade-in duration-200"
       onClick={onClose}
     >
       <div
-        className="relative flex max-h-[95vh] max-w-5xl w-full flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm"
+        className="relative flex max-h-[95vh] max-w-5xl w-full flex-col overflow-hidden rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Bar */}
-        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3.5">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-xl"><AppIcon name="search" /></span>
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-bold text-slate-900" title={image.title}>
+              <h3 className="truncate text-sm font-bold text-slate-900 dark:text-slate-100" title={image.title}>
                 {image.title}
               </h3>
               {image.subtitle && (
-                <p className="truncate text-xs text-slate-600">{image.subtitle}</p>
+                <p className="truncate text-xs text-slate-600 dark:text-slate-400">{image.subtitle}</p>
               )}
             </div>
             {image.badge && (
-              <span className="rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-xs font-bold text-blue-700 whitespace-nowrap">
+              <span className="rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2.5 py-0.5 text-xs font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap">
                 {image.badge}
               </span>
             )}
@@ -86,7 +86,7 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
               type="button"
               onClick={() => setIsZoomed((prev) => !prev)}
               title={isZoomed ? "Thu nhỏ vừa màn hình" : "Phóng to 100% chi tiết gốc"}
-              className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:border-slate-300 hover:text-slate-900"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
             >
               {isZoomed ? "⊡ Vừa màn hình" : "🔍 100% Gốc"}
             </button>
@@ -103,14 +103,14 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
               target="_blank"
               rel="noopener noreferrer"
               title="Mở ảnh trong tab mới"
-              className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:text-slate-900"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
             >
               ↗
             </a>
             <button
               type="button"
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-50 text-slate-600 hover:bg-rose-50 hover:text-slate-900 transition"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/80 hover:text-slate-900 dark:hover:text-slate-100 transition"
               title="Đóng (ESC)"
             >
               ✕
@@ -119,7 +119,7 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
         </div>
 
         {/* Image Preview Canvas */}
-        <div className="relative flex flex-1 items-center justify-center overflow-auto bg-slate-50 p-4 min-h-[350px] max-h-[70vh]">
+        <div className="relative flex flex-1 items-center justify-center overflow-auto bg-slate-50 dark:bg-slate-800 p-4 min-h-[350px] max-h-[70vh]">
           <img
             src={image.url}
             alt={image.title}
@@ -131,31 +131,31 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
         </div>
 
         {/* Technical Specs Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-3 text-xs">
-          <div className="flex flex-wrap items-center gap-4 text-slate-600">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3 text-xs">
+          <div className="flex flex-wrap items-center gap-4 text-slate-600 dark:text-slate-400">
             {image.widthPx && image.heightPx && (
               <span>
-                📐 <strong className="text-slate-900">{image.widthPx} × {image.heightPx} px</strong>
+                📐 <strong className="text-slate-900 dark:text-slate-100">{image.widthPx} × {image.heightPx} px</strong>
               </span>
             )}
             {image.dpi && (
               <span>
-                🖨️ <strong className="text-slate-900">{image.dpi} DPI</strong>
+                🖨️ <strong className="text-slate-900 dark:text-slate-100">{image.dpi} DPI</strong>
               </span>
             )}
             {image.colorMode && (
               <span>
-                <AppIcon name="image" /> <strong className="text-emerald-700">{image.colorMode}</strong>
+                <AppIcon name="image" /> <strong className="text-emerald-700 dark:text-emerald-300">{image.colorMode}</strong>
               </span>
             )}
             {image.printability !== undefined && (
               <span>
-                <AppIcon name="star" /> Chuẩn in: <strong className="text-blue-700">{image.printability}/100</strong>
+                <AppIcon name="star" /> Chuẩn in: <strong className="text-blue-700 dark:text-blue-300">{image.printability}/100</strong>
               </span>
             )}
             {image.score !== undefined && (
               <span>
-                👁️ AI Vision: <strong className="text-amber-700">{image.score}/100</strong>
+                👁️ AI Vision: <strong className="text-amber-700 dark:text-amber-300">{image.score}/100</strong>
               </span>
             )}
           </div>
@@ -165,7 +165,7 @@ export function ImageLightboxModal({ image, onClose }: ImageLightboxModalProps):
               {image.tags.slice(0, 5).map((tag) => (
                 <span
                   key={tag}
-                  className="rounded bg-slate-50 px-1.5 py-0.5 text-xs text-slate-700"
+                  className="rounded bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 text-xs text-slate-700 dark:text-slate-300"
                 >
                   #{tag}
                 </span>

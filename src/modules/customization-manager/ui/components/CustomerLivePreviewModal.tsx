@@ -76,28 +76,28 @@ export function CustomerLivePreviewModal({
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-50 transition-opacity"
+        className="fixed inset-0 bg-slate-50 dark:bg-slate-800 transition-opacity"
         onClick={onClose}
       />
 
       <div className="flex min-h-screen items-center justify-center p-3 md:p-6">
-        <div className="relative w-full max-w-5xl rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
+        <div className="relative w-full max-w-5xl rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm overflow-hidden flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-6 py-4 bg-slate-50 dark:bg-slate-800">
             <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 text-base">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-base">
                 👁️
               </span>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-slate-900">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                     Live Storefront Preview (Góc nhìn Khách hàng)
                   </h3>
-                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-semibold text-emerald-700 uppercase">
+                  <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 uppercase">
                     Interactive
                   </span>
                 </div>
-                <p className="text-xs text-slate-600">
+                <p className="text-xs text-slate-600 dark:text-slate-400">
                   Xem và tương tác chính xác như khách hàng trên trang sản phẩm Shopify
                 </p>
               </div>
@@ -106,7 +106,7 @@ export function CustomerLivePreviewModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition cursor-pointer"
+              className="rounded-lg p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
             >
               ✕ Đóng
             </button>
@@ -115,10 +115,10 @@ export function CustomerLivePreviewModal({
           {/* Main Grid: Left Mockup Canvas, Right Customizer Panel */}
           <div className="grid grid-cols-1 lg:grid-cols-12 flex-1">
             {/* Left: Mockup Interactive Canvas */}
-            <div className="lg:col-span-7 bg-white p-6 flex flex-col items-center justify-between border-b lg:border-b-0 lg:border-r border-slate-200">
+            <div className="lg:col-span-7 bg-white dark:bg-slate-900 p-6 flex flex-col items-center justify-between border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-700">
               {/* Surface Switcher Pills */}
               {surfaces.length > 1 && (
-                <div className="flex items-center gap-2 mb-4 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 mb-4 bg-slate-50 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
                   {surfaces.map((s, idx) => (
                     <button
                       key={s.surfaceId || idx}
@@ -127,7 +127,7 @@ export function CustomerLivePreviewModal({
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                         activeSurfaceIndex === idx
                           ? "bg-blue-600 text-white shadow-md "
-                          : "text-slate-600 hover:text-slate-900"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                       }`}
                     >
                       {s.name || `Mặt in ${idx + 1}`}
@@ -150,7 +150,7 @@ export function CustomerLivePreviewModal({
                 />
 
                 {/* Simulated Placement Area Overlay */}
-                <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-blue-300 rounded-lg flex items-center justify-center p-3 pointer-events-none group-hover:border-blue-300 transition">
+                <div className="absolute inset-x-1/4 top-1/4 bottom-1/3 border-2 border-dashed border-blue-300 dark:border-blue-800 rounded-lg flex items-center justify-center p-3 pointer-events-none group-hover:border-blue-300 dark:group-hover:border-blue-800 transition">
                   <div
                     className="text-center font-bold break-words max-w-full drop-shadow-md select-none transition-all duration-200"
                     style={{
@@ -161,7 +161,7 @@ export function CustomerLivePreviewModal({
                   >
                     {customText || "Nhập tên của bạn"}
                   </div>
-                  <span className="absolute top-1 left-1.5 text-xs font-mono text-blue-700 bg-slate-50 px-1 rounded">
+                  <span className="absolute top-1 left-1.5 text-xs font-mono text-blue-700 dark:text-blue-300 bg-slate-50 dark:bg-slate-800 px-1 rounded">
                     Print Area
                   </span>
                 </div>
@@ -169,8 +169,8 @@ export function CustomerLivePreviewModal({
 
               {/* Live Status Hint */}
               <div className="mt-4 text-center">
-                <span className="text-xs text-slate-500 font-mono">
-                  Đang hiển thị mặt: <strong className="text-slate-700">{activeSurface?.name || "Front"}</strong> • Phôi in chuẩn vector
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                  Đang hiển thị mặt: <strong className="text-slate-700 dark:text-slate-300">{activeSurface?.name || "Front"}</strong> • Phôi in chuẩn vector
                 </span>
               </div>
             </div>
@@ -180,13 +180,13 @@ export function CustomerLivePreviewModal({
               <div className="space-y-5">
                 {/* Product Title & Price Badge */}
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">{productName}</h2>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{productName}</h2>
                   <div className="flex items-baseline gap-2 mt-1">
-                    <span className="text-xl font-bold text-emerald-700">
+                    <span className="text-xl font-bold text-emerald-700 dark:text-emerald-300">
                       ${totalPrice.toFixed(2)}
                     </span>
                     {totalPrice > productBasePrice && (
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
                         (Giá gốc ${productBasePrice.toFixed(2)} + ${(totalPrice - productBasePrice).toFixed(2)} phụ phí)
                       </span>
                     )}
@@ -194,8 +194,8 @@ export function CustomerLivePreviewModal({
                 </div>
 
                 {/* Custom Text Input Section */}
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-                  <label className="block text-xs font-semibold text-slate-900">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-3">
+                  <label className="block text-xs font-semibold text-slate-900 dark:text-slate-100">
                     ✍️ Nhập chữ cá nhân hóa (Custom Text):
                   </label>
                   <input
@@ -204,17 +204,17 @@ export function CustomerLivePreviewModal({
                     maxLength={30}
                     onChange={(e) => setCustomText(e.target.value)}
                     placeholder="ví dụ: Happy Birthday Anna"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                   />
 
                   {/* Font picker */}
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <div>
-                      <span className="text-xs text-slate-600 block mb-1">Kiểu chữ:</span>
+                      <span className="text-xs text-slate-600 dark:text-slate-400 block mb-1">Kiểu chữ:</span>
                       <select
                         value={selectedFont}
                         onChange={(e) => setSelectedFont(e.target.value)}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                        className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30"
                       >
                         <option value="sans-serif">Mặc định (Sans-serif)</option>
                         <option value="'Playfair Display', serif">Quý phái (Playfair Serif)</option>
@@ -225,15 +225,15 @@ export function CustomerLivePreviewModal({
                     </div>
 
                     <div>
-                      <span className="text-xs text-slate-600 block mb-1">Màu chữ in:</span>
+                      <span className="text-xs text-slate-600 dark:text-slate-400 block mb-1">Màu chữ in:</span>
                       <div className="flex items-center gap-2">
                         <input
                           type="color"
                           value={textColor}
                           onChange={(e) => setTextColor(e.target.value)}
-                          className="h-8 w-10 cursor-pointer rounded border border-slate-200 bg-white p-0.5"
+                          className="h-8 w-10 cursor-pointer rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5"
                         />
-                        <span className="text-xs font-mono text-slate-600 uppercase">
+                        <span className="text-xs font-mono text-slate-600 dark:text-slate-400 uppercase">
                           {textColor}
                         </span>
                       </div>
@@ -247,11 +247,11 @@ export function CustomerLivePreviewModal({
                   return (
                     <div key={group.id} className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold text-slate-900">
+                        <label className="text-xs font-semibold text-slate-900 dark:text-slate-100">
                           {group.label || group.id}
                         </label>
                         {group.required && (
-                          <span className="text-xs text-rose-700 font-medium">Bắt buộc</span>
+                          <span className="text-xs text-rose-700 dark:text-rose-300 font-medium">Bắt buộc</span>
                         )}
                       </div>
 
@@ -271,20 +271,20 @@ export function CustomerLivePreviewModal({
                               }
                               className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
                                 isSelected
-                                  ? "border-blue-300 bg-blue-50 text-blue-700 ring-1 ring-blue-300 shadow-sm"
-                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                                  ? "border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 ring-1 ring-blue-300 dark:ring-blue-400 shadow-sm"
+                                  : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700"
                               }`}
                             >
                               {opt.thumbnailImage?.url && (
                                 <img
                                   src={opt.thumbnailImage.url}
                                   alt={opt.label}
-                                  className="h-4 w-4 rounded-full object-cover border border-slate-300"
+                                  className="h-4 w-4 rounded-full object-cover border border-slate-300 dark:border-slate-700"
                                 />
                               )}
                               <span>{opt.label || opt.id}</span>
                               {opt.price?.amount ? (
-                                <span className="text-xs text-emerald-700 font-semibold">
+                                <span className="text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
                                   +${opt.price.amount}
                                 </span>
                               ) : null}
@@ -298,7 +298,7 @@ export function CustomerLivePreviewModal({
               </div>
 
               {/* Add to Cart Simulation */}
-              <div className="pt-4 border-t border-slate-200 space-y-2">
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -310,7 +310,7 @@ export function CustomerLivePreviewModal({
                 >
                   <AppIcon name="store" /> Thêm vào Giỏ hàng (${totalPrice.toFixed(2)})
                 </button>
-                <p className="text-xs text-center text-slate-500">
+                <p className="text-xs text-center text-slate-500 dark:text-slate-400">
                   Đây là màn hình xem trước. Dữ liệu khi khách bấm mua sẽ được đính kèm vào Line Item Properties của Shopify Order.
                 </p>
               </div>

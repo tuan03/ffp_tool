@@ -6,8 +6,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANT_CLASSES = {
   primary: "border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700",
-  secondary: "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
-  danger: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+  secondary: "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700",
+  danger: "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/80",
 } as const;
 
 export function Button({ variant = "secondary", type = "button", className = "", ...props }: ButtonProps): React.JSX.Element {

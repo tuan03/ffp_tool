@@ -98,12 +98,12 @@ function EditModalInner({
 
   return (
     <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Chỉnh sửa nội dung SEO" className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/30 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl rounded-lg bg-white border border-slate-200 shadow-sm overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-2xl rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-6 py-4 bg-slate-50 dark:bg-slate-800">
           <div className="flex items-center gap-2.5 flex-wrap">
             <span className="text-lg"><AppIcon name="edit" /></span>
-            <h3 className="text-base font-bold text-slate-900">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
               Chỉnh Sửa Nội Dung SEO
             </h3>
             <SourceOriginBadge product={product} />
@@ -111,7 +111,7 @@ function EditModalInner({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
+            className="rounded-lg p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition"
           >
             ✕
           </button>
@@ -121,13 +121,13 @@ function EditModalInner({
         <form onSubmit={(event) => void handleSubmit(event)} className="flex-1 overflow-y-auto p-6 space-y-5 text-sm">
           {/* Synced Store Notice Banner */}
           {wasAlreadySynced && (
-            <div className="flex items-center gap-2.5 rounded-lg border border-blue-300 bg-blue-50 p-3 text-xs text-blue-700 shadow-sm">
+            <div className="flex items-center gap-2.5 rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-3 text-xs text-blue-700 dark:text-blue-300 shadow-sm">
               <span className="text-base flex-shrink-0"><AppIcon name="store" /></span>
               <div>
-                <p className="font-semibold text-blue-700">
+                <p className="font-semibold text-blue-700 dark:text-blue-300">
                   Sản phẩm này đã đồng bộ trên Shopify Store ({product.storeId ? product.storeId.toUpperCase() : "STORE"})
                 </p>
-                <p className="text-xs text-blue-700 mt-0.5">
+                <p className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">
                   Bản đã sync được giữ để xem lại; tạo bản SEO mới nếu cần thay đổi nội dung trên Shopify.
                 </p>
               </div>
@@ -136,25 +136,25 @@ function EditModalInner({
 
           {/* Product Title */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
               Product Title
             </label>
             <input
               type="text"
               value={productTitle}
               onChange={(e) => setProductTitle(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400"
               required
             />
           </div>
 
           {/* Handle */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
               URL Handle (Slug)
             </label>
             <div className="flex items-center">
-              <span className="inline-flex items-center px-3 py-2.5 rounded-l-lg border border-r-0 border-slate-300 bg-slate-50 text-xs text-slate-600 font-mono">
+              <span className="inline-flex items-center px-3 py-2.5 rounded-l-lg border border-r-0 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-400 font-mono">
                 /products/
               </span>
               <input
@@ -167,7 +167,7 @@ function EditModalInner({
                       .replace(/[^a-z0-9-]+/g, "-"),
                   )
                 }
-                className="w-full rounded-r-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 font-mono focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300"
+                className="w-full rounded-r-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 font-mono focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400"
                 required
               />
             </div>
@@ -176,12 +176,12 @@ function EditModalInner({
           {/* SEO Title */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                 SEO Meta Title
               </label>
               <span
                 className={`text-xs font-mono ${
-                  seoTitle.length > 70 ? "text-rose-700 font-bold" : "text-slate-600"
+                  seoTitle.length > 70 ? "text-rose-700 dark:text-rose-300 font-bold" : "text-slate-600 dark:text-slate-400"
                 }`}
               >
                 {seoTitle.length} / 70 ký tự
@@ -191,7 +191,7 @@ function EditModalInner({
               type="text"
               value={seoTitle}
               onChange={(e) => setSeoTitle(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400"
               required
             />
           </div>
@@ -199,12 +199,12 @@ function EditModalInner({
           {/* SEO Description */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                 SEO Meta Description
               </label>
               <span
                 className={`text-xs font-mono ${
-                  seoDescription.length > 160 ? "text-rose-700 font-bold" : "text-slate-600"
+                  seoDescription.length > 160 ? "text-rose-700 dark:text-rose-300 font-bold" : "text-slate-600 dark:text-slate-400"
                 }`}
               >
                 {seoDescription.length} / 160 ký tự
@@ -214,29 +214,29 @@ function EditModalInner({
               rows={3}
               value={seoDescription}
               onChange={(e) => setSeoDescription(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 resize-y"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400 resize-y"
               required
             />
           </div>
 
           {/* Product Description HTML */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
               Mô tả chi tiết (Shopify HTML)
             </label>
             <textarea
               rows={6}
               value={productDescription}
               onChange={(e) => setProductDescription(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-mono text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 resize-y"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-xs font-mono text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400 resize-y"
               required
             />
           </div>
 
           {/* Image Alt Texts */}
           {product.images.length > 0 && (
-            <div className="space-y-3 pt-3 border-t border-slate-200">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+            <div className="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                 Alt Text cho từng hình ảnh
               </label>
               {product.images.map((img, idx) => {
@@ -247,7 +247,7 @@ function EditModalInner({
                     <button
                       type="button"
                       onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
-                      className="h-10 w-10 rounded border border-slate-300 overflow-hidden flex-shrink-0 cursor-zoom-in group relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300"
+                      className="h-10 w-10 rounded border border-slate-300 dark:border-slate-700 overflow-hidden flex-shrink-0 cursor-zoom-in group relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400"
                       title="Nhấn để phóng to ảnh"
                       aria-label={`Phóng to ảnh #${idx + 1}`}
                     >
@@ -256,7 +256,7 @@ function EditModalInner({
                         alt={currentAlt}
                         className="h-full w-full object-cover group-hover:scale-105 transition-transform"
                       />
-                      <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-xs">
+                      <span className="absolute inset-0 bg-slate-50 dark:bg-slate-800 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 dark:text-slate-100 text-xs">
                         <AppIcon name="search" />
                       </span>
                     </button>
@@ -265,7 +265,7 @@ function EditModalInner({
                       value={currentAlt}
                       onChange={(e) => handleAltChange(img.id, e.target.value)}
                       placeholder={`Alt text cho ảnh #${idx + 1}`}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300"
+                      className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400"
                     />
                   </div>
                 );
@@ -274,19 +274,19 @@ function EditModalInner({
           )}
 
           {/* Footer Actions */}
-          {saveError && <p role="alert" className="text-xs text-rose-700">{saveError}</p>}
-          <div className="border-t border-slate-200 pt-4 flex flex-wrap items-center justify-end gap-2.5 sticky bottom-0 bg-white">
+          {saveError && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">{saveError}</p>}
+          <div className="border-t border-slate-200 dark:border-slate-700 pt-4 flex flex-wrap items-center justify-end gap-2.5 sticky bottom-0 bg-white dark:bg-slate-900">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-50 text-slate-700 hover:bg-slate-100 transition"
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition"
             >
               Hủy bỏ
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-900 hover:bg-slate-100 transition border border-slate-300"
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 transition border border-slate-300 dark:border-slate-700"
             >
               {isSaving ? "Đang lưu..." : "Lưu thay đổi"}
             </button>

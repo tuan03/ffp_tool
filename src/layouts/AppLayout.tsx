@@ -13,6 +13,7 @@ import {
 import { AppSidebar, NAVIGATION_GROUPS } from "./components/AppSidebar";
 import { NotificationPermissionBadge } from "./components/NotificationPermissionBadge";
 import { NotificationToastContainer } from "./components/NotificationToastContainer";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { readSidebarCollapsed, saveSidebarCollapsed } from "./sidebar-preferences";
 
 export function AppLayout(): React.JSX.Element {
@@ -85,21 +86,22 @@ export function AppLayout(): React.JSX.Element {
   }
 
   return (
-    <div className="flex min-h-dvh items-start bg-white text-slate-900">
+    <div className="flex min-h-dvh items-start bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
       <a href="#main-content" className="sr-only z-50 rounded-md bg-blue-600 px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Đi tới nội dung</a>
       {isMobileNavigationOpen && isMobileViewport ? <button type="button" tabIndex={-1} aria-label="Đóng menu điều hướng" onClick={() => setIsMobileNavigationOpen(false)} className="fixed inset-0 z-50 bg-slate-900/30 backdrop-blur-sm md:hidden" /> : null}
       <AppSidebar activeStoreId={activeStoreId} isCollapsed={isSidebarCollapsed} onToggle={handleToggleSidebar} isMobileViewport={isMobileViewport} isMobileOpen={isMobileNavigationOpen} onMobileClose={() => setIsMobileNavigationOpen(false)} />
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-2 border-b border-slate-200 bg-white/95 px-4 backdrop-blur-sm md:gap-4 md:px-6">
-          <button type="button" aria-label="Mở menu điều hướng" aria-controls="app-navigation" aria-expanded={isMobileNavigationOpen} onClick={() => setIsMobileNavigationOpen(true)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-50 md:hidden"><AppIcon name="panel" className="h-5 w-5" /></button>
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-4 backdrop-blur-sm md:gap-4 md:px-6">
+          <button type="button" aria-label="Mở menu điều hướng" aria-controls="app-navigation" aria-expanded={isMobileNavigationOpen} onClick={() => setIsMobileNavigationOpen(true)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 md:hidden"><AppIcon name="panel" className="h-5 w-5" /></button>
           <div className="flex min-w-0 items-center gap-2 text-xs">
-            <span className="hidden text-slate-500 lg:inline">Không gian làm việc</span>
-            <span aria-hidden="true" className="hidden text-slate-300 lg:inline">/</span>
-            <span className="truncate font-medium text-slate-800">{pageTitle}</span>
+            <span className="hidden text-slate-500 dark:text-slate-400 lg:inline">Không gian làm việc</span>
+            <span aria-hidden="true" className="hidden text-slate-300 dark:text-slate-600 lg:inline">/</span>
+            <span className="truncate font-medium text-slate-800 dark:text-slate-200">{pageTitle}</span>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <NotificationPermissionBadge />
-            <span title="Môi trường ứng dụng" className={`rounded border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${environment === "mock" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>{environment}</span>
+            <span title="Môi trường ứng dụng" className={`hidden rounded border px-2 py-0.5 text-xs font-medium uppercase tracking-wide sm:inline-block ${environment === "mock" ? "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300" : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400"}`}>{environment}</span>
+            <ThemeToggle />
           </div>
         </header>
         <main id="main-content" tabIndex={-1} className="min-w-0 px-4 py-6 outline-none sm:px-6 2xl:px-8">

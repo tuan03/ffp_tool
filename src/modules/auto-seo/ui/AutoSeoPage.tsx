@@ -671,7 +671,7 @@ export function AutoSeoPage({
         onOpenQueue={() => navigate(buildSeoQueueUrl(backupStoreId ?? selectedStoreId ?? ""))}
         onOpenReview={() => navigate(`/seo-review?storeId=${encodeURIComponent(backupStoreId ?? "")}`)} /> : null}
       {errorMessage && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 flex items-center justify-between gap-3">
+        <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-4 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="text-base"><AppIcon name="warning" /></span>
             <span>{errorMessage}</span>
@@ -679,7 +679,7 @@ export function AutoSeoPage({
           <button
             type="button"
             onClick={() => setErrorMessage(null)}
-            className="text-rose-700 hover:text-slate-900"
+            className="text-rose-700 dark:text-rose-300 hover:text-slate-900 dark:hover:text-slate-100"
           >
             ✕
           </button>

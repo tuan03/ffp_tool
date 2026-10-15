@@ -40,18 +40,18 @@ export interface ProductionStepProps {
 function getLogLineClass(line: string): string {
   const lower = line.toLowerCase();
   if (lower.includes("lỗi") || lower.includes("error") || lower.includes("thất bại") || lower.includes("rejected")) {
-    return "text-rose-700 font-semibold";
+    return "text-rose-700 dark:text-rose-300 font-semibold";
   }
   if (lower.includes("dừng") || lower.includes("hủy") || lower.includes("cancel") || lower.includes("cảnh báo") || lower.includes("warning")) {
-    return "text-amber-700 font-medium";
+    return "text-amber-700 dark:text-amber-300 font-medium";
   }
   if (lower.includes("hoàn thành") || lower.includes("hoàn tất") || lower.includes("completed") || lower.includes("thành công") || lower.includes("success")) {
-    return "text-emerald-700 font-medium";
+    return "text-emerald-700 dark:text-emerald-300 font-medium";
   }
   if (lower.includes("ai vision") || lower.includes("gemini") || lower.includes("cmyk") || lower.includes("mockup") || lower.includes("direct print")) {
-    return "text-blue-700";
+    return "text-blue-700 dark:text-blue-300";
   }
-  return "text-slate-700";
+  return "text-slate-700 dark:text-slate-300";
 }
 
 export function ProductionStep({
@@ -118,14 +118,14 @@ export function ProductionStep({
   return (
     <div className="flex flex-col gap-5 animate-in fade-in duration-200">
       {/* Breadcrumb Context Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
-        <div className="flex flex-wrap items-center gap-2 text-slate-600">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-slate-600 dark:text-slate-400">
           {hasStage2 && (
             <>
               <button
                 type="button"
                 onClick={() => onSelectStage(2)}
-                className="flex items-center gap-1 font-semibold text-amber-700 hover:text-amber-700 hover:underline cursor-pointer"
+                className="flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-300 hover:text-amber-700 dark:hover:text-amber-300 hover:underline cursor-pointer"
               >
                 <span>←</span>
                 <span>Xem lại Mẫu ứng viên ({candidateCount})</span>
@@ -136,14 +136,14 @@ export function ProductionStep({
           <button
             type="button"
             onClick={() => onSelectStage(1)}
-            className="flex items-center gap-1 font-semibold text-slate-600 hover:text-slate-900 hover:underline cursor-pointer"
+            className="flex items-center gap-1 font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:underline cursor-pointer"
           >
             <span>Bước 1: Quét Trend</span>
           </button>
           {jobId && (
             <>
               <span>•</span>
-              <code className="text-xs text-slate-600 font-mono">{jobId}</code>
+              <code className="text-xs text-slate-600 dark:text-slate-400 font-mono">{jobId}</code>
             </>
           )}
         </div>
@@ -151,7 +151,7 @@ export function ProductionStep({
         <button
           type="button"
           onClick={() => onSelectStage(1)}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 font-semibold text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition shadow-xs cursor-pointer"
+          className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition shadow-xs cursor-pointer"
         >
           <span><AppIcon name="play" /></span>
           <span>Làm đợt mới</span>
@@ -160,25 +160,25 @@ export function ProductionStep({
 
       {/* In-Progress Producing Banner with Cancel Action */}
       {isProductionActive && (
-        <div className="flex flex-col gap-4 rounded-lg border border-amber-200 bg-amber-50 p-6 shadow-sm">
+        <div className="flex flex-col gap-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-amber-50 text-amber-700 animate-pulse text-2xl">
+              <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 animate-pulse text-2xl">
                 🏭
               </div>
               <div>
-                <h2 className="text-base font-bold text-amber-700 flex items-center gap-2">
+                <h2 className="text-base font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2">
                   <span>Đang sản xuất thành phẩm xưởng &amp; Mockup AI...</span>
                   <span className="inline-block h-2 w-2 rounded-full bg-amber-700 animate-ping" />
                 </h2>
-                <p className="text-xs text-amber-700 mt-0.5">
+                <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
                   {stepper?.current_message || "Hệ thống đang chuẩn bị file in CMYK 300 DPI và tạo bối cảnh lifestyle..."}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              <span className="rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300">
                 {stepper?.percent ?? 0}% hoàn tất
               </span>
 
@@ -187,12 +187,12 @@ export function ProductionStep({
                 type="button"
                 onClick={() => void onCancelJob()}
                 disabled={isCancelling}
-                className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-1.5 font-semibold text-rose-700 hover:bg-rose-50 hover:text-slate-900 transition shadow-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed text-xs"
+                className="flex items-center gap-1.5 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 px-3.5 py-1.5 font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/80 hover:text-slate-900 dark:hover:text-slate-100 transition shadow-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed text-xs"
                 title="Dừng tiến trình sản xuất đang chạy"
               >
                 {isCancelling ? (
                   <>
-                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-rose-300 border-t-transparent" />
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-rose-300 dark:border-rose-800 border-t-transparent" />
                     <span>Đang dừng...</span>
                   </>
                 ) : (
@@ -205,14 +205,14 @@ export function ProductionStep({
             </div>
           </div>
 
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-50">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-50 dark:bg-slate-800">
             <div
-              className="h-full bg-blue-50 transition-all duration-500"
+              className="h-full bg-blue-50 dark:bg-blue-950/60 transition-all duration-500"
               style={{ width: `${Math.max(5, stepper?.percent ?? 0)}%` }}
             />
           </div>
 
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-600 dark:text-slate-400">
             <AppIcon name="seo" /> Hệ thống đang xử lý độc lập ở chế độ chuẩn mẫu tham chiếu (Direct Print). Sau khi hoàn thành toàn bộ {candidateCount} sản phẩm, thông báo Windows sẽ tự động kích hoạt.
           </p>
         </div>
@@ -220,13 +220,13 @@ export function ProductionStep({
 
       {/* Cancelled Banner */}
       {jobStatus === "cancelled" && (
-        <div className="flex flex-col gap-4 rounded-lg border border-amber-200 bg-amber-50 p-6 shadow-sm text-xs text-amber-700">
+        <div className="flex flex-col gap-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-6 shadow-sm text-xs text-amber-700 dark:text-amber-300">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <span className="text-3xl">⏹️</span>
               <div>
-                <h3 className="text-sm font-bold text-amber-700">Tiến trình đã được dừng an toàn</h3>
-                <p className="text-amber-700 mt-0.5">
+                <h3 className="text-sm font-bold text-amber-700 dark:text-amber-300">Tiến trình đã được dừng an toàn</h3>
+                <p className="text-amber-700 dark:text-amber-300 mt-0.5">
                   Tiến trình sản xuất đã dừng theo yêu cầu của bạn. Trạng thái và dữ liệu đã được lưu an toàn.
                 </p>
               </div>
@@ -236,7 +236,7 @@ export function ProductionStep({
               <button
                 type="button"
                 onClick={() => void onRerun()}
-                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-1.5 font-semibold text-slate-900 hover:bg-amber-50 transition shadow-xs cursor-pointer"
+                className="flex items-center gap-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-3.5 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-amber-50 dark:hover:bg-amber-950/80 transition shadow-xs cursor-pointer"
               >
                 <span><AppIcon name="refresh" /></span>
                 <span>Thử lại sản xuất</span>
@@ -245,7 +245,7 @@ export function ProductionStep({
                 <button
                   type="button"
                   onClick={() => onSelectStage(2)}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 font-semibold text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition shadow-xs cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition shadow-xs cursor-pointer"
                 >
                   <span><AppIcon name="edit" /></span>
                   <span>Chỉnh sửa mẫu chọn</span>
@@ -258,13 +258,13 @@ export function ProductionStep({
 
       {/* Failed Banner */}
       {jobStatus === "failed" && (
-        <div className="flex flex-col gap-4 rounded-lg border border-rose-200 bg-rose-50 p-6 shadow-sm text-xs text-rose-700">
+        <div className="flex flex-col gap-4 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-6 shadow-sm text-xs text-rose-700 dark:text-rose-300">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <span className="text-3xl"><AppIcon name="close" /></span>
               <div>
-                <h3 className="text-sm font-bold text-rose-700">Sản xuất thất bại</h3>
-                <p className="text-rose-700 mt-0.5">{errorMessage || "Đã xảy ra lỗi trong quá trình xử lý pipeline."}</p>
+                <h3 className="text-sm font-bold text-rose-700 dark:text-rose-300">Sản xuất thất bại</h3>
+                <p className="text-rose-700 dark:text-rose-300 mt-0.5">{errorMessage || "Đã xảy ra lỗi trong quá trình xử lý pipeline."}</p>
               </div>
             </div>
 
@@ -272,7 +272,7 @@ export function ProductionStep({
               <button
                 type="button"
                 onClick={() => void onRerun()}
-                className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-1.5 font-semibold text-slate-900 hover:bg-rose-50 transition shadow-xs cursor-pointer"
+                className="flex items-center gap-1.5 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 px-3.5 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-rose-50 dark:hover:bg-rose-950/80 transition shadow-xs cursor-pointer"
               >
                 <span><AppIcon name="refresh" /></span>
                 <span>Thử lại</span>
@@ -281,7 +281,7 @@ export function ProductionStep({
                 <button
                   type="button"
                   onClick={() => onSelectStage(2)}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 font-semibold text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition shadow-xs cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition shadow-xs cursor-pointer"
                 >
                   <span>←</span>
                   <span>Quay lại duyệt mẫu</span>
@@ -293,29 +293,29 @@ export function ProductionStep({
       )}
 
       {/* Live Execution Logs Viewer (Always available in Stage 3, collapsible) */}
-      <section className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs">
+      <section className="flex flex-col overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-2.5 text-xs">
           <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={() => setIsLogsExpanded((prev) => !prev)}
-              className="flex items-center gap-2 font-semibold text-slate-900 hover:text-slate-900 cursor-pointer"
+              className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
             >
-              <span className="text-slate-600">{isLogsExpanded ? "▼" : "▶"}</span>
+              <span className="text-slate-600 dark:text-slate-400">{isLogsExpanded ? "▼" : "▶"}</span>
               <span>Live Execution Logs</span>
-              <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs text-slate-600">
+              <span className="rounded-full bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-xs text-slate-600 dark:text-slate-400">
                 {logs.length} dòng
               </span>
             </button>
 
             {isProductionActive && (
-              <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+              <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-700 animate-pulse" />
                 Live streaming
               </span>
             )}
             {jobStatus === "cancelled" && (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+              <span className="rounded-full border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
                 Đã dừng
               </span>
             )}
@@ -323,12 +323,12 @@ export function ProductionStep({
 
           <div className="flex items-center gap-3">
             {isLogsExpanded && (
-              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={autoScroll}
                   onChange={(e) => setAutoScroll(e.target.checked)}
-                  className="rounded border-slate-300 bg-slate-50 text-blue-700 focus:ring-0"
+                  className="rounded border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300 focus:ring-0"
                 />
                 <span>Cuộn tự động</span>
               </label>
@@ -338,7 +338,7 @@ export function ProductionStep({
               <button
                 type="button"
                 onClick={handleCopyLogs}
-                className="text-xs font-medium text-blue-700 hover:text-blue-700 hover:underline cursor-pointer"
+                className="text-xs font-medium text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 hover:underline cursor-pointer"
               >
                 {copied ? "✓ Đã sao chép" : "Sao chép"}
               </button>
@@ -349,17 +349,17 @@ export function ProductionStep({
         {isLogsExpanded && (
           <div
             ref={logsContainerRef}
-            className="max-h-60 min-h-28 overflow-y-auto p-3.5 font-mono text-xs leading-relaxed text-slate-700 bg-slate-50 select-text"
+            className="max-h-60 min-h-28 overflow-y-auto p-3.5 font-mono text-xs leading-relaxed text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 select-text"
           >
             {logs.length === 0 ? (
-              <p className="italic text-slate-500">Chưa có log từ hệ thống.</p>
+              <p className="italic text-slate-500 dark:text-slate-400">Chưa có log từ hệ thống.</p>
             ) : (
               logs.map((log, i) => (
                 <div key={`${i}-${log.slice(0, 30)}`} className="flex gap-2 py-0.5">
-                  <span className="text-slate-500 select-none text-xs w-6 shrink-0 text-right">
+                  <span className="text-slate-500 dark:text-slate-400 select-none text-xs w-6 shrink-0 text-right">
                     {i + 1}
                   </span>
-                  <span className="text-slate-500 select-none">&gt;</span>
+                  <span className="text-slate-500 dark:text-slate-400 select-none">&gt;</span>
                   <span className={`break-words whitespace-pre-wrap ${getLogLineClass(log)}`}>
                     {log}
                   </span>
@@ -384,13 +384,13 @@ export function ProductionStep({
 
       {/* Missing deliverables alert when job finished or completed without items */}
       {!hasDeliverables && !isProductionActive && jobStatus !== "cancelled" && jobStatus !== "failed" && (
-        <div className="flex flex-col gap-4 rounded-lg border border-amber-200 bg-amber-50 p-6 shadow-sm text-xs text-amber-700">
+        <div className="flex flex-col gap-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-6 shadow-sm text-xs text-amber-700 dark:text-amber-300">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <span className="text-3xl"><AppIcon name="warning" /></span>
               <div>
-                <h3 className="text-sm font-bold text-amber-700">Chưa có ảnh thành phẩm cho tác vụ này</h3>
-                <p className="text-amber-700 mt-0.5">
+                <h3 className="text-sm font-bold text-amber-700 dark:text-amber-300">Chưa có ảnh thành phẩm cho tác vụ này</h3>
+                <p className="text-amber-700 dark:text-amber-300 mt-0.5">
                   Hệ thống chưa tạo được bộ mockup hoặc file in cho các mẫu đã chọn (có thể do đường dẫn ảnh gốc bị gián đoạn hoặc chưa nạp được ảnh hợp lệ).
                 </p>
               </div>
@@ -400,7 +400,7 @@ export function ProductionStep({
               <button
                 type="button"
                 onClick={() => void onRerun()}
-                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-1.5 font-semibold text-slate-900 hover:bg-amber-50 transition shadow-xs cursor-pointer"
+                className="flex items-center gap-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-3.5 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-amber-50 dark:hover:bg-amber-950/80 transition shadow-xs cursor-pointer"
               >
                 <span><AppIcon name="refresh" /></span>
                 <span>Thử lại sản xuất</span>
@@ -409,7 +409,7 @@ export function ProductionStep({
                 <button
                   type="button"
                   onClick={() => onSelectStage(2)}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 font-semibold text-slate-900 hover:bg-slate-100 hover:text-slate-900 transition shadow-xs cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition shadow-xs cursor-pointer"
                 >
                   <span>←</span>
                   <span>Quay lại duyệt mẫu</span>

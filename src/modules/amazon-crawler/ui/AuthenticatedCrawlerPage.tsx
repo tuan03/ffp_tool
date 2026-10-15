@@ -138,8 +138,8 @@ export function AuthenticatedCrawlerPage({ engineUrl, ...original }: AmazonCrawl
   return <form className="mx-auto flex max-w-md flex-col gap-4 p-6" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
     <h1 className="text-xl font-semibold">Đăng nhập Crawler Operator</h1>
     <p>Credential chỉ giữ trong bộ nhớ trang và chỉ gửi tới API crawler đã cấu hình.</p>
-    <label>Operator<input className="w-full rounded border bg-white p-2" autoComplete="off" required value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-    <label>Mật khẩu<input className="w-full rounded border bg-white p-2" type="password" autoComplete="off" required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    <label>Operator<input className="w-full rounded border bg-white dark:bg-slate-900 p-2" autoComplete="off" required value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+    <label>Mật khẩu<input className="w-full rounded border bg-white dark:bg-slate-900 p-2" type="password" autoComplete="off" required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     <Button type="submit" variant="primary" disabled={isBusy}>{isBusy ? "Đang đăng nhập…" : "Đăng nhập"}</Button>
     {error && <p role="alert">{error}</p>}
   </form>;

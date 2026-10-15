@@ -47,12 +47,12 @@ const SystemHealthTab = React.lazy(() => import("./tabs/SystemHealthTab").then(m
 function TabLoadingFallback() {
   return (
     <div className="py-12 flex flex-col items-center justify-center space-y-3 animate-pulse">
-      <div className="h-6 w-36 bg-slate-50 rounded-lg" />
-      <div className="h-4 w-64 bg-slate-50 rounded" />
+      <div className="h-6 w-36 bg-slate-50 dark:bg-slate-800 rounded-lg" />
+      <div className="h-4 w-64 bg-slate-50 dark:bg-slate-800 rounded" />
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-        <div className="h-28 bg-slate-50 rounded-lg border border-slate-200" />
-        <div className="h-28 bg-slate-50 rounded-lg border border-slate-200" />
-        <div className="h-28 bg-slate-50 rounded-lg border border-slate-200" />
+        <div className="h-28 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700" />
+        <div className="h-28 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700" />
+        <div className="h-28 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700" />
       </div>
     </div>
   );
@@ -61,8 +61,8 @@ function TabLoadingFallback() {
 function ModalLoadingFallback() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs">
-      <div className="rounded-lg border border-slate-300 bg-white p-6 text-sm text-slate-700 shadow-sm flex items-center gap-3">
-        <div className="w-4 h-4 rounded-full border-2 border-blue-300 border-t-transparent animate-spin" />
+      <div className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-sm text-slate-700 dark:text-slate-300 shadow-sm flex items-center gap-3">
+        <div className="w-4 h-4 rounded-full border-2 border-blue-300 dark:border-blue-800 border-t-transparent animate-spin" />
         <span>Đang tải...</span>
       </div>
     </div>
@@ -171,7 +171,7 @@ export function AdsIntelligencePage({ client }: { readonly client: AdsIntelligen
       window.clearInterval(timer);
     };
   }, [client]);
-  if (error) return <p role="alert" className="p-6 text-amber-700">{error}</p>;
+  if (error) return <p role="alert" className="p-6 text-amber-700 dark:text-amber-300">{error}</p>;
   if (!loaded) return <p role="status" className="p-6">Đang đọc danh sách store từ Gateway…</p>;
   if (!stores.length) return <p className="p-6">Chưa có store trong Gateway. Thêm kết nối Shopify tại màn hình quản lý Store.</p>;
   const requested = params.get("storeId") || readActiveStoreId(typeof window !== "undefined" ? window.localStorage : undefined);
@@ -665,8 +665,8 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
   };
 
   return (
-    <div className="min-w-0 flex-1 bg-white text-slate-900 w-full space-y-5">
-      {client.dataMode === "mock" && <p role="status" className="rounded border border-amber-300 p-3 text-amber-700">Chế độ dữ liệu mẫu — không phải số liệu kinh doanh thực.</p>}
+    <div className="min-w-0 flex-1 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-full space-y-5">
+      {client.dataMode === "mock" && <p role="status" className="rounded border border-amber-300 dark:border-amber-800 p-3 text-amber-700 dark:text-amber-300">Chế độ dữ liệu mẫu — không phải số liệu kinh doanh thực.</p>}
       {/* 1. Header Command Bar */}
       <AdsHeader
         stores={stores}
@@ -682,14 +682,14 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
 
       {/* Action Notification Alert Toast */}
       {actionNotification && (
-        <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-blue-50 border border-blue-300 text-blue-700 text-xs shadow-sm animate-in fade-in slide-in-from-top duration-300">
+        <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs shadow-sm animate-in fade-in slide-in-from-top duration-300">
           <div className="flex items-center gap-2">
             <span>📢</span>
             <span className="font-semibold">{actionNotification}</span>
           </div>
           <button
             onClick={() => setActionNotification(null)}
-            className="text-blue-700 hover:text-slate-900 font-bold px-2 py-0.5 rounded cursor-pointer"
+            className="text-blue-700 dark:text-blue-300 hover:text-slate-900 dark:hover:text-slate-100 font-bold px-2 py-0.5 rounded cursor-pointer"
           >
             ✕
           </button>
@@ -698,12 +698,12 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
 
       {/* Quick Setup Card for Unconfigured Store */}
       {Object.values(sourceErrors).some(msg => msg.includes("ADS_PROFILE_NOT_CONFIGURED") || msg.includes("chưa cấu hình riêng Meta/GA4")) && (
-        <div className="rounded-lg border border-blue-300 bg-blue-50 p-5 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in fade-in slide-in- duration-300">
+        <div className="rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-5 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in fade-in slide-in- duration-300">
           <div className="space-y-1">
-            <h3 className="text-sm font-bold text-blue-700 flex items-center gap-2">
-              <span><AppIcon name="play" /></span> Kích hoạt Ads Intelligence cho store <span className="font-mono text-slate-900 underline">{currentStoreId}</span>
+            <h3 className="text-sm font-bold text-blue-700 dark:text-blue-300 flex items-center gap-2">
+              <span><AppIcon name="play" /></span> Kích hoạt Ads Intelligence cho store <span className="font-mono text-slate-900 dark:text-slate-100 underline">{currentStoreId}</span>
             </h3>
-            <p className="text-xs text-slate-700 leading-relaxed max-w-2xl">
+            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed max-w-2xl">
               Store này đã kết nối Shopify nhưng chưa có cấu hình riêng cho Meta Ads / GA4. Bạn có thể nhập nhanh ID tài khoản hoặc tải lên file JSON để hệ thống tự động kết nối và xem báo cáo ngay tại đây.
             </p>
           </div>
@@ -719,25 +719,25 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
       )}
 
       {Object.keys(sourceErrors).length > 0 && (
-        <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+        <div role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-4 text-sm text-amber-700 dark:text-amber-300">
           <p>Store {currentStoreId}: {Object.keys(sourceErrors).length} nguồn chưa có dữ liệu xác minh. Không dùng dữ liệu mẫu thay thế.</p>
           <details className="mt-2"><summary className="cursor-pointer text-xs font-medium">Xem nguồn bị ảnh hưởng & chi tiết kết nối</summary>
             <ul className="mt-3 space-y-2 break-words text-xs">{Object.entries(sourceErrors).map(([source, message]) => <li key={source}><strong>{source}:</strong> {message}</li>)}</ul>
           </details>
         </div>
       )}
-      {loading && <p role="status" className="text-xs text-slate-600">Đang tải dữ liệu…</p>}
-      {!loading && isRevalidating && <p role="status" className="text-xs text-blue-700 animate-pulse"><AppIcon name="seo" /> Đang làm mới dữ liệu nền…</p>}
-      {summary && <p className="text-xs text-slate-600">Kỳ Meta: {summary.periodStart} → {summary.periodEnd} · {summary.timezone} · {summary.currency}</p>}
-      {summary?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700">{warning}</p>)}
-      {reconciliation && <p className="text-xs text-slate-600">{reconciliation.shopify.source}</p>}
+      {loading && <p role="status" className="text-xs text-slate-600 dark:text-slate-400">Đang tải dữ liệu…</p>}
+      {!loading && isRevalidating && <p role="status" className="text-xs text-blue-700 dark:text-blue-300 animate-pulse"><AppIcon name="seo" /> Đang làm mới dữ liệu nền…</p>}
+      {summary && <p className="text-xs text-slate-600 dark:text-slate-400">Kỳ Meta: {summary.periodStart} → {summary.periodEnd} · {summary.timezone} · {summary.currency}</p>}
+      {summary?.warnings.map(warning => <p key={warning} className="text-xs text-amber-700 dark:text-amber-300">{warning}</p>)}
+      {reconciliation && <p className="text-xs text-slate-600 dark:text-slate-400">{reconciliation.shopify.source}</p>}
       {/* 2. Unified Executive KPI Ribbon (3 Clusters) */}
-      {!reconciliation && shopifySummary && <p className="text-xs text-slate-600">Shopify độc lập (chưa đối soát): {shopifySummary.source}</p>}
-      {(reconciliation?.shopify.totalOrders ?? shopifySummary?.totalOrders) === 0 && <p className="text-xs text-amber-700">Không có đơn Shopify đủ điều kiện trong kỳ đang hiển thị. Số 0 không có nghĩa store chưa từng có đơn.</p>}
+      {!reconciliation && shopifySummary && <p className="text-xs text-slate-600 dark:text-slate-400">Shopify độc lập (chưa đối soát): {shopifySummary.source}</p>}
+      {(reconciliation?.shopify.totalOrders ?? shopifySummary?.totalOrders) === 0 && <p className="text-xs text-amber-700 dark:text-amber-300">Không có đơn Shopify đủ điều kiện trong kỳ đang hiển thị. Số 0 không có nghĩa store chưa từng có đơn.</p>}
       <ExecutiveKpiRibbon summary={summary} reconciliation={reconciliation} shopifySummary={shopifySummary} />
 
       {/* 3. Streamlined Tabs Navigation */}
-      <div className="flex border-b border-slate-200 gap-2 overflow-x-auto whitespace-nowrap">
+      <div className="flex border-b border-slate-200 dark:border-slate-700 gap-2 overflow-x-auto whitespace-nowrap">
         {[
           { id: "decisions", label: "Quyết định & đề xuất", icon: "ads" as const, badge: loading || sourceErrors["Quyết định"] ? null : decisions.length },
           { id: "hierarchy", label: "Chiến dịch & Ads", icon: "chart" as const, badge: loading || sourceErrors["Chiến dịch"] ? null : (campaigns.length || null) },
@@ -754,13 +754,13 @@ function AdsIntelligenceStorePage({ client, currentStoreId, stores }: { readonly
             onFocus={() => tabPreloaders[tab.id as AdsTabId]?.()}
             className={`px-4 py-2 text-xs font-semibold rounded-t-lg transition border-b-2 -mb-px flex items-center gap-1.5 cursor-pointer ${
               activeTab === tab.id
-                ? "border-blue-300 text-blue-700 bg-slate-50 shadow-sm"
-                : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                ? "border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 bg-slate-50 dark:bg-slate-800 shadow-sm"
+                : "border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700"
             }`}
           >
             <AppIcon name={tab.icon} /><span>{tab.label}</span>
             {tab.badge !== null && (
-              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white text-slate-600 border border-slate-200 font-mono font-bold">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 font-mono font-bold">
                 {tab.badge}
               </span>
             )}

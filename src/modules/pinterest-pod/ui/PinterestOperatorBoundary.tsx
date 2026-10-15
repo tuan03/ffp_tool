@@ -54,8 +54,8 @@ export function PinterestOperatorBoundary({ children, enabled }: { children: Rea
   return <form className="mx-auto flex max-w-md flex-col gap-4 p-6" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
     <h1 className="text-xl font-semibold">Đăng nhập Pinterest Operator</h1>
     <p>Phiên có thời hạn một giờ. Mật khẩu không được lưu trong browser storage.</p>
-    <label>Operator<input required autoComplete="off" className="w-full rounded border bg-white p-2" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-    <label>Mật khẩu<input required type="password" autoComplete="off" className="w-full rounded border bg-white p-2" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    <label>Operator<input required autoComplete="off" className="w-full rounded border bg-white dark:bg-slate-900 p-2" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+    <label>Mật khẩu<input required type="password" autoComplete="off" className="w-full rounded border bg-white dark:bg-slate-900 p-2" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     <button type="submit" disabled={isBusy}>{isBusy ? "Đang đăng nhập…" : "Đăng nhập"}</button>
     {error && <p role="alert">{error}</p>}
   </form>;

@@ -1,9 +1,11 @@
 import type { PropsWithChildren } from "react";
 
+import { ThemeProvider } from "./ThemeProvider";
+
 /**
  * Register application-wide providers here as the application grows.
- * Examples: query client, authentication, theme, and i18n providers.
+ * Theme is shared across routes; register future auth/query providers here too.
  */
 export function AppProviders({ children }: PropsWithChildren): React.JSX.Element {
-  return <>{children}</>;
+  return <ThemeProvider>{children}</ThemeProvider>;
 }

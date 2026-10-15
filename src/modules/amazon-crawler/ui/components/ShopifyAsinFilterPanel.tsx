@@ -118,39 +118,39 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
   }
 
   return (
-    <section aria-label="Lọc ASIN trên Shopify" className="min-w-0 rounded-lg border border-blue-200 bg-slate-50 p-4">
+    <section aria-label="Lọc ASIN trên Shopify" className="min-w-0 rounded-lg border border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-slate-800 p-4">
       <div className="min-w-0 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold text-blue-700">Lọc ASIN trên Shopify</h2>
-          <button type="button" disabled={!inputText && !snapshot && !isChecking} onClick={handleClear} className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-700 disabled:opacity-50">Xóa danh sách</button>
+          <h2 className="font-semibold text-blue-700 dark:text-blue-300">Lọc ASIN trên Shopify</h2>
+          <button type="button" disabled={!inputText && !snapshot && !isChecking} onClick={handleClear} className="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-50">Xóa danh sách</button>
         </div>
-        {hasStorageError ? <p role="alert" className="text-xs text-amber-700">Không thể lưu trên trình duyệt. Danh sách chỉ giữ trong phiên này; hãy sao chép hoặc tải TXT trước khi rời trang.</p> : null}
-        <p className="text-xs text-slate-600">Store: <strong className="break-words text-blue-700">{storeId}</strong></p>
-        <label className="grid gap-2 text-sm text-slate-900">Danh sách ASIN cần lọc
-          <textarea aria-label="Danh sách ASIN cần lọc" value={inputText} onChange={(event) => handleInputChange(event.target.value)} rows={4} maxLength={500000} placeholder="Dán ASIN hoặc link Amazon, mỗi dòng một mục" className="w-full min-w-0 rounded-lg border border-slate-300 bg-white p-2 font-mono text-sm focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300" />
+        {hasStorageError ? <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">Không thể lưu trên trình duyệt. Danh sách chỉ giữ trong phiên này; hãy sao chép hoặc tải TXT trước khi rời trang.</p> : null}
+        <p className="text-xs text-slate-600 dark:text-slate-400">Store: <strong className="break-words text-blue-700 dark:text-blue-300">{storeId}</strong></p>
+        <label className="grid gap-2 text-sm text-slate-900 dark:text-slate-100">Danh sách ASIN cần lọc
+          <textarea aria-label="Danh sách ASIN cần lọc" value={inputText} onChange={(event) => handleInputChange(event.target.value)} rows={4} maxLength={500000} placeholder="Dán ASIN hoặc link Amazon, mỗi dòng một mục" className="w-full min-w-0 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 font-mono text-sm focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800" />
         </label>
-        <p className="text-xs text-slate-600">{parsed.asins.length} ASIN{parsed.duplicateCount ? ` · bỏ ${parsed.duplicateCount} mục trùng` : ""}{parsed.invalidEntries.length ? ` · ${parsed.invalidEntries.length} mục lỗi` : ""}</p>
-        {parsed.invalidEntries.length > 0 ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+        <p className="text-xs text-slate-600 dark:text-slate-400">{parsed.asins.length} ASIN{parsed.duplicateCount ? ` · bỏ ${parsed.duplicateCount} mục trùng` : ""}{parsed.invalidEntries.length ? ` · ${parsed.invalidEntries.length} mục lỗi` : ""}</p>
+        {parsed.invalidEntries.length > 0 ? <div role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-xs text-amber-700 dark:text-amber-300">
           <p>Sửa các mục không hợp lệ trước khi kiểm tra:</p>
           <ul className="mt-2 max-h-32 list-inside list-disc overflow-auto">{parsed.invalidEntries.map((entry) => <li key={entry.position} className="break-words [overflow-wrap:anywhere]">Mục {entry.position}: {entry.value}</li>)}</ul>
         </div> : null}
-        {hasTooManyAsins ? <p role="alert" className="text-sm text-amber-700">Danh sách vượt {SHOPIFY_ASIN_FILTER_LIMIT} ASIN. Chia thành các lần kiểm tra nhỏ hơn.</p> : null}
+        {hasTooManyAsins ? <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">Danh sách vượt {SHOPIFY_ASIN_FILTER_LIMIT} ASIN. Chia thành các lần kiểm tra nhỏ hơn.</p> : null}
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={!storeId || parsed.asins.length === 0 || parsed.invalidEntries.length > 0 || hasTooManyAsins || isChecking} onClick={() => void handleCheck()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{isChecking ? "Đang kiểm tra…" : "Kiểm tra Shopify"}</button>
-          {isChecking ? <button type="button" onClick={handleStopCheck} className="rounded-lg border border-amber-200 px-4 py-2 text-sm text-amber-700">Dừng kiểm tra</button> : null}
+          {isChecking ? <button type="button" onClick={handleStopCheck} className="rounded-lg border border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">Dừng kiểm tra</button> : null}
         </div>
-        {filterState.status === "checking" ? <p role="status" className="text-sm text-blue-700">Đã đọc {filterState.progress.scannedProducts} sản phẩm Shopify · {filterState.progress.pagesRead} trang. Chờ kiểm tra đủ trước khi phân loại ASIN.</p> : null}
-        {filterState.status === "unverified" ? <section aria-label="ASIN chưa xác minh" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p role="alert" className="text-sm text-amber-700">{filterState.message}</p>
-          <p className="text-sm text-slate-700">Chưa xác minh: {parsed.asins.length} ASIN</p>
-          <textarea aria-label="Danh sách ASIN chưa xác minh" readOnly value={parsed.asins.join("\n")} rows={4} className="w-full rounded-lg border border-slate-300 bg-white p-3 font-mono text-sm" />
+        {filterState.status === "checking" ? <p role="status" className="text-sm text-blue-700 dark:text-blue-300">Đã đọc {filterState.progress.scannedProducts} sản phẩm Shopify · {filterState.progress.pagesRead} trang. Chờ kiểm tra đủ trước khi phân loại ASIN.</p> : null}
+        {filterState.status === "unverified" ? <section aria-label="ASIN chưa xác minh" className="space-y-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3">
+          <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{filterState.message}</p>
+          <p className="text-sm text-slate-700 dark:text-slate-300">Chưa xác minh: {parsed.asins.length} ASIN</p>
+          <textarea aria-label="Danh sách ASIN chưa xác minh" readOnly value={parsed.asins.join("\n")} rows={4} className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 font-mono text-sm" />
         </section> : null}
         {verifiedResult ? <>
-          <p role="status" className="flex flex-wrap justify-between gap-2 text-xs text-slate-600">
-            <span><strong className="text-emerald-700">{verifiedResult.missingAsins.length} chưa có</strong> · {verifiedResult.matches.length} đã có</span>
+          <p role="status" className="flex flex-wrap justify-between gap-2 text-xs text-slate-600 dark:text-slate-400">
+            <span><strong className="text-emerald-700 dark:text-emerald-300">{verifiedResult.missingAsins.length} chưa có</strong> · {verifiedResult.matches.length} đã có</span>
             <span title={snapshot ? `Kết quả lưu lúc ${new Date(snapshot.checkedAt).toLocaleString("vi-VN")}; kiểm tra lại để cập nhật.` : undefined}>{snapshot ? new Date(snapshot.checkedAt).toLocaleTimeString("vi-VN") : ""}</span>
           </p>
-          {snapshot?.inputText !== inputText ? <p className="text-xs text-amber-700">Đầu vào đã đổi. Kết quả cũ vẫn giữ; kiểm tra lại để cập nhật.</p> : null}
+          {snapshot?.inputText !== inputText ? <p className="text-xs text-amber-700 dark:text-amber-300">Đầu vào đã đổi. Kết quả cũ vẫn giữ; kiểm tra lại để cập nhật.</p> : null}
           <div className="grid min-w-0 gap-3">
             <section aria-label="ASIN chưa có trên Shopify" className="min-w-0 space-y-2">
               <ul aria-label="Danh sách ASIN chưa có trên Shopify" className="max-h-60 space-y-1.5 overflow-y-auto">
@@ -159,41 +159,41 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                   const isLatest = workspace.progress?.lastAsin === asin;
                   const hasAction = row?.copied || row?.viewed || row?.selected;
                   return <li key={asin} data-asin-row={asin} aria-current={isLatest ? "true" : undefined}
-                    className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 ${isLatest ? "border-blue-300 bg-blue-50" : hasAction ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 ${isLatest ? "border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60" : hasAction ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"}`}>
                   <div className="min-w-0">
-                    <span className="font-mono text-sm text-slate-900">{asin}</span>
+                    <span className="font-mono text-sm text-slate-900 dark:text-slate-100">{asin}</span>
                     {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs">
-                      {row?.copied ? <span className="text-emerald-700">✓ Đã copy</span> : null}
-                      {row?.selected ? <span className="text-emerald-700">✓ Đã chọn cào</span> : null}
-                      {row?.viewed ? <span className="text-emerald-700">✓ Đã xem</span> : null}
-                      {isLatest ? <span className="text-blue-700">Gần nhất</span> : null}
+                      {row?.copied ? <span className="text-emerald-700 dark:text-emerald-300">✓ Đã copy</span> : null}
+                      {row?.selected ? <span className="text-emerald-700 dark:text-emerald-300">✓ Đã chọn cào</span> : null}
+                      {row?.viewed ? <span className="text-emerald-700 dark:text-emerald-300">✓ Đã xem</span> : null}
+                      {isLatest ? <span className="text-blue-700 dark:text-blue-300">Gần nhất</span> : null}
                     </div> : null}
                   </div>
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label={`Dùng ASIN này ${asin}`} disabled={isSelectionDisabled}
                       onClick={async () => { if (await onSelectAsin(asin) === false) return; handleMarkRow(asin, "selected"); setCopyMessage(`Đã đưa ${asin} vào ô nhập. Chọn collection rồi bấm Bắt đầu cào.`); }}
-                      className="min-h-8 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700 disabled:opacity-50">Dùng ASIN này</button>
+                      className="min-h-8 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-2 py-1 text-xs text-blue-700 dark:text-blue-300 disabled:opacity-50">Dùng ASIN này</button>
                     <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
                       onClick={() => handleMarkRow(asin, "viewed")} onAuxClick={(event) => { if (event.button === 1) handleMarkRow(asin, "viewed"); }}
-                      className="rounded border border-blue-200 px-2 py-1 text-xs text-blue-700">View ↗</a>
+                      className="rounded border border-blue-200 dark:border-blue-800 px-2 py-1 text-xs text-blue-700 dark:text-blue-300">View ↗</a>
                   </div>
                 </li>;
                 })}
               </ul>
-              {verifiedResult.missingAsins.length === 0 ? <p className="text-xs text-slate-600">Tất cả ASIN đã tồn tại trong store này.</p> : <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => void handleCopy(verifiedResult.missingAsins.join("\n"))} className="rounded-lg border border-slate-300 px-3 py-2 text-xs">Sao chép ASIN chưa có</button>
-                <button type="button" onClick={handleDownloadMissing} className="rounded-lg border border-slate-300 px-3 py-2 text-xs">Tải TXT</button>
+              {verifiedResult.missingAsins.length === 0 ? <p className="text-xs text-slate-600 dark:text-slate-400">Tất cả ASIN đã tồn tại trong store này.</p> : <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => void handleCopy(verifiedResult.missingAsins.join("\n"))} className="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-xs">Sao chép ASIN chưa có</button>
+                <button type="button" onClick={handleDownloadMissing} className="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-xs">Tải TXT</button>
               </div>}
-              {copyMessage ? <p role="status" className="text-xs text-slate-700">{copyMessage}</p> : null}
+              {copyMessage ? <p role="status" className="text-xs text-slate-700 dark:text-slate-300">{copyMessage}</p> : null}
             </section>
-            <details className="min-w-0 rounded-lg border border-slate-200 p-2">
-              <summary className="cursor-pointer text-xs text-slate-600">Đã có trên Shopify ({verifiedResult.matches.length})</summary>
+            <details className="min-w-0 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+              <summary className="cursor-pointer text-xs text-slate-600 dark:text-slate-400">Đã có trên Shopify ({verifiedResult.matches.length})</summary>
               <section aria-label="ASIN đã có trên Shopify" className="mt-2 min-w-0 space-y-2">
-              {verifiedResult.matches.length === 0 ? <p className="text-sm text-slate-600">Không có ASIN nào trùng chính xác.</p> : <ul className="max-h-80 space-y-3 overflow-auto">
-                {verifiedResult.matches.map((match) => <li key={match.asin} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                  <p className="font-mono text-blue-700">{match.asin} <span className="text-xs text-slate-500">· {match.status}</span></p>
-                  <p className="mt-1 break-words text-slate-700 [overflow-wrap:anywhere]">{match.title}</p>
-                  <a href={match.adminUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-blue-700">Mở Shopify Admin →</a>
+              {verifiedResult.matches.length === 0 ? <p className="text-sm text-slate-600 dark:text-slate-400">Không có ASIN nào trùng chính xác.</p> : <ul className="max-h-80 space-y-3 overflow-auto">
+                {verifiedResult.matches.map((match) => <li key={match.asin} className="min-w-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-sm">
+                  <p className="font-mono text-blue-700 dark:text-blue-300">{match.asin} <span className="text-xs text-slate-500 dark:text-slate-400">· {match.status}</span></p>
+                  <p className="mt-1 break-words text-slate-700 dark:text-slate-300 [overflow-wrap:anywhere]">{match.title}</p>
+                  <a href={match.adminUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-blue-700 dark:text-blue-300">Mở Shopify Admin →</a>
                 </li>)}
               </ul>}
               </section>

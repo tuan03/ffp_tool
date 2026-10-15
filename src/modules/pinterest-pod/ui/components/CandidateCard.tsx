@@ -44,14 +44,14 @@ export function CandidateCard({
           if (!isRejected) onToggle(candId);
         }
       }}
-      className={`group relative flex flex-col overflow-hidden rounded-lg border transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-2 focus:ring-blue-300 ${
+      className={`group relative flex flex-col overflow-hidden rounded-lg border transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-400 ${
         isRejected
-          ? "border-rose-200 bg-rose-50 shadow opacity-90 hover:opacity-100"
+          ? "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 shadow opacity-90 hover:opacity-100"
           : isRoomTemplate
-          ? "border-blue-300 bg-blue-50 shadow-sm ring-2 ring-blue-300 cursor-pointer"
+          ? "border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 shadow-sm ring-2 ring-blue-300 dark:ring-blue-400 cursor-pointer"
           : isSelected
-          ? "border-blue-300 bg-slate-50 shadow-sm ring-2 ring-blue-300 cursor-pointer"
-          : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-50 shadow cursor-pointer"
+          ? "border-blue-300 dark:border-blue-800 bg-slate-50 dark:bg-slate-800 shadow-sm ring-2 ring-blue-300 dark:ring-blue-400 cursor-pointer"
+          : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 shadow cursor-pointer"
       }`}
     >
       {/* Top badges & selection checkbox overlay */}
@@ -81,7 +81,7 @@ export function CandidateCard({
               checked={isSelected}
               onChange={() => onToggle(candId)}
               aria-label={`Chọn mẫu ${candidate.title}`}
-              className="h-5 w-5 rounded border-slate-300 bg-slate-50 text-blue-700 accent-blue-300 shadow focus:ring-0 cursor-pointer"
+              className="h-5 w-5 rounded border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300 accent-blue-300 shadow focus:ring-0 cursor-pointer"
             />
           </div>
         )}
@@ -89,28 +89,28 @@ export function CandidateCard({
         {/* Badges */}
         <div className="absolute top-2.5 right-2.5 z-10 flex flex-col items-end gap-1">
           {isRejected && (
-            <span className="flex items-center gap-1 rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-xs font-bold text-rose-700 shadow">
+            <span className="flex items-center gap-1 rounded-full border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 px-2 py-0.5 text-xs font-bold text-rose-700 dark:text-rose-300 shadow">
               <span>✕</span>
               <span>Bị loại</span>
             </span>
           )}
 
           {isRoomTemplate && (
-            <span className="flex items-center gap-1 rounded-full border border-blue-300 bg-blue-600 px-2 py-0.5 text-xs font-bold text-white shadow">
+            <span className="flex items-center gap-1 rounded-full border border-blue-300 dark:border-blue-800 bg-blue-600 px-2 py-0.5 text-xs font-bold text-white shadow">
               <span>🛋️</span>
               <span>Phòng Mẫu</span>
             </span>
           )}
 
           {hasLowInformationWarning && (
-            <span className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 shadow">
+            <span className="flex items-center gap-1 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300 shadow">
               <span><AppIcon name="warning" /></span>
               <span>Ít chi tiết</span>
             </span>
           )}
 
           {!isRejected && candidate.recommended && (
-            <span className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-700 px-2 py-0.5 text-xs font-bold text-white shadow">
+            <span className="flex items-center gap-1 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-700 px-2 py-0.5 text-xs font-bold text-white shadow">
               <span><AppIcon name="star" /></span>
               <span>Khuyên chọn</span>
             </span>
@@ -118,14 +118,14 @@ export function CandidateCard({
 
           {/* Direct Printable vs Breakthrough Concept Badges */}
           {isDirectPrintable && (
-            <span className="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 shadow backdrop-blur-xs">
+            <span className="flex items-center gap-1 rounded-full border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 shadow backdrop-blur-xs">
               <span>🖨️</span>
               <span>Chuẩn in 2D</span>
             </span>
           )}
 
           {isBreakthrough && (
-            <span className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 shadow backdrop-blur-xs">
+            <span className="flex items-center gap-1 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300 shadow backdrop-blur-xs">
               <span><AppIcon name="info" /></span>
               <span>Ý tưởng đột phá</span>
             </span>
@@ -153,7 +153,7 @@ export function CandidateCard({
                 e.stopPropagation();
                 onPreview(candidate);
               }}
-              className="flex items-center gap-1 rounded-md bg-slate-50 px-2 py-1 text-xs font-medium text-slate-900 backdrop-blur-xs transition hover:bg-blue-700 hover:text-white shadow"
+              className="flex items-center gap-1 rounded-md bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs font-medium text-slate-900 dark:text-slate-100 backdrop-blur-xs transition hover:bg-blue-700 hover:text-white shadow"
               title="Soi ảnh phóng to HD"
             >
               <span><AppIcon name="search" /></span>
@@ -170,8 +170,8 @@ export function CandidateCard({
               }}
               className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium backdrop-blur-xs transition shadow ${
                 isRoomTemplate
-                  ? "bg-blue-600 text-white font-semibold ring-1 ring-blue-300"
-                  : "bg-slate-50 text-slate-700 hover:bg-blue-700 hover:text-white"
+                  ? "bg-blue-600 text-white font-semibold ring-1 ring-blue-300 dark:ring-blue-400"
+                  : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-blue-700 hover:text-white"
               }`}
               title={isRoomTemplate ? "Bỏ dùng ảnh này làm phòng mẫu" : "Dùng ảnh này làm Phòng Mẫu tham chiếu"}
             >
@@ -184,34 +184,34 @@ export function CandidateCard({
 
       {/* Content & Metrics */}
       <div className="flex flex-1 flex-col p-3.5 gap-2.5">
-        <h3 className="line-clamp-2 text-xs font-semibold text-slate-900" title={candidate.title}>
+        <h3 className="line-clamp-2 text-xs font-semibold text-slate-900 dark:text-slate-100" title={candidate.title}>
           {candidate.title}
         </h3>
 
         {/* 3 AI Vision Scores */}
-        <div className="grid grid-cols-3 gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2 text-center text-xs">
+        <div className="grid grid-cols-3 gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2 text-center text-xs">
           <div>
-            <p className="text-slate-600">Điểm nét</p>
-            <p className="font-bold text-blue-700">{candidate.image_score}/100</p>
+            <p className="text-slate-600 dark:text-slate-400">Điểm nét</p>
+            <p className="font-bold text-blue-700 dark:text-blue-300">{candidate.image_score}/100</p>
           </div>
-          <div className="border-x border-slate-200">
-            <p className="text-slate-600">Chuẩn in</p>
-            <p className="font-bold text-emerald-700">{candidate.printability_score}/100</p>
+          <div className="border-x border-slate-200 dark:border-slate-700">
+            <p className="text-slate-600 dark:text-slate-400">Chuẩn in</p>
+            <p className="font-bold text-emerald-700 dark:text-emerald-300">{candidate.printability_score}/100</p>
           </div>
           <div>
-            <p className="text-slate-600">Độ phẳng</p>
-            <p className="font-bold text-amber-700">{candidate.flat_artwork_score}/100</p>
+            <p className="text-slate-600 dark:text-slate-400">Độ phẳng</p>
+            <p className="font-bold text-amber-700 dark:text-amber-300">{candidate.flat_artwork_score}/100</p>
           </div>
         </div>
 
         {/* Rejection notice and Rescue Button */}
         {isRejected ? (
-          <div className="flex flex-col gap-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs">
+          <div className="flex flex-col gap-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-2 text-xs">
             <div className="flex flex-col gap-0.5">
-              <span className="text-xs font-bold text-rose-700 uppercase tracking-wider">
+              <span className="text-xs font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider">
                 Lý do bị loại:
               </span>
-              <p className="text-xs text-rose-700 line-clamp-2">
+              <p className="text-xs text-rose-700 dark:text-rose-300 line-clamp-2">
                 {candidate.reject_reason || candidate.reason || "Ảnh không đạt chuẩn in ấn tự động"}
               </p>
             </div>
@@ -223,7 +223,7 @@ export function CandidateCard({
                   e.stopPropagation();
                   onRescue(candidate);
                 }}
-                className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-slate-950 shadow transition cursor-pointer"
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 px-3 py-1.5 text-xs font-bold text-slate-950 dark:text-slate-100 shadow transition cursor-pointer"
               >
                 <span><AppIcon name="seo" /></span>
                 <span>Khôi phục / Rescue (Ý tưởng đột phá)</span>
@@ -232,7 +232,7 @@ export function CandidateCard({
           </div>
         ) : (
           candidate.reason && (
-            <p className="text-xs italic text-slate-600 line-clamp-2">
+            <p className="text-xs italic text-slate-600 dark:text-slate-400 line-clamp-2">
               &ldquo;{candidate.reason}&rdquo;
             </p>
           )

@@ -31,7 +31,7 @@ export function HomePage({ runWorkflow }: HomePageProps): React.JSX.Element {
         Chạy quy trình mẫu
       </Button>
       {result === null ? null : (
-        <pre className="mt-6 overflow-x-auto rounded-lg bg-white p-4 text-left text-xs leading-6 text-blue-700">
+        <pre className="mt-6 overflow-x-auto rounded-lg bg-white dark:bg-slate-900 p-4 text-left text-xs leading-6 text-blue-700 dark:text-blue-300">
           {JSON.stringify(result, null, 2)}
         </pre>
       )}

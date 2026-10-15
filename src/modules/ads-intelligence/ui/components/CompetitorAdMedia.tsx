@@ -73,7 +73,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
 
   if (hasVideoError && ad.mediaType === "VIDEO") {
     return (
-      <div className="relative h-full w-full flex flex-col items-center justify-center bg-slate-50 p-4 text-center">
+      <div className="relative h-full w-full flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800 p-4 text-center">
         {thumbnail && (
           <img
             src={thumbnail}
@@ -82,12 +82,12 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
           />
         )}
         <div className="relative z-10 flex flex-col items-center gap-2">
-          <p className="text-xs text-amber-700">Không tải được video trực tiếp từ nguồn.</p>
+          <p className="text-xs text-amber-700 dark:text-amber-300">Không tải được video trực tiếp từ nguồn.</p>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setHasVideoError(false)}
-              className="rounded bg-slate-50 px-2.5 py-1 text-xs text-blue-700 border border-blue-300 hover:bg-slate-100 transition cursor-pointer"
+              className="rounded bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-xs text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
             >
               <AppIcon name="refresh" /> Thử tải lại
             </button>
@@ -142,7 +142,7 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
         />
         {ad.mediaType === "VIDEO" && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/25">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-50 text-slate-900 shadow-sm backdrop-blur-sm border border-white/20 pl-0.5 text-xs">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-sm backdrop-blur-sm border border-white/20 pl-0.5 text-xs">
               ▶
             </span>
           </div>
@@ -152,10 +152,10 @@ export function CompetitorAdMedia({ ad }: { readonly ad: Pick<CompetitorAd, "med
   }
 
   return (
-    <div className="space-y-2 p-4 text-center text-xs text-slate-600">
+    <div className="space-y-2 p-4 text-center text-xs text-slate-600 dark:text-slate-400">
       <p>{hasVideoError || hasImageError ? "Không tải được media từ nguồn." : "Nguồn chưa cung cấp ảnh/video."}</p>
       {/^\d+$/.test(ad.archiveAdId) && (
-        <a href={`https://www.facebook.com/ads/library/?id=${ad.archiveAdId}`} target="_blank" rel="noreferrer" className="text-blue-700 underline">
+        <a href={`https://www.facebook.com/ads/library/?id=${ad.archiveAdId}`} target="_blank" rel="noreferrer" className="text-blue-700 dark:text-blue-300 underline">
           Xem trên Meta Ad Library
         </a>
       )}

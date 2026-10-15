@@ -9,8 +9,8 @@ interface BenchmarkToolbarProps {
   readonly storeId: string;
 }
 
-const selectStyle = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30";
-const inputStyle = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-500 focus:border-blue-300 focus-visible:ring-2 focus-visible:ring-blue-600/30";
+const selectStyle = "rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30";
+const inputStyle = "rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-500 dark:placeholder:text-slate-400 focus:border-blue-300 dark:focus:border-blue-800 focus-visible:ring-2 focus-visible:ring-blue-600/30";
 
 export function BenchmarkToolbar({
   filters,
@@ -25,12 +25,12 @@ export function BenchmarkToolbar({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <div className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
       {/* Primary Toolbar Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           {/* Version Filter */}
-          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
             <span>Phiên bản:</span>
             <select
               aria-label="Lọc phiên bản"
@@ -45,7 +45,7 @@ export function BenchmarkToolbar({
           </label>
 
           {/* Comparison Mode */}
-          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
             <span>Chế độ so sánh:</span>
             <select
               aria-label="Chế độ so sánh"
@@ -59,7 +59,7 @@ export function BenchmarkToolbar({
           </label>
 
           {/* Window Days */}
-          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
             <span>Cửa sổ đối chứng:</span>
             <select
               aria-label="Cửa sổ đối chứng"
@@ -74,7 +74,7 @@ export function BenchmarkToolbar({
           </label>
 
           {/* Status Filter */}
-          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
             <span>Trạng thái:</span>
             <select
               aria-label="Lọc trạng thái"
@@ -99,7 +99,7 @@ export function BenchmarkToolbar({
           <button
             type="button"
             onClick={handleExportCsv}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-900 transition hover:border-slate-300 hover:text-slate-900"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs font-medium text-slate-900 dark:text-slate-100 transition hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100"
           >
             <span>Xuất CSV ({items.length})</span>
           </button>
@@ -109,7 +109,7 @@ export function BenchmarkToolbar({
       {/* Secondary Search & GSC Query Filter */}
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <label className="flex flex-1 min-w-[200px] items-center gap-2">
-          <span className="text-xs text-slate-600">Tìm kiếm:</span>
+          <span className="text-xs text-slate-600 dark:text-slate-400">Tìm kiếm:</span>
           <input
             type="text"
             className={`${inputStyle} w-full`}
@@ -120,7 +120,7 @@ export function BenchmarkToolbar({
         </label>
 
         <label className="flex flex-1 min-w-[200px] items-center gap-2">
-          <span className="text-xs text-slate-600">GSC Query:</span>
+          <span className="text-xs text-slate-600 dark:text-slate-400">GSC Query:</span>
           <input
             type="text"
             className={`${inputStyle} w-full`}
@@ -134,7 +134,7 @@ export function BenchmarkToolbar({
           <button
             type="button"
             onClick={() => onChange({ windowDays: filters.windowDays, comparisonMode: filters.comparisonMode, offset: 0 })}
-            className="text-xs text-blue-700 hover:underline"
+            className="text-xs text-blue-700 dark:text-blue-300 hover:underline"
           >
             Xóa bộ lọc
           </button>
@@ -145,7 +145,7 @@ export function BenchmarkToolbar({
       {isQueryFilterActive && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700"
+          className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-xs text-amber-700 dark:text-amber-300"
         >
           <span className="font-bold"><AppIcon name="warning" /> Cảnh báo giới hạn báo cáo:</span>
           <span>

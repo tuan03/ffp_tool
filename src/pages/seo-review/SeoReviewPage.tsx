@@ -2281,16 +2281,16 @@ export function SeoReviewPage({
       <PageHeader title="SEO Review" description="Xem, chỉnh sửa và phê duyệt nội dung SEO trước khi đồng bộ lên Shopify." />
 
       {/* Viewing store selection never changes a product's immutable publish destination. */}
-      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-700 text-sm">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-sm">
               <AppIcon name="store" />
             </span>
-            <span className="text-sm font-semibold text-slate-900">
+            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               <label htmlFor="review-store">Store đang xem:</label>
             </span>
-            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
               onChange={event => {
                 const nextStore = event.target.value;
                 setSelectedIds(new Set()); setActiveProduct(null); setIsDrawerOpen(false); setIsEditModalOpen(false);
@@ -2300,12 +2300,12 @@ export function SeoReviewPage({
               {!availableStores.some(store => store.storeId === effectiveStoreId) && <option value={effectiveStoreId}>{effectiveStoreId}</option>}
               {availableStores.map(store => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
             </select>
-            <span className="text-xs text-slate-600">Đổi store để xem; store đích của từng sản phẩm được giữ nguyên.</span>
+            <span className="text-xs text-slate-600 dark:text-slate-400">Đổi store để xem; store đích của từng sản phẩm được giữ nguyên.</span>
           </div>
 
-          <div className="text-xs text-slate-600 flex items-center gap-2">
+          <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2">
             <span>Trang hiện tại:</span>
-            <span className="font-mono text-blue-700 font-semibold bg-slate-50 px-2.5 py-1 rounded border border-slate-300">
+            <span className="font-mono text-blue-700 dark:text-blue-300 font-semibold bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700">
               {storeScopedProducts.length} sản phẩm
             </span>
           </div>
@@ -2313,8 +2313,8 @@ export function SeoReviewPage({
 
         {/* Other stores that have products in review queue */}
         {otherStoresWithProducts.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200 text-xs text-slate-600">
-            <span className="text-slate-500">Các store khác có bản Review:</span>
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-400">
+            <span className="text-slate-500 dark:text-slate-400">Các store khác có bản Review:</span>
             {otherStoresWithProducts.map((os) => (
               <button
                 key={os.storeId}
@@ -2323,14 +2323,14 @@ export function SeoReviewPage({
                   persistBrowserActiveStoreId(os.storeId);
                   navigate(`/seo-review?storeId=${encodeURIComponent(os.storeId)}`);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1 font-mono text-xs text-blue-700 hover:border-blue-300 hover:bg-slate-100 transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 font-mono text-xs text-blue-700 dark:text-blue-300 hover:border-blue-300 dark:hover:border-blue-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
                 title={`Chuyển sang xem danh sách review của store ${os.storeId.toUpperCase()}`}
               >
                 <span><AppIcon name="store" /> {os.storeId.toUpperCase()}</span>
-                <span className="rounded bg-blue-50 px-1.5 py-0.2 text-xs text-blue-700 font-bold border border-blue-200">
+                <span className="rounded bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.2 text-xs text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800">
                   {os.count} sp
                 </span>
-                <span className="text-slate-600">➔</span>
+                <span className="text-slate-600 dark:text-slate-400">➔</span>
               </button>
             ))}
           </div>
@@ -2338,16 +2338,16 @@ export function SeoReviewPage({
       </div>
 
       {/* Batch Actions & Filters Toolbar */}
-      {environment !== "mock" && <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+      {environment !== "mock" && <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600 dark:text-slate-400">
         <span>{catalog.isLoading ? "Đang tải danh sách Review…" : `${catalog.catalog?.total ?? 0} kết quả · Trang ${catalog.page} · Các thao tác hàng loạt áp dụng cho trang hiện tại`}</span>
         <div className="flex gap-2">
-          <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-300 px-3 py-1 disabled:opacity-40">Trang trước</button>
-          <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-300 px-3 py-1 disabled:opacity-40">Trang sau</button>
-          <button type="button" onClick={() => { setPinnedReviewIds(new Set()); catalog.refresh(); }} className="rounded border border-slate-300 px-3 py-1">Làm mới</button>
+          <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-300 dark:border-slate-700 px-3 py-1 disabled:opacity-40">Trang trước</button>
+          <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-300 dark:border-slate-700 px-3 py-1 disabled:opacity-40">Trang sau</button>
+          <button type="button" onClick={() => { setPinnedReviewIds(new Set()); catalog.refresh(); }} className="rounded border border-slate-300 dark:border-slate-700 px-3 py-1">Làm mới</button>
         </div>
-        {catalog.error && <p role="alert" className="w-full text-rose-700">{catalog.error} <button type="button" onClick={catalog.refresh}>Thử lại</button></p>}
+        {catalog.error && <p role="alert" className="w-full text-rose-700 dark:text-rose-300">{catalog.error} <button type="button" onClick={catalog.refresh}>Thử lại</button></p>}
       </div>}
-      {isDetailLoading && <p role="status" className="text-sm text-blue-700">Đang tải chi tiết sản phẩm…</p>}
+      {isDetailLoading && <p role="status" className="text-sm text-blue-700 dark:text-blue-300">Đang tải chi tiết sản phẩm…</p>}
       <SeoBatchToolbar
         counts={workspaceCounts} workspace={workspace} filter={filter} viewMode={viewMode}
         selectedCount={selectedIds.size} approvableCount={selectedActionCounts.approve}
@@ -2362,14 +2362,14 @@ export function SeoReviewPage({
 
       {/* Review Content View based on active viewMode */}
       {filteredProducts.length === 0 ? (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-12 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-lg bg-slate-50 text-2xl text-slate-600 border border-slate-300 shadow-inner">
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-lg bg-slate-50 dark:bg-slate-800 text-2xl text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 shadow-inner">
             <AppIcon name="review" />
           </div>
-          <h3 className="mt-4 text-base font-bold text-slate-900">
+          <h3 className="mt-4 text-base font-bold text-slate-900 dark:text-slate-100">
             {catalog.isLoading ? "Đang tải Review…" : workspace === "synced" ? "Chưa có sản phẩm đã sync phù hợp" : "Không có sản phẩm Review phù hợp"}
           </h3>
-          <p className="mt-2 text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+          <p className="mt-2 text-xs text-slate-600 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
             {workspace === "synced" ? "Sản phẩm sync thành công sẽ xuất hiện ở đây và vẫn xem được trong Tất cả."
               : "Chọn Tất cả để xem cả bản đã sync hoặc lưu trữ; bản sẵn sàng có thể Sync ngay, không cần duyệt."}
           </p>

@@ -160,18 +160,18 @@ export function ProductDetailDrawer({
       />
 
       <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="w-screen max-w-2xl bg-white border-l border-slate-200 shadow-sm flex flex-col">
+        <div className="w-screen max-w-2xl bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
           {/* Drawer Header */}
-          <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50 sticky top-0 z-10">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-6 py-4 bg-slate-50 dark:bg-slate-800 sticky top-0 z-10">
             <div className="flex items-center gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 border border-blue-300 text-blue-700 font-bold">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold">
                 SEO
               </span>
               <div>
-                <h2 className="text-base font-bold text-slate-900 line-clamp-1">
+                <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 line-clamp-1">
                   Review Chi Tiết SEO
                 </h2>
-                <div className="flex items-center gap-2 text-xs text-slate-600 font-mono">
+                <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 font-mono">
                   <span>ID: {product.id}</span>
                   {product.asin && <span>• ASIN: {product.asin}</span>}
                 </div>
@@ -182,7 +182,7 @@ export function ProductDetailDrawer({
               <button
                 type="button"
                 onClick={() => setShowRawJsonModal(true)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 text-blue-700 hover:bg-slate-100 hover:text-blue-700 border border-slate-300 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-blue-700 dark:hover:text-blue-300 border border-slate-300 dark:border-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
                 title="Xem trực quan toàn bộ object JSON đầy đủ của sản phẩm"
               >
                 <span><AppIcon name="search" /></span>
@@ -192,7 +192,7 @@ export function ProductDetailDrawer({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg p-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition cursor-pointer"
+                className="rounded-lg p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
                 aria-label="Đóng drawer"
               >
                 ✕
@@ -201,18 +201,18 @@ export function ProductDetailDrawer({
           </div>
 
           {/* Drawer Body - Scrollable */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-700">
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-700 dark:text-slate-300">
             {workerClient && product.gptJobId && product.backendPublishRequired && <WorkerReviewHistoryPanel key={`${product.storeId}:${product.gptJobId}`} client={workerClient} storeId={product.storeId || currentStoreId || ""} jobId={product.gptJobId} />}
             {workerClient && product.productId && isShopifyProductGid(product.productId) && (product.storeId || currentStoreId) &&
               <SeoVersionHistoryPanel key={`${product.storeId || currentStoreId}:${product.productId}`} client={workerClient}
                 storeId={product.storeId || currentStoreId || ""} productGid={product.productId} />}
             {product.backendPublishRequired && (
-              <section className="rounded-lg border border-blue-200 bg-white p-4" aria-label="Backend publish">
-                <h3 className="font-semibold text-blue-700">Sync trực tiếp qua backend</h3>
+              <section className="rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 p-4" aria-label="Backend publish">
+                <h3 className="font-semibold text-blue-700 dark:text-blue-300">Sync trực tiếp qua backend</h3>
                 <p>Sync được lưu trên server, không cần giữ tab mở. Vendor, handle, giá và variants không được gửi cập nhật.</p>
                 {product.backendPublish && <p className="mt-2 break-all">Tác vụ: {product.backendPublish.id} · {product.backendPublish.state}{product.backendPublish.errorCode ? ` · ${product.backendPublish.errorCode}` : ""}</p>}
                 {product.originalBackup && <details className="mt-3">
-                  <summary className="cursor-pointer text-blue-700">So sánh nội dung nguồn và bản đề xuất</summary>
+                  <summary className="cursor-pointer text-blue-700 dark:text-blue-300">So sánh nội dung nguồn và bản đề xuất</summary>
                   {[
                     ["Tên sản phẩm", product.originalBackup.productTitle, product.productTitle.value],
                     ["SEO title", product.originalBackup.seoTitle ?? "", product.seoTitle.value],
@@ -221,46 +221,46 @@ export function ProductDetailDrawer({
                   ].map(([label, before, after]) => <div key={label} className="mt-3">
                     <h4 className="font-semibold">{label}</h4>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <div><span className="text-slate-600">Nguồn đã lưu</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{before}</pre></div>
-                      <div><span className="text-blue-700">Đề xuất</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{after}</pre></div>
+                      <div><span className="text-slate-600 dark:text-slate-400">Nguồn đã lưu</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{before}</pre></div>
+                      <div><span className="text-blue-700 dark:text-blue-300">Đề xuất</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{after}</pre></div>
                     </div>
                   </div>)}
                 </details>}
               </section>
             )}
             {/* Review Status Banner */}
-            <div className="flex flex-wrap items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4 gap-3">
+            <div className="flex flex-wrap items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 gap-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
                 {product.seoVersion !== undefined && product.seoVersion > 0 && (
-                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                     v{product.seoVersion}
                   </span>
                 )}
-                <span className="text-xs font-semibold uppercase text-slate-600">| Trạng thái:</span>
+                <span className="text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">| Trạng thái:</span>
                 <ReviewStatusBadge product={product} />
-                {product.salesChannelPublication && <details className="rounded-lg border border-slate-300 bg-white p-3 text-xs text-slate-700">
+                {product.salesChannelPublication && <details className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-xs text-slate-700 dark:text-slate-300">
                   <summary className="cursor-pointer">Sales Channels: {product.salesChannelPublication.channels.length > 0
                     ? `${product.salesChannelPublication.channels.filter(channel => channel.published).length}/${product.salesChannelPublication.channels.length} đã bật`
                     : "chưa tải được danh sách kênh"}</summary>
                   <ul className="mt-2 space-y-1">
-                    {product.salesChannelPublication.channels.map(channel => <li key={channel.id} className={channel.published ? "text-blue-700" : "text-amber-700"}>
+                    {product.salesChannelPublication.channels.map(channel => <li key={channel.id} className={channel.published ? "text-blue-700 dark:text-blue-300" : "text-amber-700 dark:text-amber-300"}>
                       {channel.name}: {channel.published ? "Đã bật" : "Chưa bật"}
                     </li>)}
                   </ul>
-                  {product.salesChannelPublication.error && <p className="mt-2 text-amber-700">{product.salesChannelPublication.error}</p>}
+                  {product.salesChannelPublication.error && <p className="mt-2 text-amber-700 dark:text-amber-300">{product.salesChannelPublication.error}</p>}
                 </details>}
 
                 {/* Shopify Store Sync Badge */}
                 {product.shopifySyncStatus === "queued" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-300">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                     <span className="h-2 w-2 rounded-full bg-amber-700" />
                     <span>Đang chờ đồng bộ Store</span>
                   </span>
                 )}
                 {product.shopifySyncStatus === "syncing" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-300 animate-pulse">
-                    <svg className="animate-spin h-3.5 w-3.5 text-blue-700" viewBox="0 0 24 24" fill="none">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 animate-pulse">
+                    <svg className="animate-spin h-3.5 w-3.5 text-blue-700 dark:text-blue-300" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                     </svg>
@@ -271,8 +271,8 @@ export function ProductDetailDrawer({
                   <span
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                       currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase()
-                        ? "bg-amber-50 text-amber-700 border border-amber-300"
-                        : "bg-emerald-50 text-emerald-700 border border-emerald-300"
+                        ? "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                        : "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
                     }`}
                   >
                     <span
@@ -288,7 +288,7 @@ export function ProductDetailDrawer({
                         href={product.shopifyAdminUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-emerald-700 hover:text-emerald-700 underline inline-flex items-center gap-0.5 ml-1"
+                        className="text-emerald-700 dark:text-emerald-300 hover:text-emerald-700 dark:hover:text-emerald-300 underline inline-flex items-center gap-0.5 ml-1"
                       >
                         Shopify Admin ↗
                       </a>
@@ -296,14 +296,14 @@ export function ProductDetailDrawer({
                   </span>
                 )}
                 {product.shopifySyncStatus === "failed" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-300">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
                     <span className="h-2 w-2 rounded-full bg-rose-600" />
                     <span title={product.shopifySyncError}>Lỗi đồng bộ Store</span>
                     {onRetrySync && reviewActions(product).canRetry && (
                       <button
                         type="button"
                         onClick={() => onRetrySync(product.id)}
-                        className="text-xs font-semibold text-rose-700 hover:text-slate-900 underline ml-1 cursor-pointer"
+                        className="text-xs font-semibold text-rose-700 dark:text-rose-300 hover:text-slate-900 dark:hover:text-slate-100 underline ml-1 cursor-pointer"
                       >
                         Thử lại
                       </button>
@@ -313,8 +313,8 @@ export function ProductDetailDrawer({
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">Pipeline:</span>
-                <span className="capitalize font-mono text-xs font-semibold text-blue-700">
+                <span className="text-xs text-slate-500 dark:text-slate-400">Pipeline:</span>
+                <span className="capitalize font-mono text-xs font-semibold text-blue-700 dark:text-blue-300">
                   {product.seoStatus.value}
                 </span>
                 <SourceBadge source={product.seoStatus.source} />
@@ -322,50 +322,50 @@ export function ProductDetailDrawer({
             </div>
 
             {product.lastSyncedAt && product.reviewDecision === "approved" && (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-700 flex items-center justify-between">
+              <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 p-3.5 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-medium">
                   <span>✓</span> Đã đồng bộ lên Shopify thành công
                 </span>
-                <span className="font-mono text-emerald-700">
+                <span className="font-mono text-emerald-700 dark:text-emerald-300">
                   {new Date(product.lastSyncedAt).toLocaleString()}
                 </span>
               </div>
             )}
 
             {product.lastRevertedAt && product.reviewDecision !== "approved" && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-700 flex items-center justify-between">
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3.5 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-medium">
                   <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
                 </span>
-                <span className="font-mono text-amber-700">
+                <span className="font-mono text-amber-700 dark:text-amber-300">
                   {new Date(product.lastRevertedAt).toLocaleString()}
                 </span>
               </div>
             )}
 
             {product.syncError && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-700 flex items-start gap-2.5">
+              <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
                 <span className="text-base flex-shrink-0"><AppIcon name="warning" /></span>
                 <div>
-                  <div className="font-bold text-rose-700">Lỗi đồng bộ lên Shopify:</div>
-                  <div className="mt-0.5 text-rose-700">{product.syncError}</div>
+                  <div className="font-bold text-rose-700 dark:text-rose-300">Lỗi đồng bộ lên Shopify:</div>
+                  <div className="mt-0.5 text-rose-700 dark:text-rose-300">{product.syncError}</div>
                 </div>
               </div>
             )}
 
             {product.revertError && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-700 flex items-start gap-2.5">
+              <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
                 <span className="text-base flex-shrink-0"><AppIcon name="warning" /></span>
                 <div>
-                  <div className="font-bold text-rose-700">Lỗi hoàn tác lên Shopify:</div>
-                  <div className="mt-0.5 text-rose-700">{product.revertError}</div>
+                  <div className="font-bold text-rose-700 dark:text-rose-300">Lỗi hoàn tác lên Shopify:</div>
+                  <div className="mt-0.5 text-rose-700 dark:text-rose-300">{product.revertError}</div>
                 </div>
               </div>
             )}
 
             {/* Rejection notice if present */}
             {product.rejectionReason && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-700">
+              <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3.5 text-xs text-rose-700 dark:text-rose-300">
                 <span className="font-bold">Lý do từ chối / lỗi:</span> {product.rejectionReason}
               </div>
             )}
@@ -381,34 +381,34 @@ export function ProductDetailDrawer({
             )}
 
             {/* 1. Product Title & Handle */}
-            <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-5">
+            <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                     Product Title (Tiêu đề sản phẩm)
                   </label>
                   <SourceBadge source={product.productTitle.source} />
                 </div>
-                <div className="font-medium text-slate-900 text-base leading-snug">
+                <div className="font-medium text-slate-900 dark:text-slate-100 text-base leading-snug">
                   {product.productTitle.value}
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-200">
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                     Product Handle (URL Slug)
                   </label>
                   <SourceBadge source={product.handle.source} />
                 </div>
                 <div className="flex items-center gap-2">
-                  <code className="font-mono text-xs text-blue-700 bg-white px-2.5 py-1.5 rounded border border-slate-200 flex-1 overflow-x-auto">
+                  <code className="font-mono text-xs text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 flex-1 overflow-x-auto">
                     /products/{product.handle.value}
                   </code>
                   <button
                     type="button"
                     onClick={() => handleCopy(product.handle.value, "handle")}
-                    className="px-2.5 py-1.5 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
+                    className="px-2.5 py-1.5 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
                   >
                     {copiedKey === "handle" ? "✓ Đã chép" : "Copy"}
                   </button>
@@ -417,68 +417,68 @@ export function ProductDetailDrawer({
             </div>
 
             {/* 2. SEO Title & SEO Meta Description */}
-            <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-5">
+            <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                       SEO Title (Meta Title)
                     </label>
                     <SourceBadge source={product.seoTitle.source} />
                   </div>
                   <span
                     className={`text-xs font-mono font-medium ${
-                      seoTitleLen > 70 ? "text-rose-700" : seoTitleLen >= 55 ? "text-emerald-700" : "text-amber-700"
+                      seoTitleLen > 70 ? "text-rose-700 dark:text-rose-300" : seoTitleLen >= 55 ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"
                     }`}
                   >
                     {seoTitleLen} / 70 ký tự
                   </span>
                 </div>
-                <div className="p-3 rounded-lg bg-white border border-slate-200 font-medium text-slate-900">
+                <div className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-medium text-slate-900 dark:text-slate-100">
                   {product.seoTitle.value}
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-200">
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                       SEO Description (Meta Description)
                     </label>
                     <SourceBadge source={product.seoDescription.source} />
                   </div>
                   <span
                     className={`text-xs font-mono font-medium ${
-                      seoDescLen > 160 ? "text-rose-700" : seoDescLen >= 120 ? "text-emerald-700" : "text-amber-700"
+                      seoDescLen > 160 ? "text-rose-700 dark:text-rose-300" : seoDescLen >= 120 ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"
                     }`}
                   >
                     {seoDescLen} / 160 ký tự
                   </span>
                 </div>
-                <div className="p-3 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs leading-relaxed">
+                <div className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs leading-relaxed">
                   {product.seoDescription.value}
                 </div>
               </div>
             </div>
 
             {/* 3. Product Description (HTML Preview / Raw Code) */}
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-5 space-y-3">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                     Product Description (Mô tả chi tiết)
                   </label>
                   <SourceBadge source={product.productDescription.source} />
                 </div>
 
-                <div className="flex items-center rounded-lg bg-white p-0.5 border border-slate-200 text-xs font-medium">
+                <div className="flex items-center rounded-lg bg-white dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-700 text-xs font-medium">
                   <button
                     type="button"
                     onClick={() => setDescriptionTab("formatted")}
                     className={`px-3 py-1 rounded transition ${
                       descriptionTab === "formatted"
                         ? "bg-blue-600 text-white font-semibold"
-                        : "text-slate-600 hover:text-slate-900"
+                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                     }`}
                   >
                     Preview
@@ -489,7 +489,7 @@ export function ProductDetailDrawer({
                     className={`px-3 py-1 rounded transition ${
                       descriptionTab === "raw"
                         ? "bg-blue-600 text-white font-semibold"
-                        : "text-slate-600 hover:text-slate-900"
+                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                     }`}
                   >
                     HTML
@@ -499,20 +499,20 @@ export function ProductDetailDrawer({
 
               {descriptionTab === "formatted" ? (
                 <div
-                  className="prose prose-invert prose-xs max-w-none p-4 rounded-lg bg-white border border-slate-200 max-h-72 overflow-y-auto leading-relaxed text-slate-700"
+                  className="prose prose-invert prose-xs max-w-none p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 max-h-72 overflow-y-auto leading-relaxed text-slate-700 dark:text-slate-300"
                   dangerouslySetInnerHTML={{
                     __html: sanitizeHtmlDescription(product.productDescription.value),
                   }}
                 />
               ) : (
                 <div className="relative">
-                  <pre className="p-4 rounded-lg bg-white border border-slate-200 font-mono text-xs text-slate-700 overflow-x-auto max-h-72">
+                  <pre className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-700 dark:text-slate-300 overflow-x-auto max-h-72">
                     {product.productDescription.value}
                   </pre>
                   <button
                     type="button"
                     onClick={() => handleCopy(product.productDescription.value, "desc")}
-                    className="absolute top-2 right-2 px-2.5 py-1 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
+                    className="absolute top-2 right-2 px-2.5 py-1 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
                   >
                     {copiedKey === "desc" ? "✓ Đã chép" : "Copy"}
                   </button>
@@ -521,21 +521,21 @@ export function ProductDetailDrawer({
             </div>
 
             {product.coordinatorReview && reviewTarget && (
-              <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <h3 className="text-sm font-bold text-slate-900">Thông tin Shopify sẽ đồng bộ</h3>
+              <section className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Thông tin Shopify sẽ đồng bộ</h3>
                 <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
-                  <div><dt className="text-slate-500">Store</dt><dd className="mt-1 font-mono text-blue-700">{product.storeId || "—"}</dd></div>
-                  <div><dt className="text-slate-500">Nhà cung cấp (Vendor)</dt><dd className="mt-1 font-medium text-slate-900">{(product.storeId ? (product.storeId.split("--")[0] || product.storeId).trim().toUpperCase() : "—")}</dd></div>
-                  <div><dt className="text-slate-500">Job</dt><dd className="mt-1 font-mono text-slate-700">{product.coordinatorReview.jobId}</dd></div>
-                  <div><dt className="text-slate-500">Product type</dt><dd className="mt-1 text-slate-900">{reviewTarget.productType || "Theo Amazon"}</dd></div>
-                  <div><dt className="text-slate-500">Collections</dt><dd className="mt-1 break-all text-slate-900">{reviewTarget.collectionIds.join(", ") || "Không chọn"}</dd></div>
-                  <div><dt className="text-slate-500">Cộng giá</dt><dd className="mt-1 text-slate-900">${reviewTarget.priceAddition.toFixed(2)}</dd></div>
-                  <div><dt className="text-slate-500">Compare-at</dt><dd className="mt-1 text-slate-900">{reviewTarget.discountPercent}%</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Store</dt><dd className="mt-1 font-mono text-blue-700 dark:text-blue-300">{product.storeId || "—"}</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Nhà cung cấp (Vendor)</dt><dd className="mt-1 font-medium text-slate-900 dark:text-slate-100">{(product.storeId ? (product.storeId.split("--")[0] || product.storeId).trim().toUpperCase() : "—")}</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Job</dt><dd className="mt-1 font-mono text-slate-700 dark:text-slate-300">{product.coordinatorReview.jobId}</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Product type</dt><dd className="mt-1 text-slate-900 dark:text-slate-100">{reviewTarget.productType || "Theo Amazon"}</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Collections</dt><dd className="mt-1 break-all text-slate-900 dark:text-slate-100">{reviewTarget.collectionIds.join(", ") || "Không chọn"}</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Cộng giá</dt><dd className="mt-1 text-slate-900 dark:text-slate-100">${reviewTarget.priceAddition.toFixed(2)}</dd></div>
+                  <div><dt className="text-slate-500 dark:text-slate-400">Compare-at</dt><dd className="mt-1 text-slate-900 dark:text-slate-100">{reviewTarget.discountPercent}%</dd></div>
                 </dl>
                 <div className="mt-4 overflow-x-auto">
                   <table className="min-w-full text-left text-xs">
-                    <thead className="text-slate-500"><tr><th className="pb-2 pr-3">SKU</th><th className="pb-2 pr-3">Options</th><th className="pb-2 pr-3">Giá gốc</th><th className="pb-2 pr-3">Giá Shopify</th><th className="pb-2">Compare-at</th></tr></thead>
-                    <tbody className="divide-y divide-slate-200 text-slate-700">
+                    <thead className="text-slate-500 dark:text-slate-400"><tr><th className="pb-2 pr-3">SKU</th><th className="pb-2 pr-3">Options</th><th className="pb-2 pr-3">Giá gốc</th><th className="pb-2 pr-3">Giá Shopify</th><th className="pb-2">Compare-at</th></tr></thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700 text-slate-700 dark:text-slate-300">
                       {sourceVariants.map((variant, index) => {
                         const basePrice = readVariantPrice(variant);
                         const sellingPrice = basePrice === null
@@ -550,34 +550,34 @@ export function ProductDetailDrawer({
                             <td className="py-2 pr-3 font-mono">{String(variant.sku || "—")}</td>
                             <td className="py-2 pr-3">{JSON.stringify(variant.options || {})}</td>
                             <td className="py-2 pr-3">{basePrice === null ? "—" : `$${basePrice.toFixed(2)}`}</td>
-                            <td className="py-2 pr-3 text-blue-700">{sellingPrice === null ? "—" : `$${sellingPrice.toFixed(2)}`}</td>
-                            <td className="py-2 text-amber-700">{compareAtPrice === null ? "—" : `$${compareAtPrice.toFixed(2)}`}</td>
+                            <td className="py-2 pr-3 text-blue-700 dark:text-blue-300">{sellingPrice === null ? "—" : `$${sellingPrice.toFixed(2)}`}</td>
+                            <td className="py-2 text-amber-700 dark:text-amber-300">{compareAtPrice === null ? "—" : `$${compareAtPrice.toFixed(2)}`}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                  {sourceVariants.length === 0 && <p className="text-slate-500">Không có variant.</p>}
+                  {sourceVariants.length === 0 && <p className="text-slate-500 dark:text-slate-400">Không có variant.</p>}
                 </div>
                 {product.sourceCrawlProduct?.customization && (
-                  <details className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                    <summary className="cursor-pointer font-semibold text-blue-700">Customization payload</summary>
-                    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-xs text-slate-600">{JSON.stringify(product.sourceCrawlProduct.customization, null, 2)}</pre>
+                  <details className="mt-4 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-3">
+                    <summary className="cursor-pointer font-semibold text-blue-700 dark:text-blue-300">Customization payload</summary>
+                    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-xs text-slate-600 dark:text-slate-400">{JSON.stringify(product.sourceCrawlProduct.customization, null, 2)}</pre>
                   </details>
                 )}
               </section>
             )}
 
             {/* 4. Images Gallery (Preview, ALT text, WebP URL) */}
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-5 space-y-4">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                   Hình ảnh & Alt Text ({product.images.length})
                 </label>
               </div>
 
               {product.images.length === 0 ? (
-                <div className="p-4 rounded-lg bg-white border border-slate-200 text-slate-500 italic text-xs">
+                <div className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 italic text-xs">
                   Sản phẩm này chưa có dữ liệu hình ảnh.
                 </div>
               ) : (
@@ -585,16 +585,16 @@ export function ProductDetailDrawer({
                   {product.images.map((img, idx) => (
                     <div
                       key={img.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3"
+                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-3"
                     >
                       <div className="flex items-start gap-4">
                         {/* Thumbnail */}
-                        <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-500 group relative">
+                        <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-400 group relative">
                           {img.previewUrl.value ? (
                             <button
                               type="button"
                               onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
-                              className="h-full w-full block cursor-zoom-in relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 rounded-lg"
+                              className="h-full w-full block cursor-zoom-in relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400 rounded-lg"
                               title="Nhấn để phóng to ảnh"
                               aria-label={`Phóng to ảnh #${idx + 1}`}
                             >
@@ -607,7 +607,7 @@ export function ProductDetailDrawer({
                                   target.style.display = "none";
                                 }}
                               />
-                              <span className="absolute inset-0 bg-slate-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 text-xs font-semibold">
+                              <span className="absolute inset-0 bg-slate-50 dark:bg-slate-800 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 dark:text-slate-100 text-xs font-semibold">
                                 <AppIcon name="search" />
                               </span>
                             </button>
@@ -621,28 +621,28 @@ export function ProductDetailDrawer({
                           <div>
                             <div className="flex items-center justify-between mb-1">
                               <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-bold text-slate-600 uppercase">
+                                <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">
                                   Image Alt #{idx + 1}
                                 </span>
                                 <SourceBadge source={img.alt.source} />
                               </div>
-                              <span className="text-xs font-mono text-slate-500">
+                              <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
                                 {img.alt.value.length} / 125 ký tự
                               </span>
                             </div>
-                            <div className="text-xs text-slate-900 bg-white p-2 rounded border border-slate-200">
+                            <div className="text-xs text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-700">
                               {img.alt.value || (
-                                <span className="text-slate-500 italic">Chưa có Alt text</span>
+                                <span className="text-slate-500 dark:text-slate-400 italic">Chưa có Alt text</span>
                               )}
                             </div>
                           </div>
 
                           {/* WebP info */}
                           <div className="flex items-center gap-2 pt-1 text-xs">
-                            <span className="text-slate-500 font-mono text-xs">WebP:</span>
-                            <span className="font-mono text-blue-700 text-xs truncate flex-1">
+                            <span className="text-slate-500 dark:text-slate-400 font-mono text-xs">WebP:</span>
+                            <span className="font-mono text-blue-700 dark:text-blue-300 text-xs truncate flex-1">
                               {img.webpUrl.value || img.webpFilename.value || (
-                                <span className="text-slate-500 italic font-sans">Chưa có WebP URL</span>
+                                <span className="text-slate-500 dark:text-slate-400 italic font-sans">Chưa có WebP URL</span>
                               )}
                             </span>
                             <SourceBadge source={img.webpUrl.source} />
@@ -650,7 +650,7 @@ export function ProductDetailDrawer({
                               <button
                                 type="button"
                                 onClick={() => handleCopy(img.webpUrl.value || img.webpFilename.value, `img-${idx}`)}
-                                className="px-2 py-0.5 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 transition"
+                                className="px-2 py-0.5 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
                               >
                                 {copiedKey === `img-${idx}` ? "✓" : "Copy"}
                               </button>
@@ -665,15 +665,15 @@ export function ProductDetailDrawer({
             </div>
 
             {/* AEO Suite (Generative / Answer Engine Optimization) */}
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 space-y-4">
+            <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-base"><AppIcon name="code" /></span>
-                  <h3 className="font-bold text-blue-700 text-sm tracking-wide">
+                  <h3 className="font-bold text-blue-700 dark:text-blue-300 text-sm tracking-wide">
                     AEO Suite (AI Search &amp; Overview Optimization)
                   </h3>
                 </div>
-                <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
+                <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
                   GEO / Perplexity / ChatGPT Search
                 </span>
               </div>
@@ -681,27 +681,27 @@ export function ProductDetailDrawer({
               {/* 1. AI Quick Summary (Featured Snippet Passage) */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <span><AppIcon name="seo" /> AI Quick Summary</span>
-                    <span className="text-xs text-slate-500 font-normal">(AI Overviews snippet)</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-normal">(AI Overviews snippet)</span>
                   </label>
                   {product.aeoQuickSummary && <SourceBadge source={product.aeoQuickSummary.source} />}
                 </div>
-                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 text-xs leading-relaxed">
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs leading-relaxed">
                   {product.aeoQuickSummary?.value ? (
                     product.aeoQuickSummary.value
                   ) : (
-                    <span className="text-slate-500 italic">Chưa có dữ liệu AEO Quick Summary</span>
+                    <span className="text-slate-500 dark:text-slate-400 italic">Chưa có dữ liệu AEO Quick Summary</span>
                   )}
                 </div>
               </div>
 
               {/* 2. Strategic FAQ (4-pack) */}
-              <div className="space-y-2 pt-2 border-t border-blue-200">
+              <div className="space-y-2 pt-2 border-t border-blue-200 dark:border-blue-800">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <span>❓ Strategic FAQ (Pre-purchase &amp; Differentiation)</span>
-                    <span className="text-xs text-slate-500 font-normal">
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-normal">
                       ({product.aeoFaq?.value?.length ?? 0} câu hỏi)
                     </span>
                   </label>
@@ -710,28 +710,28 @@ export function ProductDetailDrawer({
                 {product.aeoFaq?.value && product.aeoFaq.value.length > 0 ? (
                   <div className="space-y-2">
                     {product.aeoFaq.value.map((item, qIdx) => (
-                      <div key={qIdx} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                        <div className="font-semibold text-blue-700 text-xs flex items-start gap-1.5">
-                          <span className="text-blue-700 font-mono">Q{qIdx + 1}:</span>
+                      <div key={qIdx} className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                        <div className="font-semibold text-blue-700 dark:text-blue-300 text-xs flex items-start gap-1.5">
+                          <span className="text-blue-700 dark:text-blue-300 font-mono">Q{qIdx + 1}:</span>
                           <span>{item.question}</span>
                         </div>
-                        <div className="text-slate-700 text-xs pl-5 leading-relaxed">
+                        <div className="text-slate-700 dark:text-slate-300 text-xs pl-5 leading-relaxed">
                           {item.answer}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-xs italic">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs italic">
                     Chưa có FAQ chiến lược
                   </div>
                 )}
               </div>
 
               {/* 3. JSON-LD Schema @graph */}
-              <div className="space-y-1.5 pt-2 border-t border-blue-200">
+              <div className="space-y-1.5 pt-2 border-t border-blue-200 dark:border-blue-800">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <span>📄 Schema.org JSON-LD (@graph: Product &amp; FAQPage)</span>
                   </label>
                   <div className="flex items-center gap-2">
@@ -740,7 +740,7 @@ export function ProductDetailDrawer({
                       <button
                         type="button"
                         onClick={() => handleCopy(product.aeoJsonLd?.value || "", "json-ld")}
-                        className="px-2.5 py-1 rounded text-xs font-medium bg-blue-50 hover:bg-blue-50 text-blue-700 border border-blue-200 transition flex items-center gap-1"
+                        className="px-2.5 py-1 rounded text-xs font-medium bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-50 dark:hover:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition flex items-center gap-1"
                       >
                         {copiedKey === "json-ld" ? "✓ Đã copy" : "📋 Copy JSON-LD"}
                       </button>
@@ -748,11 +748,11 @@ export function ProductDetailDrawer({
                   </div>
                 </div>
                 {product.aeoJsonLd?.value ? (
-                  <pre className="p-3 rounded-lg bg-white font-mono text-xs text-blue-700 overflow-x-auto max-h-48 border border-slate-200">
+                  <pre className="p-3 rounded-lg bg-white dark:bg-slate-900 font-mono text-xs text-blue-700 dark:text-blue-300 overflow-x-auto max-h-48 border border-slate-200 dark:border-slate-700">
                     {product.aeoJsonLd.value}
                   </pre>
                 ) : (
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-xs italic">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs italic">
                     Chưa có dữ liệu JSON-LD Schema
                   </div>
                 )}
@@ -761,52 +761,52 @@ export function ProductDetailDrawer({
 
             {/* Pinterest POD Shopify & Pricing Details */}
             {product.sourcePinterestItem && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-base">🏷️</span>
-                    <h3 className="font-semibold text-blue-700 text-sm">
+                    <h3 className="font-semibold text-blue-700 dark:text-blue-300 text-sm">
                       Cấu hình Shopify & Định giá POD
                     </h3>
                   </div>
                   {product.sourcePinterestItem.storeId && (
-                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
+                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
                       Store: {product.sourcePinterestItem.storeId.toUpperCase()}
                     </span>
                   )}
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-xs">Loại SP:</span>
-                    <span className="font-medium text-slate-900">
+                  <div className="bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 block text-xs">Loại SP:</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100">
                       {product.sourcePinterestItem.productType || "Rug"}
                     </span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-xs">Nhà cung cấp:</span>
-                    <span className="font-medium text-slate-900">
+                  <div className="bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 block text-xs">Nhà cung cấp:</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100">
                       {product.sourcePinterestItem.vendor || "CHILLGEN"}
                     </span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-xs">Giá cộng thêm:</span>
-                    <span className="font-mono font-medium text-emerald-700">
+                  <div className="bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 block text-xs">Giá cộng thêm:</span>
+                    <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300">
                       +${(product.sourcePinterestItem.priceAddition ?? 0).toFixed(2)}
                     </span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-xs">Compare-At:</span>
-                    <span className="font-mono font-medium text-amber-700">
+                  <div className="bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 block text-xs">Compare-At:</span>
+                    <span className="font-mono font-medium text-amber-700 dark:text-amber-300">
                       {product.sourcePinterestItem.discountPercent ? `Giảm ${product.sourcePinterestItem.discountPercent}%` : "0% (Không gạch)"}
                     </span>
                   </div>
                 </div>
 
                 {product.sourcePinterestItem.collectionIds && product.sourcePinterestItem.collectionIds.length > 0 && (
-                  <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 font-medium">Collections đã gán: </span>
-                    <span className="font-mono text-blue-700">
+                  <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 font-medium">Collections đã gán: </span>
+                    <span className="font-mono text-blue-700 dark:text-blue-300">
                       {product.sourcePinterestItem.collectionIds.length} collection(s)
                     </span>
                   </div>
@@ -814,26 +814,26 @@ export function ProductDetailDrawer({
 
                 {product.sourcePinterestItem.variants && product.sourcePinterestItem.variants.length > 0 && (
                   <div className="space-y-1.5 pt-1">
-                    <div className="flex items-center justify-between text-xs text-slate-600">
-                      <span className="font-semibold text-slate-700">
+                    <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
                         Bảng biến thể ({product.sourcePinterestItem.variants.length} sizes/options):
                       </span>
                     </div>
-                    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
-                      <table className="w-full text-left text-xs text-slate-700">
-                        <thead className="bg-slate-50 text-xs uppercase text-slate-600 border-b border-slate-200">
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+                        <thead className="bg-slate-50 dark:bg-slate-800 text-xs uppercase text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
                           <tr>
                             <th className="py-1.5 px-3">Tên biến thể</th>
                             <th className="py-1.5 px-3">Giá bán</th>
                             <th className="py-1.5 px-3">Giá gạch ngang</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-200 font-mono text-xs">
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700 font-mono text-xs">
                           {product.sourcePinterestItem.variants.map((v, vIdx) => (
-                            <tr key={vIdx} className="hover:bg-slate-50">
-                              <td className="py-1.5 px-3 text-slate-900 font-sans">{v.title || `Variant #${vIdx + 1}`}</td>
-                              <td className="py-1.5 px-3 text-emerald-700 font-semibold">${v.price}</td>
-                              <td className="py-1.5 px-3 text-slate-500">
+                            <tr key={vIdx} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+                              <td className="py-1.5 px-3 text-slate-900 dark:text-slate-100 font-sans">{v.title || `Variant #${vIdx + 1}`}</td>
+                              <td className="py-1.5 px-3 text-emerald-700 dark:text-emerald-300 font-semibold">${v.price}</td>
+                              <td className="py-1.5 px-3 text-slate-500 dark:text-slate-400">
                                 {v.compareAtPrice ? <span className="line-through">${v.compareAtPrice}</span> : "—"}
                               </td>
                             </tr>
@@ -848,37 +848,37 @@ export function ProductDetailDrawer({
 
             {/* Print Master Specification (Shopify Metafields) */}
             {product.sourcePinterestItem?.printMaster && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-base">🖨️</span>
-                    <h3 className="font-semibold text-blue-700 text-sm">
+                    <h3 className="font-semibold text-blue-700 dark:text-blue-300 text-sm">
                       Bản In Xưởng (Shopify Metafields)
                     </h3>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
+                  <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
                     {product.sourcePinterestItem.printMaster.dpi || 300} DPI • {product.sourcePinterestItem.printMaster.colorMode || "CMYK"}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-xs">Độ phân giải:</span>
-                    <span className="font-mono font-medium text-slate-900">
+                  <div className="bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 block text-xs">Độ phân giải:</span>
+                    <span className="font-mono font-medium text-slate-900 dark:text-slate-100">
                       {product.sourcePinterestItem.printMaster.widthPx} × {product.sourcePinterestItem.printMaster.heightPx} px
                     </span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <span className="text-slate-600 block text-xs">Metafield đích:</span>
-                    <span className="font-mono font-medium text-blue-700">
+                  <div className="bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400 block text-xs">Metafield đích:</span>
+                    <span className="font-mono font-medium text-blue-700 dark:text-blue-300">
                       custom.print_specs
                     </span>
                   </div>
                 </div>
 
-                <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1">
+                <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700 space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-600 font-medium">Link file in gốc:</span>
+                    <span className="text-slate-600 dark:text-slate-400 font-medium">Link file in gốc:</span>
                     {product.sourcePinterestItem.printMaster.cmykUrl || product.sourcePinterestItem.printMaster.rgbUrl ? (
                       <button
                         type="button"
@@ -886,16 +886,16 @@ export function ProductDetailDrawer({
                           product.sourcePinterestItem?.printMaster?.cmykUrl || product.sourcePinterestItem?.printMaster?.rgbUrl || "",
                           "print-master-url"
                         )}
-                        className="text-xs text-blue-700 hover:text-blue-700 transition"
+                        className="text-xs text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 transition"
                       >
                         {copiedKey === "print-master-url" ? "✓ Đã copy" : "Copy Link"}
                       </button>
                     ) : null}
                   </div>
-                  <p className="font-mono text-slate-700 truncate text-xs">
+                  <p className="font-mono text-slate-700 dark:text-slate-300 truncate text-xs">
                     {product.sourcePinterestItem.printMaster.cmykUrl || product.sourcePinterestItem.printMaster.rgbUrl || product.sourcePinterestItem.printMaster.localFilePath || "Đang tạo..."}
                   </p>
-                  <p className="text-xs text-blue-700 italic pt-1">
+                  <p className="text-xs text-blue-700 dark:text-blue-300 italic pt-1">
                     ✓ File in xưởng được bảo mật tuyệt đối, không hiển thị lên trang bán hàng cho khách xem.
                   </p>
                 </div>
@@ -903,11 +903,11 @@ export function ProductDetailDrawer({
             )}
 
             {/* 6. Raw JSON (Full Product Object) */}
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-5 space-y-3">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-base"><AppIcon name="search" /></span>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                     Raw JSON Sản Phẩm (Full Payload)
                   </label>
                 </div>
@@ -915,7 +915,7 @@ export function ProductDetailDrawer({
                   <button
                     type="button"
                     onClick={handleDownloadJson}
-                    className="px-2.5 py-1 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 transition flex items-center gap-1 cursor-pointer"
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 transition flex items-center gap-1 cursor-pointer"
                     title="Tải file JSON sản phẩm này về máy tính"
                   >
                     <span><AppIcon name="download" /></span>
@@ -924,26 +924,26 @@ export function ProductDetailDrawer({
                   <button
                     type="button"
                     onClick={() => handleCopy(rawJsonString, "full-raw-json")}
-                    className="px-2.5 py-1 rounded text-xs font-medium bg-slate-50 hover:bg-slate-100 text-blue-700 border border-slate-300 transition flex items-center gap-1 cursor-pointer"
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 border border-slate-300 dark:border-slate-700 transition flex items-center gap-1 cursor-pointer"
                   >
                     {copiedKey === "full-raw-json" ? "✓ Đã copy Full JSON" : "📋 Copy Full JSON"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowRawJsonModal(true)}
-                    className="px-2.5 py-1 rounded text-xs font-medium bg-blue-50 hover:bg-blue-50 text-blue-700 border border-blue-200 transition flex items-center gap-1 cursor-pointer"
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-50 dark:hover:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition flex items-center gap-1 cursor-pointer"
                   >
                     <span>Phóng to ↗</span>
                   </button>
                 </div>
               </div>
-              <pre className="p-4 rounded-lg bg-white border border-slate-200 font-mono text-xs text-blue-700 overflow-x-auto max-h-64 leading-relaxed select-all">
+              <pre className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-blue-700 dark:text-blue-300 overflow-x-auto max-h-64 leading-relaxed select-all">
                 {rawJsonString}
               </pre>
             </div>
           </div>
 
-          <div className="border-t border-slate-200 bg-white p-4">
+          <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <ReviewProductActions product={product} onEdit={onEdit} onApprove={onApprove}
               onSync={onRetrySync} onArchive={onDelete} onRevise={onRequeue} />
           </div>
@@ -958,20 +958,20 @@ export function ProductDetailDrawer({
           onClick={() => setShowRawJsonModal(false)}
         >
           <div
-            className="bg-white border border-slate-300 rounded-lg w-full max-w-4xl max-h-[85vh] flex flex-col shadow-sm overflow-hidden"
+            className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg w-full max-w-4xl max-h-[85vh] flex flex-col shadow-sm overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50 sticky top-0">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-6 py-4 bg-slate-50 dark:bg-slate-800 sticky top-0">
               <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 border border-blue-300 text-blue-700 font-bold text-base">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold text-base">
                   <AppIcon name="search" />
                 </span>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900 line-clamp-1">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 line-clamp-1">
                     Raw JSON: {product.productTitle.value}
                   </h3>
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
                     Toàn bộ object JSON đầy đủ của sản phẩm (bao gồm các trường aeo_*, SEO, mô tả và hình ảnh).
                   </p>
                 </div>
@@ -981,7 +981,7 @@ export function ProductDetailDrawer({
                 <button
                   type="button"
                   onClick={handleDownloadJson}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-900 border border-slate-300 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
                   title="Tải file JSON này về máy tính"
                 >
                   <span><AppIcon name="download" /></span>
@@ -997,7 +997,7 @@ export function ProductDetailDrawer({
                 <button
                   type="button"
                   onClick={() => setShowRawJsonModal(false)}
-                  className="rounded-lg p-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition cursor-pointer"
+                  className="rounded-lg p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
                   aria-label="Đóng popup"
                 >
                   ✕
@@ -1006,8 +1006,8 @@ export function ProductDetailDrawer({
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-auto p-5 bg-white">
-              <pre className="font-mono text-xs text-blue-700 whitespace-pre leading-relaxed select-all">
+            <div className="flex-1 overflow-auto p-5 bg-white dark:bg-slate-900">
+              <pre className="font-mono text-xs text-blue-700 dark:text-blue-300 whitespace-pre leading-relaxed select-all">
                 {rawJsonString}
               </pre>
             </div>

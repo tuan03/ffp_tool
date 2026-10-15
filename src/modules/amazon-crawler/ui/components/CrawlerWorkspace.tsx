@@ -29,7 +29,7 @@ export function CrawlerWorkspace({
       <header className="space-y-3">
         <PageHeader title="Distributed Crawler" description="Thu thập sản phẩm Amazon, theo dõi agent và bàn giao sang SEO Queue." />
         {summary}
-        <nav aria-label="Khu vực crawler" className="flex flex-wrap gap-1 border-b border-slate-200 pb-2">
+        <nav aria-label="Khu vực crawler" className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700 pb-2">
           {WORKSPACE_SECTIONS.map((workspaceSection) => (
             <button
               key={workspaceSection.id}
@@ -37,7 +37,7 @@ export function CrawlerWorkspace({
               aria-controls={`crawler-panel-${workspaceSection.id}`}
               aria-pressed={section === workspaceSection.id}
               onClick={() => onSectionChange(workspaceSection.id)}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-300 ${section === workspaceSection.id ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"}`}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-300 dark:focus-visible:outline-blue-400 ${section === workspaceSection.id ? "bg-blue-600 text-white" : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100"}`}
             >{workspaceSection.label}</button>
           ))}
         </nav>

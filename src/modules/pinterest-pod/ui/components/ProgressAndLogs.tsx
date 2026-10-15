@@ -47,15 +47,15 @@ export function ProgressAndLogs({
   }
 
   return (
-    <section className="flex flex-col gap-5 rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm">
+    <section className="flex flex-col gap-5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 shadow-sm">
       {/* Header & Progress Bar */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <span><AppIcon name="chart" /></span>
             <span>Tiến độ Quy trình POD</span>
           </h2>
-          <span className="rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-xs font-bold text-blue-700">
+          <span className="rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2.5 py-0.5 text-xs font-bold text-blue-700 dark:text-blue-300">
             {percent}%
           </span>
         </div>
@@ -63,27 +63,27 @@ export function ProgressAndLogs({
         {(agentName || jobId) && (
           <div className="flex flex-wrap gap-2 text-xs">
             {agentName && (
-              <span className="rounded-full bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">
+              <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/60 px-2 py-1 font-semibold text-emerald-700 dark:text-emerald-300">
                 Máy thực thi: {agentName}
               </span>
             )}
             {jobId && (
-              <span className="rounded-full bg-slate-50 px-2 py-1 font-mono text-slate-600">Job: {jobId}</span>
+              <span className="rounded-full bg-slate-50 dark:bg-slate-800 px-2 py-1 font-mono text-slate-600 dark:text-slate-400">Job: {jobId}</span>
             )}
           </div>
         )}
 
         {/* Progress Track */}
-        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-50">
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-50 dark:bg-slate-800">
           <div
-            className="h-full bg-blue-50 transition-all duration-500 ease-out"
+            className="h-full bg-blue-50 dark:bg-blue-950/60 transition-all duration-500 ease-out"
             style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
           />
         </div>
       </div>
 
       {/* Stepper Steps */}
-      <div className="flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5">
+      <div className="flex flex-col gap-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
         {WORKFLOW_STEPS.map((s) => {
           const isDone = currentStep > s.step || (currentStep === 4 && percent === 100);
           const isCurrent = currentStep === s.step && percent < 100;
@@ -101,8 +101,8 @@ export function ProgressAndLogs({
                   isDone
                     ? "bg-emerald-700 text-white"
                     : isCurrent
-                      ? "bg-blue-600 text-white ring-2 ring-blue-300 animate-pulse"
-                      : "border border-slate-300 bg-slate-50 text-slate-500"
+                      ? "bg-blue-600 text-white ring-2 ring-blue-300 dark:ring-blue-400 animate-pulse"
+                      : "border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
                 }`}
               >
                 {isDone ? "✓" : s.step}
@@ -110,10 +110,10 @@ export function ProgressAndLogs({
               <span
                 className={`font-medium ${
                   isDone
-                    ? "text-slate-700"
+                    ? "text-slate-700 dark:text-slate-300"
                     : isCurrent
-                      ? "font-semibold text-blue-700"
-                      : "text-slate-500"
+                      ? "font-semibold text-blue-700 dark:text-blue-300"
+                      : "text-slate-500 dark:text-slate-400"
                 }`}
               >
                 {title}
@@ -123,18 +123,18 @@ export function ProgressAndLogs({
         })}
 
         {/* Current status message */}
-        <div className="mt-2 rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-700">
-          <span className="font-semibold text-blue-700">Trạng thái:</span> {message}
+        <div className="mt-2 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-2 text-xs text-blue-700 dark:text-blue-300">
+          <span className="font-semibold text-blue-700 dark:text-blue-300">Trạng thái:</span> {message}
         </div>
       </div>
 
       {/* Live Service Logs Drawer */}
-      <div className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+      <div className="flex flex-col overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs">
           <button
             type="button"
             onClick={() => setIsLogsExpanded(!isLogsExpanded)}
-            className="flex items-center gap-1.5 font-semibold text-slate-700 hover:text-slate-900"
+            className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
           >
             <span>{isLogsExpanded ? "▼" : "▶"}</span>
             <span>Live Service Logs ({logs.length} dòng)</span>
@@ -144,7 +144,7 @@ export function ProgressAndLogs({
             <button
               type="button"
               onClick={handleCopyLogs}
-              className="text-xs font-medium text-blue-700 hover:underline"
+              className="text-xs font-medium text-blue-700 dark:text-blue-300 hover:underline"
             >
               {copied ? "✓ Đã sao chép" : "Sao chép"}
             </button>
@@ -154,21 +154,21 @@ export function ProgressAndLogs({
         {isLogsExpanded && (
           <div
             ref={logsContainerRef}
-            className="max-h-52 min-h-28 overflow-y-auto p-3 font-mono text-xs leading-relaxed text-slate-700"
+            className="max-h-52 min-h-28 overflow-y-auto p-3 font-mono text-xs leading-relaxed text-slate-700 dark:text-slate-300"
           >
             {logs.length === 0 ? (
-              <p className="italic text-slate-500">Chưa có log từ hệ thống.</p>
+              <p className="italic text-slate-500 dark:text-slate-400">Chưa có log từ hệ thống.</p>
             ) : (
               logs.map((log, i) => (
                 <div key={`${i}-${log.slice(0, 30)}`} className="flex gap-2">
-                  <span className="text-slate-500 select-none">&gt;</span>
+                  <span className="text-slate-500 dark:text-slate-400 select-none">&gt;</span>
                   <span
                     className={
                       log.includes("Lỗi") || log.includes("failed")
-                        ? "text-rose-700"
+                        ? "text-rose-700 dark:text-rose-300"
                         : log.includes("AI Vision") || log.includes("Hoàn thành")
-                          ? "text-emerald-700"
-                          : "text-slate-700"
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-slate-700 dark:text-slate-300"
                     }
                   >
                     {log}

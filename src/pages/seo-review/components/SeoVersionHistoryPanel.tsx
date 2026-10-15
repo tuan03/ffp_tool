@@ -81,44 +81,44 @@ export function SeoVersionHistoryPanel({ client, storeId, productGid }: SeoVersi
   }
 
   const readReason = lifecycle?.capabilities.baselineRefresh.reasonCode;
-  return <section className="rounded-lg border border-slate-300 bg-slate-50 p-4" aria-label="Lịch sử phiên bản SEO">
+  return <section className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4" aria-label="Lịch sử phiên bản SEO">
     <div className="flex items-center justify-between gap-3">
       <div>
-        <h3 className="text-sm font-bold text-slate-900">SEO version history</h3>
-        <p className="mt-1 text-xs text-slate-600">
+        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">SEO version history</h3>
+        <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
           {lifecycle?.current ? `Current v${lifecycle.current.currentVersion.versionNumber} · ${lifecycle.current.state}` : "Chưa có baseline"}
         </p>
       </div>
       <button type="button" onClick={() => void handleRefresh()} disabled={!lifecycle?.capabilities.baselineRefresh.enabled || isLoading}
-        title={readReason ?? undefined} className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-900 disabled:opacity-50">Refresh baseline</button>
+        title={readReason ?? undefined} className="rounded border border-slate-300 dark:border-slate-700 px-3 py-1 text-xs text-slate-900 dark:text-slate-100 disabled:opacity-50">Refresh baseline</button>
     </div>
-    {lifecycle?.current?.hasExternalChanges && <p role="status" className="mt-3 rounded bg-amber-50 p-2 text-xs text-amber-700">Shopify có thay đổi ngoài FFP; rollback bị khóa đến khi đối chiếu xong.</p>}
-    {isLoading && <p role="status" className="mt-3 text-xs text-slate-600">Đang tải lịch sử…</p>}
-    {message && <p role="alert" className="mt-3 text-xs text-amber-700">{message}</p>}
-    {!isLoading && lifecycle?.flags.readEnabled && versions.length === 0 && <p className="mt-3 text-xs text-slate-500">Chưa có phiên bản.</p>}
+    {lifecycle?.current?.hasExternalChanges && <p role="status" className="mt-3 rounded bg-amber-50 dark:bg-amber-950/60 p-2 text-xs text-amber-700 dark:text-amber-300">Shopify có thay đổi ngoài FFP; rollback bị khóa đến khi đối chiếu xong.</p>}
+    {isLoading && <p role="status" className="mt-3 text-xs text-slate-600 dark:text-slate-400">Đang tải lịch sử…</p>}
+    {message && <p role="alert" className="mt-3 text-xs text-amber-700 dark:text-amber-300">{message}</p>}
+    {!isLoading && lifecycle?.flags.readEnabled && versions.length === 0 && <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Chưa có phiên bản.</p>}
     <div className="mt-3 space-y-2">
-      {versions.map(version => <div key={version.id} className="flex items-center justify-between rounded border border-slate-200 p-2 text-xs">
-        <div><span className="font-semibold text-blue-700">v{version.versionNumber}</span><span className="ml-2 text-slate-600">{version.source} · {new Date(version.appliedAt).toLocaleString()}</span></div>
+      {versions.map(version => <div key={version.id} className="flex items-center justify-between rounded border border-slate-200 dark:border-slate-700 p-2 text-xs">
+        <div><span className="font-semibold text-blue-700 dark:text-blue-300">v{version.versionNumber}</span><span className="ml-2 text-slate-600 dark:text-slate-400">{version.source} · {new Date(version.appliedAt).toLocaleString()}</span></div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => void handleCompare(version)} className="text-blue-700">Diff</button>
+          <button type="button" onClick={() => void handleCompare(version)} className="text-blue-700 dark:text-blue-300">Diff</button>
           {version.id !== lifecycle?.current?.currentVersion.id && <button type="button" onClick={() => void handleRollback(version)}
             disabled={!lifecycle?.capabilities.rollbackDraft.enabled} title={lifecycle?.capabilities.rollbackDraft.reasonCode ?? undefined}
-            className="text-amber-700 disabled:opacity-40">Rollback draft</button>}
+            className="text-amber-700 dark:text-amber-300 disabled:opacity-40">Rollback draft</button>}
         </div>
       </div>)}
     </div>
-    {nextOffset !== null && <button type="button" disabled={isLoading} onClick={() => void load(nextOffset)} className="mt-3 text-xs text-blue-700">Tải thêm</button>}
-    {diff && <div className="mt-4 rounded border border-slate-200 p-3 text-xs">
-      <p className="font-semibold text-slate-900">Diff v{diff.fromVersion.versionNumber} → v{diff.toVersion.versionNumber}</p>
-      {!diff.hasChanges && <p className="mt-2 text-slate-500">Không có thay đổi.</p>}
+    {nextOffset !== null && <button type="button" disabled={isLoading} onClick={() => void load(nextOffset)} className="mt-3 text-xs text-blue-700 dark:text-blue-300">Tải thêm</button>}
+    {diff && <div className="mt-4 rounded border border-slate-200 dark:border-slate-700 p-3 text-xs">
+      <p className="font-semibold text-slate-900 dark:text-slate-100">Diff v{diff.fromVersion.versionNumber} → v{diff.toVersion.versionNumber}</p>
+      {!diff.hasChanges && <p className="mt-2 text-slate-500 dark:text-slate-400">Không có thay đổi.</p>}
       {diff.fields.map(field => <div key={field.field} className="mt-2">
-        <p className="font-mono text-slate-600">{field.field}</p>
+        <p className="font-mono text-slate-600 dark:text-slate-400">{field.field}</p>
         {field.field === "descriptionHtml" ? <div className="grid gap-2 sm:grid-cols-2">
-          {[field.before, field.after].map((value, index) => <div key={index} className="prose prose-invert prose-xs max-w-none rounded bg-white p-2"
+          {[field.before, field.after].map((value, index) => <div key={index} className="prose prose-invert prose-xs max-w-none rounded bg-white dark:bg-slate-900 p-2"
             dangerouslySetInnerHTML={{ __html: sanitizeHtmlDescription(formatSeoDiffValue(value)) }} />)}
-        </div> : <p className="break-words text-slate-700">{formatSeoDiffValue(field.before)} → {formatSeoDiffValue(field.after)}</p>}
+        </div> : <p className="break-words text-slate-700 dark:text-slate-300">{formatSeoDiffValue(field.before)} → {formatSeoDiffValue(field.after)}</p>}
       </div>)}
-      {diff.images.map(image => <p key={image.mediaGid} className="mt-2 break-all text-slate-700">{image.change}: {image.mediaGid}</p>)}
+      {diff.images.map(image => <p key={image.mediaGid} className="mt-2 break-all text-slate-700 dark:text-slate-300">{image.change}: {image.mediaGid}</p>)}
     </div>}
   </section>;
 }

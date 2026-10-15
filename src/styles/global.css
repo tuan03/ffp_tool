@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme {
   --font-sans: "Segoe UI", system-ui, sans-serif;
   --color-canvas: #ffffff;
@@ -12,17 +14,27 @@
 
 @layer base {
   :root { color-scheme: light; }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --color-canvas: #0f172a;
+    --color-surface: #1e293b;
+    --color-ink: #e2e8f0;
+    --color-muted: #94a3b8;
+    --color-line: #334155;
+    --color-accent: #60a5fa;
+  }
   body { margin: 0; background: var(--color-canvas); color: var(--color-ink); font-size: 14px; -webkit-font-smoothing: antialiased; }
   button, input, select, textarea { font: inherit; }
   button:not(:disabled), [role="button"]:not([aria-disabled="true"]) { cursor: pointer; }
   :where(a, button, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
   :where(input, select, textarea) { accent-color: var(--color-accent); }
-  :where(input, textarea)::placeholder { color: #64748b; opacity: 1; }
+  :where(input, textarea)::placeholder { color: var(--color-muted); opacity: 1; }
   :where(button, input, select, textarea):disabled { cursor: not-allowed; }
   :where(th, td) { font-variant-numeric: tabular-nums; }
   :where(h1, h2, h3) { text-wrap: balance; }
   :where(p) { text-wrap: pretty; }
   ::selection { background: #dbeafe; color: #1e3a8a; }
+  :root[data-theme="dark"] ::selection { background: #1e40af; color: #ffffff; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   }

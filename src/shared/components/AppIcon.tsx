@@ -31,6 +31,8 @@ const ICON_PATHS = {
   copy: "M8 8h13v13H8zM16 4V2H2v14h2",
   play: "m7 3 15 9-15 9V3Z",
   code: "m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18",
+  sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5",
+  moon: "M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z",
 } as const;
 
 export type AppIconName = keyof typeof ICON_PATHS;
