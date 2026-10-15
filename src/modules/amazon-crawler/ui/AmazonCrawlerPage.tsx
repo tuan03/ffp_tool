@@ -3044,11 +3044,19 @@ export function AmazonCrawlerPage({
             onClick={() => void handleRecoverClearedFamily(family, "recrawl")}>Kiểm tra Shopify / mở cào lại ASIN</button>
         </div>
       ))}
-      {asinPreflightFamilies.some((family) => family.status !== "existing" && family.status !== "available") ? (
+      {asinPreflightFamilies.some(family => (family.activeSeoAsins?.length ?? 0) > 0) ? (
+        <div role="status" className="rounded-lg border border-blue-300 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+          Đã bỏ qua ASIN đang có trong SEO Queue/Review: {asinPreflightFamilies.flatMap(family => family.activeSeoAsins ?? []).join(", ")}.
+          <button type="button" className="ml-2 underline" onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)}>Mở SEO Queue →</button>
+        </div>
+      ) : null}
+      {asinPreflightFamilies.some((family) => family.status !== "existing" && family.status !== "available" &&
+        family.inputAsins.some(asin => !family.activeSeoAsins?.includes(asin))) ? (
         <div role="status" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-sm text-amber-700 dark:text-amber-300">
           <p className="font-semibold">Một số family chưa thể tạo job mới:</p>
           <ul className="mt-2 space-y-1">
-            {asinPreflightFamilies.filter((family) => family.status !== "existing" && family.status !== "available").map((family) => (
+            {asinPreflightFamilies.filter((family) => family.status !== "existing" && family.status !== "available" &&
+              family.inputAsins.some(asin => !family.activeSeoAsins?.includes(asin))).map((family) => (
               <li key={family.parentAsin}>
                 {family.inputAsins.join(", ")} · family {family.parentAsin} — {family.status === "processing"
                   ? "đang được xử lý"

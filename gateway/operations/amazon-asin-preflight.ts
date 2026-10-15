@@ -94,6 +94,7 @@ export interface AmazonAsinFamilyPreflight {
   readonly recoveredStaleRegistry: boolean;
   readonly hasSyncedFamilyMembers: boolean;
   readonly inputSyncedAsins?: readonly string[];
+  readonly activeSeoAsins?: readonly string[];
 }
 
 export interface AmazonAsinPreflightResult {
@@ -113,6 +114,7 @@ interface FamilyInput {
   readonly recoveredStaleRegistry: boolean;
   readonly hasSyncedFamilyMembers: boolean;
   readonly inputSyncedAsins: readonly string[];
+  readonly activeSeoAsins: readonly string[];
 }
 
 function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly string[]): FamilyInput[] {
@@ -127,6 +129,7 @@ function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly
       recoveredStaleRegistry: false,
       hasSyncedFamilyMembers: false,
       inputSyncedAsins: [],
+      activeSeoAsins: [],
     }));
   }
   if (!Array.isArray(payload.families) || payload.families.length === 0 || payload.families.length > 200) {
@@ -159,6 +162,9 @@ function normalizeFamilyInputs(payload: Record<string, unknown>, asins: readonly
       hasSyncedFamilyMembers: family.hasSyncedFamilyMembers === true,
       inputSyncedAsins: Array.isArray(family.inputSyncedAsins)
         ? (family.inputSyncedAsins as unknown[]).filter((asin): asin is string => typeof asin === "string" && inputAsins.includes(asin))
+        : [],
+      activeSeoAsins: Array.isArray(family.activeSeoAsins)
+        ? (family.activeSeoAsins as unknown[]).filter((asin): asin is string => typeof asin === "string" && inputAsins.includes(asin))
         : [],
     };
   });
@@ -304,7 +310,8 @@ export async function executeAmazonAsinPreflight(
       if (exactProduct && exactAsin) addMatch(exactAsin, effectiveParentAsin, exactProduct);
 
       let status: AmazonAsinFamilyStatus = "available";
-      if (["queued", "leased", "running", "cancelling"].includes(family.databaseStatus ?? "")) {
+      if (family.inputAsins.every(asin => family.activeSeoAsins.includes(asin)) ||
+          ["queued", "leased", "running", "cancelling"].includes(family.databaseStatus ?? "")) {
         status = "processing";
       } else if (family.databaseStatus === "queue_cleared") {
         status = "queue_cleared";
@@ -330,6 +337,6 @@ export async function executeAmazonAsinPreflight(
     families: resolvedFamilies,
     allowedAsins: resolvedFamilies
       .filter((family) => family.status === "available")
-      .flatMap((family) => family.inputAsins.slice(0, 1)),
+      .flatMap((family) => family.inputAsins.filter(asin => !family.activeSeoAsins?.includes(asin)).slice(0, 1)),
   };
 }

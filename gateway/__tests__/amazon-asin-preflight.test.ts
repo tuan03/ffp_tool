@@ -16,6 +16,23 @@ const filterableDefinitions = {
   parentAsin: { type: { name: "single_line_text_field" }, capabilities: { adminFilterable: { enabled: true, status: "FILTERABLE" } } },
 };
 
+test("preflight blocks only exact active SEO inputs and keeps a new sibling available", async () => {
+  const client = { async query<T>(_store: StoreConfig, document: string): Promise<T> {
+    return (document.includes("AmazonAsinDefinitions") ? filterableDefinitions : { products: { nodes: [] } }) as T;
+  } };
+  const family = { parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001", "B0CHILD002"],
+    memberAsins: ["B0CHILD001", "B0CHILD002"], isResolved: true, databaseStatus: null, jobId: null,
+    activeSeoAsins: ["B0CHILD001"] };
+  const result = await executeAmazonAsinPreflight(store, client, { asins: family.inputAsins, families: [family] }, "apply");
+  assert.deepEqual(result.allowedAsins, ["B0CHILD002"]);
+  assert.deepEqual(result.families[0].activeSeoAsins, ["B0CHILD001"]);
+  const blocked = await executeAmazonAsinPreflight(store, client, {
+    asins: ["B0CHILD001"], families: [{ ...family, inputAsins: ["B0CHILD001"] }],
+  }, "apply");
+  assert.deepEqual(blocked.allowedAsins, []);
+  assert.equal(blocked.families[0].status, "processing");
+});
+
 test("preflight allows an unsynced sibling when another product from the parent family exists", async () => {
   const searched: string[] = [];
   const client = {

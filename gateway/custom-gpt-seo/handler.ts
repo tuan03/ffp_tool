@@ -9,6 +9,7 @@ import { createExternalSeoWorkflow } from "./workflow";
 import { parseSeoGenerationInput, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import { readReviewListQuery } from "../review-list-query";
 import { buildQueueDisplay } from "./queue-display";
+import { SeoWorkerError } from "../seo-worker/protocol";
 
 export interface CustomGptHandlerOptions {
   readonly queue: SeoQueue;
@@ -334,6 +335,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       send(res, route === "submit" ? 202 : 200, result, isAdmin ? 8_000_000 : 80_000);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Request failed";
+      if (error instanceof SeoWorkerError && ["ALREADY_IN_SEO_PIPELINE", "SEO_PIPELINE_IDENTITY_CONFLICT"].includes(error.code)) {
+        send(res, 409, { error: { code: error.code, message: error.code === "ALREADY_IN_SEO_PIPELINE"
+          ? "Product is already in the SEO pipeline" : "Product overlaps an active SEO job; verify its child ASINs before retrying" }, nextAction: "getSeoQueueStatus" });
+        return;
+      }
       if (/^SEO_QUEUE_(STORAGE_UNAVAILABLE|MIGRATION_REQUIRED)/.test(message)) {
         send(res, 503, { error: { code: "SEO_QUEUE_UNAVAILABLE", message: "SEO Queue storage is unavailable; check PostgreSQL and migration readiness" } });
         return;

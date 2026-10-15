@@ -5,6 +5,30 @@ import { DatabaseSync } from "node:sqlite";
 import { CustomGptQueue } from "../custom-gpt-seo/queue";
 import { createCustomGptHandler } from "../custom-gpt-seo/handler";
 import { createTestEnqueue } from "./seo-v2-fixtures";
+import { SeoWorkerError } from "../seo-worker/protocol";
+
+test("crawler enqueue returns a typed conflict for an existing SEO pipeline", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.enqueue = () => { throw new SeoWorkerError("ALREADY_IN_SEO_PIPELINE"); };
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/enqueue?storeId=capozen`, {
+      method: "POST", headers: { "x-gateway-key": "admin-key", "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "amazon", sourceIdentity: "amazon:B0PARENT01:color:red", provider: "codex_mcp",
+        input: createTestEnqueue({ storeId: "capozen" }).input, original: {} }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json() as { error: { code: string } }).error.code, "ALREADY_IN_SEO_PIPELINE");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    db.close();
+  }
+});
 
 test("review archive requires operator auth and exact store, preserves SEO, and fences subsequent writes", async () => {
   const db = new DatabaseSync(":memory:");

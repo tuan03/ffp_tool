@@ -48,6 +48,7 @@ from .protocol import product_source_key as _source_key
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from .retry_taxonomy import classify_task_error, parse_retry_after
+from .seo_pipeline_identity import load_active_seo_identities, match_active_seo_jobs
 from .fleet_circuit_breaker import acquire_capacity as acquire_fleet_capacity, record_failure as record_fleet_failure, record_success as record_fleet_success, snapshot as fleet_breaker_snapshot
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
@@ -373,9 +374,18 @@ class CoordinatorStore(CoordinatorObservability):
             CrawlJob.settings["storeId"].as_string() == store_id,
             CrawlProductItem.job_id != job.id,
             CrawlProductItem.status != "deleted",
-            CrawlProductItem.source_key.like(f"amazon:{identity[0]}:%"),
+            or_(
+                CrawlProductItem.source_key.like(f"amazon:{identity[0]}:%"),
+                CrawlProductItem.raw_payload["asin"].as_string().in_(aliases),
+                CrawlProductItem.normalized_payload["asin"].as_string().in_(aliases),
+            ),
         )).all():
-            if retained.source_key == _source_key(product) or aliases & cls._product_exact_asins(retained.raw_payload or retained.normalized_payload or {}):
+            if (retained.shopify_result or {}).get("skippedExistingPipeline"):
+                continue
+            retained_aliases = cls._product_exact_asins(retained.raw_payload or retained.normalized_payload or {})
+            if (aliases and aliases <= retained_aliases) or (
+                not aliases and retained.source_key == _source_key(product)
+            ):
                 return retained.id
         return None
 
@@ -389,6 +399,8 @@ class CoordinatorStore(CoordinatorObservability):
         ):
             raise ValueError("asins must contain 1 to 200 normalized Amazon ASINs.")
         with self.sessions() as session:
+            active_seo_identities = load_active_seo_identities(session, normalized_store_id)
+            active_seo_asins = set().union(*(identity.asins for identity in active_seo_identities))
             registry_rows = session.scalars(select(AmazonAsinRegistry).where(
                 AmazonAsinRegistry.store_id == normalized_store_id,
                 AmazonAsinRegistry.marketplace == "amazon-us",
@@ -440,6 +452,8 @@ class CoordinatorStore(CoordinatorObservability):
                     CrawlProductItem.job_id.in_(candidate_job_ids),
                     CrawlProductItem.status != "deleted",
                 )).all():
+                    if (item.shopify_result or {}).get("skippedExistingPipeline"):
+                        continue
                     product = item.normalized_payload if isinstance(item.normalized_payload, dict) else item.raw_payload
                     if not isinstance(product, dict):
                         continue
@@ -486,6 +500,13 @@ class CoordinatorStore(CoordinatorObservability):
                     family_database_status = None
                 else:
                     family_database_status = row.status if row is not None else None
+                if pending_items and not is_queue_cleared and all(
+                    self._product_exact_asins(item.raw_payload or {})
+                    and self._product_exact_asins(item.raw_payload or {}) <= active_seo_asins
+                    for item in pending_items
+                ):
+                    # Existing child jobs reserve only those children, not family discovery.
+                    family_database_status = "seo_active"
                 family_job_id = (
                     pending_family_rows[0].last_job_id
                     if pending_family_rows
@@ -518,6 +539,10 @@ class CoordinatorStore(CoordinatorObservability):
                     family["databaseStatus"] = task.status
                     family["jobId"] = job.id
                     family["recoveredStaleRegistry"] = False
+            for family in grouped.values():
+                exact_active = [asin for asin in family["inputAsins"] if asin in active_seo_asins]
+                if exact_active:
+                    family["activeSeoAsins"] = exact_active
             return {"families": list(grouped.values())}
 
     @staticmethod
@@ -827,7 +852,7 @@ class CoordinatorStore(CoordinatorObservability):
         not_handed_over = 0
         for status, raw_result in rows:
             pipeline_result = raw_result if isinstance(raw_result, dict) else {}
-            if pipeline_result.get("skippedExistingShopify"):
+            if pipeline_result.get("skippedExistingShopify") or pipeline_result.get("skippedExistingPipeline"):
                 continue
             external_seo = pipeline_result.get("externalSeo")
             has_external_job = (
@@ -855,6 +880,7 @@ class CoordinatorStore(CoordinatorObservability):
         accepted_sources = set(session.scalars(select(CrawlProductItem.source_key).where(
             CrawlProductItem.job_id == job_id,
             func.coalesce(CrawlProductItem.shopify_result["skippedExistingShopify"].as_boolean(), False) == False,
+            func.coalesce(CrawlProductItem.shopify_result["skippedExistingPipeline"].as_boolean(), False) == False,
         )).all())
         skipped_count = len(skipped_sources - accepted_sources)
         protected_sources = set(session.scalars(select(JobEvent.payload["sourceKey"].as_string()).where(
@@ -2035,6 +2061,7 @@ class CoordinatorStore(CoordinatorObservability):
             products = payload.get("products") if isinstance(payload.get("products"), list) else []
             retained_products: list[Any] = []
             job = session.get(CrawlJob, task.job_id)
+            active_seo_identities = load_active_seo_identities(session, str((job.settings if job else {}).get("storeId") or "").strip())
             for product in products:
                 if isinstance(product, dict) and product.get("id"):
                     existing_shopify_product = self._existing_shopify_product(session, job, product)
@@ -2052,6 +2079,16 @@ class CoordinatorStore(CoordinatorObservability):
                     if retained_id is not None:
                         self._event(session, task.job_id, "product_skipped_existing_pipeline", {
                             "sourceKey": _source_key(product), "productItemId": retained_id,
+                        })
+                        continue
+                    current_item_id = session.scalar(select(CrawlProductItem.id).where(
+                        CrawlProductItem.job_id == task.job_id, CrawlProductItem.source_key == _source_key(product),
+                    ))
+                    seo_job_ids = match_active_seo_jobs(active_seo_identities, self._product_exact_asins(product),
+                                                       owner_item_id=current_item_id or "")
+                    if seo_job_ids and current_item_id is None:
+                        self._event(session, task.job_id, "product_skipped_existing_pipeline", {
+                            "sourceKey": _source_key(product), "externalSeoJobIds": seo_job_ids,
                         })
                         continue
                     item, _created = self._upsert_product_item(
@@ -2222,6 +2259,18 @@ class CoordinatorStore(CoordinatorObservability):
                     "status": "duplicate",
                     "productItemId": existing.id,
                     "sourceKey": existing.source_key,
+                })
+            seo_job_ids = match_active_seo_jobs(
+                load_active_seo_identities(session, str((job.settings if job else {}).get("storeId") or "").strip()),
+                self._product_exact_asins(product),
+            )
+            if seo_job_ids:
+                self._event(session, task.job_id, "product_skipped_existing_pipeline", {
+                    "sourceKey": source_key, "externalSeoJobIds": seo_job_ids,
+                })
+                return self._save_receipt(session, receipt_id, task_id, payload, {
+                    "status": "duplicate", "reason": "existing_pipeline_product", "sourceKey": source_key,
+                    "externalSeoJobIds": seo_job_ids,
                 })
             item, created = self._upsert_product_item(
                 session,
@@ -2469,6 +2518,38 @@ class CoordinatorStore(CoordinatorObservability):
                 "sourceKey": item.source_key, "productItemId": item.id,
                 "asins": sorted(exact_asins), "shopifyProductIds": sorted({match["productId"] for match in matches}),
                 "reason": "live_exact_asin_check",
+            })
+            session.flush()
+            self._refresh_job(session, item.job_id)
+            return True
+
+    def skip_existing_seo_product(self, item_id: str, *, worker_id: str) -> bool:
+        """Settle a verified duplicate without granting ownership of its existing SEO job."""
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo"}:
+                return False
+            pipeline_result = dict(item.shopify_result or {})
+            if pipeline_result.get("externalSeo") or pipeline_result.get("review"):
+                return False
+            job = session.get(CrawlJob, item.job_id)
+            store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
+            seo_job_ids = match_active_seo_jobs(
+                load_active_seo_identities(session, store_id),
+                self._product_exact_asins(item.raw_payload or {}), owner_item_id=item.id,
+            )
+            if not seo_job_ids:
+                return False
+            item.shopify_result = {**pipeline_result, "skippedExistingPipeline": True,
+                                   "existingSeoJobIds": seo_job_ids}
+            item.status = "completed"
+            item.claimed_by = None
+            item.claim_expires_at = None
+            item.next_attempt_at = None
+            item.last_error = None
+            item.completed_at = utc_now()
+            self._event(session, item.job_id, "product_skipped_existing_pipeline", {
+                "sourceKey": item.source_key, "productItemId": item.id, "externalSeoJobIds": seo_job_ids,
             })
             session.flush()
             self._refresh_job(session, item.job_id)

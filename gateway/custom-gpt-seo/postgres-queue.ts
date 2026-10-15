@@ -17,6 +17,7 @@ import { buildAutomaticSeoReview } from "../seo-worker/auto-publish-review";
 import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
 import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import { reviewListWhere, reviewStageSql } from "../review-list-query";
+import { getAmazonPipelineAsins } from "./amazon-pipeline-identity";
 import { emptySeoReviewCounts, getSeoReviewActions } from "../../src/shared/seo-review-list";
 import type { SeoReviewListItem, SeoReviewListPage, SeoReviewListQuery } from "../../src/shared/seo-review-list";
 
@@ -124,6 +125,22 @@ export class PostgresCustomGptQueue implements SeoQueue {
       if (workerMode) {
         const active = await this.db.prepare("SELECT job_id FROM seo_worker_jobs WHERE store_id=? AND product_key=? AND pipeline_active=true").get(execution.storeId, getWorkerProductKey(execution));
         if (active) throw new SeoWorkerError("ALREADY_IN_SEO_PIPELINE");
+        const incomingAsins = execution.source === "amazon" ? getAmazonPipelineAsins(execution.originalSnapshot) : [];
+        if (incomingAsins.length > 0) {
+          // The queue transaction's advisory lock serializes this check with enqueue,
+          // including two requests that discovered the same child under different parents.
+          const snapshots = await this.db.prepare(`SELECT jsonb_build_object(
+            'asin',COALESCE(j.payload::jsonb#>'{execution,originalSnapshot,asin}',j.payload::jsonb#>'{original,asin}'),
+            'parentAsin',COALESCE(j.payload::jsonb#>'{execution,originalSnapshot,parentAsin}',j.payload::jsonb#>'{original,parentAsin}'),
+            'sourceVariants',jsonb_path_query_array(COALESCE(j.payload::jsonb#>'{execution,originalSnapshot}',j.payload::jsonb->'original'),'$.sourceVariants[*].asin')
+          ) AS identity FROM gpt_jobs j JOIN seo_worker_jobs w ON w.job_id=j.id
+          WHERE j.store_id=? AND w.pipeline_active=true AND j.status!='CANCELLED'`).all(execution.storeId);
+          const reservedAsins = new Set(snapshots.flatMap(row => getAmazonPipelineAsins(row.identity)));
+          if (incomingAsins.some(asin => reservedAsins.has(asin))) {
+            throw new SeoWorkerError(incomingAsins.every(asin => reservedAsins.has(asin))
+              ? "ALREADY_IN_SEO_PIPELINE" : "SEO_PIPELINE_IDENTITY_CONFLICT");
+          }
+        }
       }
       const olderJobs = (await this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND json_extract(payload,'$.source')=? AND json_extract(payload,'$.sourceIdentity')=? AND status != 'CANCELLED' AND NOT EXISTS (SELECT 1 FROM gpt_sync WHERE gpt_sync.job_id=gpt_jobs.id AND gpt_sync.status != 'ROLLED_BACK')").all(execution.storeId, execution.source, execution.sourceIdentity));
       for (const row of olderJobs) {

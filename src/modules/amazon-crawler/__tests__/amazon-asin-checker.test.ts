@@ -3,6 +3,19 @@ import test from "node:test";
 
 import { createAmazonAsinChecker } from "../service";
 
+test("crawler ASIN checker preserves active SEO matches and rejects unrelated aliases", async () => {
+  let activeSeoAsins = ["B0CHILD001"];
+  const checker = createAmazonAsinChecker(async () => Response.json({ success: true, data: {
+    ready: true, matches: [], allowedAsins: [], families: [{
+      parentAsin: "B0PARENT01", inputAsins: ["B0CHILD001"], memberAsins: ["B0CHILD001"],
+      isResolved: false, databaseStatus: null, jobId: null, status: "processing", activeSeoAsins,
+    }],
+  } }));
+  assert.deepEqual((await checker("sample", ["B0CHILD001"])).families[0].activeSeoAsins, ["B0CHILD001"]);
+  activeSeoAsins = ["B0CHILD002"];
+  await assert.rejects(checker("sample", ["B0CHILD001"]), /không hợp lệ/);
+});
+
 test("crawler ASIN checker sends the selected store and parses Shopify matches", async () => {
   const checker = createAmazonAsinChecker(async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;

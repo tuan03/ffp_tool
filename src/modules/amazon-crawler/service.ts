@@ -258,7 +258,9 @@ export function createAmazonAsinChecker(
         (family.hasExistingFamilyProducts !== undefined && typeof family.hasExistingFamilyProducts !== "boolean") ||
         (family.recoveredStaleRegistry !== undefined && typeof family.recoveredStaleRegistry !== "boolean") ||
         (family.hasSyncedFamilyMembers !== undefined && typeof family.hasSyncedFamilyMembers !== "boolean") ||
-        (family.inputSyncedAsins !== undefined && !isAsinList(family.inputSyncedAsins))) ||
+        (family.inputSyncedAsins !== undefined && !isAsinList(family.inputSyncedAsins)) ||
+        (family.activeSeoAsins !== undefined && (!isAsinList(family.activeSeoAsins) ||
+          family.activeSeoAsins.some((asin: string) => !isAsinList(family.inputAsins) || !family.inputAsins.includes(asin))))) ||
       !isAsinList(preflight.allowedAsins) ||
       preflight.matches.some((match: unknown) => !isRecord(match) || typeof match.asin !== "string" ||
         typeof match.parentAsin !== "string" || typeof match.productId !== "string" ||

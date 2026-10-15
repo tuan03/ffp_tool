@@ -90,6 +90,7 @@ export interface AmazonAsinFamilyPreflight {
   readonly recoveredStaleRegistry?: boolean;
   readonly hasSyncedFamilyMembers?: boolean;
   readonly inputSyncedAsins?: readonly string[];
+  readonly activeSeoAsins?: readonly string[];
 }
 
 export interface AmazonAsinPreflightResult {

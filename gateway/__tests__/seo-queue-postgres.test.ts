@@ -23,6 +23,40 @@ import { createTestEnqueue } from "./seo-v2-fixtures";
 const databaseUrl = process.env.SEO_QUEUE_TEST_DATABASE_URL;
 const integrationTest = databaseUrl ? test : test.skip;
 
+integrationTest("Amazon enqueue serializes exact ASIN reservations across changing families and stores", async () => {
+  assert.ok(databaseUrl);
+  const schema = `seo_queue_test_${randomUUID().replaceAll("-", "")}`;
+  const queue = new PostgresCustomGptQueue({ databaseUrl, schema });
+  const cleanup = new Pool({ connectionString: databaseUrl });
+  try {
+    await queue.initialize();
+    await queue.workers.enableStoreRaw("sample");
+    await queue.workers.enableStoreRaw("other");
+    const createAmazon = (parent: string, asin: string, storeId = "sample") => createTestEnqueue({
+      storeId, source: "amazon", sourceIdentity: `amazon:${parent}:color:red`, sourceRevision: "v1",
+      original: { asin, parentAsin: parent, sourceVariants: [{ asin }], crawlerPipelineItemId: `item-${parent}` },
+    });
+    const input = createAmazon("B0PARENT01", "B0CHILD001");
+    const first = await queue.enqueue(input);
+    assert.equal((await queue.enqueue(input)).id, first.id);
+    await assert.rejects(queue.enqueue(createAmazon("B0PARENT02", "B0CHILD001")), /ALREADY_IN_SEO_PIPELINE/);
+    await queue.enqueue(createAmazon("B0PARENT02", "B0CHILD002"));
+    await queue.enqueue(createAmazon("B0PARENT03", "B0CHILD001", "other"));
+    await assert.rejects(queue.enqueue(createTestEnqueue({
+      storeId: "sample", source: "amazon", sourceIdentity: "amazon:B0PARENT04:color:mixed", sourceRevision: "v1",
+      original: { asin: "B0CHILD001", parentAsin: "B0PARENT04", sourceVariants: [{ asin: "B0CHILD003" }] },
+    })), /SEO_PIPELINE_IDENTITY_CONFLICT/);
+    const raced = await Promise.allSettled(["B0PARENT05", "B0PARENT06"].map(parent =>
+      queue.enqueue(createAmazon(parent, "B0CHILD005"))));
+    assert.equal(raced.filter(outcome => outcome.status === "fulfilled").length, 1);
+    assert.equal(raced.filter(outcome => outcome.status === "rejected").length, 1);
+  } finally {
+    await queue.close();
+    await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await cleanup.end();
+  }
+});
+
 test("queue SQL binds values and rejects unsafe schema identifiers", () => {
   assert.equal(translateQueueSql("SELECT payload FROM gpt_jobs WHERE rowid>? AND COALESCE(json_extract(payload,'$.nextAttemptAt'),0)<=?", "test_schema"), "SELECT payload FROM \"test_schema\".gpt_jobs WHERE queue_order>$1 AND COALESCE((payload::jsonb->>'nextAttemptAt')::bigint,0)<=$2");
   assert.throws(() => translateQueueSql("SELECT * FROM gpt_jobs", 'public"; DROP SCHEMA public'), /Invalid/);

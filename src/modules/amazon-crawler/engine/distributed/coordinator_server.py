@@ -1863,6 +1863,15 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=409, detail="Pipeline claim is stale or ASIN matches are invalid.")
         return {"status": "skipped", "reason": "existing_shopify_product"}
 
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/skip-existing-seo")
+    def skip_existing_seo_product(
+        item_id: str, payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        skipped = store.skip_existing_seo_product(item_id, worker_id=str(payload.get("workerId") or ""))
+        return {"status": "skipped" if skipped else "not_skipped"}
+
     @app.post("/api/v1/internal/product-pipeline/{item_id}/external-seo")
     def defer_external_seo(
         item_id: str,

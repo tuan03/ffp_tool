@@ -5,6 +5,7 @@ import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import { resolvePipelineVendor } from "./pipeline-vendor";
+import { SeoGatewayRequestError, settleSeoEnqueueConflict } from "./pipeline-seo-handoff";
 import { findExistingAmazonProducts, verifyAmazonAsinSearchable } from "./pipeline-amazon-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
@@ -507,7 +508,9 @@ async function processClaim(
       const message = isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string"
         ? payload.error.message
         : `GPT SEO gateway returned ${response.status}`;
-      throw new Error(`GPT SEO gateway returned ${response.status}: ${message}`);
+      const code = isRecord(payload) && isRecord(payload.error) && typeof payload.error.code === "string"
+        ? payload.error.code : "GPT_SEO_REQUEST_FAILED";
+      throw new SeoGatewayRequestError(code, response.status, message);
     }
     return payload as T;
   }
@@ -515,7 +518,21 @@ async function processClaim(
   let externalSeoExecution: SeoContentDetailedOutput | undefined;
   let baseNormalizedProduct = claim.product;
   let assetsNormalized = Number(claim.review?.assetsNormalized ?? claim.assetsNormalized ?? 0);
+  const skipExistingSeoProduct = async (): Promise<boolean> => {
+    const response = await postJson<{ readonly status: string }>(
+      `/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/skip-existing-seo`, { workerId },
+    );
+    return response.status === "skipped";
+  };
   if (!isSyncStage) {
+    if (!claim.externalSeo) {
+      try {
+        if (await skipExistingSeoProduct()) return;
+      } catch (error: unknown) {
+        await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
+        return;
+      }
+    }
     if (claim.externalSeo) {
       try {
         if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
@@ -612,7 +629,7 @@ async function processClaim(
             sourceRevision: claim.seoSourceRevision ?? claim.checksum,
             ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
             input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
-            original: baseNormalizedProduct,
+            original: { ...baseNormalizedProduct, crawlerPipelineItemId: claim.id },
         });
         if (externalJob.settings.provider !== "codex_mcp") {
           throw new Error("CRAWLER_CODEX_PROVIDER_MISMATCH");
@@ -631,7 +648,19 @@ async function processClaim(
         }
         externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
       } catch (error) {
-        await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
+        try {
+          if (await settleSeoEnqueueConflict({ error, verifyAndSkip: skipExistingSeoProduct })) return;
+        } catch (conflict: unknown) {
+          await failClaim(claim, workerId, conflict, {
+            retryable: !(conflict instanceof SeoGatewayRequestError && conflict.code === "SEO_PIPELINE_IDENTITY_CONFLICT"),
+            phase: "seo", timings,
+          });
+          return;
+        }
+        await failClaim(claim, workerId, error, {
+          retryable: !(error instanceof SeoGatewayRequestError && error.code === "SEO_PIPELINE_IDENTITY_CONFLICT"),
+          phase: "seo", timings,
+        });
         return;
       }
     }
