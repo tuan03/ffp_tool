@@ -7,6 +7,10 @@ import {
   filterQueueJobs,
   getBatchOwnerLabel,
   getJobProgress,
+  getJobIdentityLabel,
+  getJobIssueSummary,
+  getJobProgressPresentation,
+  getJobSourceTitle,
   getProviderPresentation,
   getStatusesForGroup,
   getStatusPresentation,
@@ -182,4 +186,39 @@ test("filters case-insensitively across product identity, source, and provider",
   assert.deepEqual(filterQueueJobs(jobs, { query: "WINTER", group: "all", provider: "all" }).map(job => job.id), ["job-gemini"]);
   assert.deepEqual(filterQueueJobs(jobs, { query: "AUTO_SEO", group: "all", provider: "gemini" }).map(job => job.id), ["job-gemini"]);
   assert.deepEqual(filterQueueJobs(jobs, { query: "", group: "ready", provider: "all" }).map(job => job.id), ["JOB-CODEX"]);
+});
+
+test("presents a readable source identity when the catalog omits the original snapshot", () => {
+  const job = { ...createJob({ id: "source", title: "Original", status: "PENDING" }), source: "amazon" as const, sourceIdentity: "amazon:B012345678:color:style #3", original: null };
+  assert.equal(getJobIdentityLabel(job), "ASIN B012345678 · color:style #3");
+  assert.equal(getJobSourceTitle(job), "ASIN B012345678 · color:style #3");
+  assert.equal(getJobIdentityLabel({ ...job, source: "auto_seo", sourceIdentity: "gid://shopify/Product/12345" }), "Shopify #12345");
+  assert.deepEqual(filterQueueJobs([job], { query: "B012345678", group: "all", provider: "all" }).map(entry => entry.id), ["source"]);
+});
+
+test("checkpoint presentation distinguishes omitted catalog details from saved checkpoints", () => {
+  const job = createJob({ id: "progress", title: "Progress", status: "IN_PROGRESS", checkpoints: { analysis: {}, research: {} } });
+  assert.deepEqual(getJobProgressPresentation(job, false), { label: "AI đang xử lý", detail: "Mở chi tiết để xem checkpoint", completed: null });
+  assert.deepEqual(getJobProgressPresentation(job, true), { label: "Đã lưu: Nghiên cứu", detail: "2/4 bước đã có checkpoint", completed: 2 });
+  assert.equal(getJobProgressPresentation({ ...job, status: "PENDING" }, false).label, "Chờ AI nhận việc");
+  assert.equal(getJobProgressPresentation({ ...job, status: "VALIDATING" }, false).label, "Đang kiểm tra kết quả");
+  assert.equal(getJobProgressPresentation({ ...job, status: "REVIEW_READY" }, false).completed, 4);
+});
+
+test("new catalog metadata restores title, handle search and real progress without full snapshots", () => {
+  const job = { ...createJob({ id: "catalog", title: "Original", status: "IN_PROGRESS" }), original: null, checkpoints: {}, queueDisplay: { sourceTitle: "Vinyl Record Rug", sourceHandle: "vinyl-record", checkpointStages: ["analysis" as const, "research" as const] } };
+  assert.equal(getJobSourceTitle(job), "Vinyl Record Rug");
+  assert.equal(getJobProgressPresentation(job, false).completed, 2);
+  assert.equal(getJobProgressPresentation(job, false).label, "Đã lưu: Nghiên cứu");
+  assert.equal(filterQueueJobs([job], { query: "vinyl-record", group: "all", provider: "all" }).length, 1);
+});
+
+test("operator error summaries explain known issues without displaying raw internal messages", () => {
+  const job = createJob({ id: "issue", title: "Issue", status: "FAILED" });
+  assert.equal(getJobIssueSummary({ ...job, error: "QUOTA_EXHAUSTED: private request body" }), "Máy xử lý đã chạm giới hạn quota. Kiểm tra tài khoản trước khi thử lại.");
+  assert.equal(getJobIssueSummary({ ...job, error: "TOKEN_EXPIRED secret-value" }), "Quyền truy cập đã hết hạn hoặc không hợp lệ. Kiểm tra kết nối máy.");
+  const summary = getJobIssueSummary({ ...job, error: "Unhandled internal error: secret-value" });
+  assert.ok(summary);
+  assert.doesNotMatch(summary, /secret-value|Unhandled/);
+  assert.equal(getJobIssueSummary({ ...job, status: "PENDING", error: undefined }), null);
 });

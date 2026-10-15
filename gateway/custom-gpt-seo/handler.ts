@@ -8,6 +8,7 @@ import { verifyImageSignature, downloadProductImage } from "./images";
 import { createExternalSeoWorkflow } from "./workflow";
 import { parseSeoGenerationInput, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import { readReviewListQuery } from "../review-list-query";
+import { buildQueueDisplay } from "./queue-display";
 
 export interface CustomGptHandlerOptions {
   readonly queue: SeoQueue;
@@ -226,7 +227,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             queue.countFiltered(storeId, filters),
             queue.visibleCounts(storeId),
           ]);
-          result = { jobs: jobs.map(job => ({ ...job, original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
+          result = { jobs: jobs.map(job => ({ ...job, queueDisplay: buildQueueDisplay(job), original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
         case "admin/review-list": {

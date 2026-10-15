@@ -138,6 +138,12 @@ export interface GptSeoEnqueue {
   readonly settings?: GptSeoSettings;
 }
 export interface GptSeoJob extends GptSeoEnqueue {
+  /** Read-only catalog metadata; absent on older gateways and full job responses. */
+  readonly queueDisplay?: {
+    readonly sourceTitle: string | null;
+    readonly sourceHandle: string | null;
+    readonly checkpointStages: readonly GptStage[];
+  };
   readonly id: string;
   /** Persisted operational columns retained for queue/query compatibility. */
   readonly storeId: string;

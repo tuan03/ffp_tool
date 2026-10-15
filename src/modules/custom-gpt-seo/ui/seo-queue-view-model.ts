@@ -187,11 +187,44 @@ function readSourceString(job: GptSeoJob, keys: readonly string[]): string | und
 }
 
 export function getJobSourceTitle(job: GptSeoJob): string {
-  return readSourceString(job, ["title", "sourceTitle"]) ?? `Product ${job.sourceIdentity}`;
+  return job.queueDisplay?.sourceTitle ?? readSourceString(job, ["title", "sourceTitle"]) ?? getJobIdentityLabel(job);
 }
 
 export function getJobSourceHandle(job: GptSeoJob): string | undefined {
-  return readSourceString(job, ["handle"]);
+  return job.queueDisplay?.sourceHandle ?? readSourceString(job, ["handle"]);
+}
+
+export function getJobIdentityLabel(job: GptSeoJob): string {
+  if (job.source === "auto_seo") return `Shopify #${job.sourceIdentity.replace(/^gid:\/\/shopify\/Product\//, "")}`;
+  const identity = job.sourceIdentity.replace(/^amazon:/i, "");
+  const match = /^([A-Z0-9]{10})(?::(.+))?$/i.exec(identity);
+  return match ? `ASIN ${match[1]}${match[2] ? ` · ${match[2]}` : ""}` : identity;
+}
+
+export function getJobProgressPresentation(job: GptSeoJob, hasDetails = true): {
+  readonly label: string; readonly detail: string; readonly completed: number | null;
+} {
+  const stages = ["analysis", "research", "keywords", "submission"] as const;
+  const labels = { analysis: "Phân tích", research: "Nghiên cứu", keywords: "Từ khóa", submission: "Kết quả" };
+  const checkpoints = job.queueDisplay?.checkpointStages ?? (hasDetails ? stages.filter(stage => Object.hasOwn(job.checkpoints, stage)) : null);
+  const completed = job.status === "REVIEW_READY" ? 4 : checkpoints?.length ?? null;
+  const detail = completed === null ? "Mở chi tiết để xem checkpoint" : `${completed}/4 bước đã có checkpoint`;
+  if (job.status === "REVIEW_READY") return { label: "Đã hoàn tất kiểm tra", detail: "Kết quả đã sẵn sàng để duyệt", completed };
+  if (job.status === "PENDING") return { label: "Chờ AI nhận việc", detail: completed ? detail : "Chưa bắt đầu lượt xử lý mới", completed };
+  if (job.status === "VALIDATING") return { label: "Đang kiểm tra kết quả", detail, completed };
+  const lastStage = stages.filter(stage => checkpoints?.includes(stage)).at(-1);
+  return { label: lastStage ? `Đã lưu: ${labels[lastStage]}` : job.status === "IN_PROGRESS" ? "AI đang xử lý" : "Chưa có checkpoint hiển thị", detail, completed };
+}
+
+export function getJobIssueSummary(job: GptSeoJob): string | null {
+  if (!canRetryJob(job)) return null;
+  const issue = job.error?.toLowerCase() ?? "";
+  if (/quota|rate.limit|resource.exhausted|429/.test(issue)) return "Máy xử lý đã chạm giới hạn quota. Kiểm tra tài khoản trước khi thử lại.";
+  if (/token.expired|unauthori[sz]ed|invalid.token|authentication/.test(issue)) return "Quyền truy cập đã hết hạn hoặc không hợp lệ. Kiểm tra kết nối máy.";
+  if (/timeout|timed.out|lease.expired|lease_expired/.test(issue)) return "Phiên xử lý đã hết thời gian hoặc mất kết nối. Kiểm tra máy trước khi thử lại.";
+  if (job.status === "NEEDS_CHANGES" || /validat|schema/.test(issue)) return "Kết quả chưa đạt yêu cầu kiểm tra. Mở chi tiết để xem phần cần chỉnh.";
+  if (job.status === "WAITING_INPUT") return "Cần bổ sung đầu vào hoặc kiểm tra máy xử lý trước khi tiếp tục.";
+  return "Lượt xử lý chưa hoàn tất. Kiểm tra chi tiết trước khi thử lại.";
 }
 
 export function filterQueueJobs(jobs: readonly GptSeoJob[], filters: QueueFilters): readonly GptSeoJob[] {
@@ -203,6 +236,8 @@ export function filterQueueJobs(jobs: readonly GptSeoJob[], filters: QueueFilter
 
     const searchableText = [
       job.id,
+      job.sourceIdentity,
+      getJobIdentityLabel(job),
       getJobSourceTitle(job),
       getJobSourceHandle(job),
       job.source,

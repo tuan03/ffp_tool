@@ -165,6 +165,33 @@ test("administration filters queue status before pagination", async () => {
   }
 });
 
+test("administration adds display metadata while preserving catalog redaction and stored jobs", async () => {
+  const db = new DatabaseSync(":memory:");
+  const queue = new CustomGptQueue(db);
+  queue.configure("capozen", { provider: "codex_mcp", batchSize: 1 });
+  const job = queue.enqueue(createTestEnqueue({ storeId: "capozen", sourceIdentity: "display-product", input: { niche: "home", images: [] }, original: { title: "Record Rug", handle: "record-rug", internal: "private-source-payload" } }));
+  const batch = queue.claim("capozen", "display-claim", "codex_mcp", "codex_mcp:office-pc");
+  queue.checkpoint("capozen", job.id, { batchId: batch.id, leaseToken: batch.leaseToken, requestId: "display-analysis", stage: "analysis", payload: { internal: "private-checkpoint-payload" } });
+  const before = structuredClone(queue.get("capozen", job.id));
+  const handler = createCustomGptHandler({ queue, storeId: "capozen", adminKey: "admin-key" });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/gpt-seo/admin/jobs?storeId=capozen`, { headers: { Authorization: "Bearer admin-key" } });
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { jobs: readonly { queueDisplay: { sourceTitle: string; sourceHandle: string; checkpointStages: readonly string[] }; original: null; checkpoints: object; execution: { originalSnapshot: null }; settings: { instructions: string } }[] };
+    assert.deepEqual(payload.jobs[0]?.queueDisplay, { sourceTitle: "Record Rug", sourceHandle: "record-rug", checkpointStages: ["analysis"] });
+    assert.equal(payload.jobs[0]?.original, null);
+    assert.equal(payload.jobs[0]?.execution.originalSnapshot, null);
+    assert.deepEqual(payload.jobs[0]?.checkpoints, {});
+    assert.equal(payload.jobs[0]?.settings.instructions, "");
+    assert.doesNotMatch(JSON.stringify(payload), /private-source-payload|private-checkpoint-payload/);
+    assert.deepEqual(queue.get("capozen", job.id), before);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); }
+});
+
 test("administration lists complete review records and saves review states in bulk", async () => {
   const db = new DatabaseSync(":memory:");
   const queue = new CustomGptQueue(db);
