@@ -1872,6 +1872,15 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         skipped = store.skip_existing_seo_product(item_id, worker_id=str(payload.get("workerId") or ""))
         return {"status": "skipped" if skipped else "not_skipped"}
 
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/recover-external-seo")
+    def recover_external_seo(
+        item_id: str, payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        recovered = store.recover_external_seo(item_id, worker_id=str(payload.get("workerId") or ""))
+        return {"status": "recovered" if recovered else "not_found"}
+
     @app.post("/api/v1/internal/product-pipeline/{item_id}/external-seo")
     def defer_external_seo(
         item_id: str,

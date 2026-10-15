@@ -5,7 +5,7 @@ import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import { resolvePipelineVendor } from "./pipeline-vendor";
-import { SeoGatewayRequestError, settleSeoEnqueueConflict } from "./pipeline-seo-handoff";
+import { SeoGatewayRequestError, settleSeoEnqueueConflict, recoverUncertainSeoEnqueue } from "./pipeline-seo-handoff";
 import { findExistingAmazonProducts, verifyAmazonAsinSearchable } from "./pipeline-amazon-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
@@ -524,9 +524,17 @@ async function processClaim(
     );
     return response.status === "skipped";
   };
+  const recoverExternalSeo = async (): Promise<boolean> => {
+    const response = await postJson<{ readonly status: string }>(
+      `/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/recover-external-seo`,
+      { workerId }, AbortSignal.timeout(2_000),
+    );
+    return response.status === "recovered";
+  };
   if (!isSyncStage) {
     if (!claim.externalSeo) {
       try {
+        if (claim.attempt > 1 && await recoverExternalSeo()) return;
         if (await skipExistingSeoProduct()) return;
       } catch (error: unknown) {
         await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
@@ -648,6 +656,9 @@ async function processClaim(
         }
         externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
       } catch (error) {
+        if (await recoverUncertainSeoEnqueue({ error, recover: recoverExternalSeo,
+          delay: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+        })) return;
         try {
           if (await settleSeoEnqueueConflict({ error, verifyAndSkip: skipExistingSeoProduct })) return;
         } catch (conflict: unknown) {

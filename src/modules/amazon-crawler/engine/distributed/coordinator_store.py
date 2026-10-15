@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any, Callable
 
-from sqlalchemy import case, delete, func, or_, select, text, update
+from sqlalchemy import case, delete, func, inspect, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
@@ -2061,7 +2061,10 @@ class CoordinatorStore(CoordinatorObservability):
             products = payload.get("products") if isinstance(payload.get("products"), list) else []
             retained_products: list[Any] = []
             job = session.get(CrawlJob, task.job_id)
-            active_seo_identities = load_active_seo_identities(session, str((job.settings if job else {}).get("storeId") or "").strip())
+            active_seo_identities = load_active_seo_identities(
+                session, str((job.settings if job else {}).get("storeId") or "").strip(),
+                asins=set().union(*(self._product_exact_asins(product) for product in products if isinstance(product, dict))),
+            )
             for product in products:
                 if isinstance(product, dict) and product.get("id"):
                     existing_shopify_product = self._existing_shopify_product(session, job, product)
@@ -2261,7 +2264,8 @@ class CoordinatorStore(CoordinatorObservability):
                     "sourceKey": existing.source_key,
                 })
             seo_job_ids = match_active_seo_jobs(
-                load_active_seo_identities(session, str((job.settings if job else {}).get("storeId") or "").strip()),
+                load_active_seo_identities(session, str((job.settings if job else {}).get("storeId") or "").strip(),
+                                           asins=self._product_exact_asins(product)),
                 self._product_exact_asins(product),
             )
             if seo_job_ids:
@@ -2535,7 +2539,7 @@ class CoordinatorStore(CoordinatorObservability):
             job = session.get(CrawlJob, item.job_id)
             store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
             seo_job_ids = match_active_seo_jobs(
-                load_active_seo_identities(session, store_id),
+                load_active_seo_identities(session, store_id, asins=self._product_exact_asins(item.raw_payload or {})),
                 self._product_exact_asins(item.raw_payload or {}), owner_item_id=item.id,
             )
             if not seo_job_ids:
@@ -2552,6 +2556,46 @@ class CoordinatorStore(CoordinatorObservability):
                 "sourceKey": item.source_key, "productItemId": item.id, "externalSeoJobIds": seo_job_ids,
             })
             session.flush()
+            self._refresh_job(session, item.job_id)
+            return True
+
+    def recover_external_seo(self, item_id: str, *, worker_id: str) -> bool:
+        """Reconnect a committed enqueue after its HTTP response was lost, never adopt another owner."""
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if (item is None or item.claimed_by != worker_id or item.status not in {"normalizing", "seo"}
+                    or not item.normalized_payload):
+                return False
+            result = dict(item.shopify_result or {})
+            if result.get("externalSeo") or result.get("review"):
+                return False
+            if not inspect(session.connection()).has_table("seo_pipeline_identities"):
+                return False
+            job = session.get(CrawlJob, item.job_id)
+            store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
+            revision = (f"{item.checksum}:recovery:{item.id}:{result['recoverySyncGeneration']}"
+                        if result.get("recoverySyncGeneration") else item.checksum)
+            receipts = session.execute(text("""
+                SELECT j.id,j.provider,j.status FROM seo_pipeline_identities i JOIN gpt_jobs j ON j.id=i.job_id
+                JOIN seo_worker_jobs w ON w.job_id=i.job_id
+                WHERE i.store_id=:store_id AND i.owner_item_id=:owner AND i.source_key=:source
+                  AND i.source_revision=:revision AND j.status NOT IN ('CANCELLED','FAILED')
+                  AND w.pipeline_active=true
+                LIMIT 2
+            """), {"store_id": store_id, "owner": item.id, "source": item.source_key, "revision": revision}).mappings().all()
+            if len(receipts) != 1 or receipts[0]["provider"] not in {"codex_mcp", "custom_gpt"}:
+                return False
+            receipt = receipts[0]
+            item.shopify_result = {**result, "externalSeo": {"jobId": receipt["id"], "provider": receipt["provider"]},
+                                   "seo": {**dict(result.get("seo") or {}), "status": "pending", "engine": receipt["provider"]}}
+            item.status = "retry_wait"
+            item.next_attempt_at = utc_now() if receipt["status"] == "REVIEW_READY" else utc_now() + EXTERNAL_SEO_RECOVERY_DELAY
+            item.claimed_by = None
+            item.claim_expires_at = None
+            item.last_error = None
+            self._event(session, item.job_id, "product_external_seo_recovered", {
+                "productItemId": item.id, "sourceKey": item.source_key, "externalSeoJobId": receipt["id"],
+            })
             self._refresh_job(session, item.job_id)
             return True
 
@@ -2573,12 +2617,13 @@ class CoordinatorStore(CoordinatorObservability):
             item.shopify_result = {
                 **dict(item.shopify_result or {}),
                 "externalSeo": {"jobId": external_job_id, "provider": provider},
-                "seo": {"status": "pending", "engine": provider},
+                "seo": {**dict((item.shopify_result or {}).get("seo") or {}), "status": "pending", "engine": provider},
             }
             item.status = "retry_wait"
             item.next_attempt_at = utc_now() + EXTERNAL_SEO_RECOVERY_DELAY
             item.claimed_by = None
             item.claim_expires_at = None
+            item.last_error = None
             self._refresh_job(session, item.job_id)
             return True
 

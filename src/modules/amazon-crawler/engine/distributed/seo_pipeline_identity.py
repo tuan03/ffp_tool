@@ -6,7 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import inspect, text
+from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.orm import Session
 
 
@@ -18,14 +18,40 @@ class ActiveSeoIdentity:
     owner_item_id: str
 
 
-def load_active_seo_identities(session: Session, store_id: str) -> list[ActiveSeoIdentity]:
-    if not store_id:
+def load_active_seo_identities(
+    session: Session, store_id: str, *, asins: set[str] | None = None,
+) -> list[ActiveSeoIdentity]:
+    if not store_id or (asins is not None and not asins):
         return []
     connection = session.connection()
     inspector = inspect(connection)
     # Standalone crawler/test databases may not have the Gateway schema yet.
     if not inspector.has_table("gpt_jobs") or not inspector.has_table("seo_worker_jobs"):
         return []
+    if inspector.has_table("seo_pipeline_asins") and inspector.has_table("seo_pipeline_identities"):
+        # The projection is committed with the job, including legacy backfill. Read only
+        # exact candidates, never the large SEO input/checkpoints/original snapshots.
+        query = text(f"""
+            SELECT i.job_id,i.source_key,i.owner_item_id,a.asin FROM seo_pipeline_asins a
+            JOIN seo_pipeline_identities i ON i.job_id=a.job_id
+            JOIN seo_worker_jobs w ON w.job_id=a.job_id JOIN gpt_jobs j ON j.id=a.job_id
+            WHERE a.store_id=:store_id AND w.pipeline_active=true AND j.status!='CANCELLED'
+            {"AND a.asin IN :asins" if asins is not None else ""}
+        """)
+        parameters: dict[str, str | list[str]] = {"store_id": store_id}
+        if asins is not None:
+            query = query.bindparams(bindparam("asins", expanding=True))
+            parameters["asins"] = sorted(asins)
+        aliases_by_job: dict[str, set[str]] = {}
+        metadata: dict[str, tuple[str, str]] = {}
+        for row in session.execute(query, parameters).mappings():
+            job_id = str(row["job_id"])
+            aliases_by_job.setdefault(job_id, set()).add(str(row["asin"]))
+            metadata[job_id] = (str(row["source_key"]), str(row["owner_item_id"]))
+        return [ActiveSeoIdentity(job_id, metadata[job_id][0], frozenset(aliases), metadata[job_id][1])
+                for job_id, aliases in aliases_by_job.items()]
+    # Compatibility for standalone SQLite tests and a pre-upgrade Gateway. Once the
+    # atomic projection migration commits, the hot path above never parses payloads.
     if connection.dialect.name == "postgresql":
         identity_projection = """
             COALESCE(j.payload::jsonb#>'{execution,originalSnapshot}', j.payload::jsonb->'original')
@@ -64,6 +90,8 @@ def load_active_seo_identities(session: Session, store_id: str) -> list[ActiveSe
             alias = str(alias or "").strip().upper()
             if re.fullmatch(r"[A-Z0-9]{10}", alias) and alias != parent:
                 aliases.add(alias)
+        if asins is not None:
+            aliases.intersection_update(asins)
         identities.append(ActiveSeoIdentity(
             job_id=str(row["id"]), source_key=str(row["source_key"] or ""),
             asins=frozenset(aliases), owner_item_id=str(snapshot.get("crawlerPipelineItemId") or ""),

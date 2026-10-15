@@ -129,13 +129,11 @@ export class PostgresCustomGptQueue implements SeoQueue {
         if (incomingAsins.length > 0) {
           // The queue transaction's advisory lock serializes this check with enqueue,
           // including two requests that discovered the same child under different parents.
-          const snapshots = await this.db.prepare(`SELECT jsonb_build_object(
-            'asin',COALESCE(j.payload::jsonb#>'{execution,originalSnapshot,asin}',j.payload::jsonb#>'{original,asin}'),
-            'parentAsin',COALESCE(j.payload::jsonb#>'{execution,originalSnapshot,parentAsin}',j.payload::jsonb#>'{original,parentAsin}'),
-            'sourceVariants',jsonb_path_query_array(COALESCE(j.payload::jsonb#>'{execution,originalSnapshot}',j.payload::jsonb->'original'),'$.sourceVariants[*].asin')
-          ) AS identity FROM gpt_jobs j JOIN seo_worker_jobs w ON w.job_id=j.id
-          WHERE j.store_id=? AND w.pipeline_active=true AND j.status!='CANCELLED'`).all(execution.storeId);
-          const reservedAsins = new Set(snapshots.flatMap(row => getAmazonPipelineAsins(row.identity)));
+          const reservations = await this.db.prepare(`SELECT DISTINCT a.asin FROM seo_pipeline_asins a
+            JOIN seo_worker_jobs w ON w.job_id=a.job_id JOIN gpt_jobs j ON j.id=a.job_id
+            WHERE a.store_id=? AND a.asin=ANY(?::text[]) AND w.pipeline_active=true AND j.status!='CANCELLED'`)
+            .all(execution.storeId, incomingAsins);
+          const reservedAsins = new Set(reservations.map(row => String(row.asin)));
           if (incomingAsins.some(asin => reservedAsins.has(asin))) {
             throw new SeoWorkerError(incomingAsins.every(asin => reservedAsins.has(asin))
               ? "ALREADY_IN_SEO_PIPELINE" : "SEO_PIPELINE_IDENTITY_CONFLICT");

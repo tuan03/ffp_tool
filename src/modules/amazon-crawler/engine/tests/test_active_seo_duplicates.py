@@ -2,9 +2,13 @@
 
 import json
 import os
+import tempfile
 import unittest
 import uuid
+from pathlib import Path
+from unittest.mock import patch
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -13,6 +17,7 @@ from engine.distributed.coordinator_models import CrawlJob, CrawlProductItem, Cr
 from engine.tests import test_distributed
 from engine.tests.test_distributed import client_hello
 from engine.distributed.seo_pipeline_identity import load_active_seo_identities
+from engine.distributed.coordinator_server import create_coordinator_app
 
 
 class ActiveSeoDuplicateTests(unittest.TestCase):
@@ -27,15 +32,16 @@ class ActiveSeoDuplicateTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def seed_seo(self, *, job_id="seo-existing", store_id="sample", active=True, status="PENDING", owner=None):
+    def seed_seo(self, *, job_id="seo-existing", store_id="sample", active=True, status="PENDING", owner=None, revision="checksum"):
         product = {"id": "product", "asin": "B0CHILD001", "parentAsin": "B0PARENT01",
                    "sourceKey": "amazon:B0PARENT01:color:red", "sourceVariants": [{"asin": "B0CHILD001"}]}
         if owner:
             product["crawlerPipelineItemId"] = owner
         payload = {"source": "amazon", "sourceIdentity": product["sourceKey"],
-                   "execution": {"source": "amazon", "sourceIdentity": product["sourceKey"], "originalSnapshot": product}}
+                   "execution": {"source": "amazon", "sourceIdentity": product["sourceKey"],
+                                 "sourceRevision": revision, "originalSnapshot": product}}
         with self.store.sessions.begin() as session:
-            session.execute(text("INSERT INTO gpt_jobs VALUES (:id,:store,:status,:payload)"),
+            session.execute(text("INSERT INTO gpt_jobs(id,store_id,status,payload) VALUES (:id,:store,:status,:payload)"),
                             {"id": job_id, "store": store_id, "status": status, "payload": json.dumps(payload)})
             session.execute(text("INSERT INTO seo_worker_jobs VALUES (:id,:active)"), {"id": job_id, "active": active})
         return product
@@ -142,6 +148,92 @@ class ActiveSeoDuplicateTests(unittest.TestCase):
         self.assertEqual(family.get("activeSeoAsins", []), [])
 
 
+class IndexedActiveSeoDuplicateTests(ActiveSeoDuplicateTests):
+    def setUp(self):
+        super().setUp()
+        with self.store.sessions.begin() as session:
+            session.execute(text("ALTER TABLE gpt_jobs ADD COLUMN provider TEXT DEFAULT 'codex_mcp'"))
+            session.execute(text("CREATE TABLE seo_pipeline_identities (job_id TEXT PRIMARY KEY,store_id TEXT,source_key TEXT,source_revision TEXT,owner_item_id TEXT)"))
+            session.execute(text("CREATE TABLE seo_pipeline_asins (store_id TEXT,asin TEXT,job_id TEXT,PRIMARY KEY(store_id,asin,job_id))"))
+
+    def seed_seo(self, **options):
+        product = super().seed_seo(**options)
+        with self.store.sessions.begin() as session:
+            session.execute(text("INSERT INTO seo_pipeline_identities VALUES (:id,:store,:source,:revision,:owner)"), {
+                "id": options.get("job_id", "seo-existing"), "store": options.get("store_id", "sample"),
+                "source": product["sourceKey"], "revision": options.get("revision", "checksum"), "owner": options.get("owner", ""),
+            })
+            session.execute(text("INSERT INTO seo_pipeline_asins VALUES (:store,'B0CHILD001',:id)"), {
+                "id": options.get("job_id", "seo-existing"), "store": options.get("store_id", "sample"),
+            })
+        return product
+
+    def test_indexed_lookup_never_reads_the_large_payload(self):
+        self.seed_seo()
+        with self.store.sessions.begin() as session:
+            session.execute(text("UPDATE gpt_jobs SET payload='not-json: must not read snapshot'"))
+        with self.store.sessions() as session:
+            self.assertEqual(load_active_seo_identities(session, "sample", asins={"B0CHILD001"})[0].asins,
+                             frozenset({"B0CHILD001"}))
+            self.assertEqual(load_active_seo_identities(session, "sample", asins={"B0CHILD002"}), [])
+
+    def test_recovers_only_its_own_revision_and_clears_the_old_timeout(self):
+        job, lease = self.start_crawl()
+        product = {"id": "product", "asin": "B0CHILD001", "parentAsin": "B0PARENT01", "sourceKey": "amazon:B0PARENT01:color:red"}
+        self.upload(job, lease, product)
+        claim = self.store.claim_product_items(worker_id="pipeline", store_id="sample", limit=1)[0]
+        self.store.mark_product_seo(claim["id"], worker_id="pipeline", normalized_payload=product, seo_summary={"status": "running"})
+        self.seed_seo(owner=claim["id"], revision="old")
+        self.assertFalse(self.store.recover_external_seo(claim["id"], worker_id="pipeline"))
+        with self.store.sessions.begin() as session:
+            session.execute(text("UPDATE seo_pipeline_identities SET source_revision=:revision"), {"revision": claim["seoSourceRevision"]})
+            session.get(CrawlProductItem, claim["id"]).last_error = {"phase": "seo", "message": "timeout"}
+        self.assertFalse(self.store.recover_external_seo(claim["id"], worker_id="other"))
+        self.assertTrue(self.store.recover_external_seo(claim["id"], worker_id="pipeline"))
+        with self.store.sessions() as session:
+            item = session.get(CrawlProductItem, claim["id"])
+            self.assertEqual(item.shopify_result["externalSeo"]["jobId"], "seo-existing")
+            self.assertIsNone(item.last_error)
+            self.assertIsNone(item.claimed_by)
+        self.assertEqual(self.store.get_job(job["id"])["seoQueueHandoff"]["handedOver"], 1)
+
+    def test_recovery_does_not_attach_another_owner_or_a_cancelled_job(self):
+        job, lease = self.start_crawl()
+        product = {"id": "product", "asin": "B0CHILD001", "sourceKey": "amazon:B0PARENT01:color:red"}
+        self.upload(job, lease, product)
+        claim = self.store.claim_product_items(worker_id="pipeline", store_id="sample", limit=1)[0]
+        self.seed_seo(owner="another-owner")
+        self.assertFalse(self.store.recover_external_seo(claim["id"], worker_id="pipeline"))
+        self.seed_seo(job_id="cancelled", owner=claim["id"], status="CANCELLED")
+        self.assertFalse(self.store.recover_external_seo(claim["id"], worker_id="pipeline"))
+
+    def test_ready_receipt_wakes_immediately_and_preserves_normalized_assets(self):
+        job, lease = self.start_crawl()
+        product = {"id": "product", "asin": "B0CHILD001", "sourceKey": "amazon:B0PARENT01:color:red"}
+        self.upload(job, lease, product)
+        claim = self.store.claim_product_items(worker_id="pipeline", store_id="sample", limit=1)[0]
+        self.store.mark_product_seo(claim["id"], worker_id="pipeline", normalized_payload=product,
+                                    seo_summary={"status": "running", "assetsNormalized": 7})
+        self.seed_seo(owner=claim["id"], status="REVIEW_READY")
+        self.assertTrue(self.store.recover_external_seo(claim["id"], worker_id="pipeline"))
+        continuation = self.store.claim_product_items(worker_id="next-worker", store_id="sample", limit=1)[0]
+        self.assertEqual(continuation["externalSeo"]["jobId"], "seo-existing")
+        self.assertEqual(continuation["assetsNormalized"], 7)
+
+
+class SeoReceiptApiTests(unittest.TestCase):
+    def test_recovery_requires_pipeline_credentials_and_passes_only_the_claim_owner(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"SHOPIFY_PIPELINE_TOKEN": "fixture-key"}):
+            app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'receipt.sqlite3').as_posix()}")
+            with TestClient(app) as client, patch.object(app.state.store, "recover_external_seo", return_value=True) as recover:
+                route = "/api/v1/internal/product-pipeline/item/recover-external-seo"
+                self.assertEqual(client.post(route, json={"workerId": "owner"}).status_code, 401)
+                recover.assert_not_called()
+                response = client.post(route, headers={"X-Pipeline-Key": "fixture-key"}, json={"workerId": "owner"})
+                self.assertEqual(response.json(), {"status": "recovered"})
+                recover.assert_called_once_with("item", worker_id="owner")
+
+
 @unittest.skipUnless(os.environ.get("TEST_AMAZON_COORDINATOR_DATABASE_URL"), "PostgreSQL test URL is not configured")
 class ActiveSeoPostgresTests(unittest.TestCase):
     def test_projects_compact_aliases_and_owner_from_postgres_queue(self):
@@ -165,6 +257,17 @@ class ActiveSeoPostgresTests(unittest.TestCase):
                 identities = load_active_seo_identities(session, "sample")
                 self.assertEqual(len(identities), 1)
                 self.assertEqual(identities[0].asins, frozenset({"B0CHILD001", "B0CHILD002"}))
+                self.assertEqual(identities[0].owner_item_id, "owner")
+                self.assertEqual(load_active_seo_identities(session, "other"), [])
+            with engine.begin() as connection:
+                connection.execute(text("CREATE TABLE seo_pipeline_identities(job_id TEXT PRIMARY KEY,store_id TEXT,source_key TEXT,source_revision TEXT,owner_item_id TEXT)"))
+                connection.execute(text("CREATE TABLE seo_pipeline_asins(store_id TEXT,asin TEXT,job_id TEXT,PRIMARY KEY(store_id,asin,job_id))"))
+                connection.execute(text("INSERT INTO seo_pipeline_identities VALUES ('job','sample','amazon:test','r1','owner')"))
+                connection.execute(text("INSERT INTO seo_pipeline_asins VALUES ('sample','B0CHILD001','job'),('sample','B0CHILD002','job')"))
+                connection.execute(text("UPDATE gpt_jobs SET payload='invalid-json: indexed path must not read payload'"))
+            with Session(engine) as session:
+                identities = load_active_seo_identities(session, "sample", asins={"B0CHILD002"})
+                self.assertEqual(identities[0].asins, frozenset({"B0CHILD002"}))
                 self.assertEqual(identities[0].owner_item_id, "owner")
                 self.assertEqual(load_active_seo_identities(session, "other"), [])
         finally:
