@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { AppIcon } from "../../shared/components/AppIcon";
-import { PageHeader } from "../../shared/components/PageHeader";
 import { environment } from "../../config/environment";
 import { getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { adaptCustomGptReview, loadAllCustomGptReviewRecords } from "./custom-gpt-review";
@@ -630,7 +629,8 @@ export function SeoReviewPage({
       loaded = adaptAmazonCrawlerReviewToViewModel(await amazonCrawlerReviews.detail(item.recordId, item.storeId, signal), amazonCrawlerReviews.imageUrl);
     }
     if (viewingStoreRef.current !== item.storeId || loaded.storeId !== item.storeId) throw new Error("Store đã đổi; hãy chọn lại sản phẩm.");
-    loaded = { ...loaded, reviewActions: item.source === "crawler" ? loaded.reviewActions ?? item.actions : item.actions,
+    loaded = { ...loaded, shopifySyncError: loaded.shopifySyncError ?? (loaded.shopifySyncStatus === item.syncStatus ? item.syncError : undefined),
+      reviewActions: item.source === "crawler" ? loaded.reviewActions ?? item.actions : item.actions,
       reviewArchivedAt: loaded.reviewArchivedAt ?? item.archivedAt, reviewLifecycleStage: item.stage };
     hydratedCatalogVersions.current.set(item.id, item.updatedAt);
     if (loaded.gptJobId) persistedGptReviews.current.set(loaded.id, JSON.stringify(loaded));
@@ -662,7 +662,9 @@ export function SeoReviewPage({
 
   useEffect(() => {
     if (viewMode !== "split" || !activeProduct?.reviewListItem || activeProduct.storeId !== effectiveStoreId) return;
-    void loadTarget(activeProduct).then(product => { if (product && product.storeId === viewingStoreRef.current) setActiveProduct(product); });
+    void loadTarget(activeProduct).then(product => {
+      if (product && product.storeId === viewingStoreRef.current) setActiveProduct(current => current?.id === product.id ? product : current);
+    });
   }, [viewMode, activeProduct?.id, activeProduct?.reviewListItem, effectiveStoreId]);
 
   // Notify approver when new products arrive from other pipelines
@@ -687,8 +689,8 @@ export function SeoReviewPage({
               }
             }
             notifyUser({
-              title: "📥 Sản phẩm mới sẵn sàng sync!",
-              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}${handoff.storeId ? ` cho store ${handoff.storeId.toUpperCase()}` : ""}. Bạn có thể xem nội dung và bấm Sync Shopify.`,
+              title: "Đã nhận kết quả SEO mới",
+              message: `Hệ thống vừa nhận ${handoff.count} sản phẩm từ ${handoff.source || "hệ thống"}${handoff.storeId ? ` cho store ${handoff.storeId.toUpperCase()}` : ""}. Bạn có thể xem lại nội dung và trạng thái đồng bộ tại SEO Review.`,
               type: "info",
               sound: "chime",
               url: handoff.storeId ? `/seo-review?storeId=${encodeURIComponent(handoff.storeId)}` : "/seo-review",
@@ -2277,20 +2279,14 @@ export function SeoReviewPage({
 
   return (
     <div className="space-y-4">
-      {/* Page Header */}
-      <PageHeader title="SEO Review" description="Xem, chỉnh sửa và phê duyệt nội dung SEO trước khi đồng bộ lên Shopify." />
-
-      {/* Viewing store selection never changes a product's immutable publish destination. */}
-      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-sm">
-              <AppIcon name="store" />
-            </span>
-            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              <label htmlFor="review-store">Store đang xem:</label>
-            </span>
-            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+      <header className="flex items-center justify-between gap-8 border-b border-slate-200 pb-5 dark:border-slate-700">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">SEO Review</h1>
+          <p className="mt-1.5 text-sm leading-6 text-slate-500 dark:text-slate-400">Xem lại kết quả SEO và đồng bộ Shopify. Luồng tự Sync không cần duyệt tại đây.</p>
+        </div>
+        <div className="shrink-0">
+          <label htmlFor="review-store" className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">Store đang xem</label>
+            <select id="review-store" value={effectiveStoreId} className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 max-w-80 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
               onChange={event => {
                 const nextStore = event.target.value;
                 setSelectedIds(new Set()); setActiveProduct(null); setIsDrawerOpen(false); setIsEditModalOpen(false);
@@ -2300,21 +2296,12 @@ export function SeoReviewPage({
               {!availableStores.some(store => store.storeId === effectiveStoreId) && <option value={effectiveStoreId}>{effectiveStoreId}</option>}
               {availableStores.map(store => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
             </select>
-            <span className="text-xs text-slate-600 dark:text-slate-400">Đổi store để xem; store đích của từng sản phẩm được giữ nguyên.</span>
-          </div>
-
-          <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2">
-            <span>Trang hiện tại:</span>
-            <span className="font-mono text-blue-700 dark:text-blue-300 font-semibold bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700">
-              {storeScopedProducts.length} sản phẩm
-            </span>
-          </div>
         </div>
-
+      </header>
         {/* Other stores that have products in review queue */}
         {otherStoresWithProducts.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-400">
-            <span className="text-slate-500 dark:text-slate-400">Các store khác có bản Review:</span>
+            <span className="text-slate-500 dark:text-slate-400">Store khác có bản ghi:</span>
             {otherStoresWithProducts.map((os) => (
               <button
                 key={os.storeId}
@@ -2335,11 +2322,9 @@ export function SeoReviewPage({
             ))}
           </div>
         )}
-      </div>
-
       {/* Batch Actions & Filters Toolbar */}
       {environment !== "mock" && <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600 dark:text-slate-400">
-        <span>{catalog.isLoading ? "Đang tải danh sách Review…" : `${catalog.catalog?.total ?? 0} kết quả · Trang ${catalog.page} · Các thao tác hàng loạt áp dụng cho trang hiện tại`}</span>
+        <span>{catalog.isLoading ? "Đang tải danh sách Review…" : `${catalog.catalog?.total ?? 0} kết quả · Trang ${catalog.page} · Chọn sản phẩm để xem nội dung`}</span>
         <div className="flex gap-2">
           <button type="button" disabled={!catalog.hasPreviousPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.previous(); }} className="rounded border border-slate-300 dark:border-slate-700 px-3 py-1 disabled:opacity-40">Trang trước</button>
           <button type="button" disabled={!catalog.catalog?.hasNextPage || catalog.isLoading} onClick={() => { setSelectedIds(new Set()); catalog.next(); }} className="rounded border border-slate-300 dark:border-slate-700 px-3 py-1 disabled:opacity-40">Trang sau</button>
@@ -2362,18 +2347,21 @@ export function SeoReviewPage({
 
       {/* Review Content View based on active viewMode */}
       {filteredProducts.length === 0 ? (
-        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-12 text-center">
+        <div className="rounded-xl border border-dashed border-slate-200 bg-white p-12 text-center dark:border-slate-700 dark:bg-slate-900">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-lg bg-slate-50 dark:bg-slate-800 text-2xl text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 shadow-inner">
             <AppIcon name="review" />
           </div>
           <h3 className="mt-4 text-base font-bold text-slate-900 dark:text-slate-100">
-            {catalog.isLoading ? "Đang tải Review…" : workspace === "synced" ? "Chưa có sản phẩm đã sync phù hợp" : "Không có sản phẩm Review phù hợp"}
+            {catalog.isLoading ? "Đang tải Review…" : catalog.error ? "Chưa tải được kết quả" : workspace === "synced" ? "Chưa có sản phẩm đã sync phù hợp" : "Chưa có kết quả phù hợp"}
           </h3>
           <p className="mt-2 text-xs text-slate-600 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
-            {workspace === "synced" ? "Sản phẩm sync thành công sẽ xuất hiện ở đây và vẫn xem được trong Tất cả."
-              : "Chọn Tất cả để xem cả bản đã sync hoặc lưu trữ; bản sẵn sàng có thể Sync ngay, không cần duyệt."}
+            {catalog.isLoading ? "Đang lấy danh sách bản ghi đã lưu."
+              : catalog.error ? "Chưa thể lấy danh sách từ server. Nhấn Thử lại phía trên; việc này không chạy lại SEO hay Sync."
+              : workspace === "synced" ? "Sản phẩm sync thành công sẽ xuất hiện ở đây và vẫn xem được trong Tất cả."
+              : "Kết quả SEO và trạng thái đồng bộ sẽ xuất hiện tại đây. Bạn có thể đổi bộ lọc hoặc xem tiến độ ở SEO Queue; không cần duyệt thủ công cho luồng tự Sync."}
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
+            <a href="/gpt-seo" className="inline-flex items-center gap-2 rounded-lg border border-blue-200 px-4 py-2.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/60">Xem tiến độ SEO Queue ↗</a>
             <a
               href="/amazon-crawler"
               className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition"
@@ -2435,7 +2423,7 @@ export function SeoReviewPage({
             <ProductSplitView
               products={filteredProducts}
               selectedIds={selectedIds}
-              activeProduct={activeProduct?.reviewListItem ? null : activeProduct}
+              activeProduct={activeProduct}
               currentStoreId={effectiveStoreId}
               onSelectActive={setActiveProduct}
               onToggleSelect={handleToggleSelect}

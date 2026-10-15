@@ -47,8 +47,8 @@ export function SourceOriginBadge({
       icon: "🤖",
       badgeClass: "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 ",
       dotClass: "bg-blue-600",
-      hintLabel: "Cần duyệt lại",
-      hintTitle: "Sản phẩm tuyển chọn từ Auto SEO, cần duyệt lại nội dung SEO trước khi đồng bộ.",
+      hintLabel: "Kết quả Auto SEO",
+      hintTitle: "Nội dung SEO đã được lưu để xem lại; không yêu cầu duyệt tại trang này.",
       hintClass: "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800",
       hintIcon: "⏳",
     };
@@ -85,7 +85,7 @@ export function SourceOriginBadge({
         <span
           title={
             isDifferentTarget
-              ? `Store gốc: ${product.storeId} → Store đích khi sync: ${targetStoreId}`
+              ? `Đích đã lưu: ${product.storeId}. Bạn đang xem store ${targetStoreId}; việc xem không thay đổi đích sync.`
               : `Gắn với Shopify Store: ${effectiveStore}`
           }
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 select-none"
@@ -93,7 +93,7 @@ export function SourceOriginBadge({
           <span><AppIcon name="store" /></span>
           <span>{product.storeId || targetStoreId}</span>
           {isDifferentTarget && (
-            <span className="text-amber-700 dark:text-amber-300 font-sans text-xs">➔ {targetStoreId}</span>
+            <span className="text-amber-700 dark:text-amber-300 font-sans text-xs">Khác store đang xem</span>
           )}
         </span>
       )}

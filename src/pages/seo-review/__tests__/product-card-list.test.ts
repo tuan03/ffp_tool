@@ -35,9 +35,9 @@ test("SEO Review cards show compact summaries and open details in the right draw
     onApprove: () => undefined,
     onReject: () => undefined,
   }));
-  assert.match(drawerHtml, /SEO Title/);
-  assert.match(drawerHtml, /Product Description/);
-  assert.match(drawerHtml, /Image Alt/);
+  assert.match(drawerHtml, /SEO title/);
+  assert.match(drawerHtml, /Mô tả sản phẩm/);
+  assert.match(drawerHtml, /Ảnh &amp; Alt/);
 });
 
 test("published history exposes view and archive but no approve, reject, edit, rollback or resync", () => {
@@ -75,7 +75,7 @@ test("partial publication shows a channel-only retry and preserves the Shopify l
   assert.doesNotMatch(html, /SHOPIFY_PUBLICATION_INCOMPLETE/);
   const drawer = renderToStaticMarkup(createElement(ProductDetailDrawer, { product, isOpen: true, onClose: () => undefined,
     onEdit: () => undefined, onApprove: () => undefined, onReject: () => undefined }));
-  assert.match(drawer, /Sales Channels: 1\/2 đã bật/);
-  assert.match(drawer, /Online Store: Đã bật/);
-  assert.match(drawer, /POS: Chưa bật/);
+  assert.match(drawer, /Kênh bán hàng: 1\/2 đã bật/);
+  assert.match(drawer, /Online Store · Đã bật/);
+  assert.match(drawer, /POS · Chưa bật/);
 });

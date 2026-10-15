@@ -1,16 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
-import { sanitizeHtmlDescription } from "../sanitize-html";
-import { reviewActions } from "../review-actions";
+import type { SeoProductUiViewModel } from "../types";
+
 import { ReviewProductActions } from "./ReviewProductActions";
+import { ReviewResultContent } from "./ReviewResultContent";
+import { ReviewResultStatus } from "./ReviewResultStatus";
 import { ReviewStatusBadge } from "./ReviewStatusBadge";
-import { buildProductZoomImages } from "../zoom-image-helper";
-import { SeoSerpPreview } from "./SeoSerpPreview";
-import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
-import { SourceBadge } from "./SourceBadge";
-import { SourceOriginBadge } from "./SourceOriginBadge";
-import type { SeoProcessingStatus, SeoProductUiViewModel, ZoomImageItem } from "../types";
+import type { ZoomImageItem } from "../types";
 
 export interface ProductSplitViewProps {
   readonly products: readonly SeoProductUiViewModel[];
@@ -32,601 +29,85 @@ export interface ProductSplitViewProps {
   readonly onZoomImage?: (images: readonly ZoomImageItem[], initialIndex?: number) => void;
 }
 
-export function ProductSplitView({
-  products,
-  selectedIds,
-  activeProduct,
-  currentStoreId,
-  onSelectActive,
-  onToggleSelect,
-  onViewProduct,
-  onEditProduct,
-  onApproveProduct,
-  onRejectProduct,
-  onRollbackProduct,
-  onApproveAndNext,
-  onRejectAndNext,
-  onDeleteProduct,
-  onRetrySync,
-  onViewSyncError,
-  onZoomImage,
-}: ProductSplitViewProps): React.JSX.Element {
-  const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // If no active product or activeProduct is not in the filtered products list, auto-select first item
+export function ProductSplitView(props: ProductSplitViewProps): React.JSX.Element {
+  const { products, activeProduct, onSelectActive } = props;
+  const readerRef = useRef<HTMLDivElement>(null);
+  const activeIndex = products.findIndex(product => product.id === activeProduct?.id);
   useEffect(() => {
-    if (products.length > 0) {
-      const isCurrentInList = activeProduct && products.some((p) => p.id === activeProduct.id);
-      if (!isCurrentInList) {
-        const first = products[0];
-        if (first) {
-          onSelectActive(first);
-        }
-      }
-    }
-  }, [activeProduct, products, onSelectActive]);
+    const first = products[0];
+    if (first && !products.some(product => product.id === activeProduct?.id)) onSelectActive(first);
+  }, [products, activeProduct?.id, onSelectActive]);
+  useEffect(() => { readerRef.current?.scrollTo({ top: 0 }); }, [activeProduct?.id]);
 
-  const activeIndex = activeProduct
-    ? products.findIndex((p) => p.id === activeProduct.id)
-    : -1;
-
-  function handlePrev() {
-    if (activeIndex > 0) {
-      const prev = products[activeIndex - 1];
-      if (prev) {
-        onSelectActive(prev);
-      }
-    } else if (activeIndex === -1 && products.length > 0) {
-      const first = products[0];
-      if (first) {
-        onSelectActive(first);
-      }
-    }
+  function handleNavigate(direction: number): void {
+    const product = products[activeIndex + direction];
+    if (product) onSelectActive(product);
   }
-
-  function handleNext() {
-    if (activeIndex >= 0 && activeIndex < products.length - 1) {
-      const next = products[activeIndex + 1];
-      if (next) {
-        onSelectActive(next);
-      }
-    } else if (activeIndex === -1 && products.length > 0) {
-      const first = products[0];
-      if (first) {
-        onSelectActive(first);
-      }
-    }
-  }
-
-  // Keyboard navigation: ArrowLeft/ArrowUp for Prev, ArrowRight/ArrowDown for Next
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
       if (document.querySelector('dialog[open], [role="dialog"]')) return;
-      const activeTag = document.activeElement?.tagName?.toLowerCase();
-      if (
-        activeTag === "input" ||
-        activeTag === "textarea" ||
-        activeTag === "select" ||
-        (document.activeElement as HTMLElement)?.isContentEditable
-      ) {
-        return;
-      }
-
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        handlePrev();
-      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        handleNext();
+      const element = document.activeElement;
+      if (element instanceof HTMLElement && (element.isContentEditable || element.closest("input, textarea, select, button, a, summary, [role='tablist'], [role='tabpanel']"))) return;
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        event.preventDefault();
+        handleNavigate(event.key === "ArrowUp" ? -1 : 1);
       }
     }
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeIndex, products, onSelectActive]);
+  }, [products, activeIndex, onSelectActive]);
 
-  function handleCopy(text: string, key: string) {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 1600);
-    }
-  }
-
-  function renderSeoStatusBadge(status: SeoProcessingStatus, isMock: boolean) {
-    if (status === "completed") {
-      return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-          <span className="h-1 w-1 rounded-full bg-emerald-700" />
-          Completed
-          {isMock && <SourceBadge source="mock" />}
-        </span>
-      );
-    }
-    if (status === "processing") {
-      return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
-          Processing
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-        Failed
-      </span>
-    );
-  }
-
-  function renderShopifySyncBadge(product: SeoProductUiViewModel) {
-    if (product.shopifySyncStatus === "synced") {
-      const isCrossStore = Boolean(
-        currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase(),
-      );
-      return (
-        <span
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold ${
-            isCrossStore
-              ? "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
-              : "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
-          }`}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${isCrossStore ? "bg-amber-700" : "bg-emerald-700"}`} />
-          <span>{product.storeId ? `Đích: ${product.storeId}` : "Đích Shopify"}</span>
-          {product.shopifyAdminUrl ? (
-            <a
-              href={product.shopifyAdminUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-emerald-700 dark:text-emerald-300 hover:text-emerald-700 dark:hover:text-emerald-300 underline ml-0.5"
-              title="Mở sản phẩm trên Shopify Admin"
-              onClick={(e) => e.stopPropagation()}
-            >
-              Shopify ↗
-            </a>
-          ) : null}
-        </span>
-      );
-    }
-    if (product.shopifySyncStatus === "failed") {
-      return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-          <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
-          <span>Lỗi đẩy</span>
-          {onViewSyncError && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onViewSyncError(product);
-              }}
-              className="text-xs font-bold text-blue-700 dark:text-blue-300 hover:text-slate-900 dark:hover:text-slate-100 underline ml-0.5 cursor-pointer"
-              title="Xem thông báo lỗi chi tiết"
-            >
-              Chi tiết
-            </button>
-          )}
-          {onRetrySync && reviewActions(product).canRetry ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRetrySync(product.id);
-              }}
-              className="text-xs font-bold text-rose-700 dark:text-rose-300 hover:text-slate-900 dark:hover:text-slate-100 underline ml-0.5 cursor-pointer"
-            >
-              Thử lại
-            </button>
-          ) : null}
-        </span>
-      );
-    }
-    return null;
-  }
-
-  if (products.length === 0) {
-    return (
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-12 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-slate-50 dark:bg-slate-800 text-xl text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
-          <AppIcon name="search" />
-        </div>
-        <h4 className="mt-3 text-sm font-bold text-slate-900 dark:text-slate-100">Không có sản phẩm nào</h4>
-        <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-          Không tìm thấy sản phẩm nào phù hợp với bộ lọc hoặc từ khóa tìm kiếm hiện tại.
-        </p>
+  return <div className="grid min-w-0 grid-cols-[minmax(17rem,0.85fr)_minmax(0,2fr)] items-start gap-4">
+    <section aria-label="Danh sách kết quả SEO" className="sticky top-20 flex h-[calc(100dvh-25rem)] min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+        <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-300">Sản phẩm trên trang</h3>
+        <span className="text-xs tabular-nums text-slate-400">{products.length}</span>
       </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-      {/* Left Master List */}
-      <div className="lg:col-span-5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-210px)]">
-        <div className="p-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-between">
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-            Danh sách ({products.length})
-          </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            {activeIndex >= 0 ? `Đang chọn #${activeIndex + 1}` : "Chưa chọn"}
-          </span>
-        </div>
-
-        <div className="overflow-y-auto divide-y divide-slate-200 dark:divide-slate-700 p-1 flex-1">
-          {products.map((product, idx) => {
-            const isSelected = selectedIds.has(product.id);
-            const isActive = activeProduct?.id === product.id;
-            const firstImage = product.images[0]?.previewUrl.value || "";
-
-            return (
-              <div
-                key={product.id}
-                onClick={() => onSelectActive(product)}
-                className={`p-3 rounded-lg transition cursor-pointer flex items-start gap-3 ${
-                  isActive
-                    ? "bg-blue-50 dark:bg-blue-950/60 border border-blue-300 dark:border-blue-800 shadow-md ring-1 ring-blue-300 dark:ring-blue-400"
-                    : "hover:bg-slate-50 dark:hover:bg-slate-700 border border-transparent"
-                }`}
-              >
-                {/* Checkbox */}
-                <div
-                  className="pt-0.5"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggleSelect(product.id)}
-                    className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300 focus:ring-blue-300 dark:focus:ring-blue-400 cursor-pointer"
-                  />
-                </div>
-
-                {/* Thumbnail */}
-                <div className="relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-400 group">
-                  {firstImage ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onZoomImage?.(buildProductZoomImages(product), 0);
-                      }}
-                      className="h-full w-full block cursor-zoom-in relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400 rounded-lg"
-                      title="Nhấn để phóng to ảnh"
-                      aria-label="Phóng to ảnh sản phẩm"
-                    >
-                      <img
-                        src={firstImage}
-                        alt={product.productTitle.value}
-                        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                        loading="lazy"
-                      />
-                      <span className="absolute inset-0 bg-slate-50 dark:bg-slate-800 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 dark:text-slate-100 text-xs">
-                        <AppIcon name="search" />
-                      </span>
-                    </button>
-                  ) : (
-                    <span className="text-sm"><AppIcon name="image" /></span>
-                  )}
-                </div>
-
-                {/* Info */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1 mb-0.5">
-                    <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                      {product.productTitle.value}
-                    </span>
-                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400 flex-shrink-0">
-                      #{idx + 1}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-blue-700 dark:text-blue-300 truncate font-mono">
-                    /{product.handle.value}
-                  </p>
-
-                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    <SourceOriginBadge product={product} showStatusHint={false} targetStoreId={currentStoreId} />
-                    <ReviewStatusBadge product={product} />
-                    {product.seoStatus.value !== "completed" ? renderSeoStatusBadge(product.seoStatus.value, product.seoStatus.source === "mock") : product.seoStatus.source === "mock" ? <SourceBadge source="mock" /> : null}
-                    {renderShopifySyncBadge(product)}
-                    {product.isReverting && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                        <svg className="animate-spin h-2.5 w-2.5 text-amber-700 dark:text-amber-300" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                        </svg>
-                        <span>Reverting</span>
-                      </span>
-                    )}
-                    {product.lastRevertedAt && product.reviewDecision !== "approved" && !product.isSyncing && !product.isReverting && (
-                      <span className="text-xs text-amber-700 dark:text-amber-300 font-medium" title={`Đã hoàn tác: ${new Date(product.lastRevertedAt).toLocaleString()}`}>
-                        ↩ Reverted
-                      </span>
-                    )}
-                    {product.syncError && !product.isSyncing && (
-                      <span className="text-xs text-rose-700 dark:text-rose-300 font-medium" title={product.syncError}>
-                        <AppIcon name="warning" /> Lỗi sync
-                      </span>
-                    )}
-                    {product.revertError && !product.isReverting && (
-                      <span className="text-xs text-rose-700 dark:text-rose-300 font-medium" title={product.revertError}>
-                        <AppIcon name="warning" /> Lỗi hoàn tác
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      <div className="min-h-0 overflow-y-auto">
+        {products.map(product => <article key={product.id} aria-label={product.productTitle.value}
+          className={"relative flex gap-2 border-b border-slate-100 px-3 py-4 last:border-0 dark:border-slate-800 " +
+            (product.id === activeProduct?.id ? "bg-blue-50/70 shadow-[inset_3px_0_0_0_#2563eb] dark:bg-blue-950/30" : "hover:bg-slate-50 dark:hover:bg-slate-800/50")}>
+          <input type="checkbox" aria-label={`Chọn ${product.productTitle.value}`} checked={props.selectedIds.has(product.id)}
+            onChange={() => props.onToggleSelect(product.id)} className="mt-1 h-3.5 w-3.5 shrink-0 accent-blue-600" />
+          <button type="button" aria-pressed={product.id === activeProduct?.id} onClick={() => onSelectActive(product)}
+            className="flex min-w-0 flex-1 gap-3 text-left focus-visible:outline-2 focus-visible:outline-blue-600">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-100 bg-white text-slate-400 dark:border-slate-700 dark:bg-slate-800">
+              {product.images[0]?.previewUrl.value ? <img src={product.images[0].previewUrl.value} alt="" loading="lazy" className="h-full w-full object-contain" /> : <AppIcon name="image" />}
+            </span>
+            <span className="min-w-0 flex-1 space-y-2">
+              <span className="line-clamp-2 block text-xs font-semibold leading-5 text-slate-900 dark:text-slate-100">{product.productTitle.value}</span>
+              <span className="block truncate font-mono text-[11px] text-slate-400">{product.asin || product.handle.value || product.productId}</span>
+              <ReviewStatusBadge product={product} />
+            </span>
+          </button>
+        </article>)}
       </div>
-
-      {/* Right Detail Inspector */}
-      <div className="lg:col-span-7 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col sticky top-4 max-h-[calc(100vh-140px)]">
-        {activeProduct ? (
-          <>
-            {/* Inspector Header with Navigation */}
-            <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold text-xs">
-                  SEO
-                </span>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
-                    {activeProduct.productTitle.value}
-                  </h3>
-                  <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 font-mono">
-                    <span>/{activeProduct.handle.value}</span>
-                    {activeProduct.asin && <span>• ASIN: {activeProduct.asin}</span>}
-                  </div>
-                </div>
-              </div>
-
-              {/* Prev / Next controls */}
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={handlePrev}
-                  disabled={activeIndex <= 0 && activeIndex !== -1}
-                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-xs transition"
-                  title="Sản phẩm trước (Phím tắt: ← hoặc ↑)"
-                >
-                  ◀
-                </button>
-                <span className="text-xs font-mono text-slate-600 dark:text-slate-400 px-1">
-                  {activeIndex >= 0 ? activeIndex + 1 : (products.length > 0 ? 1 : 0)} / {products.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleNext}
-                  disabled={activeIndex >= products.length - 1}
-                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-xs transition"
-                  title="Sản phẩm kế tiếp (Phím tắt: → hoặc ↓)"
-                >
-                  ▶
-                </button>
-              </div>
-            </div>
-
-            {/* Inspector Body - Scrollable */}
-            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-sm text-slate-700 dark:text-slate-300">
-              {/* Status Banner */}
-              <div className="flex flex-wrap items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <SourceOriginBadge product={activeProduct} showStore targetStoreId={currentStoreId} />
-                  <span className="text-xs text-slate-600 dark:text-slate-400">| Trạng thái:</span>
-                  <ReviewStatusBadge product={activeProduct} />
-                  {renderShopifySyncBadge(activeProduct)}
-                </div>
-                <div className="flex items-center gap-2">
-                  {activeProduct.seoStatus.value !== "completed" ? renderSeoStatusBadge(activeProduct.seoStatus.value, activeProduct.seoStatus.source === "mock") : <span className="text-xs text-slate-500 dark:text-slate-400">SEO hoàn tất{activeProduct.seoStatus.source === "mock" ? <SourceBadge source="mock" /> : null}</span>}
-                </div>
-              </div>
-
-              {activeProduct.lastSyncedAt && activeProduct.reviewDecision === "approved" && (
-                <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 p-2.5 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span>✓</span> Đã đồng bộ lên Shopify thành công
-                  </span>
-                  <span className="font-mono text-xs text-emerald-700 dark:text-emerald-300">
-                    {new Date(activeProduct.lastSyncedAt).toLocaleTimeString()}
-                  </span>
-                </div>
-              )}
-
-              {activeProduct.lastRevertedAt && activeProduct.reviewDecision !== "approved" && (
-                <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-2.5 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
-                  </span>
-                  <span className="font-mono text-xs text-amber-700 dark:text-amber-300">
-                    {new Date(activeProduct.lastRevertedAt).toLocaleTimeString()}
-                  </span>
-                </div>
-              )}
-
-              {activeProduct.syncError && (
-                <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
-                  <span className="text-sm"><AppIcon name="warning" /></span>
-                  <div>
-                    <span className="font-bold">Lỗi đồng bộ Shopify:</span> {activeProduct.syncError}
-                  </div>
-                </div>
-              )}
-
-              {activeProduct.revertError && (
-                <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
-                  <span className="text-sm"><AppIcon name="warning" /></span>
-                  <div>
-                    <span className="font-bold">Lỗi hoàn tác Shopify:</span> {activeProduct.revertError}
-                  </div>
-                </div>
-              )}
-
-              {activeProduct.rejectionReason && (
-                <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-2.5 text-xs text-rose-700 dark:text-rose-300">
-                  <span className="font-bold">Lý do từ chối:</span> {activeProduct.rejectionReason}
-                </div>
-              )}
-
-              {/* Shopify Sync Error Banner */}
-              {activeProduct.shopifySyncStatus === "failed" && (
-                <ShopifySyncErrorBanner
-                  error={activeProduct.shopifySyncError}
-                  syncedAt={activeProduct.shopifySyncedAt}
-                  onRetry={onRetrySync && reviewActions(activeProduct).canRetry ? () => onRetrySync(activeProduct.id) : undefined}
-                />
-              )}
-
-              {/* 1. Google SERP Preview */}
-              <SeoSerpPreview
-                seoTitle={activeProduct.seoTitle}
-                seoDescription={activeProduct.seoDescription}
-                handle={activeProduct.handle}
-              />
-
-              {/* 2. Image Alts Gallery */}
-              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    <AppIcon name="image" /> Image Alt Texts ({activeProduct.images.length})
-                  </span>
-                </div>
-
-                {activeProduct.images.length === 0 ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 italic">Chưa có hình ảnh.</p>
-                ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {activeProduct.images.map((img, idx) => {
-                      const copyId = `split-img-${idx}`;
-                      return (
-                        <div
-                          key={img.id}
-                          className="flex items-start gap-3 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                        >
-                          <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 group relative">
-                            {img.previewUrl.value ? (
-                              <button
-                                type="button"
-                                onClick={() => onZoomImage?.(buildProductZoomImages(activeProduct), idx)}
-                                className="h-full w-full block cursor-zoom-in relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400 rounded"
-                                title="Nhấn để phóng to ảnh"
-                                aria-label={`Phóng to ảnh #${idx + 1}`}
-                              >
-                                <img
-                                  src={img.previewUrl.value}
-                                  alt={img.alt.value}
-                                  className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                                />
-                                <span className="absolute inset-0 bg-slate-50 dark:bg-slate-800 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 dark:text-slate-100 text-xs">
-                                  <AppIcon name="search" />
-                                </span>
-                              </button>
-                            ) : (
-                              <span className="text-sm"><AppIcon name="image" /></span>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">
-                                Ảnh #{idx + 1}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-mono text-slate-600 dark:text-slate-400">
-                                  {img.alt.value.length}/125
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(img.alt.value, copyId)}
-                                  className="text-xs text-slate-600 dark:text-slate-400 hover:text-blue-700 dark:hover:text-blue-300 cursor-pointer"
-                                >
-                                  {copiedKey === copyId ? "✓" : "Copy"}
-                                </button>
-                              </div>
-                            </div>
-                            <div className="text-xs text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900 p-1.5 rounded border border-slate-200 dark:border-slate-700">
-                              {img.alt.value || <span className="text-rose-700 dark:text-rose-300 italic">Chưa có Alt</span>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* 3. Product Description */}
-              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    <AppIcon name="review" /> Mô tả sản phẩm
-                  </span>
-
-                  <div className="flex items-center rounded-md bg-white dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-700 text-xs font-medium">
-                    <button
-                      type="button"
-                      onClick={() => setDescriptionTab("formatted")}
-                      className={`px-2 py-0.5 rounded transition ${
-                        descriptionTab === "formatted"
-                          ? "bg-blue-600 text-white font-semibold"
-                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-                      }`}
-                    >
-                      Preview
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDescriptionTab("raw")}
-                      className={`px-2 py-0.5 rounded transition ${
-                        descriptionTab === "raw"
-                          ? "bg-blue-600 text-white font-semibold"
-                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-                      }`}
-                    >
-                      HTML
-                    </button>
-                  </div>
-                </div>
-
-                {descriptionTab === "formatted" ? (
-                  <div
-                    className="prose prose-invert prose-xs max-w-none p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 max-h-56 overflow-y-auto leading-relaxed text-slate-700 dark:text-slate-300 text-xs"
-                    dangerouslySetInnerHTML={{
-                      __html: sanitizeHtmlDescription(activeProduct.productDescription.value),
-                    }}
-                  />
-                ) : (
-                  <div className="relative">
-                    <pre className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-700 dark:text-slate-300 overflow-x-auto max-h-56">
-                      {activeProduct.productDescription.value}
-                    </pre>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopy(activeProduct.productDescription.value, `desc-${activeProduct.id}`)
-                      }
-                      className="absolute top-2 right-2 px-2 py-0.5 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
-                    >
-                      {copiedKey === `desc-${activeProduct.id}` ? "✓" : "Copy"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-              <ReviewProductActions product={activeProduct} onView={onViewProduct} onEdit={onEditProduct}
-                onApprove={onApproveProduct} onSync={onRetrySync} onArchive={onDeleteProduct} />
-            </div>
-          </>
-        ) : (
-          <div className="p-12 text-center text-slate-500 dark:text-slate-400">
-            <span className="text-3xl block mb-2">👈</span>
-            Chọn một sản phẩm từ danh sách bên trái để review chi tiết.
+      <p className="border-t border-slate-200 px-4 py-2.5 text-[11px] text-slate-400 dark:border-slate-700">↑ ↓ chuyển sản phẩm · Chỉ xem, không tự ghi dữ liệu</p>
+    </section>
+    <section aria-label="Khung đọc kết quả SEO" className="sticky top-20 flex h-[calc(100dvh-25rem)] min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      {activeProduct ? <>
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+          <div className="min-w-0"><p className="mb-1 text-[11px] font-medium text-slate-400">Kết quả đã lưu</p>
+            <h3 className="line-clamp-2 text-base font-semibold leading-6 tracking-tight text-slate-900 dark:text-slate-100">{activeProduct.productTitle.value}</h3>
           </div>
-        )}
-      </div>
-    </div>
-  );
+          <div className="flex shrink-0 items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <button type="button" aria-label="Sản phẩm trước" disabled={activeIndex <= 0} onClick={() => handleNavigate(-1)}
+              className="rounded-md border border-slate-200 px-2 py-1.5 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800">←</button>
+            <span className="tabular-nums">{Math.max(0, activeIndex + 1)}/{products.length}</span>
+            <button type="button" aria-label="Sản phẩm kế tiếp" disabled={activeIndex >= products.length - 1} onClick={() => handleNavigate(1)}
+              className="rounded-md border border-slate-200 px-2 py-1.5 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800">→</button>
+          </div>
+        </div>
+        <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <ReviewResultStatus product={activeProduct} currentStoreId={props.currentStoreId} />
+          <ReviewResultContent product={activeProduct} onZoomImage={props.onZoomImage} />
+        </div>
+        <div className="shrink-0 border-t border-slate-200 p-3 dark:border-slate-700">
+          <ReviewProductActions product={activeProduct} onView={props.onViewProduct} onEdit={props.onEditProduct}
+            onApprove={props.onApproveProduct} onSync={props.onRetrySync} onArchive={props.onDeleteProduct} />
+        </div>
+      </> : <p className="p-10 text-sm text-slate-500 dark:text-slate-400">Chọn sản phẩm bên trái để xem nội dung đã lưu.</p>}
+    </section>
+  </div>;
 }

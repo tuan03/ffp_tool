@@ -5,16 +5,13 @@ import { useDialogFocus } from "../../../shared/hooks/useDialogFocus";
 import { WorkerReviewHistoryPanel } from "../../../modules/custom-gpt-seo";
 import type { CustomGptClient } from "../../../modules/custom-gpt-seo";
 
-import { sanitizeHtmlDescription } from "../sanitize-html";
 import { reviewActions } from "../review-actions";
 import { ReviewProductActions } from "./ReviewProductActions";
-import { ReviewStatusBadge } from "./ReviewStatusBadge";
-import { buildProductZoomImages } from "../zoom-image-helper";
+import { ReviewResultContent } from "./ReviewResultContent";
+import { ReviewResultStatus } from "./ReviewResultStatus";
 import { serializeProductRawJson } from "../product-raw-json-helper";
 import { ShopifySyncErrorBanner } from "./ShopifySyncErrorBanner";
 import { SeoVersionHistoryPanel, isShopifyProductGid } from "./SeoVersionHistoryPanel";
-import { SourceBadge } from "./SourceBadge";
-import { SourceOriginBadge } from "./SourceOriginBadge";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductDetailDrawerProps {
@@ -62,7 +59,7 @@ export function ProductDetailDrawer({
   onRollback,
   onZoomImage,
 }: ProductDetailDrawerProps): React.JSX.Element | null {
-  const [descriptionTab, setDescriptionTab] = useState<"formatted" | "raw">("formatted");
+  const [isHistoryVisible, setIsHistoryVisible] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showRawJsonModal, setShowRawJsonModal] = useState(false);
   const dialogRef = useDialogFocus({ isOpen: isOpen && product !== null, onClose });
@@ -141,8 +138,6 @@ export function ProductDetailDrawer({
     }
   }
 
-  const seoTitleLen = product.seoTitle.value.length;
-  const seoDescLen = product.seoDescription.value.length;
   const reviewTarget = product.coordinatorReview?.target;
   const sourceVariants = Array.isArray(product.sourceCrawlProduct?.variants)
     ? product.sourceCrawlProduct.variants.filter(
@@ -160,7 +155,7 @@ export function ProductDetailDrawer({
       />
 
       <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="w-screen max-w-2xl bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
+        <div className="w-screen max-w-5xl bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-sm flex flex-col">
           {/* Drawer Header */}
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-6 py-4 bg-slate-50 dark:bg-slate-800 sticky top-0 z-10">
             <div className="flex items-center gap-3">
@@ -169,26 +164,16 @@ export function ProductDetailDrawer({
               </span>
               <div>
                 <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 line-clamp-1">
-                  Review Chi Tiết SEO
+                  Kết quả SEO
                 </h2>
                 <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 font-mono">
-                  <span>ID: {product.id}</span>
+                  <span className="max-w-xl truncate">{product.productTitle.value}</span>
                   {product.asin && <span>• ASIN: {product.asin}</span>}
                 </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowRawJsonModal(true)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-blue-700 dark:hover:text-blue-300 border border-slate-300 dark:border-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-                title="Xem trực quan toàn bộ object JSON đầy đủ của sản phẩm"
-              >
-                <span><AppIcon name="search" /></span>
-                <span>Xem Raw JSON</span>
-              </button>
-
               <button
                 type="button"
                 onClick={onClose}
@@ -200,329 +185,27 @@ export function ProductDetailDrawer({
             </div>
           </div>
 
-          {/* Drawer Body - Scrollable */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-slate-700 dark:text-slate-300">
-            {workerClient && product.gptJobId && product.backendPublishRequired && <WorkerReviewHistoryPanel key={`${product.storeId}:${product.gptJobId}`} client={workerClient} storeId={product.storeId || currentStoreId || ""} jobId={product.gptJobId} />}
-            {workerClient && product.productId && isShopifyProductGid(product.productId) && (product.storeId || currentStoreId) &&
-              <SeoVersionHistoryPanel key={`${product.storeId || currentStoreId}:${product.productId}`} client={workerClient}
-                storeId={product.storeId || currentStoreId || ""} productGid={product.productId} />}
-            {product.backendPublishRequired && (
-              <section className="rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 p-4" aria-label="Backend publish">
-                <h3 className="font-semibold text-blue-700 dark:text-blue-300">Sync trực tiếp qua backend</h3>
-                <p>Sync được lưu trên server, không cần giữ tab mở. Vendor, handle, giá và variants không được gửi cập nhật.</p>
-                {product.backendPublish && <p className="mt-2 break-all">Tác vụ: {product.backendPublish.id} · {product.backendPublish.state}{product.backendPublish.errorCode ? ` · ${product.backendPublish.errorCode}` : ""}</p>}
-                {product.originalBackup && <details className="mt-3">
-                  <summary className="cursor-pointer text-blue-700 dark:text-blue-300">So sánh nội dung nguồn và bản đề xuất</summary>
-                  {[
-                    ["Tên sản phẩm", product.originalBackup.productTitle, product.productTitle.value],
-                    ["SEO title", product.originalBackup.seoTitle ?? "", product.seoTitle.value],
-                    ["Meta description", product.originalBackup.seoDescription ?? "", product.seoDescription.value],
-                    ["Mô tả (HTML dạng văn bản)", product.originalBackup.productDescription, product.productDescription.value],
-                  ].map(([label, before, after]) => <div key={label} className="mt-3">
-                    <h4 className="font-semibold">{label}</h4>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div><span className="text-slate-600 dark:text-slate-400">Nguồn đã lưu</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{before}</pre></div>
-                      <div><span className="text-blue-700 dark:text-blue-300">Đề xuất</span><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{after}</pre></div>
-                    </div>
-                  </div>)}
-                </details>}
-              </section>
-            )}
-            {/* Review Status Banner */}
-            <div className="flex flex-wrap items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 gap-3">
-              <div className="flex items-center gap-3 flex-wrap">
-                <SourceOriginBadge product={product} showStore targetStoreId={currentStoreId} />
-                {product.seoVersion !== undefined && product.seoVersion > 0 && (
-                  <span className="px-2.5 py-1 rounded text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                    v{product.seoVersion}
-                  </span>
-                )}
-                <span className="text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">| Trạng thái:</span>
-                <ReviewStatusBadge product={product} />
-                {product.salesChannelPublication && <details className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-xs text-slate-700 dark:text-slate-300">
-                  <summary className="cursor-pointer">Sales Channels: {product.salesChannelPublication.channels.length > 0
-                    ? `${product.salesChannelPublication.channels.filter(channel => channel.published).length}/${product.salesChannelPublication.channels.length} đã bật`
-                    : "chưa tải được danh sách kênh"}</summary>
-                  <ul className="mt-2 space-y-1">
-                    {product.salesChannelPublication.channels.map(channel => <li key={channel.id} className={channel.published ? "text-blue-700 dark:text-blue-300" : "text-amber-700 dark:text-amber-300"}>
-                      {channel.name}: {channel.published ? "Đã bật" : "Chưa bật"}
-                    </li>)}
-                  </ul>
-                  {product.salesChannelPublication.error && <p className="mt-2 text-amber-700 dark:text-amber-300">{product.salesChannelPublication.error}</p>}
-                </details>}
-
-                {/* Shopify Store Sync Badge */}
-                {product.shopifySyncStatus === "queued" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-                    <span className="h-2 w-2 rounded-full bg-amber-700" />
-                    <span>Đang chờ đồng bộ Store</span>
-                  </span>
-                )}
-                {product.shopifySyncStatus === "syncing" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 animate-pulse">
-                    <svg className="animate-spin h-3.5 w-3.5 text-blue-700 dark:text-blue-300" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                    </svg>
-                    <span>Đang đồng bộ Store...</span>
-                  </span>
-                )}
-                {product.shopifySyncStatus === "synced" && (
-                  <span
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase()
-                        ? "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
-                        : "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
-                    }`}
-                  >
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        currentStoreId && product.storeId && currentStoreId.toLowerCase() !== product.storeId.toLowerCase()
-                          ? "bg-amber-700"
-                          : "bg-emerald-700"
-                      }`}
-                    />
-                    <span>{product.storeId ? `Đã đẩy (${product.storeId})` : "Đã đẩy Shopify Store"}</span>
-                    {product.shopifyAdminUrl && (
-                      <a
-                        href={product.shopifyAdminUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-emerald-700 dark:text-emerald-300 hover:text-emerald-700 dark:hover:text-emerald-300 underline inline-flex items-center gap-0.5 ml-1"
-                      >
-                        Shopify Admin ↗
-                      </a>
-                    )}
-                  </span>
-                )}
-                {product.shopifySyncStatus === "failed" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-                    <span className="h-2 w-2 rounded-full bg-rose-600" />
-                    <span title={product.shopifySyncError}>Lỗi đồng bộ Store</span>
-                    {onRetrySync && reviewActions(product).canRetry && (
-                      <button
-                        type="button"
-                        onClick={() => onRetrySync(product.id)}
-                        className="text-xs font-semibold text-rose-700 dark:text-rose-300 hover:text-slate-900 dark:hover:text-slate-100 underline ml-1 cursor-pointer"
-                      >
-                        Thử lại
-                      </button>
-                    )}
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500 dark:text-slate-400">Pipeline:</span>
-                <span className="capitalize font-mono text-xs font-semibold text-blue-700 dark:text-blue-300">
-                  {product.seoStatus.value}
-                </span>
-                <SourceBadge source={product.seoStatus.source} />
-              </div>
-            </div>
-
-            {product.lastSyncedAt && product.reviewDecision === "approved" && (
-              <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 p-3.5 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <span>✓</span> Đã đồng bộ lên Shopify thành công
-                </span>
-                <span className="font-mono text-emerald-700 dark:text-emerald-300">
-                  {new Date(product.lastSyncedAt).toLocaleString()}
-                </span>
-              </div>
-            )}
-
-            {product.lastRevertedAt && product.reviewDecision !== "approved" && (
-              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3.5 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <span>↩</span> Đã hoàn tác về dữ liệu gốc thành công
-                </span>
-                <span className="font-mono text-amber-700 dark:text-amber-300">
-                  {new Date(product.lastRevertedAt).toLocaleString()}
-                </span>
-              </div>
-            )}
-
-            {product.syncError && (
-              <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
-                <span className="text-base flex-shrink-0"><AppIcon name="warning" /></span>
-                <div>
-                  <div className="font-bold text-rose-700 dark:text-rose-300">Lỗi đồng bộ lên Shopify:</div>
-                  <div className="mt-0.5 text-rose-700 dark:text-rose-300">{product.syncError}</div>
-                </div>
-              </div>
-            )}
-
-            {product.revertError && (
-              <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
-                <span className="text-base flex-shrink-0"><AppIcon name="warning" /></span>
-                <div>
-                  <div className="font-bold text-rose-700 dark:text-rose-300">Lỗi hoàn tác lên Shopify:</div>
-                  <div className="mt-0.5 text-rose-700 dark:text-rose-300">{product.revertError}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Rejection notice if present */}
-            {product.rejectionReason && (
-              <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3.5 text-xs text-rose-700 dark:text-rose-300">
-                <span className="font-bold">Lý do từ chối / lỗi:</span> {product.rejectionReason}
-              </div>
-            )}
-
-            {/* Shopify Sync Error Banner */}
-            {product.shopifySyncStatus === "failed" && (
-              <ShopifySyncErrorBanner
-                error={product.shopifySyncError}
-                syncedAt={product.shopifySyncedAt}
-                onRetry={onRetrySync && reviewActions(product).canRetry ? () => onRetrySync(product.id) : undefined}
-                showDetailsByDefault={true}
-              />
-            )}
-
-            {/* 1. Product Title & Handle */}
-            <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5">
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                    Product Title (Tiêu đề sản phẩm)
-                  </label>
-                  <SourceBadge source={product.productTitle.source} />
-                </div>
-                <div className="font-medium text-slate-900 dark:text-slate-100 text-base leading-snug">
-                  {product.productTitle.value}
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                    Product Handle (URL Slug)
-                  </label>
-                  <SourceBadge source={product.handle.source} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <code className="font-mono text-xs text-blue-700 dark:text-blue-300 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 flex-1 overflow-x-auto">
-                    /products/{product.handle.value}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(product.handle.value, "handle")}
-                    className="px-2.5 py-1.5 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
-                  >
-                    {copiedKey === "handle" ? "✓ Đã chép" : "Copy"}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. SEO Title & SEO Meta Description */}
-            <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5">
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                      SEO Title (Meta Title)
-                    </label>
-                    <SourceBadge source={product.seoTitle.source} />
-                  </div>
-                  <span
-                    className={`text-xs font-mono font-medium ${
-                      seoTitleLen > 70 ? "text-rose-700 dark:text-rose-300" : seoTitleLen >= 55 ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"
-                    }`}
-                  >
-                    {seoTitleLen} / 70 ký tự
-                  </span>
-                </div>
-                <div className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-medium text-slate-900 dark:text-slate-100">
-                  {product.seoTitle.value}
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                      SEO Description (Meta Description)
-                    </label>
-                    <SourceBadge source={product.seoDescription.source} />
-                  </div>
-                  <span
-                    className={`text-xs font-mono font-medium ${
-                      seoDescLen > 160 ? "text-rose-700 dark:text-rose-300" : seoDescLen >= 120 ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"
-                    }`}
-                  >
-                    {seoDescLen} / 160 ký tự
-                  </span>
-                </div>
-                <div className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs leading-relaxed">
-                  {product.seoDescription.value}
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Product Description (HTML Preview / Raw Code) */}
-            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                    Product Description (Mô tả chi tiết)
-                  </label>
-                  <SourceBadge source={product.productDescription.source} />
-                </div>
-
-                <div className="flex items-center rounded-lg bg-white dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-700 text-xs font-medium">
-                  <button
-                    type="button"
-                    onClick={() => setDescriptionTab("formatted")}
-                    className={`px-3 py-1 rounded transition ${
-                      descriptionTab === "formatted"
-                        ? "bg-blue-600 text-white font-semibold"
-                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-                    }`}
-                  >
-                    Preview
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDescriptionTab("raw")}
-                    className={`px-3 py-1 rounded transition ${
-                      descriptionTab === "raw"
-                        ? "bg-blue-600 text-white font-semibold"
-                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-                    }`}
-                  >
-                    HTML
-                  </button>
-                </div>
-              </div>
-
-              {descriptionTab === "formatted" ? (
-                <div
-                  className="prose prose-invert prose-xs max-w-none p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 max-h-72 overflow-y-auto leading-relaxed text-slate-700 dark:text-slate-300"
-                  dangerouslySetInnerHTML={{
-                    __html: sanitizeHtmlDescription(product.productDescription.value),
-                  }}
-                />
-              ) : (
-                <div className="relative">
-                  <pre className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-700 dark:text-slate-300 overflow-x-auto max-h-72">
-                    {product.productDescription.value}
-                  </pre>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(product.productDescription.value, "desc")}
-                    className="absolute top-2 right-2 px-2.5 py-1 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
-                  >
-                    {copiedKey === "desc" ? "✓ Đã chép" : "Copy"}
-                  </button>
-                </div>
-              )}
-            </div>
-
+          {/* Keep the saved result primary; technical history remains opt-in. */}
+          <div className="min-h-0 flex-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
+            <ReviewResultStatus product={product} currentStoreId={currentStoreId} />
+            <ReviewResultContent product={product} onZoomImage={onZoomImage} />
+            <div className="space-y-4 px-5 pb-6">
+              <details open={isHistoryVisible} className="rounded-lg border border-slate-200 p-4 dark:border-slate-700" onToggle={event => setIsHistoryVisible(event.currentTarget.open)}>
+                <summary className="cursor-pointer text-sm font-medium">Lịch sử SEO & đồng bộ</summary>
+                {isHistoryVisible && <div className="mt-4 space-y-4">
+                  {workerClient && product.gptJobId && product.backendPublishRequired && <WorkerReviewHistoryPanel key={`${product.storeId}:${product.gptJobId}`} client={workerClient} storeId={product.storeId || currentStoreId || ""} jobId={product.gptJobId} />}
+                  {workerClient && product.productId && isShopifyProductGid(product.productId) && (product.storeId || currentStoreId)
+                    ? <SeoVersionHistoryPanel key={`${product.storeId || currentStoreId}:${product.productId}`} client={workerClient}
+                        storeId={product.storeId || currentStoreId || ""} productGid={product.productId} />
+                    : <p className="text-xs text-slate-500 dark:text-slate-400">Bản ghi này chưa có lịch sử phiên bản Shopify để truy xuất.</p>}
+                </div>}
+              </details>
+              {(product.coordinatorReview || product.sourcePinterestItem) && <details className="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+                <summary className="cursor-pointer text-sm font-medium">Cấu hình nguồn, giá & biến thể</summary>
+                <div className="mt-4 space-y-4">
             {product.coordinatorReview && reviewTarget && (
               <section className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Thông tin Shopify sẽ đồng bộ</h3>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Cấu hình Shopify đã lưu</h3>
                 <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                   <div><dt className="text-slate-500 dark:text-slate-400">Store</dt><dd className="mt-1 font-mono text-blue-700 dark:text-blue-300">{product.storeId || "—"}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">Nhà cung cấp (Vendor)</dt><dd className="mt-1 font-medium text-slate-900 dark:text-slate-100">{(product.storeId ? (product.storeId.split("--")[0] || product.storeId).trim().toUpperCase() : "—")}</dd></div>
@@ -568,196 +251,6 @@ export function ProductDetailDrawer({
               </section>
             )}
 
-            {/* 4. Images Gallery (Preview, ALT text, WebP URL) */}
-            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                  Hình ảnh & Alt Text ({product.images.length})
-                </label>
-              </div>
-
-              {product.images.length === 0 ? (
-                <div className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 italic text-xs">
-                  Sản phẩm này chưa có dữ liệu hình ảnh.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {product.images.map((img, idx) => (
-                    <div
-                      key={img.id}
-                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 space-y-3"
-                    >
-                      <div className="flex items-start gap-4">
-                        {/* Thumbnail */}
-                        <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-400 group relative">
-                          {img.previewUrl.value ? (
-                            <button
-                              type="button"
-                              onClick={() => onZoomImage?.(buildProductZoomImages(product), idx)}
-                              className="h-full w-full block cursor-zoom-in relative focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-400 rounded-lg"
-                              title="Nhấn để phóng to ảnh"
-                              aria-label={`Phóng to ảnh #${idx + 1}`}
-                            >
-                              <img
-                                src={img.previewUrl.value}
-                                alt={img.alt.value}
-                                className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                                onError={(e) => {
-                                  const target = e.currentTarget;
-                                  target.style.display = "none";
-                                }}
-                              />
-                              <span className="absolute inset-0 bg-slate-50 dark:bg-slate-800 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-slate-900 dark:text-slate-100 text-xs font-semibold">
-                                <AppIcon name="search" />
-                              </span>
-                            </button>
-                          ) : (
-                            <span className="text-xl" title="Không có ảnh"><AppIcon name="image" /></span>
-                          )}
-                        </div>
-
-                        {/* Alt text & metadata */}
-                        <div className="flex-1 min-w-0 space-y-2">
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">
-                                  Image Alt #{idx + 1}
-                                </span>
-                                <SourceBadge source={img.alt.source} />
-                              </div>
-                              <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                                {img.alt.value.length} / 125 ký tự
-                              </span>
-                            </div>
-                            <div className="text-xs text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-700">
-                              {img.alt.value || (
-                                <span className="text-slate-500 dark:text-slate-400 italic">Chưa có Alt text</span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* WebP info */}
-                          <div className="flex items-center gap-2 pt-1 text-xs">
-                            <span className="text-slate-500 dark:text-slate-400 font-mono text-xs">WebP:</span>
-                            <span className="font-mono text-blue-700 dark:text-blue-300 text-xs truncate flex-1">
-                              {img.webpUrl.value || img.webpFilename.value || (
-                                <span className="text-slate-500 dark:text-slate-400 italic font-sans">Chưa có WebP URL</span>
-                              )}
-                            </span>
-                            <SourceBadge source={img.webpUrl.source} />
-                            {(img.webpUrl.value || img.webpFilename.value) ? (
-                              <button
-                                type="button"
-                                onClick={() => handleCopy(img.webpUrl.value || img.webpFilename.value, `img-${idx}`)}
-                                className="px-2 py-0.5 rounded text-xs font-medium bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
-                              >
-                                {copiedKey === `img-${idx}` ? "✓" : "Copy"}
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* AEO Suite (Generative / Answer Engine Optimization) */}
-            <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-base"><AppIcon name="code" /></span>
-                  <h3 className="font-bold text-blue-700 dark:text-blue-300 text-sm tracking-wide">
-                    AEO Suite (AI Search &amp; Overview Optimization)
-                  </h3>
-                </div>
-                <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
-                  GEO / Perplexity / ChatGPT Search
-                </span>
-              </div>
-
-              {/* 1. AI Quick Summary (Featured Snippet Passage) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span><AppIcon name="seo" /> AI Quick Summary</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400 font-normal">(AI Overviews snippet)</span>
-                  </label>
-                  {product.aeoQuickSummary && <SourceBadge source={product.aeoQuickSummary.source} />}
-                </div>
-                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs leading-relaxed">
-                  {product.aeoQuickSummary?.value ? (
-                    product.aeoQuickSummary.value
-                  ) : (
-                    <span className="text-slate-500 dark:text-slate-400 italic">Chưa có dữ liệu AEO Quick Summary</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 2. Strategic FAQ (4-pack) */}
-              <div className="space-y-2 pt-2 border-t border-blue-200 dark:border-blue-800">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>❓ Strategic FAQ (Pre-purchase &amp; Differentiation)</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400 font-normal">
-                      ({product.aeoFaq?.value?.length ?? 0} câu hỏi)
-                    </span>
-                  </label>
-                  {product.aeoFaq && <SourceBadge source={product.aeoFaq.source} />}
-                </div>
-                {product.aeoFaq?.value && product.aeoFaq.value.length > 0 ? (
-                  <div className="space-y-2">
-                    {product.aeoFaq.value.map((item, qIdx) => (
-                      <div key={qIdx} className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
-                        <div className="font-semibold text-blue-700 dark:text-blue-300 text-xs flex items-start gap-1.5">
-                          <span className="text-blue-700 dark:text-blue-300 font-mono">Q{qIdx + 1}:</span>
-                          <span>{item.question}</span>
-                        </div>
-                        <div className="text-slate-700 dark:text-slate-300 text-xs pl-5 leading-relaxed">
-                          {item.answer}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs italic">
-                    Chưa có FAQ chiến lược
-                  </div>
-                )}
-              </div>
-
-              {/* 3. JSON-LD Schema @graph */}
-              <div className="space-y-1.5 pt-2 border-t border-blue-200 dark:border-blue-800">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>📄 Schema.org JSON-LD (@graph: Product &amp; FAQPage)</span>
-                  </label>
-                  <div className="flex items-center gap-2">
-                    {product.aeoJsonLd && <SourceBadge source={product.aeoJsonLd.source} />}
-                    {product.aeoJsonLd?.value ? (
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(product.aeoJsonLd?.value || "", "json-ld")}
-                        className="px-2.5 py-1 rounded text-xs font-medium bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-50 dark:hover:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition flex items-center gap-1"
-                      >
-                        {copiedKey === "json-ld" ? "✓ Đã copy" : "📋 Copy JSON-LD"}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                {product.aeoJsonLd?.value ? (
-                  <pre className="p-3 rounded-lg bg-white dark:bg-slate-900 font-mono text-xs text-blue-700 dark:text-blue-300 overflow-x-auto max-h-48 border border-slate-200 dark:border-slate-700">
-                    {product.aeoJsonLd.value}
-                  </pre>
-                ) : (
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs italic">
-                    Chưa có dữ liệu JSON-LD Schema
-                  </div>
-                )}
-              </div>
-            </div>
 
             {/* Pinterest POD Shopify & Pricing Details */}
             {product.sourcePinterestItem && (
@@ -902,6 +395,19 @@ export function ProductDetailDrawer({
               </div>
             )}
 
+
+                </div>
+              </details>}
+              <details className="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+                <summary className="cursor-pointer text-sm font-medium">Thông tin kỹ thuật & JSON</summary>
+                <div className="mt-4 space-y-4">
+                  <p className="break-all text-xs text-slate-500 dark:text-slate-400">ID: {product.id}</p>
+                  {product.backendPublish && <p className="break-all text-xs">Tác vụ: {product.backendPublish.id} · {product.backendPublish.state}</p>}
+                  {product.shopifySyncStatus === "failed" && <ShopifySyncErrorBanner error={product.shopifySyncError} syncedAt={product.shopifySyncedAt}
+                    onRetry={onRetrySync && reviewActions(product).canRetry ? () => onRetrySync(product.id) : undefined} />}
+                  {product.syncError && <p className="break-words text-xs text-amber-700 dark:text-amber-300">{product.syncError}</p>}
+                  {product.revertError && <p className="break-words text-xs text-amber-700 dark:text-amber-300">{product.revertError}</p>}
+                  {product.rejectionReason && <p className="break-words text-xs">{product.rejectionReason}</p>}
             {/* 6. Raw JSON (Full Product Object) */}
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-5 space-y-3">
               <div className="flex items-center justify-between">
@@ -940,6 +446,9 @@ export function ProductDetailDrawer({
               <pre className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-blue-700 dark:text-blue-300 overflow-x-auto max-h-64 leading-relaxed select-all">
                 {rawJsonString}
               </pre>
+            </div>
+                </div>
+              </details>
             </div>
           </div>
 
