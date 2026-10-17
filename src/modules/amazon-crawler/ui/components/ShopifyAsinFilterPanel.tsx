@@ -180,23 +180,25 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                   const isLatest = workspace.progress?.lastAsin === asin;
                   const hasAction = row?.copied || row?.viewed || row?.selected;
                   return <li key={asin} data-asin-row={asin} aria-current={isLatest ? "true" : undefined}
-                    className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-2.5 py-2 ${isLatest ? "border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/60" : hasAction ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/60" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"}`}>
-                  <div className="min-w-0">
-                    <span className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100">{asin}</span>
-                    {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs">
-                      {row?.copied ? <span className="text-emerald-700 dark:text-emerald-300">✓ Đã copy</span> : null}
-                      {row?.selected ? <span className="text-emerald-700 dark:text-emerald-300">✓ Đã chọn cào</span> : null}
-                      {row?.viewed ? <span className="text-emerald-700 dark:text-emerald-300">✓ Đã xem</span> : null}
-                      {isLatest ? <span className="text-blue-700 dark:text-blue-300">Gần nhất</span> : null}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2 ${isLatest ? "border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/60" : hasAction ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/60" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100">{asin}</span>
+                      {isLatest ? <span className="rounded bg-blue-100/80 dark:bg-blue-900/60 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-blue-700 dark:text-blue-300">Gần nhất</span> : null}
+                    </div>
+                    {hasAction ? <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] leading-tight">
+                      {row?.copied ? <span className=" whitespace-nowrap text-emerald-700 dark:text-emerald-300">✓ Đã copy</span> : null}
+                      {row?.selected ? <span className="whitespace-nowrap text-emerald-700 dark:text-emerald-300">✓ Đã chọn cào</span> : null}
+                      {row?.viewed ? <span className="whitespace-nowrap text-emerald-700 dark:text-emerald-300">✓ Đã xem</span> : null}
                     </div> : null}
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <button type="button" aria-label={`Dùng ASIN này ${asin}`} disabled={isSelectionDisabled}
                       onClick={async () => { if (await onSelectAsin(asin) === false) return; handleMarkRow(asin, "selected"); setCopyMessage(`Đã đưa ${asin} vào ô nhập. Chọn collection rồi bấm Bắt đầu cào.`); }}
-                      className="min-h-8 rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/80 dark:bg-blue-950/60 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 transition hover:bg-blue-100/80 disabled:opacity-50">Dùng ASIN này</button>
+                      className="min-h-7 whitespace-nowrap rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/80 dark:bg-blue-950/60 px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 transition hover:bg-blue-100/80 disabled:opacity-50">Dùng ASIN</button>
                     <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
                       onClick={() => handleMarkRow(asin, "viewed")} onAuxClick={(event) => { if (event.button === 1) handleMarkRow(asin, "viewed"); }}
-                      className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition hover:bg-slate-50 dark:hover:bg-slate-800">View ↗</a>
+                      className="inline-flex min-h-7 items-center whitespace-nowrap rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition hover:bg-slate-50 dark:hover:bg-slate-800">View ↗</a>
                   </div>
                 </li>;
                 })}
