@@ -2648,7 +2648,7 @@ export function AmazonCrawlerPage({
           <div role="group" aria-label="Store và Vendor" className="flex h-full min-w-0 flex-col justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs md:grid-cols-2">
           <div className="min-w-0 space-y-2.5">
           <label className="grid gap-2 text-base font-bold text-slate-900 dark:text-slate-100">
-            <span>3. Store nhận sản phẩm</span>
+            <span>2. Store nhận sản phẩm</span>
             <div className="relative">
               <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-xs font-bold text-emerald-700 dark:text-emerald-300">S</span>
               <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning || isCheckingAsins} onChange={(event) => handleStoreChange(event.target.value)} className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 py-2 pl-11 pr-8 text-sm font-medium text-slate-900 dark:text-slate-100 disabled:opacity-50">
