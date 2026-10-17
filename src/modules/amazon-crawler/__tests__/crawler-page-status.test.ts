@@ -60,7 +60,7 @@ test("crawler page stops at SEO Queue handoff after restoring a downstream job",
   assert.doesNotMatch(markup, /Chờ kiểm duyệt SEO|Shopify:|Proxy Shopify|SEO fallback/);
   assert.match(markup, /Xử lý ảnh/);
   assert.match(markup, /Tiếp tục tự động sau SEO theo profile đã chọn/);
-  assert.equal((markup.match(/aria-label="Kết quả bàn giao phiên vừa cào"/g) ?? []).length, 1);
+  assert.equal((markup.match(/aria-label="Trạng thái phiên cào"/g) ?? []).length, 1);
   assert.match(markup, /Đã bàn giao 1\/1 sản phẩm sang SEO Queue/);
   assert.match(markup, />Tải Agent cho Windows</);
   assert.match(markup, /https:\/\/github\.com\/tuan03\/ffp_tool\/releases\/latest/);
@@ -85,7 +85,7 @@ test("crawler page keeps settings open with one start action ahead of agents and
   assert.ok(startPosition > markup.indexOf("Collection, loại sản phẩm"));
   assert.match(markup, /<section aria-label="Collection, loại sản phẩm &amp; định giá"/);
   assert.doesNotMatch(markup, /<summary[^>]*>Collection, loại sản phẩm/);
-  assert.match(markup, /aria-label="Điều kiện bắt đầu cào"/);
+  assert.match(markup, /aria-label="Trạng thái phiên cào"/);
   assert.ok(startPosition < markup.indexOf("Crawler clients"));
   assert.ok(startPosition < markup.indexOf("Xóa toàn bộ cache"));
   assert.match(markup, /id="crawler-panel-agents"[^>]*hidden=""/);
@@ -114,7 +114,7 @@ test("start buttons show durable eighteen-product handoff even without loaded ca
       loadAmazonCrawlerClients: async () => [], runAmazonCrawler: async () => amazonCrawlerMockOutput,
     }),
   ));
-  assert.equal((markup.match(/aria-label="Kết quả bàn giao phiên vừa cào"/g) ?? []).length, 1);
+  assert.equal((markup.match(/aria-label="Trạng thái phiên cào"/g) ?? []).length, 1);
   assert.match(markup, /Đã bàn giao 18\/18 sản phẩm sang SEO Queue/);
   clearCrawlerSession();
 });

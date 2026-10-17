@@ -395,7 +395,7 @@ export async function startCrawlerJob({
       });
       const hasWarnings = completion?.tone !== "success" || crawlerOutput.errors.length > 0;
       notifyUser({
-        title: hasWarnings ? "⚡ Distributed Crawler: Phiên cào đã kết thúc" : summary.totalProducts > 0
+        title: summary.pending > 0 ? "⚡ Distributed Crawler: Đã nhận dữ liệu, đang bàn giao" : hasWarnings ? "⚡ Distributed Crawler: Phiên cào đã kết thúc" : summary.totalProducts > 0
           ? "⚡ Distributed Crawler: Đã bàn giao SEO Queue" : "⚡ Distributed Crawler: Đã kiểm tra ASIN",
         message: `${completion?.label ?? "Phiên cào đã kết thúc."}${crawlerOutput.errors.length > 0 ? ` · ${crawlerOutput.errors.length} lỗi crawl` : ""}`,
         type: hasWarnings ? "warning" : "success",

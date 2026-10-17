@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { resolveCrawlStatus } from "./crawl-status";
+import { CrawlStatusNotice } from "./components/CrawlStatusNotice";
 
 import { AppIcon } from "../../../shared/components/AppIcon";
 import { persistBrowserActiveStoreId } from "../../../shared/active-store";
@@ -394,9 +396,10 @@ export function AmazonCrawlerPage({
   );
   const inputAnalysis = useMemo(() => analyzeCrawlerInput(urlText), [urlText]);
   const resultProducts = output?.products ?? liveProducts;
-  const durableSeoHandoffSummary = lastJobId
-    ? jobs.find((job) => job.jobId === lastJobId)?.seoQueueHandoff ?? output?.seoQueueHandoff
-    : output?.seoQueueHandoff;
+  const summaryJobId = activeJobId ?? (isRunning ? null : lastJobId);
+  const durableSeoHandoffSummary = summaryJobId
+    ? jobs.find((job) => job.jobId === summaryJobId)?.seoQueueHandoff ?? (isRunning ? undefined : output?.seoQueueHandoff)
+    : isRunning ? undefined : output?.seoQueueHandoff;
   const seoHandoffSummary = useMemo(
     () => resolveCrawlerSeoHandoffSummary(resultProducts, durableSeoHandoffSummary),
     [durableSeoHandoffSummary, resultProducts],
@@ -1350,6 +1353,9 @@ export function AmazonCrawlerPage({
     if (preflightInFlight.current) return;
     preflightInFlight.current = true;
     setDismissedHandoffJobId(lastJobId);
+    setHandoverError(null);
+    setJobControlMessage(null);
+    updateCrawlerSession({ error: null });
     setIsCheckingAsins(true);
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
@@ -2438,6 +2444,25 @@ export function AmazonCrawlerPage({
       ? isLoadingClients ? "Đang kiểm tra kết nối Agent." : isClientSnapshotStale ? "Kết nối Agent chưa được xác minh." : "Chưa có Agent kết nối."
       : null,
   ].filter((reason): reason is string => reason !== null);
+  const statusJob = activeManagedJob ?? coordinatorActiveJob;
+  const isCurrentResult = output !== null && (output.settings.storeId || "capozen").toLowerCase() === activeStoreId.toLowerCase() && lastJobId !== dismissedHandoffJobId;
+  const statusErrors = [...new Set([
+    error, asinPreflightError, handoverError, jobControlTone === "error" && !isJobSnapshotStale ? jobControlMessage : null,
+    ...(isCurrentResult ? (output?.errors ?? []).map(crawlError => `${crawlError.source}: ${crawlError.message}`) : []),
+    ...(isCurrentResult || isRunning ? resultProducts : []).filter(product => crawlerSeoHandoffState(product.pipeline) === "not_handed_over")
+      .map(product => `${product.asin}: ${product.pipeline?.seo.error || "Chưa bàn giao SEO Queue. Mở Phiên & kết quả để kiểm tra."}`),
+    ...(statusJob?.progress.items ?? []).filter(item => item.status === "failed").map(item => `${item.asin}: ${item.message}`),
+  ].filter((message): message is string => Boolean(message)))];
+  const crawlStatus = resolveCrawlStatus({
+    isChecking: isCheckingAsins, isRunning: isRunning || statusJob !== undefined,
+    isStale: isJobSnapshotStale, progress: statusJob?.progress ?? progress,
+    executionState: statusJob?.executionState,
+    cancelled: isCurrentResult && output?.status === "cancelled",
+    cancelling: statusJob?.status === "cancelling",
+    blockers: startBlockers, errors: statusErrors,
+    summary: statusJob?.seoQueueHandoff ?? (isCurrentResult || isRunning ? seoHandoffSummary : { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 }),
+    completion: inlineHandoff,
+  });
   const startCrawlButton = <button className="min-h-10 shrink-0 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
     aria-describedby="crawler-start-readiness" disabled={isStartDisabled} type="button" onClick={() => void handleStart()}>
     {isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}
@@ -3104,9 +3129,8 @@ export function AmazonCrawlerPage({
       )}
           <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-4 py-3 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
             <div className="w-full min-w-0 text-xs text-slate-600 dark:text-slate-400 2xl:w-auto 2xl:flex-1">
-              <p className="mb-1 font-medium text-slate-900 dark:text-slate-100">{activeStoreId} · {inputAnalysis.validCount} ASIN · {settings.classificationMode !== "manual" ? "Codex tự phân loại" : `${activeCollectionIds.length} collection · ${settings.productType || "Loại gốc Amazon"}`}</p>
-              <div id="crawler-start-readiness" aria-label="Điều kiện bắt đầu cào" role="status">{startBlockers.length > 0 ? startBlockers.join(" ") : "Sẵn sàng. Hệ thống sẽ kiểm tra ASIN trước khi tạo phiên."}</div>
-              {inlineHandoff ? <p role="status" aria-label="Kết quả bàn giao phiên vừa cào" className={`mt-1 text-xs leading-5 ${inlineHandoff.tone === "success" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{inlineHandoff.label}</p> : null}
+              <p className="mb-1 font-medium text-slate-900 dark:text-slate-100">{statusJob ? `Phiên ${statusJob.jobId.slice(0, 8)} · Store ${statusJob.settings.storeId || "capozen"}` : `${activeStoreId} · ${inputAnalysis.validCount} ASIN`} · {settings.classificationMode !== "manual" ? "Codex tự phân loại" : `${activeCollectionIds.length} collection · ${settings.productType || "Loại gốc Amazon"}`}</p>
+              <CrawlStatusNotice id="crawler-start-readiness" status={crawlStatus} errors={isCheckingAsins ? [] : statusErrors} />
             </div>
             <div className="flex w-full flex-wrap items-center gap-3 2xl:w-auto">
               {!hasSavedStoreVendor ? <button type="button" className="min-h-9 text-sm text-blue-700 dark:text-blue-300" onClick={() => document.getElementById("crawler-store-vendor")?.focus()}>Nhập Vendor</button> : null}
@@ -3114,7 +3138,6 @@ export function AmazonCrawlerPage({
               {startCrawlButton}
             </div>
           </div>
-          {error ? <p role="alert" className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3 text-sm text-rose-700 dark:text-rose-300">{error}</p> : null}
           </div>
           <aside aria-label="Kiểm tra ASIN trên Shopify" className="min-w-0 xl:sticky xl:top-20 xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto">
             <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
@@ -3132,9 +3155,10 @@ export function AmazonCrawlerPage({
         <div className={`space-y-4 rounded-lg border p-4 ${progress.phase === "captcha" ? "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60" : "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"}`}>
           <div>
             <div className="flex flex-wrap justify-between gap-2 text-sm">
-              <span>{progress.message}</span>
-              <strong>{progress.completed}/{progress.total} link</strong>
+              <span>{crawlStatus.title}</span>
+              <strong>Tiến độ cào link: {progress.completed}/{progress.total}</strong>
             </div>
+            <p className="mt-1 text-sm">{crawlStatus.detail}</p>
             {progress.currentAsin || progress.errors ? (
               <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                 {progress.currentAsin ? `Đang xử lý: ${progress.currentAsin}` : ""}
@@ -3145,6 +3169,7 @@ export function AmazonCrawlerPage({
             <div className="mt-2 h-2 overflow-hidden rounded bg-slate-50 dark:bg-slate-800">
               <div className="h-full bg-blue-600 transition-[width]" style={{ width: `${progress.total > 0 ? Math.min(100, (progress.completed / progress.total) * 100) : 0}%` }} />
             </div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Thanh tiến độ chỉ tính link đã cào; bàn giao SEO Queue được tính riêng theo sản phẩm.</p>
             {progress.browserPool ? (
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
                 <span>Direct: {progress.browserPool.directActive} active · {progress.browserPool.directQueued} queued / {progress.browserPool.directProfiles * progress.browserPool.tabsPerProfile} slots</span>
