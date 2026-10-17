@@ -22,6 +22,7 @@ test("crawler workspace defaults to a focused crawl panel with separate navigati
   const markup = renderWorkspace("crawl");
   assert.match(markup, /Cào sản phẩm/);
   assert.match(markup, /Chẩn đoán &amp; bảo trì/);
+  assert.match(markup, /Hướng dẫn/);
   assert.match(markup, /id="crawler-panel-crawl"(?![^>]*hidden)/);
   assert.match(markup, /id="crawler-panel-agents"[^>]*hidden=""/);
   assert.match(markup, /id="crawler-panel-results"[^>]*hidden=""/);
@@ -43,7 +44,7 @@ test("switching crawler sections keeps inactive forms mounted to preserve drafts
   assert.match(markup, /id="crawler-panel-agents"(?![^>]*hidden)/);
   assert.match(markup, /value="B000000001"/);
   assert.match(markup, /Agent configuration draft/);
-  assert.match(markup, /aria-pressed="true"[^>]*>Agent</);
+  assert.match(markup, /aria-label="Agent"[^>]*aria-pressed="true"[^>]*>[\s\S]*?<span>Agent<\/span><\/button>/);
 });
 
 test("diagnostics can be selected without discarding the crawl form", () => {

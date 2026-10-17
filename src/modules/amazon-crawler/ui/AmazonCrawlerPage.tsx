@@ -234,6 +234,7 @@ export function AmazonCrawlerPage({
   const [pendingFilterAsin, setPendingFilterAsin] = useState<string | null>(null);
   const pendingAsinResolver = useRef<((isSelected: boolean) => void) | null>(null);
   const crawlerInputRef = useRef<HTMLTextAreaElement>(null);
+  const crawlerFileInputRef = useRef<HTMLInputElement>(null);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [isHistoryAllStores, setIsHistoryAllStores] = useState(false);
   const [isProductDetailsOpen, setIsProductDetailsOpen] = useState(false);
@@ -2467,10 +2468,20 @@ export function AmazonCrawlerPage({
     summary: statusJob?.seoQueueHandoff ?? (isCurrentResult || isRunning ? seoHandoffSummary : { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 }),
     completion: inlineHandoff,
   });
-  const startCrawlButton = <button className="min-h-10 shrink-0 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-    aria-describedby="crawler-start-readiness" disabled={isStartDisabled} type="button" onClick={() => void handleStart()}>
-    {isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}
-  </button>;
+  const startCrawlButton = <button className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+    aria-describedby="crawler-start-readiness" disabled={isStartDisabled} type="button" onClick={() => void handleStart()}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><polygon points="6 3 20 12 6 21 6 3" /></svg>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>;
+
+  async function handleImportUrlsFile(file: File | undefined): Promise<void> {
+    if (!file || isRunning || isCheckingAsins) return;
+    try {
+      const content = await file.text();
+      setCrawlerUrlText(content);
+      setAsinPreflightError(null);
+      setAsinPreflightMatches([]);
+    } catch {
+      // Ignore file read errors
+    }
+  }
 
   function applyFilterAsin(asin: string): void {
     setCrawlerUrlText(replaceCrawlerInputWithAsin(urlText, asin));
@@ -2507,62 +2518,110 @@ export function AmazonCrawlerPage({
         onSectionChange={(section) => { setWorkspaceSection(section); setIsProductDetailsOpen(false); setIsImageProfileEditorOpen(false); }}
         summary={<>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-            <span className="text-slate-600 dark:text-slate-400">Store <strong className="ml-1 text-slate-900 dark:text-slate-100">{activeStoreId}</strong></span>
-            <span className={isClientSnapshotStale ? "text-amber-700 dark:text-amber-300" : "text-slate-700 dark:text-slate-300"}>{isLoadingClients ? "Đang kiểm tra agent…" : isClientSnapshotStale ? "Kết nối agent chưa xác minh" : connectedClients.length + " agent kết nối"}</span>
-            <span className={admissionGate?.state === "STOPPED" ? "text-amber-700 dark:text-amber-300" : "text-slate-600 dark:text-slate-400"}>{admissionGate?.state === "STOPPED" ? "Đã ngừng nhận task mới" : admissionGate ? "Đang mở nhận việc" : ""}</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-sm shadow-xs">
+          <div className="flex flex-wrap items-center gap-3">
+            <span aria-hidden="true" className="flex h-9 w-9 shrink-0 flex-col items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-serif text-base font-bold leading-none text-slate-900 dark:text-slate-100">
+              <span>a</span>
+              <span className="mt-0.5 h-1 w-4 rounded-full bg-amber-500" />
+            </span>
+            <span className="inline-flex items-center gap-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/70 px-3 py-1 text-slate-600 dark:text-slate-400">
+              <span className="leading-tight">
+                <span className="block text-[10px] font-medium text-slate-500 dark:text-slate-400">Store</span>
+                <strong className="text-sm font-bold text-slate-900 dark:text-slate-100">{activeStoreId}</strong>
+              </span>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5 text-slate-500"><path d="m6 9 6 6 6-6" /></svg>
+            </span>
+            <span className={`inline-flex items-center gap-2 text-xs font-semibold ${isClientSnapshotStale ? "text-amber-700 dark:text-amber-300" : "text-slate-900 dark:text-slate-100"}`}>
+              <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${isClientSnapshotStale || connectedClients.length === 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
+              {isLoadingClients ? "Đang kiểm tra agent…" : isClientSnapshotStale ? "Kết nối agent chưa xác minh" : connectedClients.length + " agent kết nối"}
+            </span>
+            <span className={`inline-flex items-center gap-2 border-l border-slate-200 dark:border-slate-700 pl-3 text-xs ${admissionGate?.state === "STOPPED" ? "text-amber-700 dark:text-amber-300" : "text-slate-600 dark:text-slate-400"}`}>
+              <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${admissionGate?.state === "STOPPED" ? "bg-amber-500 ring-4 ring-amber-500/20" : "bg-emerald-500 ring-4 ring-emerald-500/20"}`} />
+              {admissionGate?.state === "STOPPED" ? "Đã ngừng nhận task mới" : admissionGate ? "Đang mở nhận việc" : "Đang mở nhận việc"}
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <button type="button" onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)} className="text-sm text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300">Mở SEO Queue →</button>
-            <button type="button" onClick={() => setWorkspaceSection("agents")} className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100">Quản lý agent →</button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button type="button" onClick={() => navigate(`/gpt-seo?storeId=${encodeURIComponent(activeStoreId)}`)} className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/40 px-3.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 transition hover:bg-blue-100/70 dark:hover:bg-blue-900/50">Mở SEO Queue →</button>
+            <button type="button" onClick={() => setWorkspaceSection("agents")} className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/40 px-3.5 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 transition hover:bg-blue-100/70 dark:hover:bg-blue-900/50">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><rect x="4" y="8" width="16" height="12" rx="2" /><path d="M12 4v4M9 13h.01M15 13h.01" /></svg>
+              <span>Quản lý agent →</span>
+            </button>
           </div>
         </div>
-        {admissionGate?.state === "STOPPED" ? <p role="status" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">Hệ thống đang dừng nhận task mới. Task đang chạy có thể hoàn tất; mở lại tại khu vực Agent.</p> : null}
-        {clientError || (!isLoadingClients && connectedClients.length === 0) ? <p role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">{clientError ?? "Chưa có agent kết nối. Mở Agent để kiểm tra hoặc tải Agent Windows."}</p> : null}
-        {isJobSnapshotStale ? <p role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">Chưa xác minh được trạng thái job. Các thao tác điều khiển tạm khóa; đang kết nối lại.</p> : null}
-        {admissionGateError ? <p role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">Chưa xác minh được trạng thái nhận việc toàn hệ thống. Mở Agent để kiểm tra kết nối.</p> : null}
+        {admissionGate?.state === "STOPPED" ? <p role="status" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">Hệ thống đang dừng nhận task mới. Task đang chạy có thể hoàn tất; mở lại tại khu vực Agent.</p> : null}
+        {clientError || (!isLoadingClients && connectedClients.length === 0) ? <p role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">{clientError ?? "Chưa có agent kết nối. Mở Agent để kiểm tra hoặc tải Agent Windows."}</p> : null}
+        {isJobSnapshotStale ? <p role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">Chưa xác minh được trạng thái job. Các thao tác điều khiển tạm khóa; đang kết nối lại.</p> : null}
+        {admissionGateError ? <p role="alert" className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">Chưa xác minh được trạng thái nhận việc toàn hệ thống. Mở Agent để kiểm tra kết nối.</p> : null}
 
         </>}
         crawl={<>
           <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
-          <div className="min-w-0 space-y-5">
-          <section className="grid min-w-0 items-start gap-5 pb-4 2xl:grid-cols-2" aria-label="Tạo phiên cào">
-            <div className="min-w-0 space-y-4">
-      <label className="grid gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-        Amazon URLs hoặc ASIN, mỗi dòng một giá trị
-        <textarea
-          ref={crawlerInputRef}
-          aria-describedby="crawler-input-summary"
-          aria-invalid={inputAnalysis.invalidEntries.length > 0}
-          className="min-h-32 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 font-mono text-sm text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
-          placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
-          value={urlText}
-          onChange={(event) => {
-            setCrawlerUrlText(event.target.value);
-            setAsinPreflightError(null);
-            setAsinPreflightMatches([]);
-          }}
-        />
-      </label>
-              <div id="crawler-input-summary" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-400">
-                <span>{inputAnalysis.lineCount} dòng · <strong className="font-medium text-slate-900 dark:text-slate-100">{inputAnalysis.validCount} ASIN hợp lệ, không trùng</strong></span>
-                {inputAnalysis.duplicateCount > 0 ? <button type="button" disabled={isRunning || isCheckingAsins} className="min-h-8 text-blue-700 dark:text-blue-300 underline underline-offset-4 disabled:opacity-50" onClick={() => setCrawlerUrlText(inputAnalysis.deduplicatedText)}>Bỏ {inputAnalysis.duplicateCount} dòng trùng</button> : null}
+          <div className="min-w-0 space-y-4">
+          <section className="grid min-w-0 items-stretch gap-4 lg:grid-cols-2" aria-label="Tạo phiên cào">
+            <div className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base font-bold text-slate-900 dark:text-slate-100">1. Amazon URLs hoặc ASIN</span>
+                    <span aria-hidden="true" title="Nhập danh sách ASIN hoặc URL Amazon, mỗi dòng một giá trị" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">i</span>
+                  </div>
+                  <input
+                    ref={crawlerFileInputRef}
+                    type="file"
+                    accept=".txt,.csv"
+                    className="hidden"
+                    onChange={(event) => {
+                      void handleImportUrlsFile(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={isRunning || isCheckingAsins}
+                    onClick={() => crawlerFileInputRef.current?.click()}
+                    className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/40 px-3 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 transition hover:bg-blue-100/70 disabled:opacity-50"
+                  >
+                    Nhập từ file
+                  </button>
+                </div>
+                <label className="grid gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100">
+                  <span className="sr-only">Amazon URLs hoặc ASIN, mỗi dòng một giá trị</span>
+                  <textarea
+                    ref={crawlerInputRef}
+                    aria-describedby="crawler-input-summary"
+                    aria-invalid={inputAnalysis.invalidEntries.length > 0}
+                    className="min-h-32 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900 p-3 font-mono text-sm text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
+                    placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
+                    value={urlText}
+                    onChange={(event) => {
+                      setCrawlerUrlText(event.target.value);
+                      setAsinPreflightError(null);
+                      setAsinPreflightMatches([]);
+                    }}
+                  />
+                </label>
               </div>
-              {inputAnalysis.invalidEntries.length > 0 ? <details className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-sm text-amber-800 dark:text-amber-300">
-                <summary className="cursor-pointer font-medium">{inputAnalysis.invalidEntries.length} dòng cần sửa</summary>
-                <ul className="mt-2 max-h-32 space-y-1 overflow-auto break-all">{inputAnalysis.invalidEntries.map((entry) => <li key={entry.line}>Dòng {entry.line}: {entry.value}</li>)}</ul>
-              </details> : null}
+              <div className="space-y-1.5">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Nhập ASIN, mỗi dòng một giá trị</p>
+                <div id="crawler-input-summary" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-400">
+                  <span>{inputAnalysis.lineCount} dòng · <strong className="font-semibold text-slate-900 dark:text-slate-100">{inputAnalysis.validCount} ASIN hợp lệ, không trùng</strong></span>
+                  {inputAnalysis.duplicateCount > 0 ? <button type="button" disabled={isRunning || isCheckingAsins} className="min-h-8 text-blue-700 dark:text-blue-300 underline underline-offset-4 disabled:opacity-50" onClick={() => setCrawlerUrlText(inputAnalysis.deduplicatedText)}>Bỏ {inputAnalysis.duplicateCount} dòng trùng</button> : null}
+                </div>
+                {inputAnalysis.invalidEntries.length > 0 ? <details className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-sm text-amber-800 dark:text-amber-300">
+                  <summary className="cursor-pointer font-medium">{inputAnalysis.invalidEntries.length} dòng cần sửa</summary>
+                  <ul className="mt-2 max-h-32 space-y-1 overflow-auto break-all">{inputAnalysis.invalidEntries.map((entry) => <li key={entry.line}>Dòng {entry.line}: {entry.value}</li>)}</ul>
+                </details> : null}
 
-          {coordinatorActiveJob ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-slate-700 dark:text-slate-300">{resolveCrawlerJobPresentation(coordinatorActiveJob).label}</span>
-              {resolveCrawlerJobPresentation(coordinatorActiveJob).canPause ? <button type="button" disabled={isJobSnapshotStale || controlledJobId !== null} onClick={() => void handlePauseResumeJob(coordinatorActiveJob)} className="rounded-lg border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm text-amber-700 dark:text-amber-300 disabled:opacity-50">{controlledJobId === coordinatorActiveJob.jobId ? "Đang cập nhật…" : coordinatorActiveJob.executionState === "paused" || coordinatorActiveJob.executionState === "pausing" ? "Tiếp tục phiên cào" : "Tạm dừng phiên cào"}</button> : null}
-              {resolveCrawlerJobPresentation(coordinatorActiveJob).canCancel ? <button type="button" disabled={isJobSnapshotStale || controlledJobId !== null} onClick={() => handleRequestCancelJob(coordinatorActiveJob)} className="rounded-lg border border-rose-200 dark:border-rose-800 px-3 py-2 text-sm text-rose-700 dark:text-rose-300 disabled:opacity-50">{coordinatorActiveJob.status === "cancelling" ? "Buộc dừng phiên cào" : "Hủy phiên cào"}</button> : null}
-            </div>
-          ) : isRunning && !amazonCrawlerJobs ? <button type="button" onClick={() => { if (window.confirm("Dừng phiên cào hiện tại?")) void handleStop(); }} className="rounded-lg border border-rose-200 dark:border-rose-800 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">Dừng phiên cào</button> : null}
+                {coordinatorActiveJob ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-slate-700 dark:text-slate-300">{resolveCrawlerJobPresentation(coordinatorActiveJob).label}</span>
+                    {resolveCrawlerJobPresentation(coordinatorActiveJob).canPause ? <button type="button" disabled={isJobSnapshotStale || controlledJobId !== null} onClick={() => void handlePauseResumeJob(coordinatorActiveJob)} className="rounded-lg border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm text-amber-700 dark:text-amber-300 disabled:opacity-50">{controlledJobId === coordinatorActiveJob.jobId ? "Đang cập nhật…" : coordinatorActiveJob.executionState === "paused" || coordinatorActiveJob.executionState === "pausing" ? "Tiếp tục phiên cào" : "Tạm dừng phiên cào"}</button> : null}
+                    {resolveCrawlerJobPresentation(coordinatorActiveJob).canCancel ? <button type="button" disabled={isJobSnapshotStale || controlledJobId !== null} onClick={() => handleRequestCancelJob(coordinatorActiveJob)} className="rounded-lg border border-rose-200 dark:border-rose-800 px-3 py-2 text-sm text-rose-700 dark:text-rose-300 disabled:opacity-50">{coordinatorActiveJob.status === "cancelling" ? "Buộc dừng phiên cào" : "Hủy phiên cào"}</button> : null}
+                  </div>
+                ) : isRunning && !amazonCrawlerJobs ? <button type="button" onClick={() => { if (window.confirm("Dừng phiên cào hiện tại?")) void handleStop(); }} className="rounded-lg border border-rose-200 dark:border-rose-800 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">Dừng phiên cào</button> : null}
 
-              {isRunning || coordinatorActiveJob ? <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">Tạm dừng phiên cào: không nhận ASIN mới sau khi task hiện tại kết thúc an toàn. Kết quả đã lưu và xử lý ảnh được giữ lại. Thao tác này khác với ngừng nhận task toàn hệ thống tại Agent.</p> : null}
+                {isRunning || coordinatorActiveJob ? <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">Tạm dừng phiên cào: không nhận ASIN mới sau khi task hiện tại kết thúc an toàn. Kết quả đã lưu và xử lý ảnh được giữ lại. Thao tác này khác với ngừng nhận task toàn hệ thống tại Agent.</p> : null}
+              </div>
             </div>
             <div className="min-w-0 space-y-4">
 
@@ -2586,19 +2645,22 @@ export function AmazonCrawlerPage({
             )}
           </div>
         )}
-          <div role="group" aria-label="Store và Vendor" className="grid min-w-0 items-start gap-4 md:grid-cols-2">
-          <div className="min-w-0 space-y-2">
-          <label className="grid gap-1.5 text-sm text-slate-700 dark:text-slate-300">
-            Store nhận sản phẩm
-            <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning || isCheckingAsins} onChange={(event) => handleStoreChange(event.target.value)} className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100 disabled:opacity-50">
-              {availableStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
-            </select>
+          <div role="group" aria-label="Store và Vendor" className="flex h-full min-w-0 flex-col justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs md:grid-cols-2">
+          <div className="min-w-0 space-y-2.5">
+          <label className="grid gap-2 text-base font-bold text-slate-900 dark:text-slate-100">
+            <span>3. Store nhận sản phẩm</span>
+            <div className="relative">
+              <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-emerald-100 dark:bg-emerald-950/70 text-xs font-bold text-emerald-700 dark:text-emerald-300">S</span>
+              <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning || isCheckingAsins} onChange={(event) => handleStoreChange(event.target.value)} className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 py-2 pl-11 pr-8 text-sm font-medium text-slate-900 dark:text-slate-100 disabled:opacity-50">
+                {availableStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
+              </select>
+            </div>
           </label>
 
-          <div className="flex flex-wrap gap-3 text-xs">
-            <button type="button" aria-label="Sửa store" disabled={isRunning} onClick={() => setIsEditStoreOpen(true)} className="text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-50">Sửa store</button>
-            <button type="button" aria-label="Thêm store" disabled={isRunning} onClick={() => setIsAddStoreOpen(true)} className="text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50">Thêm store</button>
-            <button type="button" aria-label="Xóa store" disabled={isRunning} onClick={() => setIsDeleteStoreOpen(true)} className="text-rose-700 dark:text-rose-300 hover:text-rose-700 dark:hover:text-rose-300 disabled:opacity-50">Xóa store</button>
+          <div className="flex flex-wrap items-center gap-3 text-xs font-medium">
+            <button type="button" aria-label="Sửa store" disabled={isRunning} onClick={() => setIsEditStoreOpen(true)} className="border-r border-slate-200 dark:border-slate-700 pr-3 text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">Sửa store</button>
+            <button type="button" aria-label="Thêm store" disabled={isRunning} onClick={() => setIsAddStoreOpen(true)} className="border-r border-slate-200 dark:border-slate-700 pr-3 text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">Thêm store</button>
+            <button type="button" aria-label="Xóa store" disabled={isRunning} onClick={() => setIsDeleteStoreOpen(true)} className="text-rose-600 dark:text-rose-400 hover:underline disabled:opacity-50">Xóa store</button>
           </div>
           </div>
 
@@ -2614,32 +2676,36 @@ export function AmazonCrawlerPage({
           </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-700 dark:text-amber-300">{imageProfileMessage}</p> : null}
             </div>
-              <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 border-t border-slate-200 dark:border-slate-700 pt-5 2xl:col-span-2">
-                <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">Collection, loại sản phẩm & định giá
-                  <span className="mt-1 block text-xs font-normal text-slate-600 dark:text-slate-400">{settings.classificationMode !== "manual" ? "Codex tự chọn collection và loại sản phẩm" : `${settings.productType || "Chưa chọn loại"} · ${activeCollectionIds.length} collection`} · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
-                </h2>
-                <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
+              <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-xs lg:col-span-2">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h2 className="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100">3. Collection, loại sản phẩm & định giá</h2>
+                    <span aria-hidden="true" title="Thiết lập phân loại sản phẩm và quy tắc giá khi đồng bộ sang Shopify" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">i</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{settings.classificationMode !== "manual" ? "Codex tự chọn collection và loại sản phẩm" : `${settings.productType || "Chưa chọn loại"} · ${activeCollectionIds.length} collection`} · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</p>
+                </div>
+                <div className="mt-3">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
       <section className="grid min-w-0 items-start gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3 2xl:col-span-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 tracking-tight">
               Áp dụng cho store: {activeStoreId}
             </h2>
             <button
-              className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-400 transition-colors hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 transition-colors hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isRunning}
               title="Đặt lại cấu hình về mặc định"
               type="button"
               onClick={resetCrawlerSettings}
             >
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span>Reset</span>
             </button>
           </div>
           {settings.storeId && (
-            <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 font-mono">
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono">
               <span>{settings.storeId}</span>
               {settings.productType && <span>• {settings.productType}</span>}
               {selectedCollections.length > 0 && <span>• {selectedCollections.length} collections</span>}
@@ -2649,14 +2715,14 @@ export function AmazonCrawlerPage({
 
 
         {/* Row 1: Collection & Product Type */}
-        <label className="col-span-full flex flex-wrap items-center gap-3 text-sm">
+        <label className="col-span-full flex flex-wrap items-center gap-3 text-sm font-medium text-slate-800 dark:text-slate-200">
           Collection và loại sản phẩm
           <select aria-label="Chế độ phân loại" value={settings.classificationMode ?? "automatic"}
             onChange={event => updateSetting("classificationMode", event.target.value === "manual" ? "manual" : "automatic")}
-            className="rounded-lg border border-slate-600 bg-white dark:bg-slate-900 px-3 py-2">
+            className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-900 dark:text-slate-100">
             <option value="automatic">Tự động bằng Codex</option><option value="manual">Chọn thủ công</option>
           </select>
-          {settings.classificationMode !== "manual" && <span className="text-slate-500">Chọn riêng cho từng sản phẩm khi xử lý SEO.</span>}
+          {settings.classificationMode !== "manual" && <span className="font-normal text-slate-500 dark:text-slate-400">Chọn riêng cho từng sản phẩm khi xử lý SEO.</span>}
         </label>
         <div className={settings.classificationMode === "manual" ? "contents" : "hidden"}>
           <div className="min-w-0 2xl:row-span-2">
@@ -2809,35 +2875,33 @@ export function AmazonCrawlerPage({
         </div>
 
         {/* Row 2: Price Addition & Compare-At Discount */}
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 2xl:col-span-2">
           {/* Price Addition */}
-          <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                Giá cộng thêm ($)
-              </label>
-              <div className="flex flex-wrap gap-1">
-                {[
-                  { label: "+$0", value: 0 },
-                  { label: "+$5.99", value: 5.99 },
-                  { label: "+$6.95", value: 6.95 },
-                  { label: "+$9.99", value: 9.99 },
-                  { label: "+$14.99", value: 14.99 },
-                ].map((btn) => (
-                  <button
-                    key={btn.label}
-                    type="button"
-                    className={`rounded px-2 py-0.5 text-xs font-semibold transition-colors ${
-                      settings.priceAddition === btn.value
-                        ? "bg-slate-100 dark:bg-slate-700 text-slate-950 dark:text-slate-100 shadow-sm"
-                        : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                    }`}
-                    onClick={() => updateSetting("priceAddition", btn.value)}
-                  >
-                    {btn.label}
-                  </button>
-                ))}
-              </div>
+          <div className="space-y-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/70 p-3.5">
+            <label className="block text-sm font-bold text-slate-900 dark:text-slate-100">
+              Giá cộng thêm ($)
+            </label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { label: "+$0", value: 0 },
+                { label: "+$5.99", value: 5.99 },
+                { label: "+$6.95", value: 6.95 },
+                { label: "+$9.99", value: 9.99 },
+                { label: "+$14.99", value: 14.99 },
+              ].map((btn) => (
+                <button
+                  key={btn.label}
+                  type="button"
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                    (settings.priceAddition ?? 0) === btn.value
+                      ? "border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 shadow-2xs"
+                      : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  }`}
+                  onClick={() => updateSetting("priceAddition", btn.value)}
+                >
+                  {btn.label}
+                </button>
+              ))}
             </div>
             <div className="relative">
               <span className="absolute left-3 top-2 text-sm text-slate-500 dark:text-slate-400 pointer-events-none font-mono">$</span>
@@ -2858,12 +2922,12 @@ export function AmazonCrawlerPage({
           </div>
 
           {/* Compare-At Discount % */}
-          <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3.5">
+          <div className="space-y-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/70 p-3.5">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-900 dark:text-slate-100">
+              <label className="text-sm font-bold text-slate-900 dark:text-slate-100">
                 Giá gạch ngang (Compare-At)
               </label>
-              <span className="text-xs font-mono text-slate-700 dark:text-slate-300 font-semibold">
+              <span className="text-xs font-mono text-slate-800 dark:text-slate-200 font-bold">
                 {settings.discountPercent ?? 0}%
               </span>
             </div>
@@ -2883,7 +2947,7 @@ export function AmazonCrawlerPage({
                   }
                 }}
               >
-                <option value={0}>0% (Không hiển thị giá giảm)</option>
+                <option value={0}>0% (Không dùng)</option>
                 {Array.from({ length: 19 }, (_, i) => (i + 1) * 5).map((pct) => (
                   <option key={pct} value={pct}>
                     Giảm {pct}%
@@ -2902,7 +2966,7 @@ export function AmazonCrawlerPage({
                   min="0"
                   max="95"
                   placeholder="%"
-                  className="w-20 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-2 pr-6 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 font-mono text-sm text-right"
+                  className="w-24 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-2 pr-7 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-slate-300 dark:focus:border-slate-700 font-mono text-sm text-center"
                   value={settings.discountPercent ?? 0}
                   aria-label="Giá gạch ngang (%)"
                   onChange={(e) => {
@@ -2910,7 +2974,7 @@ export function AmazonCrawlerPage({
                     updateSetting("discountPercent", val);
                   }}
                 />
-                <span className="absolute right-2 top-2 text-xs text-slate-500 dark:text-slate-400 pointer-events-none">%</span>
+                <span className="absolute right-2.5 top-2.5 text-xs text-slate-500 dark:text-slate-400 pointer-events-none">%</span>
               </div>
             </div>
           </div>
@@ -2925,22 +2989,31 @@ export function AmazonCrawlerPage({
           const compareAt = discount > 0 && discount < 100 ? selling / (1 - discount / 100) : undefined;
 
           return (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 dark:bg-slate-800 px-4 py-2.5 text-xs text-slate-600 dark:text-slate-400 2xl:col-span-2">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-slate-700 dark:text-slate-300">
-                  Ví dụ gốc $20.00:
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200/80 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/80 px-3.5 py-2 text-xs text-slate-600 dark:text-slate-400 2xl:col-span-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 text-slate-500">
+                  <circle cx="9" cy="21" r="1" />
+                  <circle cx="20" cy="21" r="1" />
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                </svg>
+                <span className="text-slate-600 dark:text-slate-400">
+                  Ví dụ giá cuối:
                 </span>
-                <span className="text-slate-900 dark:text-slate-100 font-mono">
-                  Bán <strong className="text-slate-900 dark:text-slate-100">${selling.toFixed(2)}</strong>
+                <span className="text-slate-900 dark:text-slate-100">
+                  Bán <strong className="font-bold text-slate-900 dark:text-slate-100">${selling.toFixed(2)}</strong>
                 </span>
-                {compareAt !== undefined && (
-                  <span className="text-slate-600 dark:text-slate-400 font-mono">
-                    Gạch ngang: <span className="line-through">${compareAt.toFixed(2)}</span>
+                <span className="text-slate-500 dark:text-slate-400">(Gốc: $20.00)</span>
+                <span>·</span>
+                {compareAt !== undefined ? (
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Compare-at: <span className="line-through">${compareAt.toFixed(2)}</span>
                     <span className="ml-1 text-slate-700 dark:text-slate-300 font-semibold">(-{discount}%)</span>
                   </span>
+                ) : (
+                  <span className="text-slate-600 dark:text-slate-400">Compare-at: Không dùng</span>
                 )}
               </div>
-              <div className="flex items-center gap-2 font-mono text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                 <span>{settings.storeId || "capozen"}</span>
                 {settings.productType && <span>• {settings.productType}</span>}
               </div>
@@ -2948,20 +3021,32 @@ export function AmazonCrawlerPage({
           );
         })()}
       </section></div>
-                <label className="flex items-start gap-3 text-sm text-slate-900 dark:text-slate-100">
-                  <input type="checkbox" className="mt-1" checked={settings.autoSyncAfterSeo ?? true}
+                <label className="flex cursor-pointer items-start gap-3 text-sm text-slate-900 dark:text-slate-100">
+                  <input type="checkbox" className="peer sr-only" checked={settings.autoSyncAfterSeo ?? true}
                     onChange={(event) => updateSetting("autoSyncAfterSeo", event.target.checked)} />
-                  <span>Tự sync sau Codex SEO
-                    <span className="mt-1 block max-w-[85ch] text-xs leading-5 text-slate-600 dark:text-slate-400">Chờ SEO và ảnh hoàn tất, tự sync và bật các Sales Channels được phép. Áp dụng cho job mới của store này; SEO Review vẫn giữ để theo dõi.</span>
+                  <span aria-hidden="true" className="relative mt-0.5 h-6 w-11 shrink-0 rounded-full bg-slate-300 dark:bg-slate-700 transition-colors peer-checked:bg-blue-600 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-400 after:content-[''] after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-xs after:transition-transform peer-checked:after:translate-x-5" />
+                  <span><strong className="font-bold">Tự sync sau Codex SEO</strong>
+                    <span className="mt-0.5 block max-w-[85ch] text-xs leading-5 text-slate-600 dark:text-slate-400">Chờ SEO và ảnh hoàn tất, tự sync và bật các Sales Channels được phép. Áp dụng cho job mới của store này; SEO Review vẫn giữ để theo dõi.</span>
                   </span>
                 </label>
               </section>
-            <div className="min-w-0 space-y-3 2xl:col-span-2">
-      <button aria-expanded={isAdvancedOpen} className="min-h-9 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100" type="button" onClick={toggleCrawlerAdvancedOpen}>
-        {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
-      </button>
+            <div className="min-w-0 space-y-3 lg:col-span-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-xs text-slate-600 dark:text-slate-400 shadow-xs">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span aria-hidden="true" className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ${startBlockers.length === 0 ? "bg-blue-600" : "bg-amber-500"}`}>
+            {startBlockers.length === 0 ? "i" : "!"}
+          </span>
+          <p className="min-w-0">
+            <strong className="mr-2 font-bold text-slate-900 dark:text-slate-100">{startBlockers.length === 0 ? "Sẵn sàng chạy crawl" : "Chưa sẵn sàng chạy crawl"}</strong>
+            <span>{startBlockers.length === 0 ? `Đã cấu hình nguồn ASIN, store, collection và quy tắc giá. Nhấn "Bắt đầu cào" để tạo phiên crawl và gửi ${urls.length} link vào hàng đợi.` : startBlockers.join(" ")}</span>
+          </p>
+        </div>
+        <button aria-expanded={isAdvancedOpen} className="shrink-0 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100" type="button" onClick={toggleCrawlerAdvancedOpen}>
+          {isAdvancedOpen ? "Ẩn" : "Hiện"} cài đặt nâng cao
+        </button>
+      </div>
       {isAdvancedOpen ? (
-        <div className="grid gap-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4 sm:grid-cols-3">
+        <div className="grid gap-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 shadow-xs sm:grid-cols-3">
           <NumberSetting label="Product threads" min={1} max={16} value={settings.productThreads} onChange={(value) => updateSetting("productThreads", value)} />
           <NumberSetting label="Variant threads" min={1} max={32} value={settings.variantThreads} onChange={(value) => updateSetting("variantThreads", value)} />
           <NumberSetting label="HTTP threads" min={1} max={64} value={settings.urllibThreads} onChange={(value) => updateSetting("urllibThreads", value)} />
@@ -3081,14 +3166,14 @@ export function AmazonCrawlerPage({
           <p className="mt-1">{handoverError}</p>
         </div>
       )}
-          <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-4 py-3 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
+          <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-4 py-2.5 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
             <div className="w-full min-w-0 text-xs text-slate-600 dark:text-slate-400 2xl:w-auto 2xl:flex-1">
-              <p className="mb-1 font-medium text-slate-900 dark:text-slate-100">{statusJob ? `Phiên ${statusJob.jobId.slice(0, 8)} · Store ${statusJob.settings.storeId || "capozen"}` : `${activeStoreId} · ${inputAnalysis.validCount} ASIN`} · {settings.classificationMode !== "manual" ? "Codex tự phân loại" : `${activeCollectionIds.length} collection · ${settings.productType || "Loại gốc Amazon"}`}</p>
+              <p className="sr-only">{statusJob ? `Phiên ${statusJob.jobId.slice(0, 8)} · Store ${statusJob.settings.storeId || "capozen"}` : `${activeStoreId} · ${inputAnalysis.validCount} ASIN`} · {settings.classificationMode !== "manual" ? "Codex tự phân loại" : `${activeCollectionIds.length} collection · ${settings.productType || "Loại gốc Amazon"}`}</p>
               <CrawlStatusNotice id="crawler-start-readiness" status={crawlStatus} errors={isCheckingAsins && !isRunning && !statusJob ? [] : statusErrors} />
             </div>
-            <div className="flex w-full flex-wrap items-center gap-3 2xl:w-auto">
-              {!hasSavedStoreConfig ? <button type="button" className="min-h-9 text-sm text-blue-700 dark:text-blue-300" onClick={() => document.getElementById("crawler-store-settings")?.scrollIntoView({ behavior: "smooth", block: "center" })}>Cấu hình store</button> : null}
-              <button type="button" className="min-h-9 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100" onClick={() => setWorkspaceSection("results")}>{progress ? `${progress.completed}/${progress.total} link · ` : ""}Phiên & kết quả →</button>
+            <div className="flex w-full flex-wrap items-center justify-end gap-4 2xl:w-auto">
+              {!hasSavedStoreConfig ? <button type="button" className="min-h-9 text-sm font-medium text-blue-700 dark:text-blue-300" onClick={() => document.getElementById("crawler-store-settings")?.scrollIntoView({ behavior: "smooth", block: "center" })}>Cấu hình store</button> : null}
+              <button type="button" className="min-h-9 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100" onClick={() => setWorkspaceSection("results")}>{progress ? `${progress.completed}/${progress.total} link · ` : urls.length > 0 ? `${urls.length}/${urls.length} link · ` : ""}Phiên & kết quả →</button>
               {startCrawlButton}
             </div>
           </div>

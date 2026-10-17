@@ -23,13 +23,30 @@ export function CrawlStatusNotice({ status, errors, id }: {
     const timer = window.setInterval(() => setUnchangedMinutes(Math.floor((Date.now() - startedAt) / 60_000)), 30_000);
     return () => window.clearInterval(timer);
   }, [status.title, status.detail, status.tone]);
-  return <div id={id} aria-label="Trạng thái phiên cào" className={`min-w-0 rounded-lg border px-3 py-2 ${COLORS[status.tone]}`}>
-    <div role="status" aria-live="polite" aria-atomic="true">
-      <p className="flex items-center gap-2 text-sm font-semibold">
-        {status.tone === "working" ? <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" /> : <span aria-hidden="true">{status.tone === "success" ? "✓" : status.tone === "error" || status.tone === "warning" ? "⚠" : "○"}</span>}
-        {status.title}
-      </p>
-      <p className="mt-1 break-words text-xs leading-5">{status.detail}</p>
+  return <div id={id} aria-label="Trạng thái phiên cào" className={`min-w-0 rounded-xl border px-3.5 py-2 ${COLORS[status.tone]}`}>
+    <div role="status" aria-live="polite" aria-atomic="true" className="flex items-center gap-3">
+      {status.tone === "working" ? (
+        <span aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />
+      ) : (
+        <span
+          aria-hidden="true"
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${
+            status.tone === "success"
+              ? "bg-emerald-600"
+              : status.tone === "error"
+                ? "bg-rose-600"
+                : status.tone === "warning"
+                  ? "bg-amber-500"
+                  : "bg-blue-600"
+          }`}
+        >
+          {status.tone === "success" ? "✓" : status.tone === "error" || status.tone === "warning" ? "⚠" : "i"}
+        </span>
+      )}
+      <div className="min-w-0">
+        <p className="text-sm font-bold leading-tight">{status.title}</p>
+        <p className="mt-0.5 break-words text-xs leading-5 opacity-90">{status.detail}</p>
+      </div>
     </div>
     {unchangedMinutes >= 2 ? <p className="mt-1 text-xs">Tiến trình chưa thay đổi trong {unchangedMinutes} phút. Mở Phiên &amp; kết quả để kiểm tra; chưa thể kết luận phiên bị lỗi.</p> : null}
     {errors.length > 0 ? <details className="mt-1 text-xs">
@@ -38,3 +55,4 @@ export function CrawlStatusNotice({ status, errors, id }: {
     </details> : null}
   </div>;
 }
+

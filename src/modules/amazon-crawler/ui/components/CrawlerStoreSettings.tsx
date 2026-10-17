@@ -82,30 +82,23 @@ export function CrawlerStoreSettings({ storeId, manager, imageProfiles, disabled
     }
   }
 
-  return <section id="crawler-store-settings" aria-label="Cấu hình cào theo store" className="min-w-0 space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="text-sm font-semibold">Cấu hình của {storeId}</h3>
-      <div className="flex gap-3 text-xs text-blue-700 dark:text-blue-300">
-        {!isEditing && saved ? <button type="button" disabled={disabled || isLoading} onClick={() => { populate(saved); setIsEditing(true); }}>Chỉnh cấu hình</button> : null}
-        <button type="button" disabled={disabled || isLoading || isSaving} onClick={() => { setReload((value) => value + 1); onReloadImages(); }}>Tải lại</button>
-      </div>
-    </div>
-    {isLoading ? <p role="status" className="text-sm text-slate-500">Đang tải cấu hình store…</p> : null}
-    {error ? <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">{error}</p> : null}
+  return <section id="crawler-store-settings" aria-label="Cấu hình cào theo store" className="min-w-0 space-y-2.5 rounded-lg border border-slate-200/80 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-3">
+    {isLoading ? <p role="status" className="text-xs text-slate-500">Đang tải cấu hình store…</p> : null}
+    {error ? <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">{error}</p> : null}
     {!isLoading && !isEditing && saved?.defaults ? <>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        <dt className="text-slate-500">Vendor</dt><dd className="break-words font-medium">{saved.vendor}</dd>
-        <dt className="text-slate-500">Profile cào</dt><dd>{saved.defaults.profileSlug}{saved.defaults.applyJeminisePreset ? " · preset variants bật" : ""}</dd>
-        <dt className="text-slate-500">Xử lý ảnh</dt><dd>{savedImage ? `${savedImage.name} · ${savedImage.enabled ? "bật" : "tắt"}` : "Profile ảnh không khả dụng — tải lại hoặc chỉnh cấu hình"}</dd>
+      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
+        <dt className="text-slate-500 dark:text-slate-400">Vendor</dt><dd className="break-words font-semibold text-slate-900 dark:text-slate-100">{saved.vendor}</dd>
+        <dt className="text-slate-500 dark:text-slate-400">Profile cào</dt><dd className="font-semibold text-slate-900 dark:text-slate-100">{saved.defaults.profileSlug}{saved.defaults.applyJeminisePreset ? " · preset variants bật" : ""}</dd>
+        <dt className="text-slate-500 dark:text-slate-400">Xử lý ảnh</dt><dd className="font-semibold text-slate-900 dark:text-slate-100">{savedImage ? `${savedImage.name} · ${savedImage.enabled ? "bật" : "tắt"}` : "Profile ảnh không khả dụng — tải lại hoặc chỉnh cấu hình"}</dd>
       </dl>
       {!savedImage ? <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">Chưa thể cào khi không tìm thấy Profile ảnh đã lưu.</p> : null}
     </> : null}
-    {!isLoading && isEditing ? <fieldset disabled={disabled || isSaving} className="grid min-w-0 gap-3 sm:grid-cols-2 disabled:opacity-60">
+    {!isLoading && isEditing ? <fieldset disabled={disabled || isSaving} className="grid min-w-0 gap-2.5 sm:grid-cols-2 disabled:opacity-60">
       {!saved?.defaults ? <p className="text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">Thiết lập một lần cho store này trước khi cào.</p> : null}
-      <label className="grid min-w-0 gap-1 text-sm sm:col-span-2">Vendor Shopify
+      <label className="grid min-w-0 gap-1 text-xs font-medium text-slate-700 dark:text-slate-300 sm:col-span-2">Vendor Shopify
         <input id="crawler-store-vendor" maxLength={255} className={fieldClass} value={vendor} onChange={(event) => setVendor(event.target.value)} placeholder="Tên thương hiệu / nhà cung cấp" />
       </label>
-      <label className="grid min-w-0 gap-1 text-sm">Profile cào
+      <label className="grid min-w-0 gap-1 text-xs font-medium text-slate-700 dark:text-slate-300">Profile cào
         <select aria-label="Profile cào" className={fieldClass} value={profileSlug} onChange={(event) => {
           const value = event.target.value;
           if (value === "default" || value === "jeminise" || value === "preaurem" || value === "") {
@@ -114,23 +107,28 @@ export function CrawlerStoreSettings({ storeId, manager, imageProfiles, disabled
           }
         }}><option value="">Chọn Profile cào</option><option value="default">Default</option><option value="jeminise">Jeminise</option><option value="preaurem">Preaurem</option></select>
       </label>
-      <label className="grid min-w-0 gap-1 text-sm">Xử lý ảnh
+      <label className="grid min-w-0 gap-1 text-xs font-medium text-slate-700 dark:text-slate-300">Xử lý ảnh
         <select aria-label="Profile xử lý ảnh" className={fieldClass} value={imageSlug} onChange={(event) => setImageSlug(event.target.value)}>
           <option value="">Chọn Profile ảnh</option>
           {imageSlug && !imageProfiles.some((profile) => profile.slug === imageSlug) ? <option value={imageSlug}>Không khả dụng: {imageSlug}</option> : null}
           {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name} · {profile.enabled ? "bật" : "tắt"}</option>)}
         </select>
       </label>
-      {profileSlug === "jeminise" ? <label className="flex items-start gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={preset} onChange={(event) => setPreset(event.target.checked)} />Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)</label> : null}
-      <div className="flex flex-wrap gap-3 text-xs text-blue-700 dark:text-blue-300 sm:col-span-2">
-        <button type="button" disabled={!imageProfiles.some((profile) => profile.slug === imageSlug)} onClick={() => onEditImage(imageSlug)}>Cấu hình ảnh</button>
-        <button type="button" onClick={onCreateImage}>Tạo Profile ảnh</button>
+      {profileSlug === "jeminise" ? <label className="flex items-start gap-2 text-xs sm:col-span-2"><input type="checkbox" checked={preset} onChange={(event) => setPreset(event.target.checked)} />Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)</label> : null}
+      <div className="flex flex-wrap gap-3 text-xs text-blue-600 dark:text-blue-400 sm:col-span-2">
+        <button type="button" className="hover:underline disabled:opacity-50" disabled={!imageProfiles.some((profile) => profile.slug === imageSlug)} onClick={() => onEditImage(imageSlug)}>Cấu hình ảnh</button>
+        <button type="button" className="hover:underline" onClick={onCreateImage}>Tạo Profile ảnh</button>
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
         <button type="button" className={buttonClass} disabled={!vendor.trim() || !profileSlug || !imageProfiles.some((profile) => profile.slug === imageSlug)} onClick={() => void save()}>{isSaving ? "Đang lưu…" : "Lưu cấu hình store"}</button>
-        {saved?.defaults ? <button type="button" className="px-2 py-2 text-sm" onClick={() => { populate(saved); setError(null); setIsEditing(false); }}>Hủy chỉnh sửa</button> : null}
+        {saved?.defaults ? <button type="button" className="px-2 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900" onClick={() => { populate(saved); setError(null); setIsEditing(false); }}>Hủy chỉnh sửa</button> : null}
         <p className="text-xs text-slate-500">Chỉ áp dụng cho job mới.</p>
       </div>
     </fieldset> : null}
+    <div className="flex items-center justify-end gap-3 border-t border-slate-200/70 dark:border-slate-700/70 pt-2 text-xs text-blue-600 dark:text-blue-400">
+      {!isEditing && saved ? <button type="button" className="hover:underline disabled:opacity-50" disabled={disabled || isLoading} onClick={() => { populate(saved); setIsEditing(true); }}>Chỉnh cấu hình</button> : null}
+      <button type="button" className="hover:underline disabled:opacity-50" disabled={disabled || isLoading || isSaving} onClick={() => { setReload((value) => value + 1); onReloadImages(); }}>Tải lại</button>
+    </div>
   </section>;
 }
+
