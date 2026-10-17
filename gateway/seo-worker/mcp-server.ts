@@ -25,6 +25,9 @@ const analysis = z.object({ physicalProductIdentity: analysisText, visualEntitie
   evidence: z.array(z.object({ imageId: analysisText, observation: analysisText }).strict()).min(1),
 }).strict();
 const submission = z.object({
+  classification: z.object({ status: z.enum(["ready", "needs_review"]), collectionId: z.string().optional(),
+    productType: z.string().min(1).max(255).optional(), reason: z.string().min(1).max(1000) }).strict().optional()
+    .describe("Required when job context enables automatic classification. Choose one catalog collection and a product type based on viewed images; needs_review when uncertain. Never use catalog descriptions as product facts."),
   draft: z.object({ productTitle: z.string().min(1), intro: z.string().min(1),
     bullets: z.array(z.object({ label: z.string().min(1), text: z.string().min(1) }).strict()).min(2).max(5),
     guidance: z.array(z.string().min(1)).optional(), closing: z.string().min(1),

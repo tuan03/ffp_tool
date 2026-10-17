@@ -1018,6 +1018,10 @@ class CoordinatorStore(CoordinatorObservability):
         if len(raw_urls) > 200:
             raise ValueError("A job may contain at most 200 inputs.")
         settings = CrawlSettings.from_api(payload).api_dict()
+        if "classificationMode" in payload:
+            if payload["classificationMode"] not in {"automatic", "manual"}:
+                raise ValueError("classificationMode must be automatic or manual.")
+            settings["classificationMode"] = payload["classificationMode"]
         if "autoSyncAfterSeo" in payload:
             if not isinstance(payload["autoSyncAfterSeo"], bool):
                 raise ValueError("autoSyncAfterSeo must be boolean.")
@@ -2655,6 +2659,7 @@ class CoordinatorStore(CoordinatorObservability):
             settings = dict(job.settings or {}) if job is not None else {}
             auto_sync = (
                 settings.get("autoSyncAfterSeo") is True
+                and (settings.get("classificationMode") != "automatic" or (review_summary.get("classification") or {}).get("status") == "ready")
                 and seo_summary.get("engine") == "codex_mcp"
                 and seo_summary.get("status") == "completed"
             )
@@ -2666,7 +2671,7 @@ class CoordinatorStore(CoordinatorObservability):
                 "syncStatus": "queued" if auto_sync else "idle",
                 "version": 1,
                 "rejectionReason": None,
-                "syncError": None,
+                "syncError": (review_summary.get("classification") or {}).get("reason") if (review_summary.get("classification") or {}).get("status") == "needs_review" else None,
                 "readyAt": utc_iso(utc_now()),
                 "updatedAt": utc_iso(utc_now()),
             }
@@ -2696,10 +2701,11 @@ class CoordinatorStore(CoordinatorObservability):
         is_busy = sync_status in {"queued", "syncing"} or item.status in {"sync_queued", "syncing", "shopify_writing", "reconciliation_required"}
         is_archived = bool(review.get("archivedAt"))
         can_change = not is_busy and not is_archived and sync_status != "synced"
-        return {"canEdit": can_change and not review.get("publicationOnly"), "canDecide": can_change and not review.get("publicationOnly"),
-                "canSync": can_change and review.get("decision") == "approved" and sync_status == "idle",
+        has_classification = (review.get("classification") or {}).get("status") != "needs_review"
+        return {"canEdit": can_change and not review.get("publicationOnly"), "canDecide": can_change and has_classification and not review.get("publicationOnly"),
+                "canSync": can_change and has_classification and review.get("decision") == "approved" and sync_status == "idle",
                 "canArchive": not is_busy and not is_archived,
-                "canRetry": can_change and review.get("decision") == "approved" and sync_status == "failed",
+                "canRetry": can_change and has_classification and review.get("decision") == "approved" and sync_status == "failed",
                 "canReconcile": not is_archived and (sync_status == "synced" or item.status == "reconciliation_required"),
                 "canRevise": False}
 
@@ -2726,10 +2732,17 @@ class CoordinatorStore(CoordinatorObservability):
             "readyAt": review.get("readyAt"),
             "updatedAt": review.get("updatedAt"),
             "target": {
+                "classificationMode": settings.get("classificationMode", "manual"),
+                "classificationStatus": (review.get("classification") or {}).get("status"),
+                "classificationReason": (review.get("classification") or {}).get("reason"),
                 "collectionIds": list(settings.get("collectionIds") or ([settings["collectionId"]] if settings.get("collectionId") else [])),
                 "productType": settings.get("productType"),
                 "priceAddition": float(settings.get("priceAddition") or 0),
                 "discountPercent": float(settings.get("discountPercent") or 0),
+                **({
+                    "collectionIds": [review["classification"]["collectionId"]] if review["classification"].get("collectionId") else [],
+                    "productType": review["classification"].get("productType"),
+                } if isinstance(review.get("classification"), dict) else {}),
             },
             "product": product,
         }
@@ -2778,7 +2791,7 @@ class CoordinatorStore(CoordinatorObservability):
                                           func.coalesce(product["media"][0]["processedUrl"].as_string(),
                                                         product["media"][0]["url"].as_string(), raw["media"][0]["url"].as_string(), ""),
                                           product["media"][0]["processedFileToken"].as_string(), archived_at, review_stage, is_busy,
-                                          review["publicationOnly"].as_boolean())
+                                          review["publicationOnly"].as_boolean(), review["classification"]["status"].as_string())
                                    .join(CrawlJob).where(*conditions)
                                    .order_by(CrawlProductItem.updated_at.desc(), CrawlProductItem.id.desc())
                                    .offset(offset).limit(limit)).all()
@@ -2787,10 +2800,10 @@ class CoordinatorStore(CoordinatorObservability):
                       "syncError": row[8], "thumbnailUrl": row[9], "thumbnailToken": row[10],
                       "archivedAt": row[11] or None, "stage": row[12],
                       "actions": {"canEdit": not row[13] and not row[11] and row[7] != "synced" and not row[14],
-                                  "canDecide": not row[13] and not row[11] and row[7] != "synced" and not row[14],
-                                  "canSync": not row[13] and not row[11] and row[6] == "approved" and row[7] == "idle",
+                                  "canDecide": not row[13] and not row[11] and row[7] != "synced" and not row[14] and row[15] != "needs_review",
+                                  "canSync": not row[13] and not row[11] and row[6] == "approved" and row[7] == "idle" and row[15] != "needs_review",
                                   "canArchive": not row[13] and not row[11],
-                                  "canRetry": not row[13] and not row[11] and row[6] == "approved" and row[7] == "failed",
+                                  "canRetry": not row[13] and not row[11] and row[6] == "approved" and row[7] == "failed" and row[15] != "needs_review",
                                   "canReconcile": not row[11] and (row[7] == "synced" or row[13] and row[7] == "failed"), "canRevise": False},
                       "updatedAt": row[1].replace(tzinfo=utc_now().tzinfo).timestamp() * 1000} for row in rows]
             return {"items": items, "total": total, "counts": counts, "nextOffset": offset + len(items) if offset + len(items) < total else None}
@@ -2947,6 +2960,15 @@ class CoordinatorStore(CoordinatorObservability):
             if review.get("publicationOnly") or review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
                 return {"locked": True}
             product = dict(item.normalized_payload or {})
+            classification_patch = patch.get("classification")
+            if isinstance(classification_patch, dict):
+                collection_id = str(classification_patch.get("collectionId") or "").strip()
+                product_type = " ".join(str(classification_patch.get("productType") or "").split())
+                if (collection_id and not re.fullmatch(r"gid://shopify/Collection/\d+", collection_id)) or len(product_type) > 255:
+                    return {"invalidClassification": True}
+                classification_ready = bool(collection_id and product_type)
+                review["classification"] = {"status": "ready" if classification_ready else "needs_review", "collectionId": collection_id,
+                                            "productType": product_type, "reason": "Operator selection" if classification_ready else "Cần chọn collection và loại sản phẩm."}
             field_map = {
                 "productTitle": "title",
                 "productDescription": "descriptionHtml",
@@ -2978,7 +3000,7 @@ class CoordinatorStore(CoordinatorObservability):
             review.update({
                 "decision": "pending",
                 "rejectionReason": None,
-                "syncError": None,
+                "syncError": (review.get("classification") or {}).get("reason") if (review.get("classification") or {}).get("status") == "needs_review" else None,
                 "syncStatus": "idle",
                 "version": expected_version + 1,
                 "updatedAt": utc_iso(utc_now()),
@@ -3044,6 +3066,9 @@ class CoordinatorStore(CoordinatorObservability):
                 return {"deleted": True}
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
+            job = session.get(CrawlJob, item.job_id)
+            if job and (job.settings or {}).get("classificationMode") == "automatic" and (review.get("classification") or {}).get("status") != "ready":
+                return {"classificationRequired": True}
             if review.get("archivedAt"):
                 return {"archived": True}
             if str(review.get("decision") or "pending") != "approved":
@@ -3107,6 +3132,9 @@ class CoordinatorStore(CoordinatorObservability):
             for item in items:
                 pipeline_result = dict(item.shopify_result or {})
                 review = dict(pipeline_result.get("review") or {})
+                job = session.get(CrawlJob, item.job_id)
+                if job and (job.settings or {}).get("classificationMode") == "automatic" and (review.get("classification") or {}).get("status") != "ready":
+                    continue
                 if review.get("archivedAt") or str(review.get("decision") or "pending") != "approved":
                     continue
                 if str(review.get("syncStatus") or "idle") not in {"idle", "failed"}:
@@ -3642,6 +3670,9 @@ class CoordinatorStore(CoordinatorObservability):
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
             if review and not reconciliation_required:
+                if error.get("phase") == "classification":
+                    review["classification"] = {**dict(review.get("classification") or {}),
+                                                "status": "needs_review", "reason": str(error.get("message") or "Cần kiểm tra phân loại.")}
                 review.update({
                     "syncStatus": "failed",
                     "syncError": str(error.get("message") or "Shopify sync failed."),

@@ -137,6 +137,7 @@ export interface SeoReviewFilterState {
 }
 
 export interface SeoProductEditInput {
+  readonly classification?: { readonly collectionId: string; readonly productType: string };
   readonly productTitle: string;
   readonly productDescription: string;
   readonly seoTitle: string;

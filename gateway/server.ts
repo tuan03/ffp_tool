@@ -18,6 +18,7 @@ import { createSeoRevision } from "./seo-worker/revision-service";
 import { handleWorkerMcp } from "./seo-worker/mcp-handler";
 import { createWorkerWorkflow } from "./seo-worker/workflow";
 import { createWorkerSourceGuard } from "./seo-worker/source-guard";
+import { createClassificationCatalogLoader } from "./seo-worker/product-classification";
 import { serveStaticFile } from "./static-server";
 
 import { GatewayDispatcher } from "./dispatcher";
@@ -152,6 +153,7 @@ export function startGatewayServer(
   const tokenProvider = new CompositeTokenProvider();
   const throttleManager = new InMemoryThrottleManager();
   const graphqlClient = new ShopifyGraphqlClient({ tokenProvider, throttleManager });
+  const classificationCatalog = createClassificationCatalogLoader(graphqlClient, storeId => storeRegistry.getStore(storeId));
   configureAdsGateway({ storeRegistry, graphqlClient });
   const idempotencyStore = new InMemoryIdempotencyStore();
   const dispatcher = new GatewayDispatcher({ storeRegistry, graphqlClient, idempotencyStore });
@@ -246,6 +248,7 @@ export function startGatewayServer(
         const runtime = getCustomGptRuntime(); await runtime.initialize();
         await handleWorkerMcp(req, res, runtime.queue.workers, createWorkerWorkflow(runtime.queue.workers, {
           checkSource: createWorkerSourceGuard(dispatcher),
+          classificationCatalog,
           performanceEvidence: async job => getPerformanceService()?.workerProductEvidence(
             job.execution.storeId,
             job.execution.productId ?? job.execution.sourceIdentity,

@@ -1397,7 +1397,8 @@ export function AmazonCrawlerPage({
       return;
     }
     const sources = [...urls];
-    const jobSettings = { ...settings, vendor: storeVendor.vendor ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true };
+    const jobSettings = { ...settings, vendor: storeVendor.vendor ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true,
+      ...(settings.classificationMode !== "manual" ? { classificationMode: "automatic" as const, collectionIds: [], collectionId: "", productType: "" } : {}) };
     await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
       allowedSources,
       existingShopifyAsins,
@@ -2636,7 +2637,7 @@ export function AmazonCrawlerPage({
             </div>
               <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 border-t border-slate-200 dark:border-slate-700 pt-5 2xl:col-span-2">
                 <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">Collection, loại sản phẩm & định giá
-                  <span className="mt-1 block text-xs font-normal text-slate-600 dark:text-slate-400">{settings.productType || "Chưa chọn loại"} · {activeCollectionIds.length} collection · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
+                  <span className="mt-1 block text-xs font-normal text-slate-600 dark:text-slate-400">{settings.classificationMode !== "manual" ? "Codex tự chọn collection và loại sản phẩm" : `${settings.productType || "Chưa chọn loại"} · ${activeCollectionIds.length} collection`} · Giá cộng thêm: {"$"}{settings.priceAddition ?? 0} · Compare-at: {settings.discountPercent ? "Giảm " + settings.discountPercent + "%" : "Không dùng"}</span>
                 </h2>
                 <div className="mt-4">      {/* Cấu hình Đồng bộ Shopify, Phân loại & Định giá */}
       <section className="grid min-w-0 items-start gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] [&_input]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full">
@@ -2669,7 +2670,16 @@ export function AmazonCrawlerPage({
 
 
         {/* Row 1: Collection & Product Type */}
-        <div className="contents">
+        <label className="col-span-full flex flex-wrap items-center gap-3 text-sm">
+          Collection và loại sản phẩm
+          <select aria-label="Chế độ phân loại" value={settings.classificationMode ?? "automatic"}
+            onChange={event => updateSetting("classificationMode", event.target.value === "manual" ? "manual" : "automatic")}
+            className="rounded-lg border border-slate-600 bg-white dark:bg-slate-900 px-3 py-2">
+            <option value="automatic">Tự động bằng Codex</option><option value="manual">Chọn thủ công</option>
+          </select>
+          {settings.classificationMode !== "manual" && <span className="text-slate-500">Chọn riêng cho từng sản phẩm khi xử lý SEO.</span>}
+        </label>
+        <div className={settings.classificationMode === "manual" ? "contents" : "hidden"}>
           <div className="min-w-0 2xl:row-span-2">
           <CrawlerCollectionPicker key={activeStoreId} collections={availableCollections} selectedIds={activeCollectionIds}
             isLoading={isLoadingCollections} onToggle={toggleCollection} onSelectAll={handleSelectAllCollections} onClear={handleClearCollections} />
@@ -3094,7 +3104,7 @@ export function AmazonCrawlerPage({
       )}
           <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-4 py-3 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
             <div className="w-full min-w-0 text-xs text-slate-600 dark:text-slate-400 2xl:w-auto 2xl:flex-1">
-              <p className="mb-1 font-medium text-slate-900 dark:text-slate-100">{activeStoreId} · {inputAnalysis.validCount} ASIN · {activeCollectionIds.length} collection · {settings.productType || "Loại gốc Amazon"}</p>
+              <p className="mb-1 font-medium text-slate-900 dark:text-slate-100">{activeStoreId} · {inputAnalysis.validCount} ASIN · {settings.classificationMode !== "manual" ? "Codex tự phân loại" : `${activeCollectionIds.length} collection · ${settings.productType || "Loại gốc Amazon"}`}</p>
               <div id="crawler-start-readiness" aria-label="Điều kiện bắt đầu cào" role="status">{startBlockers.length > 0 ? startBlockers.join(" ") : "Sẵn sàng. Hệ thống sẽ kiểm tra ASIN trước khi tạo phiên."}</div>
               {inlineHandoff ? <p role="status" aria-label="Kết quả bàn giao phiên vừa cào" className={`mt-1 text-xs leading-5 ${inlineHandoff.tone === "success" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{inlineHandoff.label}</p> : null}
             </div>

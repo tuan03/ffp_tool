@@ -210,6 +210,7 @@ export function ProductDetailDrawer({
                   <div><dt className="text-slate-500 dark:text-slate-400">Store</dt><dd className="mt-1 font-mono text-blue-700 dark:text-blue-300">{product.storeId || "—"}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">Nhà cung cấp (Vendor)</dt><dd className="mt-1 font-medium text-slate-900 dark:text-slate-100">{(product.storeId ? (product.storeId.split("--")[0] || product.storeId).trim().toUpperCase() : "—")}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">Job</dt><dd className="mt-1 font-mono text-slate-700 dark:text-slate-300">{product.coordinatorReview.jobId}</dd></div>
+                  {reviewTarget.classificationStatus === "needs_review" && <p role="status" className="col-span-full text-amber-500">Cần chọn collection/loại sản phẩm. Mở chỉnh sửa để bổ sung, không cần chạy SEO lại.</p>}
                   <div><dt className="text-slate-500 dark:text-slate-400">Product type</dt><dd className="mt-1 text-slate-900 dark:text-slate-100">{reviewTarget.productType || "Theo Amazon"}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">Collections</dt><dd className="mt-1 break-all text-slate-900 dark:text-slate-100">{reviewTarget.collectionIds.join(", ") || "Không chọn"}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">Cộng giá</dt><dd className="mt-1 text-slate-900 dark:text-slate-100">${reviewTarget.priceAddition.toFixed(2)}</dd></div>

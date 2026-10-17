@@ -21,6 +21,7 @@ export function reviewActions(product: SeoProductUiViewModel): SeoReviewActions 
 }
 /** Clicking Sync is the operator's consent; pending drafts need no separate approval click. */
 export function canStartReviewSync(product: SeoProductUiViewModel): boolean {
+  if (product.coordinatorReview?.target.classificationStatus === "needs_review") return false;
   const actions = reviewActions(product);
   return actions.canSync || actions.canRetry || (actions.canDecide && product.reviewDecision === "pending" &&
     (product.shopifySyncStatus ?? "idle") === "idle");

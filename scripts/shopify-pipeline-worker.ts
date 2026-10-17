@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
+
+import { createClassificationCatalogLoader, validateLiveProductClassification, validateProductClassification } from "../gateway/seo-worker/product-classification";
+import type { ProductClassification } from "../gateway/seo-worker/product-classification";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
@@ -197,6 +200,7 @@ const duplicateCheckClient = new ShopifyGraphqlClient({
   tokenProvider: new CompositeTokenProvider(),
   throttleManager: new InMemoryThrottleManager(),
 });
+const loadClassificationCatalog = createClassificationCatalogLoader(duplicateCheckClient, id => getPipelineStoreProfile(id).storeConfig);
 
 function getPipelineStoreProfile(targetStoreId: string): ReturnType<typeof resolvePipelineStoreProfile> {
   const resolved = resolvePipelineStoreProfile({
@@ -457,7 +461,7 @@ async function failClaim(
   options?: {
     readonly retryable?: boolean;
     readonly reconciliationRequired?: boolean;
-    readonly phase?: "normalization" | "seo" | "image_processing" | "shopify" | "shopify_duplicate_check";
+    readonly phase?: "normalization" | "seo" | "image_processing" | "shopify" | "shopify_duplicate_check" | "classification";
     readonly timings?: PipelineTimings;
     readonly createdProductId?: string;
   },
@@ -516,6 +520,7 @@ async function processClaim(
   }
   let gptSyncToken: string | undefined;
   let externalSeoExecution: SeoContentDetailedOutput | undefined;
+  let externalClassification: unknown;
   let baseNormalizedProduct = claim.product;
   let assetsNormalized = Number(claim.review?.assetsNormalized ?? claim.assetsNormalized ?? 0);
   const skipExistingSeoProduct = async (): Promise<boolean> => {
@@ -558,6 +563,7 @@ async function processClaim(
           return;
         }
         externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
+        externalClassification = (externalJob.checkpoints.submission as Record<string, unknown> | undefined)?.classification;
       } catch (error) {
         await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
         return;
@@ -637,7 +643,8 @@ async function processClaim(
             sourceRevision: claim.seoSourceRevision ?? claim.checksum,
             ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
             input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
-            original: { ...baseNormalizedProduct, crawlerPipelineItemId: claim.id },
+            original: { ...baseNormalizedProduct, crawlerPipelineItemId: claim.id,
+              crawlerClassificationMode: claim.settings.classificationMode ?? "manual" },
         });
         if (externalJob.settings.provider !== "codex_mcp") {
           throw new Error("CRAWLER_CODEX_PROVIDER_MISMATCH");
@@ -655,6 +662,7 @@ async function processClaim(
           return;
         }
         externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
+        externalClassification = (externalJob.checkpoints.submission as Record<string, unknown> | undefined)?.classification;
       } catch (error) {
         if (await recoverUncertainSeoEnqueue({ error, recover: recoverExternalSeo,
           delay: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
@@ -739,10 +747,30 @@ async function processClaim(
     if (legacyCollectionId && !rawCollectionIds.includes(legacyCollectionId)) {
       rawCollectionIds.unshift(legacyCollectionId);
     }
-    const collectionIds = Array.from(new Set(rawCollectionIds));
-    const customProductType = typeof claim.settings?.productType === "string" && claim.settings.productType.trim()
+    let collectionIds = Array.from(new Set(rawCollectionIds));
+    let customProductType = typeof claim.settings?.productType === "string" && claim.settings.productType.trim()
       ? claim.settings.productType.trim()
       : undefined;
+
+    let classification: ProductClassification | undefined;
+    if (claim.stage !== "publish" && (claim.settings.classificationMode === "automatic" || (isSyncStage && claim.review?.classification))) {
+      const candidate = isSyncStage ? claim.review?.classification : externalClassification;
+      try {
+        const catalog = await loadClassificationCatalog(claimStoreId);
+        if (isSyncStage && !claimStoreConfig) throw new Error("CLASSIFICATION_STORE_REQUIRED");
+        classification = isSyncStage && claimStoreConfig
+          ? await validateLiveProductClassification({ client: duplicateCheckClient, store: claimStoreConfig, candidate, catalog })
+          : validateProductClassification(candidate, catalog);
+      } catch {
+        classification = { status: "needs_review", reason: "Không tải được danh mục store. Kiểm tra phân loại trước khi sync." };
+      }
+      collectionIds = classification.status === "ready" && classification.collectionId ? [classification.collectionId] : [];
+      customProductType = classification.productType;
+      if (isSyncStage && classification.status !== "ready") {
+        await failClaim(claim, workerId, new Error(classification.reason), { retryable: false, phase: "classification", timings });
+        return;
+      }
+    }
 
     const runner = createModuleApiRunner({
       gatewayUrl,
@@ -908,6 +936,7 @@ async function processClaim(
         seo: seoSummary,
         imageProcessing: imageProcessingSummary,
         review: {
+          ...(classification ? { classification } : {}),
           storeId: claimStoreId,
           assetsNormalized,
           seo: seoSummary,

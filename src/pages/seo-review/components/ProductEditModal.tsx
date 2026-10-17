@@ -4,6 +4,7 @@ import { AppIcon } from "../../../shared/components/AppIcon";
 import { useDialogFocus } from "../../../shared/hooks/useDialogFocus";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import { SourceOriginBadge } from "./SourceOriginBadge";
+import { ClassificationFields } from "./ClassificationFields";
 import type { SeoProductEditInput, SeoProductUiViewModel, ZoomImageItem } from "../types";
 
 export interface ProductEditModalProps {
@@ -54,6 +55,8 @@ function EditModalInner({
   const [seoTitle, setSeoTitle] = useState(product.seoTitle.value);
   const [seoDescription, setSeoDescription] = useState(product.seoDescription.value);
   const [handle, setHandle] = useState(product.handle.value);
+  const [classification, setClassification] = useState({ collectionId: product.coordinatorReview?.target?.collectionIds[0] ?? "",
+    productType: product.coordinatorReview?.target?.productType ?? "" });
   const [imageAlts, setImageAlts] = useState(
     product.images.map((img) => ({ id: img.id, alt: img.alt.value })),
   );
@@ -82,6 +85,7 @@ function EditModalInner({
         seoDescription,
         handle,
         imageAlts,
+        ...(product.coordinatorReview?.target?.classificationMode === "automatic" ? { classification } : {}),
       });
       if (wasSaved) onClose();
       else setSaveError("Không thể lưu chỉnh sửa. Hãy kiểm tra thông báo lỗi và thử lại.");
@@ -119,6 +123,10 @@ function EditModalInner({
 
         {/* Form Body */}
         <form onSubmit={(event) => void handleSubmit(event)} className="flex-1 overflow-y-auto p-6 space-y-5 text-sm">
+          {product.coordinatorReview?.target?.classificationMode === "automatic" && <ClassificationFields
+            storeId={product.storeId ?? ""} collectionId={classification.collectionId} productType={classification.productType}
+            reason={product.coordinatorReview.target.classificationStatus === "needs_review" ? product.coordinatorReview.target.classificationReason : undefined}
+            onChange={setClassification} />}
           {/* Synced Store Notice Banner */}
           {wasAlreadySynced && (
             <div className="flex items-center gap-2.5 rounded-lg border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-3 text-xs text-blue-700 dark:text-blue-300 shadow-sm">

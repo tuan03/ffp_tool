@@ -33,6 +33,7 @@ export interface AmazonCrawlerSessionState {
 }
 
 interface PersistedCrawlerSession {
+  pricingDraftVersion?: 1;
   urlText: string;
   settings: AmazonCrawlerSettings;
   isAdvancedOpen: boolean;
@@ -87,6 +88,7 @@ function readPersistedSession(): AmazonCrawlerSessionState {
     const settings = useCurrentAmazonZip({
       ...DEFAULT_AMAZON_CRAWLER_SETTINGS,
       ...(parsed.settings && typeof parsed.settings === "object" ? parsed.settings : {}),
+      ...(parsed.pricingDraftVersion !== 1 ? { priceAddition: 0, discountPercent: 0 } : {}),
     });
 
     const output = (parsed.output && typeof parsed.output === "object" && Array.isArray((parsed.output as AmazonCrawlerOutput).products))
@@ -131,6 +133,7 @@ function persistSession(state: AmazonCrawlerSessionState): void {
   if (typeof window === "undefined") return;
 
   const dataToSave: PersistedCrawlerSession = {
+    pricingDraftVersion: 1,
     urlText: state.urlText,
     settings: state.settings,
     isAdvancedOpen: state.isAdvancedOpen,
@@ -358,7 +361,8 @@ export async function startCrawlerJob({
         notifyListeners();
       },
       onJobCreated: (jobId) => {
-        sessionState = { ...sessionState, activeJobId: jobId };
+        sessionState = { ...sessionState, activeJobId: jobId,
+          settings: { ...sessionState.settings, priceAddition: 0, discountPercent: 0 } };
         persistSession(sessionState);
         notifyListeners();
       },

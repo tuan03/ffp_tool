@@ -11,6 +11,18 @@ import { ReviewStatusBadge } from "../components/ReviewStatusBadge";
 import { stabilizeReviewCatalogItems } from "../review-catalog";
 import type { SeoReviewListItem } from "../../../shared/seo-review-list";
 
+test("an unresolved classification blocks direct Sync while leaving the SEO draft editable", () => {
+  const sample = getInitialSampleViewModels()[0]; assert.ok(sample);
+  const product = { ...sample, reviewDecision: "pending" as const, shopifySyncStatus: "idle" as const,
+    coordinatorReview: { itemId: "item", jobId: "job", version: 1, target: {
+      classificationMode: "automatic" as const, classificationStatus: "needs_review" as const,
+      collectionIds: [], priceAddition: 0, discountPercent: 0,
+    } } };
+  assert.equal(canStartReviewSync(product), false);
+  assert.equal(canStartReviewSync({ ...product, coordinatorReview: { ...product.coordinatorReview,
+    target: { ...product.coordinatorReview.target, classificationStatus: "ready", collectionIds: ["gid://shopify/Collection/1"], productType: "Handbag" } } }), true);
+});
+
 test("pending Review exposes Sync directly and never exposes a manual approval button", () => {
   const product = getInitialSampleViewModels()[0];
   assert.ok(product);

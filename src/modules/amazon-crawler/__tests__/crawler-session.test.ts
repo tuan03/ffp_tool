@@ -23,6 +23,30 @@ import {
   updateCrawlerSetting,
 } from "../ui/crawler-session";
 
+test("a newly accepted job snapshots entered prices and resets prices for the next job", async () => {
+  clearCrawlerSession();
+  updateCrawlerSetting("priceAddition", 6.95);
+  updateCrawlerSetting("discountPercent", 25);
+  await startCrawlerJob({ urls: ["B012345678"], runAmazonCrawler: async options => {
+    assert.equal(options.input.priceAddition, 6.95);
+    assert.equal(options.input.discountPercent, 25);
+    options.onJobCreated?.("accepted-job");
+    assert.equal(getCrawlerSessionState().settings.priceAddition, 0);
+    assert.equal(options.input.priceAddition, 6.95);
+    return amazonCrawlerMockOutput;
+  } });
+  assert.equal(getCrawlerSessionState().settings.discountPercent, 0);
+  clearCrawlerSession();
+});
+
+test("a failed job creation preserves entered prices for retry", async () => {
+  clearCrawlerSession();
+  updateCrawlerSetting("priceAddition", 6.95);
+  await startCrawlerJob({ urls: ["B012345678"], runAmazonCrawler: async () => { throw new Error("Unavailable"); } });
+  assert.equal(getCrawlerSessionState().settings.priceAddition, 6.95);
+  clearCrawlerSession();
+});
+
 test("completion toast uses server handoff counts instead of the empty result card list", async () => {
   clearCrawlerSession();
   const notifications: AppNotification[] = [];

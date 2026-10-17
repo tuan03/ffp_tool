@@ -1890,6 +1890,7 @@ export function SeoReviewPage({
     );
 
     let nextVersion = target?.coordinatorReview?.version;
+    let nextReviewTarget = target.coordinatorReview?.target;
     try {
       if (target?.coordinatorReview && amazonCrawlerReviews) {
         const reviewed = await amazonCrawlerReviews.update(
@@ -1898,6 +1899,7 @@ export function SeoReviewPage({
           updated,
         );
         nextVersion = reviewed.version;
+        nextReviewTarget = reviewed.target;
 
         if (autoApprove) {
           const approved = await amazonCrawlerReviews.decide(
@@ -1947,8 +1949,10 @@ export function SeoReviewPage({
       reviewLifecycleStage: undefined,
       rejectionReason: undefined,
       coordinatorReview: target.coordinatorReview && nextVersion !== undefined
-        ? { ...target.coordinatorReview, version: nextVersion }
+        ? { ...target.coordinatorReview, version: nextVersion, target: nextReviewTarget ?? target.coordinatorReview.target }
         : target.coordinatorReview,
+      ...(target.coordinatorReview ? { shopifySyncStatus: "idle" as const,
+        shopifySyncError: nextReviewTarget?.classificationStatus === "needs_review" ? nextReviewTarget.classificationReason : undefined } : {}),
       updatedAt: Date.now(),
     };
 

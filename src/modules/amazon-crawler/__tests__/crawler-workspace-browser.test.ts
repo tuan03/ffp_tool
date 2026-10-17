@@ -61,6 +61,10 @@ test("crawler workspace preserves drafts, isolates maintenance, and opens access
     const formBounds = await crawl.getByRole("region", { name: "Tạo phiên cào", exact: true }).boundingBox();
     assert.ok(settingsBounds && formBounds && settingsBounds.width > formBounds.width * 0.9);
     const collectionSearch = crawl.getByRole("searchbox", { name: "Tìm collection", exact: true });
+    const classificationMode = crawl.getByLabel("Chế độ phân loại", { exact: true });
+    assert.equal(await classificationMode.inputValue(), "automatic");
+    assert.equal(await collectionSearch.isVisible(), false);
+    await classificationMode.selectOption("manual");
     const firstCollection = crawl.getByRole("checkbox", { name: "Collection One With A Long Name For Everyday Product Selection", exact: true });
     await firstCollection.check();
     await collectionSearch.fill("TWO");

@@ -1567,6 +1567,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             expected_version=int(payload.get("expectedVersion") or 0),
             patch=patch,
         )
+        if result and result.get("invalidClassification"):
+            raise HTTPException(status_code=422, detail="Chọn collection và loại sản phẩm hợp lệ.")
         if result is None:
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("conflict"):
@@ -1608,6 +1610,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=404, detail="Review item was not found.")
         if result.get("notApproved"):
             raise HTTPException(status_code=409, detail="Only approved products can be synced.")
+        if result.get("classificationRequired"):
+            raise HTTPException(status_code=409, detail="Cần chọn collection và loại sản phẩm tại Review trước khi sync.")
         if result.get("archived"):
             raise HTTPException(status_code=409, detail="Review đã lưu trữ; không thể đồng bộ bản này.")
         if result.get("deleted"):

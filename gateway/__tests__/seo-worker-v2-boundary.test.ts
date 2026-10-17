@@ -130,3 +130,51 @@ function normalizePersisted(job: GptSeoJob): GptSeoJob {
     sourceIdentity: normalized.execution.sourceIdentity, sourceRevision: normalized.execution.sourceRevision,
     original: normalized.execution.originalSnapshot };
 }
+
+test("automatic crawler classification is store scoped, durable and never enables classification for Auto SEO", async () => {
+  for (const source of ["amazon", "auto_seo"] as const) {
+    const original = { crawlerClassificationMode: "automatic", updatedAt: "v1", title: "UNTRUSTED_OLD_TITLE" };
+    const job = normalizePersisted({ ...enqueue, execution: { ...enqueue.execution, source, originalSnapshot: original },
+      id: "classification-job", storeId: "jeminise", source, sourceIdentity: "123", original,
+      inputHash: "hash", settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "English", instructions: "" },
+      status: "IN_PROGRESS", checkpoints: {}, createdAt: 1, updatedAt: 1 } as GptSeoJob);
+    let saved: unknown;
+    const repository = { checkpointReceipt: async () => null, readJob: async () => job,
+      saveCheckpoint: async (_token: string, _lease: unknown, input: { payload: unknown }) => {
+        saved = input.payload; return { jobId: job.id, status: "VALIDATING" };
+      } } as unknown as SeoWorkerRepository;
+    let catalogReads = 0;
+    const workflow = createWorkerWorkflow(repository, { checkSource: async () => undefined, classificationCatalog: async storeId => {
+      assert.equal(storeId, "jeminise"); catalogReads += 1;
+      return { collections: [{ id: "gid://shopify/Collection/1", title: "Dragons", description: "" }], productTypes: ["Bedding"] };
+    } });
+    const lease = { jobId: job.id, runId: "run", sessionId: "session", leaseId: "lease", leaseVersion: 1, expiresAt: 10 };
+    const context = await workflow.context("token", lease);
+    assert.doesNotMatch(JSON.stringify(context), /UNTRUSTED_OLD_TITLE/);
+    assert.equal(Boolean(context.classification), source === "amazon");
+    const submission = { draft: { productTitle: "Dragon bedding" }, alts: {}, classification: {
+      status: "ready", collectionId: "gid://shopify/Collection/1", productType: "bedding", reason: "Viewed bed covering with dragons" } };
+    await workflow.submit("token", lease, "submit", submission);
+    assert.deepEqual(saved, source === "amazon" ? { ...submission, classification: { ...submission.classification, productType: "Bedding" } } : submission);
+    if (source === "auto_seo") assert.equal(catalogReads, 0);
+  }
+});
+
+test("missing classification or catalog outage preserves the SEO draft for operator repair", async () => {
+  const original = { crawlerClassificationMode: "automatic" };
+  const job = normalizePersisted({ ...enqueue, execution: { ...enqueue.execution, source: "amazon", originalSnapshot: original },
+    id: "classification-offline", storeId: "jeminise", source: "amazon", sourceIdentity: "123", original,
+    inputHash: "hash", settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "English", instructions: "" },
+    status: "IN_PROGRESS", checkpoints: {}, createdAt: 1, updatedAt: 1 } as GptSeoJob);
+  let saved: unknown;
+  const repository = { checkpointReceipt: async () => null, readJob: async () => job,
+    saveCheckpoint: async (_token: string, _lease: unknown, input: { payload: unknown }) => { saved = input.payload; return {}; },
+  } as unknown as SeoWorkerRepository;
+  const workflow = createWorkerWorkflow(repository, { checkSource: async () => undefined,
+    classificationCatalog: async () => { throw new Error("Unavailable"); } });
+  const lease = { jobId: job.id, runId: "run", sessionId: "session", leaseId: "lease", leaseVersion: 1, expiresAt: 10 };
+  assert.equal((await workflow.context("token", lease)).classification?.catalog, null);
+  await workflow.submit("token", lease, "submit", { draft: { productTitle: "Preserved SEO" }, alts: {} });
+  assert.equal((saved as { classification: { status: string } }).classification.status, "needs_review");
+  assert.equal((saved as { draft: { productTitle: string } }).draft.productTitle, "Preserved SEO");
+});

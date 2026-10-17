@@ -48,6 +48,7 @@ export interface AmazonCrawlerSettings {
   storeId?: string;
   vendor?: string;
   autoSyncAfterSeo?: boolean;
+  classificationMode?: "automatic" | "manual";
   autoSyncByStore?: Readonly<Record<string, boolean>>;
   priceAddition?: number;
   discountPercent?: number;
@@ -751,6 +752,9 @@ export type AmazonCrawlerReviewDecision = "pending" | "approved" | "rejected";
 export type AmazonCrawlerReviewSyncStatus = "idle" | "queued" | "syncing" | "synced" | "failed";
 
 export interface AmazonCrawlerReviewTarget {
+  readonly classificationMode?: "automatic" | "manual";
+  readonly classificationStatus?: "ready" | "needs_review";
+  readonly classificationReason?: string;
   readonly collectionIds: readonly string[];
   readonly productType?: string;
   readonly priceAddition: number;
@@ -1063,6 +1067,7 @@ export const DEFAULT_AMAZON_CRAWLER_SETTINGS: AmazonCrawlerSettings = {
   maxMatrixVariants: 500,
   storeId: "capozen",
   priceAddition: 0,
+  classificationMode: "automatic",
   discountPercent: 0,
   collectionId: "",
   collectionIds: [],
