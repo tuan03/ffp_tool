@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
 
-import { createClassificationCatalogLoader, validateLiveProductClassification, validateProductClassification } from "../gateway/seo-worker/product-classification";
+import { buildClassificationSyncFields, createClassificationCatalogLoader, validateLiveProductClassification, validateProductClassification } from "../gateway/seo-worker/product-classification";
 import type { ProductClassification } from "../gateway/seo-worker/product-classification";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
@@ -764,7 +764,9 @@ async function processClaim(
       } catch {
         classification = { status: "needs_review", reason: "Không tải được danh mục store. Kiểm tra phân loại trước khi sync." };
       }
-      collectionIds = classification.status === "ready" && classification.collectionId ? [classification.collectionId] : [];
+      // Rule-based collections populate from tags; never call collectionAddProducts on them.
+      collectionIds = classification.status === "ready" && classification.collectionId && !classification.collectionTags
+        ? [classification.collectionId] : [];
       customProductType = classification.productType;
       if (isSyncStage && classification.status !== "ready") {
         await failClaim(claim, workerId, new Error(classification.reason), { retryable: false, phase: "classification", timings });
@@ -953,6 +955,7 @@ async function processClaim(
       imageProfileRevision: imageProcessingSummary.profileRevision,
       customProductType: customProductType ?? null,
       collectionIds: [...collectionIds].sort(),
+      classificationTags: [...(classification?.collectionTags ?? [])].sort(),
       priceAddition,
       discountPercent,
       storeVendor,
@@ -1061,7 +1064,7 @@ async function processClaim(
       let syncInput: ShopifySyncProductInput = {
         ...baseInput,
         vendor: storeVendor,
-        collectionsToJoin: collectionIds,
+        ...buildClassificationSyncFields({ classification, collectionIds, tags: baseInput.tags ?? [] }),
         ...(customProductType ? { productType: customProductType } : {}),
       };
 

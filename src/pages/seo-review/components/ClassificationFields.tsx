@@ -20,7 +20,7 @@ export function ClassificationFields({ storeId, collectionId, productType, reaso
         do {
           const response = await fetch("/api/shopify", { method: "POST", signal: controller.signal,
             headers: { "Content-Type": "application/json" }, body: JSON.stringify({ storeId, operation: "collections.list",
-              payload: { limit: 250, cursor, query: "collection_type:custom" } }) });
+              payload: { limit: 250, cursor } }) });
           if (!response.ok) throw new Error("Catalog unavailable");
           const page = collectionPage.parse(await response.json()).data;
           loaded.push(...page.collections);
@@ -28,7 +28,7 @@ export function ClassificationFields({ storeId, collectionId, productType, reaso
           if (page.pageInfo.hasNextPage && (!cursor || seen.has(cursor))) throw new Error("Incomplete catalog");
           if (cursor) seen.add(cursor);
         } while (cursor);
-        if (!controller.signal.aborted) { setCollections(loaded); setStatus(loaded.length ? "" : "Store chưa có collection có thể gán trực tiếp."); }
+        if (!controller.signal.aborted) { setCollections(loaded); setStatus(loaded.length ? "Collection tự động: server kiểm tra rule và thêm tag phù hợp khi sync; rule phức tạp sẽ yêu cầu kiểm tra." : "Store chưa có collection."); }
       } catch { if (!controller.signal.aborted) setStatus("Không tải được collections. Đóng và mở lại để thử lại."); }
     })();
     return () => controller.abort();

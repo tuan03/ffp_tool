@@ -26,7 +26,11 @@ const analysis = z.object({ physicalProductIdentity: analysisText, visualEntitie
 }).strict();
 const submission = z.object({
   classification: z.object({ status: z.enum(["ready", "needs_review"]), collectionId: z.string().optional(),
-    productType: z.string().min(1).max(255).optional(), reason: z.string().min(1).max(1000) }).strict().optional()
+    productType: z.string().min(1).max(255).optional(), reason: z.string().min(1).max(1000),
+    evidence: z.object({ imageIds: z.array(z.string().min(1)).min(1), visualTheme: z.string().min(1).max(1000),
+      collectionTheme: z.string().min(1).max(1000), alternatives: z.array(z.object({ collectionId: z.string().min(1),
+        whyNotChosen: z.string().min(1).max(1000) }).strict()).max(3) }).strict().optional(),
+  }).strict().optional()
     .describe("Required when job context enables automatic classification. Submit status ready, one exact catalog collectionId, productType and reason based on viewed images. Missing or invalid classification must be repaired before SEO completes. Never use catalog descriptions as product facts or force an unsupported match."),
   draft: z.object({ productTitle: z.string().min(1), intro: z.string().min(1),
     bullets: z.array(z.object({ label: z.string().min(1), text: z.string().min(1) }).strict()).min(2).max(5),
@@ -55,6 +59,8 @@ async function execute(operation: () => Promise<unknown>, observe: (code: string
       CLASSIFICATION_PRODUCT_TYPE_REQUIRED: "Add a concise physical productType, preferring the catalog's existing types. Preserve SEO and resubmit with a new requestId.",
       CLASSIFICATION_CATALOG_UNAVAILABLE: "Keep all SEO work. Retry reading context later; do not invent a collection or claim completion. If unavailable after bounded retries, report this blocker for operator recovery.",
       CLASSIFICATION_UNRESOLVED: "Compare the viewed product theme and identity with this store's collections. Select the best grounded match and submit ready with a new requestId. Preserve SEO. If no match is justified, report the blocker; never force a choice.",
+      CLASSIFICATION_RULES_UNSUPPORTED: "The selected collection has rules that cannot be safely fulfilled by tags alone. Report the blocker; do not substitute a semantically unrelated collection just to pass.",
+      CLASSIFICATION_EVIDENCE_REQUIRED: "Read context and compare all collections, including tag-based ones. Add evidence with valid imageIds, visualTheme, collectionTheme and a different catalog collectionId with whyNotChosen (unless only one collection exists). A shared product type is not proof of a shared theme. Keep SEO and resubmit with a new requestId.",
       IMAGE_VIEW_REQUIRED: "Fetch every imageId with job_get_image under the current lease before analysis.",
       INVALID_ANALYSIS: "Read ffp://seo-worker/contracts analysis schema. Evidence must cover exactly all supplied imageIds; use only grounded observations.",
       PRODUCT_IDENTITY_AMBIGUOUS: "Read error.reasons. Correct missing analysis fields only from viewed image evidence. If identity remains uncertain, stop and release for operator review; never lower the threshold or set reviewRequired=false just to pass.",

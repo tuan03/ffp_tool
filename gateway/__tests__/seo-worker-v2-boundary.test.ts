@@ -153,7 +153,8 @@ test("automatic crawler classification is store scoped, durable and never enable
     assert.doesNotMatch(JSON.stringify(context), /UNTRUSTED_OLD_TITLE/);
     assert.equal(Boolean(context.classification), source === "amazon");
     const submission = { draft: { productTitle: "Dragon bedding" }, alts: {}, classification: {
-      status: "ready", collectionId: "gid://shopify/Collection/1", productType: "bedding", reason: "Viewed bed covering with dragons" } };
+      status: "ready", collectionId: "gid://shopify/Collection/1", productType: "bedding", reason: "Viewed bed covering with dragons",
+      evidence: { imageIds: job.input.images.map(image => image.id), visualTheme: "Dragon", collectionTheme: "Dragons", alternatives: [] } } };
     await workflow.submit("token", lease, "submit", submission);
     assert.deepEqual(saved, source === "amazon" ? { ...submission, classification: { ...submission.classification, productType: "Bedding" } } : submission);
     if (source === "auto_seo") assert.equal(catalogReads, 0);
@@ -180,7 +181,9 @@ test("automatic submission requires classification and preserves checkpoints unt
   const draft = { draft: { productTitle: "Preserved SEO" }, alts: {} };
   await assert.rejects(workflow.submit("token", lease, "missing", draft), /CLASSIFICATION_REQUIRED/);
   await assert.rejects(workflow.submit("token", lease, "invalid", { ...draft, classification: { status: "ready" } }), /CLASSIFICATION_INVALID/);
-  const classification = { status: "ready", collectionId: "collection-1", productType: "Bedding", reason: "Viewed dragon bedding" };
+  const classification = { status: "ready", collectionId: "collection-1", productType: "Bedding", reason: "Viewed dragon bedding",
+    evidence: { imageIds: job.input.images.map(image => image.id), visualTheme: "Dragon", collectionTheme: "Dragon", alternatives: [] } };
+  await assert.rejects(workflow.submit("token", lease, "missing-evidence", { ...draft, classification: { ...classification, evidence: undefined } }), /CLASSIFICATION_EVIDENCE_REQUIRED/);
   await assert.rejects(workflow.submit("token", lease, "no-type", { ...draft, classification: { ...classification, productType: undefined } }), /CLASSIFICATION_PRODUCT_TYPE_REQUIRED/);
   await assert.rejects(workflow.submit("token", lease, "uncertain", { ...draft, classification: { ...classification, status: "needs_review" } }), /CLASSIFICATION_UNRESOLVED/);
   await assert.rejects(workflow.submit("token", lease, "wrong-store", { ...draft, classification: { ...classification, collectionId: "other" } }), /CLASSIFICATION_COLLECTION_INVALID/);
