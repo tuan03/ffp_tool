@@ -29,6 +29,32 @@ test("customized variants from the same Amazon product have distinct stable SKUs
   assert.notEqual(product.variants?.[0].sku, product.variants?.[1].sku);
 });
 
+test("size display normalization preserves short SKUs across option-name and value cleanup", () => {
+  const original = { asin: "B012345678", variants: [
+    { price: 10, options: { "Size (Popular)": "3x3 ft (!!!)" } },
+    { price: 20, options: { "Size (Popular)": "4x6 ft (Recommended)" } },
+  ] };
+  const before = fromCustomizationNormalizerProduct(original);
+  const after = fromCustomizationNormalizerProduct({ ...original,
+    variants: [{ price: 10, options: { Size: "3x3 ft" } }, { price: 20, options: { Size: "4x6 ft" } }],
+    sizeOptionNormalization: { version: 1, sourceHash: "a".repeat(64), groups: [{ originalLabel: "Size (Popular)", label: "Size",
+      choices: [{ originalLabel: "3x3 ft (!!!)", label: "3x3 ft" }, { originalLabel: "4x6 ft (Recommended)", label: "4x6 ft" }] }] },
+  });
+  assert.deepEqual(after.variants?.map(variant => variant.sku), before.variants?.map(variant => variant.sku));
+  assert.deepEqual(after.variants?.[0].optionValues, [{ optionName: "Size", name: "3x3 ft" }]);
+});
+
+test("missing or malformed size audit cannot override existing SKU assignment", () => {
+  const product = { asin: "B012345678", variants: [
+    { price: 10, options: { Size: "S" } }, { price: 20, options: { Size: "M" } },
+  ] };
+  for (const audit of [null, {}, { version: 1, sourceHash: "invalid", groups: [] },
+    { version: 1, sourceHash: "a".repeat(64), groups: [{ label: "Size", originalLabel: "Different", choices: null }] }]) {
+    assert.deepEqual(fromCustomizationNormalizerProduct({ ...product, sizeOptionNormalization: audit }).variants,
+      fromCustomizationNormalizerProduct(product).variants);
+  }
+});
+
 test("source variant ASIN supplies the SKU when product ASIN is missing", () => {
   const product = fromCustomizationNormalizerProduct({
     sourceVariants: [{ asin: "B012345678" }], variants: [{ price: 10 }],

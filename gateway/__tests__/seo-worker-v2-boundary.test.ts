@@ -195,3 +195,45 @@ test("automatic submission requires classification and preserves checkpoints unt
   await workflow.submit("token", lease, "repaired", { ...draft, classification });
   assert.deepEqual(saved, { ...draft, classification });
 });
+
+test("default crawler size labels are a separate context, validated durable checkpoint and retryable repair", async () => {
+  for (const profile of ["default", "preaurem", "jeminise"]) {
+    const original = { crawlerProfileSlug: profile, crawlerSizeOptionsVersion: 1, title: "UNTRUSTED_TITLE",
+      variants: [{ id: "stable-id", options: { Size: "1.5x1.5 ft (!!!)", Color: "PRIVATE_COLOR" } }] };
+    const job = normalizePersisted({ ...enqueue, execution: { ...enqueue.execution, source: "amazon", originalSnapshot: original },
+      id: "size-job", storeId: "jeminise", source: "amazon", sourceIdentity: "123", original,
+      inputHash: "hash", settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "English", instructions: "" },
+      status: "IN_PROGRESS", checkpoints: {}, createdAt: 1, updatedAt: 1 } as GptSeoJob);
+    let saved: unknown;
+    let replay: unknown = null;
+    const repository = { checkpointReceipt: async () => replay, readJob: async () => job,
+      saveCheckpoint: async (_token: string, _lease: unknown, input: { payload: unknown }) => { saved = input.payload; return { status: "VALIDATING" }; },
+    } as unknown as SeoWorkerRepository;
+    const workflow = createWorkerWorkflow(repository, { checkSource: async () => undefined });
+    const lease = { jobId: job.id, runId: "run", sessionId: "session", leaseId: "lease", leaseVersion: 1, expiresAt: 10 };
+    const context = await workflow.context("token", lease);
+    assert.doesNotMatch(JSON.stringify(context), /UNTRUSTED_TITLE|PRIVATE_COLOR/);
+    assert.deepEqual(Object.keys(context.input).sort(), ["images", "niche", "storeProfile"]);
+    const draft = { draft: { productTitle: "Preserved SEO" }, alts: {} };
+    if (profile !== "default") {
+      assert.equal(context.sizeOptions, undefined);
+      await workflow.submit("token", lease, "submit", { ...draft, sizeOptions: { version: 1, groups: [] } });
+      assert.deepEqual(saved, draft);
+      continue;
+    }
+    assert.ok(context.sizeOptions);
+    await assert.rejects(workflow.submit("token", lease, "missing", draft), /SIZE_OPTIONS_REQUIRED/);
+    assert.equal(saved, undefined);
+    const group = context.sizeOptions.groups[0];
+    const sizeOptions = { version: 1, groups: [{ groupId: group.groupId, label: group.label, reason: "Remove decoration",
+      choices: [{ choiceId: group.choices[0].choiceId, label: "1.5x1.5 ft" }] }] };
+    await workflow.submit("token", lease, "complete", { ...draft, sizeOptions });
+    function readSaved(): unknown { return saved; }
+    const stored = readSaved();
+    assert.ok(stored && typeof stored === "object" && "sizeOptions" in stored && "draft" in stored);
+    assert.deepEqual(stored.draft, draft.draft);
+    assert.ok(stored.sizeOptions && typeof stored.sizeOptions === "object" && "sourceHash" in stored.sizeOptions);
+    replay = { status: "VALIDATING", replay: true };
+    assert.deepEqual(await workflow.submit("token", lease, "complete", { ...draft, sizeOptions }), replay);
+  }
+});

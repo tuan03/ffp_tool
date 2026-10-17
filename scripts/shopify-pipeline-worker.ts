@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 
 import { buildClassificationSyncFields, createClassificationCatalogLoader, validateLiveProductClassification, validateProductClassification } from "../gateway/seo-worker/product-classification";
 import type { ProductClassification } from "../gateway/seo-worker/product-classification";
+import { applySizeOptionNormalization } from "../gateway/seo-worker/size-option-normalization";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
@@ -521,6 +522,7 @@ async function processClaim(
   let gptSyncToken: string | undefined;
   let externalSeoExecution: SeoContentDetailedOutput | undefined;
   let externalClassification: unknown;
+  let externalSizeOptions: unknown;
   let baseNormalizedProduct = claim.product;
   let assetsNormalized = Number(claim.review?.assetsNormalized ?? claim.assetsNormalized ?? 0);
   const skipExistingSeoProduct = async (): Promise<boolean> => {
@@ -564,6 +566,7 @@ async function processClaim(
         }
         externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
         externalClassification = (externalJob.checkpoints.submission as Record<string, unknown> | undefined)?.classification;
+        externalSizeOptions = (externalJob.checkpoints.submission as Record<string, unknown> | undefined)?.sizeOptions;
       } catch (error) {
         await failClaim(claim, workerId, error, { retryable: true, phase: "seo", timings });
         return;
@@ -644,6 +647,8 @@ async function processClaim(
             ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
             input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
             original: { ...baseNormalizedProduct, crawlerPipelineItemId: claim.id,
+              crawlerProfileSlug: claim.settings.profileSlug ?? "default",
+              ...((claim.settings.profileSlug ?? "default") === "default" ? { crawlerSizeOptionsVersion: 1 } : {}),
               crawlerClassificationMode: claim.settings.classificationMode ?? "manual" },
         });
         if (externalJob.settings.provider !== "codex_mcp") {
@@ -663,6 +668,7 @@ async function processClaim(
         }
         externalSeoExecution = externalJob.result as SeoContentDetailedOutput;
         externalClassification = (externalJob.checkpoints.submission as Record<string, unknown> | undefined)?.classification;
+        externalSizeOptions = (externalJob.checkpoints.submission as Record<string, unknown> | undefined)?.sizeOptions;
       } catch (error) {
         if (await recoverUncertainSeoEnqueue({ error, recover: recoverExternalSeo,
           delay: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
@@ -862,7 +868,7 @@ async function processClaim(
       let seoProduct: CrawlProduct;
       try {
         seoProduct = applySeoContentToCustomizationProduct(
-          baseNormalizedProduct,
+          applySizeOptionNormalization(baseNormalizedProduct, (claim.settings.profileSlug ?? "default") === "default" ? externalSizeOptions : undefined),
           seoExecution.output,
           { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
         );

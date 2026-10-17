@@ -3,6 +3,8 @@ import type { ShopifyVariantInput } from "./types";
 interface AmazonVariantSkuSource {
   readonly asin?: string;
   readonly variant: ShopifyVariantInput;
+  /** Original selections keep SKU identity stable when only display labels change. */
+  readonly identityOptionValues?: ShopifyVariantInput["optionValues"];
 }
 
 function invalidSku(reason: string): never {
@@ -36,13 +38,14 @@ export function assignAmazonVariantSkus(sources: readonly AmazonVariantSkuSource
   for (const { asin } of sources) {
     if (asin) asinCounts.set(asin, (asinCounts.get(asin) ?? 0) + 1);
   }
-  const candidates = sources.map(({ asin, variant }) => {
+  const candidates = sources.map(({ asin, variant, identityOptionValues }) => {
     if (!asin) return { variant, baseSku: undefined, digest: undefined };
     const hasOptions = (variant.optionValues?.length ?? 0) > 0;
     if (sources.length > 1 && !hasOptions && (asinCounts.get(asin) ?? 0) > 1) {
       invalidSku("Variants sharing an ASIN need option selections to distinguish them.");
     }
-    return { variant, baseSku: `AMZ-${asin}`, digest: sources.length > 1 && hasOptions ? optionDigest(variant) : undefined };
+    return { variant, baseSku: `AMZ-${asin}`, digest: sources.length > 1 && hasOptions
+      ? optionDigest(identityOptionValues ? { ...variant, optionValues: identityOptionValues } : variant) : undefined };
   });
   const codeLengths = [8, 12, 16] as const;
   const candidateCounts = new Map<string, number>();

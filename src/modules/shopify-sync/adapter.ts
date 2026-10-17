@@ -105,6 +105,23 @@ function normalizeJeminiseBeddingOptionValue(
   return value;
 }
 
+function originalSkuOptions(product: CrawlProduct, variant: ShopifyVariantInput): ShopifyVariantInput["optionValues"] {
+  const audit = product.sizeOptionNormalization;
+  if (!isRecord(audit) || audit.version !== 1 || typeof audit.sourceHash !== "string"
+    || !/^[a-f0-9]{64}$/.test(audit.sourceHash) || !Array.isArray(audit.groups)) return undefined;
+  const groups = audit.groups.filter(isRecord);
+  return variant.optionValues?.map(option => {
+    const matches = groups.filter(group => group.label === option.optionName);
+    const group = matches[0];
+    if (matches.length !== 1 || !group || typeof group.originalLabel !== "string" || !Array.isArray(group.choices)) return option;
+    const choices = group.choices.filter(isRecord).filter(choice => choice.label === option.name);
+    const choice = choices[0];
+    if (choices.length !== 1 || !choice || typeof choice.originalLabel !== "string") return option;
+    // The checkpoint contains an injective original/display mapping, not a new SKU.
+    return { optionName: group.originalLabel, name: choice.originalLabel };
+  });
+}
+
 function parseAeoFaq(value: unknown): readonly ShopifyAeoFaqItem[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const faq: ShopifyAeoFaqItem[] = [];
@@ -290,7 +307,7 @@ export function fromCustomizationNormalizerProduct(
         optionValues: optionValues.length > 0 ? optionValues : undefined,
         mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
       };
-      return [{ asin: variantAsin, variant }];
+      return [{ asin: variantAsin, variant, identityOptionValues: originalSkuOptions(product, variant) }];
     });
   const variants = assignAmazonVariantSkus(variantSources);
 
