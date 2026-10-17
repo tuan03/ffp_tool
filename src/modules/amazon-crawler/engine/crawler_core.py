@@ -32,6 +32,7 @@ from .customization_converter import apply_preaurem_size_profile, expand_paid_va
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
 from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
 from .retry_policy import FetchFailure, RETRY_FIELDS, response_failure, retry_delay
+from .size_option_labels import clean_customization_size_options, clean_source_size_options
 from .variant_presets import (
     BEDDING_PRESET_ID,
     BLANKET_PRESET_ID,
@@ -2123,22 +2124,30 @@ class AmazonCrawler:
             variant["customization"] = customization
             variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
             variant["warnings"] = sorted(set(variant.get("warnings", []) + customization_warnings))
-        actual_dimensions = self._source_variant_dimensions(rebuilt_source_variants)
+        raw_source_variants = rebuilt_source_variants
+        actual_dimensions = self._source_variant_dimensions(raw_source_variants)
         split_attribute = split_attribute_override or self._choose_split_attribute(actual_dimensions)
+        size_warnings: list[str] = []
+        mapped_names: dict[str, str] = {}
+        if self.settings.profile_slug == "default":
+            rebuilt_source_variants, mapped_names, size_warnings = clean_source_size_options(raw_source_variants)
+        raw_options_by_asin = {variant["asin"]: variant.get("options", {}) for variant in raw_source_variants}
+        mapped_split_attribute = mapped_names.get(split_attribute, split_attribute) if split_attribute else None
         grouped: dict[str | None, list[dict[str, Any]]] = {}
         if split_attribute is None:
             grouped[None] = rebuilt_source_variants
         else:
-            for variant in rebuilt_source_variants:
-                value = variant.get("options", {}).get(split_attribute)
+            for raw_variant, variant in zip(raw_source_variants, rebuilt_source_variants):
+                value = raw_variant.get("options", {}).get(split_attribute)
                 grouped.setdefault(value, []).append(variant)
         products: list[dict[str, Any]] = []
         for split_value, source_variants in grouped.items():
             if not source_variants:
                 continue
             title = family["sourceTitle"]
-            if split_value and not title.casefold().endswith(str(split_value).casefold()):
-                title = f"{title} - {split_value}"
+            display_split_value = source_variants[0].get("options", {}).get(mapped_split_attribute) if mapped_split_attribute else split_value
+            if display_split_value and not title.casefold().endswith(str(display_split_value).casefold()):
+                title = f"{title} - {display_split_value}"
             source_asins = [variant["asin"] for variant in source_variants]
             group_key = _stable_token(family["parentAsin"], split_attribute or "none", str(split_value or "none"))
             fingerprints = sorted({variant["customizationFingerprint"] for variant in source_variants if variant.get("customizationFingerprint")})
@@ -2148,17 +2157,24 @@ class AmazonCrawler:
             bullet_points = next((variant.get("bulletPoints") for variant in source_variants if variant.get("bulletPoints")), family.get("bulletPoints", []))
             categories = next((variant.get("categories") for variant in source_variants if variant.get("categories")), family.get("categories", []))
             product_details = next((variant.get("productDetails") for variant in source_variants if variant.get("productDetails")), family.get("productDetails", {}))
-            warnings = [warning for variant in source_variants for warning in variant.get("warnings", [])]
+            warnings = [*size_warnings, *(warning for variant in source_variants for warning in variant.get("warnings", []))]
             if self.settings.profile_slug == "preaurem":
                 customization, profile_warnings = apply_preaurem_size_profile(customization)
                 warnings.extend(profile_warnings)
+            elif self.settings.profile_slug == "default":
+                customization, customization_warnings = clean_customization_size_options(
+                    customization,
+                    reserved_names={name for variant in source_variants for name in variant.get("options", {}) if name != mapped_split_attribute},
+                )
+                warnings.extend(customization_warnings)
             if len(fingerprints) > 1:
                 warnings.append(f"Source variants have different customization configurations; representative {representative['asin']} was used. Fingerprints: {', '.join(fingerprints)}")
             base_variants: list[dict[str, Any]] = []
             for variant in source_variants:
-                options = {key: value for key, value in variant.get("options", {}).items() if key != split_attribute}
+                options = {key: value for key, value in variant.get("options", {}).items() if key != mapped_split_attribute}
+                raw_options = {key: value for key, value in raw_options_by_asin.get(variant["asin"], {}).items() if key != split_attribute}
                 base_variants.append({
-                    "id": f"{variant['asin']}-{_stable_token(json.dumps(options, sort_keys=True), length=10)}",
+                    "id": f"{variant['asin']}-{_stable_token(json.dumps(raw_options, sort_keys=True), length=10)}",
                     "sku": variant["asin"], "sourceAsin": variant["asin"], "options": options,
                     "price": deepcopy(variant.get("price")),
                     "surcharge": None,
@@ -2206,8 +2222,8 @@ class AmazonCrawler:
             for media_index, media in enumerate(product_media):
                 media["isMain"] = media_index == 0
             remaining_dimensions = self._source_variant_dimensions(source_variants)
-            if split_attribute:
-                remaining_dimensions.pop(split_attribute, None)
+            if mapped_split_attribute:
+                remaining_dimensions.pop(mapped_split_attribute, None)
             matrix = deepcopy(family["variantMatrix"])
             matrix["dimensions"] = remaining_dimensions
             remaining_expected = 1
