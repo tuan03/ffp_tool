@@ -27,7 +27,7 @@ const analysis = z.object({ physicalProductIdentity: analysisText, visualEntitie
 const submission = z.object({
   classification: z.object({ status: z.enum(["ready", "needs_review"]), collectionId: z.string().optional(),
     productType: z.string().min(1).max(255).optional(), reason: z.string().min(1).max(1000) }).strict().optional()
-    .describe("Required when job context enables automatic classification. Choose one catalog collection and a product type based on viewed images; needs_review when uncertain. Never use catalog descriptions as product facts."),
+    .describe("Required when job context enables automatic classification. Submit status ready, one exact catalog collectionId, productType and reason based on viewed images. Missing or invalid classification must be repaired before SEO completes. Never use catalog descriptions as product facts or force an unsupported match."),
   draft: z.object({ productTitle: z.string().min(1), intro: z.string().min(1),
     bullets: z.array(z.object({ label: z.string().min(1), text: z.string().min(1) }).strict()).min(2).max(5),
     guidance: z.array(z.string().min(1)).optional(), closing: z.string().min(1),
@@ -49,6 +49,12 @@ async function execute(operation: () => Promise<unknown>, observe: (code: string
     const code = error instanceof SeoWorkerError ? error.code : "WORKER_OPERATION_FAILED";
     await observe(code);
     const hints: Record<string, string> = {
+      CLASSIFICATION_REQUIRED: "Keep the existing SEO draft. Read job context and submit classification alongside draft/alts: status ready, exact catalog collectionId, productType and reason. Resubmit with a new requestId; do not redo SEO.",
+      CLASSIFICATION_INVALID: "Read the classification schema and repair only its fields. Preserve draft/alts and existing checkpoints; resubmit the complete payload with a new requestId.",
+      CLASSIFICATION_COLLECTION_INVALID: "Refresh job context. Choose one exact collectionId from this store's catalog, not a title or another store's ID. Preserve SEO and resubmit with a new requestId.",
+      CLASSIFICATION_PRODUCT_TYPE_REQUIRED: "Add a concise physical productType, preferring the catalog's existing types. Preserve SEO and resubmit with a new requestId.",
+      CLASSIFICATION_CATALOG_UNAVAILABLE: "Keep all SEO work. Retry reading context later; do not invent a collection or claim completion. If unavailable after bounded retries, report this blocker for operator recovery.",
+      CLASSIFICATION_UNRESOLVED: "Compare the viewed product theme and identity with this store's collections. Select the best grounded match and submit ready with a new requestId. Preserve SEO. If no match is justified, report the blocker; never force a choice.",
       IMAGE_VIEW_REQUIRED: "Fetch every imageId with job_get_image under the current lease before analysis.",
       INVALID_ANALYSIS: "Read ffp://seo-worker/contracts analysis schema. Evidence must cover exactly all supplied imageIds; use only grounded observations.",
       PRODUCT_IDENTITY_AMBIGUOUS: "Read error.reasons. Correct missing analysis fields only from viewed image evidence. If identity remains uncertain, stop and release for operator review; never lower the threshold or set reviewRequired=false just to pass.",

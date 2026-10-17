@@ -4,7 +4,7 @@ New crawler jobs default to `classificationMode: automatic`. Missing mode means 
 
 The crawler pipeline snapshots `crawlerClassificationMode` in the original execution snapshot. MCP semantic product input remains images, niche and store profile. Separate classification context supplies the target store's paginated manual collections and existing product types. This catalog is categorization metadata, never product evidence or instructions. Codex chooses one collection and prefers existing product types, with concise new types permitted. It cannot create collections, change collection rules or pricing.
 
-`job_submit_draft.submission.classification` contains `status` (`ready` or `needs_review`), optional `collectionId`/`productType`, and `reason`. It is validated before the durable submission checkpoint. Missing, unavailable or invalid classification becomes `needs_review` without discarding valid SEO. The catalog cache lives for 60 seconds and coalesces same-store reads. Failed fetches are not cached. Shopify `productTypes` and `collections` are read with full cursor pagination; collections with a rule set cannot be directly assigned.
+`job_submit_draft.submission.classification` contains `status`, `collectionId`, `productType`, and `reason`. Automatic crawler submissions require `ready` and valid fields before the durable submission checkpoint; legacy/manual and Auto SEO submissions remain compatible. Missing, malformed, unresolved, wrong-store and unavailable catalog cases return specific `CLASSIFICATION_*` errors with repair hints. Codex retains its draft and saved analysis/research/keyword checkpoints and resubmits the complete payload with a new request ID after repairing only classification. Rejected submissions are not persisted or counted as completed. Never force a match when evidence is insufficient. Historical incomplete Review records still support operator repair without rerunning SEO. The catalog cache lives for 60 seconds and coalesces same-store reads. Failed fetches are not cached. Shopify `productTypes` and `collections` are read with full cursor pagination; collections with a rule set cannot be directly assigned.
 
 The pipeline copies classification from the checkpoint to the per-product Review record. Automatic publication requires complete SEO, images and ready classification. Review edits can repair the selection without rerunning SEO. Coordinator sync endpoints and bulk queueing reject incomplete classification. Before product writes, the pipeline validates the selection against the store catalog and queries the chosen collection live; deletion or a rule-set change returns the item to Review. Existing sync idempotency and image staging stay in force. Channel-only publication retries do not require reclassification.
 
@@ -15,6 +15,15 @@ Task branch: `feature/module-a-add-seo-product-classification`, based on `cua_pr
 References: [Shopify productTypes](https://shopify.dev/docs/api/admin-graphql/latest/queries/productTypes), [Shopify collections](https://shopify.dev/docs/api/admin-graphql/latest/queries/collections).
 
 ## Verification and handoff
+
+### Classification repair follow-up
+
+- Strict submission validation and actionable MCP repair hints prevent missing classification from silently becoming completed SEO. No new environment variables or database migration.
+- Focused classification, V2 boundary and MCP tests: 17 passed. Typecheck and production build passed.
+- Full `npm test`: tooling 80 passed, web 1,100 passed; Ads MCP user audit test failed and Gateway did not terminate, so the run was stopped. This is not an all-green suite.
+- Local server image rebuilt and restarted; no Git push or VPS deployment. Two existing portrait Review records were repaired through the version-checked Coordinator update path, preserving SEO and images without requesting Shopify sync. The remaining leopard-stiletto design needs operator collection confirmation; no forced match was made.
+
+### Initial implementation
 
 - Gateway/MCP classification, V2 boundary, source-leakage, MCP access and auto-publish tests: 21 passed.
 - Engine suite with isolated `LOCALAPPDATA`: 705 tests, 23 skipped, no failures. Focused classification/Review repair tests also passed after the final Coordinator edits.

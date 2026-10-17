@@ -160,7 +160,7 @@ test("automatic crawler classification is store scoped, durable and never enable
   }
 });
 
-test("missing classification or catalog outage preserves the SEO draft for operator repair", async () => {
+test("automatic submission requires classification and preserves checkpoints until repaired", async () => {
   const original = { crawlerClassificationMode: "automatic" };
   const job = normalizePersisted({ ...enqueue, execution: { ...enqueue.execution, source: "amazon", originalSnapshot: original },
     id: "classification-offline", storeId: "jeminise", source: "amazon", sourceIdentity: "123", original,
@@ -170,11 +170,25 @@ test("missing classification or catalog outage preserves the SEO draft for opera
   const repository = { checkpointReceipt: async () => null, readJob: async () => job,
     saveCheckpoint: async (_token: string, _lease: unknown, input: { payload: unknown }) => { saved = input.payload; return {}; },
   } as unknown as SeoWorkerRepository;
+  let offline = false;
   const workflow = createWorkerWorkflow(repository, { checkSource: async () => undefined,
-    classificationCatalog: async () => { throw new Error("Unavailable"); } });
+    classificationCatalog: async () => {
+      if (offline) throw new Error("Unavailable");
+      return { collections: [{ id: "collection-1", title: "Dragon", description: "" }], productTypes: ["Bedding"] };
+    } });
   const lease = { jobId: job.id, runId: "run", sessionId: "session", leaseId: "lease", leaseVersion: 1, expiresAt: 10 };
+  const draft = { draft: { productTitle: "Preserved SEO" }, alts: {} };
+  await assert.rejects(workflow.submit("token", lease, "missing", draft), /CLASSIFICATION_REQUIRED/);
+  await assert.rejects(workflow.submit("token", lease, "invalid", { ...draft, classification: { status: "ready" } }), /CLASSIFICATION_INVALID/);
+  const classification = { status: "ready", collectionId: "collection-1", productType: "Bedding", reason: "Viewed dragon bedding" };
+  await assert.rejects(workflow.submit("token", lease, "no-type", { ...draft, classification: { ...classification, productType: undefined } }), /CLASSIFICATION_PRODUCT_TYPE_REQUIRED/);
+  await assert.rejects(workflow.submit("token", lease, "uncertain", { ...draft, classification: { ...classification, status: "needs_review" } }), /CLASSIFICATION_UNRESOLVED/);
+  await assert.rejects(workflow.submit("token", lease, "wrong-store", { ...draft, classification: { ...classification, collectionId: "other" } }), /CLASSIFICATION_COLLECTION_INVALID/);
+  offline = true;
   assert.equal((await workflow.context("token", lease)).classification?.catalog, null);
-  await workflow.submit("token", lease, "submit", { draft: { productTitle: "Preserved SEO" }, alts: {} });
-  assert.equal((saved as { classification: { status: string } }).classification.status, "needs_review");
-  assert.equal((saved as { draft: { productTitle: string } }).draft.productTitle, "Preserved SEO");
+  await assert.rejects(workflow.submit("token", lease, "offline", { ...draft, classification }), /CLASSIFICATION_CATALOG_UNAVAILABLE/);
+  assert.equal(saved, undefined);
+  offline = false;
+  await workflow.submit("token", lease, "repaired", { ...draft, classification });
+  assert.deepEqual(saved, { ...draft, classification });
 });

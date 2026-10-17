@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SeoWorkerError } from "./protocol";
 
 import type { GptSeoJob } from "../../src/modules/custom-gpt-seo";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
@@ -14,6 +15,22 @@ export interface ProductClassification {
   readonly collectionId?: string;
   readonly productType?: string;
   readonly reason: string;
+}
+
+// Worker submissions must be repaired before they can count as completed SEO.
+// Legacy Review reads retain the tolerant validator below.
+export function requireProductClassification(value: unknown, catalog: ClassificationCatalog): ProductClassification {
+  if (value == null) throw new SeoWorkerError("CLASSIFICATION_REQUIRED");
+  const parsed = z.object({ status: z.enum(["ready", "needs_review"]), collectionId: z.string().optional(),
+    productType: z.string().trim().min(1).max(255).optional(), reason: z.string().trim().min(1).max(1000) }).strict().safeParse(value);
+  if (!parsed.success) throw new SeoWorkerError("CLASSIFICATION_INVALID");
+  if (!catalog.collections.length) throw new SeoWorkerError("CLASSIFICATION_CATALOG_UNAVAILABLE");
+  if (parsed.data.status !== "ready") throw new SeoWorkerError("CLASSIFICATION_UNRESOLVED");
+  if (!parsed.data.productType) throw new SeoWorkerError("CLASSIFICATION_PRODUCT_TYPE_REQUIRED");
+  if (!catalog.collections.some(collection => collection.id === parsed.data.collectionId)) {
+    throw new SeoWorkerError("CLASSIFICATION_COLLECTION_INVALID");
+  }
+  return validateProductClassification(parsed.data, catalog);
 }
 
 export function requiresProductClassification(job: GptSeoJob): boolean {
