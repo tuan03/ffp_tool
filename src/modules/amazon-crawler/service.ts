@@ -27,6 +27,8 @@ import type {
   AmazonCrawlerJobSnapshot,
   AmazonCrawlerJobController,
   AmazonCrawlerStoreVendor,
+  AmazonCrawlerStoreCrawlSettings,
+  AmazonCrawlerStoreCrawlSettingsInput,
   AmazonCrawlerJobSummary,
   AmazonCrawlerSeoQueueHandoffSummary,
   AmazonCrawlerOutput,
@@ -1007,6 +1009,30 @@ export function createAmazonCrawlerJobController({
 }: AmazonCrawlerClientOptions): AmazonCrawlerJobController {
   const baseUrl = normalizeEngineUrl(engineUrl);
   const jobUrl = (jobId: string): string => `${baseUrl}/api/v1/crawl-jobs/${encodeURIComponent(jobId)}`;
+  async function requestStoreCrawlSettings(storeId: string, input?: AmazonCrawlerStoreCrawlSettingsInput): Promise<AmazonCrawlerStoreCrawlSettings> {
+    if (!storeId.trim()) throw new AmazonCrawlerServiceError("Chọn store trước khi cấu hình.", "STORE_REQUIRED");
+    const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/store-vendors/${encodeURIComponent(storeId)}/crawl-settings`, {
+      signal: AbortSignal.timeout(10_000), cache: "no-store",
+      ...(input ? { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) } : {}),
+    }));
+    if (!isRecord(payload) || payload.storeId !== storeId || !(payload.vendor === null || typeof payload.vendor === "string")
+      || !(payload.updatedAt === null || typeof payload.updatedAt === "string")) {
+      throw new AmazonCrawlerServiceError("Không tải được cấu hình của store.", "INVALID_ENGINE_RESPONSE");
+    }
+    const defaults = payload.defaults;
+    if (defaults === null) return { storeId, vendor: payload.vendor, updatedAt: payload.updatedAt, defaults: null };
+    if (!isRecord(defaults) || !["default", "jeminise", "preaurem"].includes(String(defaults.profileSlug))
+      || typeof defaults.imageProfileSlug !== "string" || !defaults.imageProfileSlug
+      || typeof defaults.applyJeminisePreset !== "boolean"
+      || (defaults.applyJeminisePreset && defaults.profileSlug !== "jeminise")
+      || !payload.vendor?.trim() || !payload.updatedAt) {
+      throw new AmazonCrawlerServiceError("Cấu hình store không hợp lệ. Hãy lưu lại cấu hình.", "INVALID_ENGINE_RESPONSE");
+    }
+    return { storeId, vendor: payload.vendor, updatedAt: payload.updatedAt, defaults: {
+      profileSlug: defaults.profileSlug as AmazonCrawlerStoreCrawlSettingsInput["profileSlug"],
+      imageProfileSlug: defaults.imageProfileSlug, applyJeminisePreset: defaults.applyJeminisePreset,
+    } };
+  }
   async function requestStoreVendor(storeId: string, vendor?: string): Promise<AmazonCrawlerStoreVendor> {
     if (!storeId.trim() || (vendor !== undefined && (!vendor.trim() || vendor.trim().length > 255 || /[\u0000-\u001f\u007f]/.test(vendor)))) {
       throw new AmazonCrawlerServiceError("Nhập Vendor hợp lệ, tối đa 255 ký tự.", "STORE_VENDOR_REQUIRED");
@@ -1023,6 +1049,7 @@ export function createAmazonCrawlerJobController({
   }
   return {
     storeVendors: { get: (storeId) => requestStoreVendor(storeId), save: (storeId, vendor) => requestStoreVendor(storeId, vendor) },
+    storeCrawlSettings: { get: (storeId) => requestStoreCrawlSettings(storeId), save: (storeId, input) => requestStoreCrawlSettings(storeId, input) },
     async metrics(jobId) {
       const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : "";
       const payload = await readJson(await fetchImplementation(`${baseUrl}/api/v1/crawler-metrics${query}`, { signal: AbortSignal.timeout(10_000) }));

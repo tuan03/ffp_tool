@@ -4,6 +4,7 @@ import { crawlerMockMetrics } from "./mocks/observability";
 import { createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, createShopifyAsinFilter } from "./service";
 
 import type { AppEnvironment } from "../../shared/types";
+import type { AmazonCrawlerStoreCrawlSettings } from "./types";
 import type { AmazonCrawlerAgentReleaseLoader, AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager, ShopifyAsinFilter } from "./types";
 
 export function getShopifyAsinFilter(environment: AppEnvironment): ShopifyAsinFilter {
@@ -32,12 +33,30 @@ export function getAmazonCrawlerAgentReleaseLoader(
 export function getAmazonCrawlerJobController(environment: AppEnvironment, engineUrl: string): AmazonCrawlerJobController {
   if (environment !== "mock") return createAmazonCrawlerJobController({ engineUrl });
   const vendors = new Map<string, string>();
+  const storeSettings = new Map<string, AmazonCrawlerStoreCrawlSettings>();
+  let settingsRevision = 0;
   return {
+    storeCrawlSettings: {
+      get: async (storeId) => structuredClone(storeSettings.get(storeId) ?? { storeId, vendor: vendors.get(storeId) ?? null, defaults: null, updatedAt: null }),
+      save: async (storeId, input) => {
+        if (!storeId.trim() || !input.vendor.trim() || input.vendor.trim().length > 255 || /[\u0000-\u001f\u007f]/.test(input.vendor)
+          || !["default", "jeminise", "preaurem"].includes(input.profileSlug) || !input.imageProfileSlug.trim()
+          || typeof input.applyJeminisePreset !== "boolean" || (input.applyJeminisePreset && input.profileSlug !== "jeminise")) throw new Error("Invalid store configuration.");
+        const saved: AmazonCrawlerStoreCrawlSettings = { storeId, vendor: input.vendor.trim(),
+          defaults: { profileSlug: input.profileSlug, imageProfileSlug: input.imageProfileSlug, applyJeminisePreset: input.applyJeminisePreset },
+          updatedAt: new Date(++settingsRevision).toISOString() };
+        storeSettings.set(storeId, saved);
+        vendors.set(storeId, saved.vendor ?? "");
+        return structuredClone(saved);
+      },
+    },
     storeVendors: {
       get: async (storeId) => ({ storeId, vendor: vendors.get(storeId) ?? "Demo Brand", updatedAt: null }),
       save: async (storeId, vendor) => {
         if (!vendor.trim() || vendor.trim().length > 255 || /[\u0000-\u001f\u007f]/.test(vendor)) throw new Error("Invalid vendor.");
         vendors.set(storeId, vendor.trim());
+        const existing = storeSettings.get(storeId);
+        if (existing) storeSettings.set(storeId, { ...existing, vendor: vendor.trim(), updatedAt: new Date(++settingsRevision).toISOString() });
         return { storeId, vendor: vendor.trim(), updatedAt: null };
       },
     },

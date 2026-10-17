@@ -47,6 +47,7 @@ export interface AmazonCrawlerSettings {
   maxMatrixVariants: number;
   storeId?: string;
   vendor?: string;
+  storeCrawlSettingsUpdatedAt?: string;
   autoSyncAfterSeo?: boolean;
   classificationMode?: "automatic" | "manual";
   autoSyncByStore?: Readonly<Record<string, boolean>>;
@@ -559,6 +560,28 @@ export interface AmazonCrawlerCancellationSummary {
   isExecutionConfirmed: boolean;
 }
 
+export interface AmazonCrawlerStoreCrawlDefaults {
+  profileSlug: AmazonCrawlerProfile;
+  imageProfileSlug: string;
+  applyJeminisePreset: boolean;
+}
+
+export interface AmazonCrawlerStoreCrawlSettings {
+  storeId: string;
+  vendor: string | null;
+  defaults: AmazonCrawlerStoreCrawlDefaults | null;
+  updatedAt: string | null;
+}
+
+export interface AmazonCrawlerStoreCrawlSettingsInput extends AmazonCrawlerStoreCrawlDefaults {
+  vendor: string;
+}
+
+export interface AmazonCrawlerStoreCrawlSettingsManager {
+  get(storeId: string): Promise<AmazonCrawlerStoreCrawlSettings>;
+  save(storeId: string, input: AmazonCrawlerStoreCrawlSettingsInput): Promise<AmazonCrawlerStoreCrawlSettings>;
+}
+
 export interface AmazonCrawlerStoreVendor {
   storeId: string;
   vendor: string | null;
@@ -571,6 +594,7 @@ export interface AmazonCrawlerStoreVendorManager {
 }
 
 export interface AmazonCrawlerJobController {
+  storeCrawlSettings?: AmazonCrawlerStoreCrawlSettingsManager;
   storeVendors?: AmazonCrawlerStoreVendorManager;
   metrics?(jobId?: string): Promise<AmazonCrawlerMetrics>;
   trace?(jobId: string, requestId: string, cursor?: string): Promise<AmazonCrawlerTracePage>;

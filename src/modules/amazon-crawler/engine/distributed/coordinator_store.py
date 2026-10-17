@@ -220,16 +220,39 @@ class CoordinatorStore(CoordinatorObservability):
             record = session.get(CoordinatorState, key)
             return json.loads(record.value) if record else {"storeId": store_id.strip(), "vendor": None, "updatedAt": None}
 
-    def save_store_vendor(self, store_id: str, vendor: Any) -> dict[str, Any]:
+    def get_store_crawl_settings(self, store_id: str) -> dict[str, Any]:
+        value = self.get_store_vendor(store_id)
+        return {**value, "defaults": value.get("defaults")}
+
+    def save_store_crawl_settings(self, store_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        profile = payload.get("profileSlug")
+        image_profile = payload.get("imageProfileSlug")
+        preset = payload.get("applyJeminisePreset")
+        if profile not in ("default", "jeminise", "preaurem"):
+            raise ValueError("Select a supported crawl profile.")
+        if not isinstance(image_profile, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,119}", image_profile):
+            raise ValueError("Select a valid image profile.")
+        if not isinstance(preset, bool) or (preset and profile != "jeminise"):
+            raise ValueError("Variant preset is only supported by the Jeminise crawl profile.")
+        return self.save_store_vendor(store_id, payload.get("vendor"), defaults={
+            "profileSlug": profile, "imageProfileSlug": image_profile, "applyJeminisePreset": preset,
+        })
+
+    def save_store_vendor(self, store_id: str, vendor: Any, *, defaults: dict[str, Any] | None = None) -> dict[str, Any]:
         key = self._store_vendor_key(store_id)
         if not isinstance(vendor, str) or not vendor.strip() or len(vendor.strip()) > 255 or any(ord(c) < 32 or ord(c) == 127 for c in vendor):
             raise ValueError("Vendor must contain 1-255 characters without control characters.")
-        value = {"storeId": store_id.strip(), "vendor": vendor.strip(), "updatedAt": utc_iso(utc_now())}
         with self.sessions.begin() as session:
+            # One row and transaction for all defaults; legacy vendor edits preserve profiles.
             insert = postgres_insert if session.bind.dialect.name == "postgresql" else sqlite_insert
-            statement = insert(CoordinatorState).values(key=key, value=json.dumps(value, ensure_ascii=False))
-            session.execute(statement.on_conflict_do_update(index_elements=[CoordinatorState.key],
-                set_={"value": statement.excluded.value, "updated_at": utc_now()}))
+            statement = insert(CoordinatorState).values(key=key, value="{}")
+            session.execute(statement.on_conflict_do_nothing(index_elements=[CoordinatorState.key]))
+            record = session.scalar(select(CoordinatorState).where(CoordinatorState.key == key).with_for_update())
+            value = {**json.loads(record.value), "storeId": store_id.strip(), "vendor": vendor.strip(), "updatedAt": utc_iso(utc_now())}
+            if defaults is not None:
+                value["defaults"] = defaults
+            record.value = json.dumps(value, ensure_ascii=False)
+            record.updated_at = utc_now()
         return value
 
     @staticmethod
@@ -1064,7 +1087,14 @@ class CoordinatorStore(CoordinatorObservability):
                 record = session.get(CoordinatorState, key)
                 if record is None:
                     raise ValueError("STORE_VENDOR_REQUIRED: Nhập và lưu Vendor Shopify cho store trước khi cào.")
-                settings["vendor"] = json.loads(record.value)["vendor"]
+                saved_config = json.loads(record.value)
+                expected_revision = payload.get("storeCrawlSettingsUpdatedAt")
+                if expected_revision is not None:
+                    if expected_revision != saved_config.get("updatedAt") or not saved_config.get("defaults"):
+                        raise ValueError("STORE_CRAWL_SETTINGS_CHANGED: Cấu hình store đã thay đổi. Tải lại cấu hình trước khi cào.")
+                    settings.update(saved_config["defaults"])
+                    settings["storeCrawlSettingsUpdatedAt"] = expected_revision
+                settings["vendor"] = saved_config["vendor"]
                 settings["vendorPolicyVersion"] = 1
             input_asins = []
             for source in raw_urls:

@@ -58,6 +58,25 @@ npm run dev:mock
 
 ### Shared crawler profiles
 
+Crawler defaults are saved per store through authenticated
+`GET/PUT /api/v1/store-vendors/{storeId}/crawl-settings`. The PUT body contains
+`vendor`, `profileSlug`, `imageProfileSlug`, and `applyJeminisePreset`. All four
+values share one CoordinatorState row/transaction with the existing vendor API;
+legacy vendor edits preserve the profile defaults. No database migration or new
+environment variable is required.
+
+Existing stores retain their vendor but start with `defaults: null`. Operators
+must explicitly choose both profiles and save once; there is no store-name
+inference or migration from a browser's previous selection. The crawler blocks
+starting while configuration is loading, being edited, or references an
+unavailable image profile. Disabled image processing is a valid explicit choice.
+
+New UI requests send `storeCrawlSettingsUpdatedAt`. The Coordinator rejects a
+stale configuration, resolves the saved profiles, and snapshots the defaults and
+image revision into the new job (including Run again). Existing jobs retain their
+snapshots. Legacy callers without saved defaults retain vendor-only behavior.
+Collection/type classification and per-run pricing are not part of these defaults.
+
 Versioned image presets and their PNG logos live in `config/image-processing-profiles/`.
 Coordinator startup installs missing presets into its runtime store (PostgreSQL in Docker)
 and copies logo bytes into the durable runtime volume. Existing operator profiles are

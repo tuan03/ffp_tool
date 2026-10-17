@@ -91,9 +91,10 @@ test("crawler page keeps settings open with one start action ahead of agents and
   assert.match(markup, /id="crawler-panel-agents"[^>]*hidden=""/);
   assert.match(markup, /id="crawler-panel-diagnostics"[^>]*hidden=""/);
   assert.match(markup, /Store nhận sản phẩm/);
-  assert.match(markup, /Xử lý ảnh/);
+  assert.match(markup, /Cấu hình cào theo store/);
   assert.match(markup, /role="group" aria-label="Store và Vendor" class="[^"]*md:grid-cols-2/);
-  assert.match(markup, /role="group" aria-label="Profile cào và xử lý ảnh" class="[^"]*md:grid-cols-2/);
+  assert.match(markup, /aria-label="Cấu hình cào theo store"/);
+  assert.match(markup, /Đang tải cấu hình store/);
   assert.match(markup, /class="[^"]*min-h-32[^"]*"[^>]*placeholder=/);
   assert.equal((markup.match(/>Bắt đầu cào \(0 link\)<\/button>/g) ?? []).length, 1);
   assert.ok(markup.lastIndexOf("Bắt đầu cào (0 link)") > markup.indexOf("Collection, loại sản phẩm"));

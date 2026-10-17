@@ -27,7 +27,7 @@ import {
   type AmazonCrawlerJobSnapshot,
   type AmazonCrawlerOutput,
   type AmazonCrawlerProgress,
-  type AmazonCrawlerProfile,
+  type AmazonCrawlerStoreCrawlSettings,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
   type AmazonCrawlerJobLoader,
@@ -44,7 +44,7 @@ import { CrawlerObservability } from "./components/CrawlerObservability";
 import { AmazonCrawlerDeadLetterPanel } from "./components/AmazonCrawlerDeadLetterPanel";
 import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
-import { CrawlerStoreVendorField } from "./components/CrawlerStoreVendorField";
+import { CrawlerStoreSettings } from "./components/CrawlerStoreSettings";
 import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
 import { replaceCrawlerInputWithAsin } from "./asin-filter-input";
 import { analyzeCrawlerInput } from "./crawler-input";
@@ -268,7 +268,7 @@ export function AmazonCrawlerPage({
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   const [isClearingTemporaryData, setIsClearingTemporaryData] = useState(false);
   const [cacheAsin, setCacheAsin] = useState("");
-  const [storeVendor, setStoreVendor] = useState<{ storeId: string; vendor: string | null }>({ storeId: "", vendor: null });
+  const [storeConfig, setStoreConfig] = useState<AmazonCrawlerStoreCrawlSettings | null>(null);
   const [cacheMessage, setCacheMessage] = useState<string | null>(null);
   const [isHandingOver, setIsHandingOver] = useState(false);
   const [handoverError, setHandoverError] = useState<string | null>(null);
@@ -984,11 +984,6 @@ export function AmazonCrawlerPage({
     void imageProcessingProfiles.list().then((profiles) => {
       if (!isMounted) return;
       setImageProfiles(profiles);
-      const selected = profiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? profiles[0];
-      if (selected) {
-        updateCrawlerSetting("imageProfileSlug", selected.slug);
-        setEditingImageProfile(selected);
-      }
     }).catch((caught: unknown) => {
       if (isMounted) setImageProfileMessage(caught instanceof Error ? caught.message : "Không tải được image profiles.");
     });
@@ -997,11 +992,12 @@ export function AmazonCrawlerPage({
 
   async function refreshImageProfiles(selectedSlug?: string): Promise<void> {
     if (!imageProcessingProfiles) return;
+    setImageProfiles([]);
     const profiles = await imageProcessingProfiles.list();
     setImageProfiles(profiles);
-    const selected = profiles.find((profile) => profile.slug === (selectedSlug ?? settings.imageProfileSlug)) ?? profiles[0] ?? null;
+    setImageProfileMessage(null);
+    const selected = profiles.find((profile) => profile.slug === (selectedSlug ?? storeConfig?.defaults?.imageProfileSlug)) ?? null;
     setEditingImageProfile(selected);
-    if (selected) updateSetting("imageProfileSlug", selected.slug);
   }
 
   async function handleSaveImageProfile(): Promise<void> {
@@ -1016,7 +1012,7 @@ export function AmazonCrawlerPage({
   }
 
   async function handleCreateImageProfile(): Promise<void> {
-    const template = imageProfiles.find((profile) => profile.slug === settings.imageProfileSlug) ?? imageProfiles[0];
+    const template = imageProfiles.find((profile) => profile.slug === storeConfig?.defaults?.imageProfileSlug) ?? imageProfiles[0];
     if (!template) return;
     const slug = `image-profile-${Date.now()}`;
     setEditingImageProfile({ ...template, slug, name: "New image profile", revision: "new", hasLogo: false });
@@ -1219,7 +1215,8 @@ export function AmazonCrawlerPage({
       pendingAsinResolver.current = null;
     };
   }, [activeStoreId]);
-  const hasSavedStoreVendor = storeVendor.storeId === activeStoreId && Boolean(storeVendor.vendor?.trim());
+  const hasSavedStoreConfig = storeConfig?.storeId === activeStoreId && Boolean(storeConfig.defaults && storeConfig.vendor?.trim()
+    && imageProfiles.some((profile) => profile.slug === storeConfig.defaults?.imageProfileSlug));
   const activeShopDomain = selectedStoreProfile?.shopDomain || `${activeStoreId}.myshopify.com`;
 
   const currentStoreProductTypes = useMemo(() => {
@@ -1249,6 +1246,7 @@ export function AmazonCrawlerPage({
   }, [currentStoreProductTypes]);
 
   function handleStoreChange(nextStore: string): void {
+    setStoreConfig(null);
     setAsinPreflightError(null);
     setAsinPreflightMatches([]);
     const nextStoreLower = nextStore.trim().toLowerCase();
@@ -1401,12 +1399,13 @@ export function AmazonCrawlerPage({
       crawlerInputRef.current?.focus();
       return;
     }
-    if (!hasSavedStoreVendor) {
-      setAsinPreflightError("Nhập và lưu Vendor Shopify cho store trước khi cào.");
+    if (!hasSavedStoreConfig || !storeConfig?.defaults) {
+      setAsinPreflightError("Tải và lưu cấu hình Vendor, Profile cào và ảnh cho store trước khi cào.");
       return;
     }
     const sources = [...urls];
-    const jobSettings = { ...settings, vendor: storeVendor.vendor ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true,
+    const jobSettings = { ...settings, ...storeConfig.defaults, vendor: storeConfig.vendor ?? undefined,
+      storeCrawlSettingsUpdatedAt: storeConfig.updatedAt ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true,
       ...(settings.classificationMode !== "manual" ? { classificationMode: "automatic" as const, collectionIds: [], collectionId: "", productType: "" } : {}) };
     await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
       allowedSources,
@@ -1604,9 +1603,9 @@ export function AmazonCrawlerPage({
 
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
-    if (!hasSavedStoreVendor) {
+    if (!hasSavedStoreConfig || !storeConfig?.defaults) {
       setJobControlTone("error");
-      setJobControlMessage("Nhập và lưu Vendor Shopify cho store trước khi chạy lại.");
+      setJobControlMessage("Tải và lưu cấu hình store trước khi chạy lại.");
       return;
     }
     const sources = urls.length > 0 ? [...urls] : [...job.inputs];
@@ -1620,7 +1619,9 @@ export function AmazonCrawlerPage({
       try {
         const replacement = await amazonCrawlerJobs.replace(job.jobId, {
           ...settings,
-          vendor: storeVendor.vendor ?? undefined,
+          ...storeConfig.defaults,
+          vendor: storeConfig.vendor ?? undefined,
+          storeCrawlSettingsUpdatedAt: storeConfig.updatedAt ?? undefined,
           urls: allowedSources,
           existingShopifyAsins,
           refreshFamilyAsins,
@@ -2424,7 +2425,7 @@ export function AmazonCrawlerPage({
     </>
   );
 
-  const isStartDisabled = !hasSavedStoreVendor || urls.length === 0 || inputAnalysis.invalidEntries.length > 0 || isRunning || isCheckingAsins || isJobSnapshotStale
+  const isStartDisabled = !hasSavedStoreConfig || urls.length === 0 || inputAnalysis.invalidEntries.length > 0 || isRunning || isCheckingAsins || isJobSnapshotStale
     || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED"
     || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0));
   const inlineHandoff = resolveInlineCrawlerHandoff({
@@ -2436,7 +2437,7 @@ export function AmazonCrawlerPage({
     summary: seoHandoffSummary,
   });
   const startBlockers = [
-    !hasSavedStoreVendor ? "Nhập và lưu Vendor cho store này." : null,
+    !hasSavedStoreConfig ? "Tải và lưu cấu hình cào cho store này." : null,
     urls.length === 0 ? "Nhập ít nhất một URL Amazon hoặc ASIN." : null,
     inputAnalysis.invalidEntries.length > 0 ? `Sửa ${inputAnalysis.invalidEntries.length} dòng chưa hợp lệ.` : null,
     isCheckingAsins ? "Đang kiểm tra ASIN trước khi tạo phiên." : null,
@@ -2589,7 +2590,7 @@ export function AmazonCrawlerPage({
           <div className="min-w-0 space-y-2">
           <label className="grid gap-1.5 text-sm text-slate-700 dark:text-slate-300">
             Store nhận sản phẩm
-            <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning} onChange={(event) => handleStoreChange(event.target.value)} className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100 disabled:opacity-50">
+            <select aria-label="Store nhận sản phẩm" value={settings.storeId || "capozen"} disabled={isRunning || isCheckingAsins} onChange={(event) => handleStoreChange(event.target.value)} className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100 disabled:opacity-50">
               {availableStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeId} ({store.shopDomain})</option>)}
             </select>
           </label>
@@ -2601,66 +2602,16 @@ export function AmazonCrawlerPage({
           </div>
           </div>
 
-          <CrawlerStoreVendorField key={activeStoreId} storeId={activeStoreId} manager={amazonCrawlerJobs?.storeVendors} onReady={setStoreVendor} />
-          </div>
-
-      <div role="group" aria-label="Profile cào và xử lý ảnh" className="grid min-w-0 items-start gap-4 md:grid-cols-2">
-        <label className="grid min-w-0 gap-1.5 text-sm text-slate-700 dark:text-slate-300">
-          Profile cào
-          <select
-            aria-label="Profile cào"
-            className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
-            value={settings.profileSlug}
-            onChange={(event) => {
-              const selectedProfile = event.target.value;
-              const nextProfile: AmazonCrawlerProfile =
-                selectedProfile === "jeminise" || selectedProfile === "preaurem"
-                  ? selectedProfile
-                  : "default";
-              updateSetting("profileSlug", nextProfile);
-              if (nextProfile === "jeminise") {
-                updateSetting("applyJeminisePreset", true);
-              } else {
-                updateSetting("applyJeminisePreset", false);
-              }
+          <CrawlerStoreSettings key={activeStoreId} storeId={activeStoreId} manager={amazonCrawlerJobs?.storeCrawlSettings}
+            imageProfiles={imageProfiles} disabled={isRunning || isCheckingAsins} onReady={setStoreConfig}
+            onEditImage={(slug) => {
+              setEditingImageProfile((current) => current?.slug === slug ? current : imageProfiles.find((profile) => profile.slug === slug) ?? null);
+              setIsImageProfileEditorOpen(true);
             }}
-          >
-            <option value="default">Default</option>
-            <option value="jeminise">Jeminise</option>
-            <option value="preaurem">Preaurem</option>
-          </select>
-        </label>
-        <div className="min-w-0 space-y-2">
-        <label className="grid min-w-0 gap-1.5 text-sm text-slate-700 dark:text-slate-300">
-          Xử lý ảnh
-          <select
-            aria-label="Profile xử lý ảnh"
-            className="min-w-0 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
-            value={settings.imageProfileSlug}
-            onChange={(event) => {
-              const slug = event.target.value;
-              updateSetting("imageProfileSlug", slug);
-              setEditingImageProfile(imageProfiles.find((profile) => profile.slug === slug) ?? null);
-            }}
-          >
-            {imageProfiles.map((profile) => <option key={profile.slug} value={profile.slug}>{profile.name}{profile.enabled ? " · bật" : " · tắt"}</option>)}
-          </select>
-        </label>
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="text-xs text-blue-700 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-300" type="button" onClick={() => setIsImageProfileEditorOpen((open) => !open)}>Cấu hình ảnh</button>
-          <button className="text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100" type="button" onClick={() => void handleCreateImageProfile()}>Tạo profile</button>
-        </div>
-        </div>
-        {settings.profileSlug === "jeminise" ? <label className="flex items-start gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 md:col-span-2">
-          <input className="mt-1 shrink-0"
-            checked={settings.applyJeminisePreset}
-            disabled={settings.profileSlug !== "jeminise"}
-            type="checkbox"
-            onChange={(event) => updateSetting("applyJeminisePreset", event.target.checked)}
+            onCreateImage={() => void handleCreateImageProfile()}
+            onReloadImages={() => void refreshImageProfiles().catch(() => setImageProfileMessage("Không tải được Profile ảnh. Kiểm tra kết nối rồi thử lại."))}
           />
-          Thay variants bằng preset Jeminise (Bedding 47v / Blanket 8v)
-        </label> : null}
-      </div>
+          </div>
               {imageProfileMessage ? <p role="status" className="text-xs text-amber-700 dark:text-amber-300">{imageProfileMessage}</p> : null}
             </div>
               <section aria-label="Collection, loại sản phẩm & định giá" className="min-w-0 space-y-4 border-t border-slate-200 dark:border-slate-700 pt-5 2xl:col-span-2">
@@ -3136,7 +3087,7 @@ export function AmazonCrawlerPage({
               <CrawlStatusNotice id="crawler-start-readiness" status={crawlStatus} errors={isCheckingAsins && !isRunning && !statusJob ? [] : statusErrors} />
             </div>
             <div className="flex w-full flex-wrap items-center gap-3 2xl:w-auto">
-              {!hasSavedStoreVendor ? <button type="button" className="min-h-9 text-sm text-blue-700 dark:text-blue-300" onClick={() => document.getElementById("crawler-store-vendor")?.focus()}>Nhập Vendor</button> : null}
+              {!hasSavedStoreConfig ? <button type="button" className="min-h-9 text-sm text-blue-700 dark:text-blue-300" onClick={() => document.getElementById("crawler-store-settings")?.scrollIntoView({ behavior: "smooth", block: "center" })}>Cấu hình store</button> : null}
               <button type="button" className="min-h-9 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100" onClick={() => setWorkspaceSection("results")}>{progress ? `${progress.completed}/${progress.total} link · ` : ""}Phiên & kết quả →</button>
               {startCrawlButton}
             </div>

@@ -498,13 +498,46 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         except ValueError as error:
             raise HTTPException(422, detail=str(error)) from error
 
+    @app.get("/api/v1/store-vendors/{store_id}/crawl-settings")
+    async def get_store_crawl_settings(store_id: str, request: Request) -> dict[str, Any]:
+        require_operator_actor(request)
+        try:
+            return await asyncio.to_thread(store.get_store_crawl_settings, store_id)
+        except ValueError as error:
+            raise HTTPException(422, detail=str(error)) from error
+
+    @app.put("/api/v1/store-vendors/{store_id}/crawl-settings")
+    async def save_store_crawl_settings(store_id: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+        require_operator_actor(request)
+        try:
+            slug = payload.get("imageProfileSlug")
+            if not isinstance(slug, str) or not slug:
+                raise ValueError("Select an image profile.")
+            profile = await asyncio.to_thread(image_service.profiles.load, slug)
+            if profile["slug"] != slug:
+                raise ValueError("Select a valid image profile.")
+            return await asyncio.to_thread(store.save_store_crawl_settings, store_id, payload)
+        except (ValueError, KeyError) as error:
+            raise HTTPException(422, detail=str(error)) from error
+
+    def prepare_job_settings(payload: dict[str, Any]) -> dict[str, Any]:
+        enriched = dict(payload)
+        config = store.get_store_crawl_settings(str(payload.get("storeId") or ""))
+        expected_revision = payload.get("storeCrawlSettingsUpdatedAt")
+        if expected_revision is not None and (expected_revision != config["updatedAt"] or not config["defaults"]):
+            raise ValueError("STORE_CRAWL_SETTINGS_CHANGED: Cấu hình store đã thay đổi. Tải lại cấu hình trước khi cào.")
+        if config["defaults"]:
+            enriched.update(config["defaults"])
+            enriched["storeCrawlSettingsUpdatedAt"] = config["updatedAt"]
+        image_profile = image_service.profiles.load(str(enriched.get("imageProfileSlug") or "default"))
+        enriched["imageProfileSlug"] = image_profile["slug"]
+        enriched["imageProfileRevision"] = image_profile["revision"]
+        return enriched
+
     @app.post("/api/v1/crawl-jobs", status_code=202)
     async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            enriched_payload = dict(payload)
-            image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
-            enriched_payload["imageProfileSlug"] = image_profile["slug"]
-            enriched_payload["imageProfileRevision"] = image_profile["revision"]
+            enriched_payload = await asyncio.to_thread(prepare_job_settings, payload)
             async with cache_maintenance_lock:
                 job = await asyncio.to_thread(store.create_job, enriched_payload, require_store_vendor=True)
             await manager.broadcast({"type": "work_available"})
@@ -772,10 +805,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if source_job.get("status") not in {"completed", "partial"}:
             raise HTTPException(status_code=409, detail="Chỉ có thể chạy lại job đã hoàn tất.")
         try:
-            enriched_payload = dict(payload)
-            image_profile = image_service.profiles.load(str(payload.get("imageProfileSlug") or "default"))
-            enriched_payload["imageProfileSlug"] = image_profile["slug"]
-            enriched_payload["imageProfileRevision"] = image_profile["revision"]
+            enriched_payload = await asyncio.to_thread(prepare_job_settings, payload)
             enriched_payload["replacementOfJobId"] = job_id
             enriched_payload["schedulerPriority"] = 100
             async with cache_maintenance_lock:
