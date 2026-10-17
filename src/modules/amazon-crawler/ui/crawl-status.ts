@@ -26,7 +26,7 @@ export function resolveCrawlStatus(input: {
     summary.skippedExistingShopify ? `${summary.skippedExistingShopify} đã có Shopify` : null,
     summary.skippedExistingPipeline ? `${summary.skippedExistingPipeline} đã có trong Queue/Review` : null,
   ].filter(Boolean).join(" · ");
-  if (input.isChecking) return { title: "Đang kiểm tra ASIN", detail: "Kiểm tra Shopify và SEO Queue trước khi tạo phiên mới…", tone: "working" };
+  if (input.isChecking && !input.isRunning) return { title: "Đang kiểm tra ASIN", detail: "Kiểm tra Shopify và SEO Queue trước khi tạo phiên mới…", tone: "working" };
   if (input.errors.length) return { title: input.isRunning ? "Phiên đang chạy có lỗi cần kiểm tra" : "Có lỗi cần kiểm tra", detail: counts || "Kết quả đã nhận được giữ nguyên. Mở Xem lỗi để biết bước cần xử lý.", tone: "error" };
   if (input.isStale) return { title: "Chưa xác minh được trạng thái mới", detail: "Đang kết nối lại; số liệu hiện tại là lần xác nhận gần nhất. Không có nghĩa phiên đã thất bại.", tone: "warning" };
   if (input.cancelled) return { title: "Phiên đã hủy", detail: counts || "Dữ liệu server đã nhận được giữ nguyên.", tone: "warning" };

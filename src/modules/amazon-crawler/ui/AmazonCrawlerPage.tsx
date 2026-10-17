@@ -1372,6 +1372,9 @@ export function AmazonCrawlerPage({
         if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId) {
           throw new Error("Link hoặc store đã thay đổi. Vui lòng bấm Start để kiểm tra lại.");
         }
+          // startJob waits for the entire crawl, not just job creation.
+          // Preflight must stop masking live progress before that long-running await.
+          setIsCheckingAsins(false);
           await startJob(allowedSources, existingShopifyAsins, refreshFamilyAsins);
         },
       );
@@ -3130,7 +3133,7 @@ export function AmazonCrawlerPage({
           <div aria-label="Thao tác phiên cào" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-4 py-3 shadow-[0_-4px_24px_-12px_#0f172a40] backdrop-blur-sm">
             <div className="w-full min-w-0 text-xs text-slate-600 dark:text-slate-400 2xl:w-auto 2xl:flex-1">
               <p className="mb-1 font-medium text-slate-900 dark:text-slate-100">{statusJob ? `Phiên ${statusJob.jobId.slice(0, 8)} · Store ${statusJob.settings.storeId || "capozen"}` : `${activeStoreId} · ${inputAnalysis.validCount} ASIN`} · {settings.classificationMode !== "manual" ? "Codex tự phân loại" : `${activeCollectionIds.length} collection · ${settings.productType || "Loại gốc Amazon"}`}</p>
-              <CrawlStatusNotice id="crawler-start-readiness" status={crawlStatus} errors={isCheckingAsins ? [] : statusErrors} />
+              <CrawlStatusNotice id="crawler-start-readiness" status={crawlStatus} errors={isCheckingAsins && !isRunning && !statusJob ? [] : statusErrors} />
             </div>
             <div className="flex w-full flex-wrap items-center gap-3 2xl:w-auto">
               {!hasSavedStoreVendor ? <button type="button" className="min-h-9 text-sm text-blue-700 dark:text-blue-300" onClick={() => document.getElementById("crawler-store-vendor")?.focus()}>Nhập Vendor</button> : null}
