@@ -160,7 +160,7 @@ async function ensureAmazonAsinSearchable(targetStore: string): Promise<void> {
 const gatewayPort = Math.max(1, Number(env.GATEWAY_PORT || 3001));
 const gatewayUrl = (env.SHOPIFY_GATEWAY_URL || `http://127.0.0.1:${gatewayPort}/api/shopify`).replace(/\/+$/, "");
 const proxyCooldownUntil = new Map<string, number>();
-const AMAZON_METAFIELD_SCHEMA_VERSION = 2;
+const AMAZON_METAFIELD_SCHEMA_VERSION = 3;
 let seoPersistence: PostgresSeoContentRuntime | undefined;
 let reviewImageWorker: AbortController | undefined;
 
@@ -956,6 +956,10 @@ async function processClaim(
       return;
     }
 
+    // Validate the actual family identity before computing the no-op checkpoint.
+    const preflightInput = prepareShopifySyncProduct(fromCustomizationNormalizerProduct(shopifyProduct, {
+      vendor: storeVendor, productType: customProductType,
+    }));
     finalChecksum = checksum({
       product: shopifyProduct,
       imageProfileRevision: imageProcessingSummary.profileRevision,
@@ -966,12 +970,8 @@ async function processClaim(
       discountPercent,
       storeVendor,
       amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
-      amazonParentAsin: claim.inputAsin,
+      amazonParentAsin: preflightInput.amazonParentAsin,
     });
-    // Adapter projection/validation must finish before acquiring a permit or uploading files.
-    const preflightInput = prepareShopifySyncProduct(fromCustomizationNormalizerProduct(shopifyProduct, {
-      vendor: storeVendor, productType: customProductType, amazonParentAsin: claim.inputAsin,
-    }));
     // A SKU policy change must not be skipped merely because the crawl payload is unchanged.
     finalChecksum = checksum({
       sourceChecksum: finalChecksum,
@@ -1065,7 +1065,6 @@ async function processClaim(
       const baseInput = fromCustomizationNormalizerProduct(shopifyProduct, {
         vendor: storeVendor,
         productType: customProductType,
-        amazonParentAsin: claim.inputAsin,
       });
       let syncInput: ShopifySyncProductInput = {
         ...baseInput,

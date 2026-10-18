@@ -351,7 +351,6 @@ export async function pushSeoReviewProductToShopify(
       const baseInput = fromCustomizationNormalizerProduct(enrichedCrawlProduct, {
         vendor: effectiveVendor,
         productType: product.productType,
-        amazonParentAsin: product.asin,
       });
 
       let syncInput: ShopifySyncProductInput = {

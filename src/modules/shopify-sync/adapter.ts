@@ -185,6 +185,7 @@ export function fromCustomizationNormalizerProduct(
   options?: {
     readonly vendor?: string;
     readonly productType?: string;
+    /** @deprecated Ignored: parent identity comes only from the crawl product. */
     readonly amazonParentAsin?: string;
   },
 ): ShopifySyncProductInput {
@@ -245,9 +246,9 @@ export function fromCustomizationNormalizerProduct(
   const amazonAsin = normalizeAsin(product.asin)
     ?? normalizeAsin(rawCustomization?.source?.asin)
     ?? firstSourceVariantAsin(product);
-  const amazonParentAsin = normalizeAsin(
-    options?.amazonParentAsin ?? product.parentAsin ?? product.asin,
-  );
+  // An input/child ASIN is not evidence of family identity. Missing parent
+  // metadata must fail preflight, not silently write a different identifier.
+  const amazonParentAsin = normalizeAsin(product.parentAsin);
 
   if (rawCustomization && typeof rawCustomization === "object") {
     tags.add("has-customizer");
@@ -345,6 +346,7 @@ export function fromCustomizationNormalizerBatch(
   options?: {
     readonly vendor?: string;
     readonly productType?: string;
+    /** @deprecated Ignored: each product retains its own parent identity. */
     readonly amazonParentAsin?: string;
   },
 ): ShopifySyncBatchInput {

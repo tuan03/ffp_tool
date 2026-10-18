@@ -275,6 +275,7 @@ describe("seo-review-shopify-sync", () => {
     const mockCrawlProduct: CrawlProduct = {
       id: "amazon-asin-1",
       asin: "B00EXAMPLE",
+      parentAsin: "B0PARENT01",
       title: "Raw Amazon Title",
       description: "Raw Amazon Description",
       variants: [
@@ -296,6 +297,7 @@ describe("seo-review-shopify-sync", () => {
 
     const item: SeoReviewPushProductItem = {
       id: "crawler-review-1",
+      asin: "B0INPUT001",
       productTitle: "Enriched Custom Blanket",
       productDescription: "<p>Ultra soft custom photo blanket.</p>",
       seoTitle: "Custom Photo Blanket | Cozy Living",
@@ -330,6 +332,8 @@ describe("seo-review-shopify-sync", () => {
     assert.equal(result.productId, "gid://shopify/Product/crawl-sync-777");
     assert.equal(result.adminUrl, "https://admin.shopify.com/store/capozen/products/crawl-sync-777");
     const metafieldCalls = executedInputs.filter((input) => input.operation === "metafields.set");
+    const parentField = metafieldCalls.find(input => input.operation === "metafields.set" && input.payload.key === "amazon_parent_asin");
+    assert.equal(parentField?.operation === "metafields.set" && parentField.payload.value, "B0PARENT01");
     assert.equal(
       metafieldCalls.some((input) => input.operation === "metafields.set" && input.payload.key === "aeo_suite_html"),
       true,
@@ -428,6 +432,7 @@ describe("seo-review-shopify-sync", () => {
     const mockCrawlProduct: CrawlProduct = {
       id: "B0H829WFC2",
       asin: "B0H829WFC2",
+      parentAsin: "B0H829WFC2",
       title: "Classroom Shaped Rug",
       description: "Personalized notebook rug",
       variants: [],
@@ -508,6 +513,7 @@ describe("seo-review-shopify-sync", () => {
     const mockCrawlProduct: CrawlProduct = {
       id: "B0H829WFC2",
       asin: "B0H829WFC2",
+      parentAsin: "B0H829WFC2",
       sourceKey: "amazon:B0H829WFC2:none:none",
       title: "Classroom Shaped Rug",
       description: "Personalized notebook rug",
@@ -673,6 +679,7 @@ describe("seo-review-shopify-sync", () => {
     const crawlProduct: CrawlProduct = {
       id: "crawl-prod-999",
       asin: "B012345678",
+      parentAsin: "B012345678",
       sourceKey: "amazon:B012345678:none:none",
       canonicalUrl: "https://amazon.com/dp/B012345678",
       categories: ["Home & Kitchen"],

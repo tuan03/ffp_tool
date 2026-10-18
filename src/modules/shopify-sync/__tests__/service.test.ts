@@ -7,7 +7,10 @@ import {
   buildAeoMetafields,
   buildAeoSuiteHtml,
   compactCustomizerConfigForMetafield,
+  createDryRunGateway,
+  fromCustomizationNormalizerBatch,
   fromCustomizationNormalizerProduct,
+  prepareShopifySyncProduct,
   getShopifySyncRunner,
   replaceUrlsInObject,
   rollbackProductSync,
@@ -169,10 +172,12 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.equal(adaptedJeminise.vendor, "JEMINISE");
   assertStrict.equal(adaptedJeminise.productType, "Blanket");
 
-  const adaptedWithInputParent = fromCustomizationNormalizerProduct(crawlProduct, {
-    amazonParentAsin: "b0input001",
-  });
-  assertStrict.equal(adaptedWithInputParent.amazonParentAsin, "B0INPUT001");
+  const adaptedFamily = fromCustomizationNormalizerProduct(
+    { ...crawlProduct, asin: "B0CHILD001", parentAsin: " b0parent01 " },
+    { amazonParentAsin: "B0INPUT001" },
+  );
+  assertStrict.equal(adaptedFamily.amazonAsin, "B0CHILD001");
+  assertStrict.equal(adaptedFamily.amazonParentAsin, "B0PARENT01");
 
   // Test Money object support as produced by amazon-crawler
   const moneyProduct = {
@@ -191,6 +196,45 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.equal(adaptedMoney.productType, "Bedding");
   assertStrict.equal(adaptedMoney.variants?.[0].price, "59.99");
   assertStrict.equal(adaptedMoney.variants?.[0].compareAtPrice, "79.99");
+});
+
+test("crawl sync rejects missing or invalid parent instead of substituting the child ASIN", () => {
+  for (const parentAsin of [undefined, "", "invalid"]) {
+    const adapted = fromCustomizationNormalizerProduct({ id: "unknown-parent", asin: "B0CHILD001", parentAsin,
+      title: "Sample", variants: [], media: [] });
+    assertStrict.equal(adapted.amazonParentAsin, undefined);
+    assertStrict.throws(() => prepareShopifySyncProduct(adapted), /custom\.amazon_parent_asin/);
+  }
+  const standalone = fromCustomizationNormalizerProduct({ id: "standalone", asin: "B0CHILD001", parentAsin: "B0CHILD001",
+    title: "Sample", variants: [], media: [] });
+  assertStrict.equal(prepareShopifySyncProduct(standalone).amazonParentAsin, "B0CHILD001");
+});
+
+test("a mixed-family batch retains each product parent despite a legacy batch override", () => {
+  const batch = fromCustomizationNormalizerBatch({ jobId: "mixed", status: "completed",
+    products: [
+      { id: "one", asin: "B0CHILD001", parentAsin: "B0PARENT01", title: "One" },
+      { id: "two", asin: "B0CHILD002", parentAsin: "B0PARENT02", title: "Two" },
+    ],
+    normalizationSummary: { totalProducts: 2, customizedProducts: 0, untouchedProducts: 2, normalizedAssetsCount: 0 },
+  }, { amazonParentAsin: "B0INPUT001" });
+  assertStrict.deepEqual(batch.products.map(product => product.amazonParentAsin), ["B0PARENT01", "B0PARENT02"]);
+});
+
+test("missing parent fails before any Shopify gateway call even with a legacy override", async () => {
+  const product = fromCustomizationNormalizerProduct({ id: "missing-parent", asin: "B0CHILD001", title: "Sample" },
+    { amazonParentAsin: "B0INPUT001" });
+  const calls: string[] = [];
+  const gateway = new Proxy(createDryRunGateway(), {
+    get(target, property, receiver) {
+      calls.push(String(property));
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const result = await syncSingleProduct(product, { gateway });
+  assertStrict.equal(result.success, false);
+  assertStrict.match(result.error ?? "", /custom\.amazon_parent_asin/);
+  assertStrict.deepEqual(calls, []);
 });
 
 test("fromCustomizationNormalizerProduct omits variants whose Amazon selling price is missing", () => {
