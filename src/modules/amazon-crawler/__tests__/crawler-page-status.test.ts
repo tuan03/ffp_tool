@@ -6,8 +6,34 @@ import { MemoryRouter } from "react-router-dom";
 
 import { amazonCrawlerMockAgentRelease, amazonCrawlerMockOutput } from "../mocks/data";
 import { AmazonCrawlerPage } from "../ui/AmazonCrawlerPage";
-import { clearCrawlerSession, hydrateCrawlerSessionFromJob } from "../ui/crawler-session";
+import { clearCrawlerSession, getCrawlerSessionState, hydrateCrawlerSessionFromJob, updateCrawlerSession } from "../ui/crawler-session";
 import { filterConnectedCrawlerClients, getCrawlerClientPresence } from "../ui/client-presence";
+
+test("crawler input does not suggest switching stores based on previous product titles", () => {
+  clearCrawlerSession();
+  const sourceProduct = amazonCrawlerMockOutput.products[0];
+  assert.ok(sourceProduct);
+  updateCrawlerSession({
+    urlText: "B0GGSBXL7L",
+    settings: { ...amazonCrawlerMockOutput.settings, storeId: "jeminise", productType: "Blanket" },
+    output: { ...amazonCrawlerMockOutput, products: [{ ...sourceProduct, title: "Floral Area Rug" }] },
+  });
+  try {
+    const markup = renderToStaticMarkup(createElement(MemoryRouter, null,
+      createElement(AmazonCrawlerPage, {
+        clearAmazonCrawlerCache: async () => ({ removedFiles: 0, removedBytes: 0 }),
+        loadAmazonCrawlerAgentRelease: async () => amazonCrawlerMockAgentRelease,
+        loadAmazonCrawlerClients: async () => [],
+        runAmazonCrawler: async () => amazonCrawlerMockOutput,
+      }),
+    ));
+    assert.doesNotMatch(markup, /Link cào có vẻ là|Chuyển sang capozen/);
+    assert.match(markup, /B0GGSBXL7L/);
+    assert.equal(getCrawlerSessionState().settings.storeId, "jeminise");
+  } finally {
+    clearCrawlerSession();
+  }
+});
 
 test("crawler agent list excludes disconnected agents", () => {
   const clients = [

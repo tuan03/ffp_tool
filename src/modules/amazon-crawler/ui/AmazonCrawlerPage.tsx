@@ -1303,44 +1303,6 @@ export function AmazonCrawlerPage({
     }
   }
 
-  const detectedProductNiche = useMemo(() => {
-    const sampleTitle = selectedProduct?.title || resultProducts[0]?.title || "";
-    if (!sampleTitle) return null;
-    const titleLower = sampleTitle.toLowerCase();
-
-    if (/\b(blanket|fleece|throw|chăn)\b/i.test(titleLower)) {
-      return { niche: "Blanket", targetStore: "jeminise", label: "Chăn / Blanket" };
-    }
-    if (/\b(quilt|comforter|duvet|bedding|ga giường)\b/i.test(titleLower)) {
-      return { niche: "Bedding/Quilt", targetStore: "jeminise", label: "Chăn ga / Quilt" };
-    }
-    if (/\b(rug|area rug|carpet|doormat|runner rug|floor mat|thảm)\b/i.test(titleLower)) {
-      return { niche: "Rug", targetStore: "capozen", label: "Thảm / Rug" };
-    }
-    if (/\b(tumbler|skinny tumbler|travel mug|coffee mug|cup|ly giữ nhiệt)\b/i.test(titleLower)) {
-      return { niche: "Tumbler", targetStore: "dizzy", label: "Ly giữ nhiệt / Tumbler" };
-    }
-    if (/\b(t-shirt|tee|hoodie|sweatshirt|áo thun|áo nỉ)\b/i.test(titleLower)) {
-      return { niche: "Apparel", targetStore: "dizzy", label: "Áo / T-Shirt" };
-    }
-    if (/\b(pillow|pillowcase|cushion|gối)\b/i.test(titleLower)) {
-      return { niche: "Pillow", targetStore: "jeminise", label: "Gối / Pillow" };
-    }
-    return null;
-  }, [selectedProduct?.title, resultProducts]);
-
-  const isNicheMismatch = useMemo(() => {
-    if (!detectedProductNiche) return false;
-    const currentType = (settings.productType || "").toLowerCase();
-    const currentTypes = currentStoreProductTypes.map((t) => t.toLowerCase());
-    const detectedNicheLower = detectedProductNiche.niche.toLowerCase();
-
-    const matchesCurrentType = currentType.includes(detectedNicheLower) || detectedNicheLower.includes(currentType);
-    const matchesStore = currentTypes.some((t) => t.includes(detectedNicheLower) || detectedNicheLower.includes(t));
-
-    return !matchesCurrentType && !matchesStore;
-  }, [detectedProductNiche, settings.productType, currentStoreProductTypes]);
-
   async function checkBeforeCrawl(
     sources: readonly string[], storeId: string,
     startJob: (
@@ -2625,26 +2587,6 @@ export function AmazonCrawlerPage({
             </div>
             <div className="min-w-0 space-y-4">
 
-        {/* Niche Mismatch Warning Banner */}
-        {isNicheMismatch && detectedProductNiche && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-xs text-amber-700 dark:text-amber-300">
-            <div className="flex items-center gap-2">
-              <span className="text-amber-700 dark:text-amber-300"><AppIcon name="warning" /></span>
-              <span>
-                Link cào có vẻ là <strong className="text-slate-900 dark:text-slate-100">{detectedProductNiche.label}</strong>, nhưng store đang chọn là <strong className="font-mono text-amber-700 dark:text-amber-300">{currentStoreId}</strong>.
-              </span>
-            </div>
-            {detectedProductNiche.targetStore && detectedProductNiche.targetStore !== currentStoreId && (
-              <button
-                type="button"
-                onClick={() => handleStoreChange(detectedProductNiche.targetStore)}
-                className="inline-flex items-center gap-1 rounded-md bg-amber-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700 transition-colors"
-              >
-                Chuyển sang {detectedProductNiche.targetStore} →
-              </button>
-            )}
-          </div>
-        )}
           <div role="group" aria-label="Store và Vendor" className="flex h-full min-w-0 flex-col justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs md:grid-cols-2">
           <div className="min-w-0 space-y-2.5">
           <label className="grid gap-2 text-base font-bold text-slate-900 dark:text-slate-100">
