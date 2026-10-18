@@ -482,6 +482,16 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.post("/api/v1/asin-families/activity")
+    def filter_asin_activity(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            asins = payload.get("asins")
+            if not isinstance(asins, list) or any(not isinstance(asin, str) for asin in asins):
+                raise ValueError("asins must be a string array.")
+            return store.filter_asin_activity(str(payload.get("storeId") or ""), asins)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @app.get("/api/v1/store-vendors/{store_id}")
     async def get_store_vendor(store_id: str, request: Request) -> dict[str, Any]:
         require_operator_actor(request)

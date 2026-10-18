@@ -8,6 +8,56 @@ import { replaceCrawlerInputWithAsin, parseAsinFilterInput } from "../ui/asin-fi
 const existingAsin = "B0EXIST001";
 const missingAsin = "B0MISSING1";
 
+test("combined filter finds prior batches in the server pipeline and never reserves unknown siblings", async () => {
+  let active = true;
+  const requests: string[] = [];
+  const filter = createShopifyAsinFilter(async (url, init) => {
+    requests.push(String(url));
+    if (url === "/api/shopify") return pageResponse();
+    assert.equal(url, "http://coordinator/api/v1/asin-families/activity");
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.storeId, "new-store");
+    return Response.json({ storeId: body.storeId, entries: body.asins.map((asin: string) => ({
+      asin, parentAsin: "B0PARENT01", status: active && asin === missingAsin ? "processing" : "available",
+    })) });
+  }, { engineUrl: "http://coordinator/" });
+  const first = await filter({ storeId: "new-store", asins: [existingAsin, missingAsin, "B0CHILD002"] });
+  assert.deepEqual(first.activity?.map((entry) => [entry.asin, entry.status]), [[missingAsin, "processing"], ["B0CHILD002", "available"]]);
+  assert.equal(first.matches.length, 1);
+  active = false;
+  assert.ok(filter.loadActivity);
+  requests.length = 0;
+  const refreshed = await filter.loadActivity({ storeId: "new-store", asins: [missingAsin] });
+  assert.equal(refreshed[0]?.status, "available");
+  assert.deepEqual(requests, ["http://coordinator/api/v1/asin-families/activity"], "polling must not scan Shopify");
+});
+
+test("combined filter fails closed for incomplete, wrong-store or failed activity checks", async () => {
+  for (const response of [
+    { storeId: "wrong", entries: [] },
+    { storeId: "new-store", entries: [] },
+    { storeId: "new-store", entries: [{ asin: missingAsin, parentAsin: missingAsin, status: "unknown" }] },
+  ]) {
+    const filter = createShopifyAsinFilter(async (url) => url === "/api/shopify" ? pageResponse() : Response.json(response), { engineUrl: "" });
+    await assert.rejects(filter({ storeId: "new-store", asins: [missingAsin] }), /Chưa xác minh/);
+  }
+});
+
+test("activity checks batch 5000 inputs without dropping entries and support abort", async () => {
+  const sizes: number[] = [];
+  const filter = createShopifyAsinFilter(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    sizes.push(body.asins.length);
+    return Response.json({ storeId: body.storeId, entries: body.asins.map((asin: string) => ({ asin, parentAsin: asin, status: "available" })) });
+  }, { engineUrl: "" });
+  assert.ok(filter.loadActivity);
+  const asins = Array.from({ length: 5000 }, (_, index) => `B${String(index).padStart(9, "0")}`);
+  assert.equal((await filter.loadActivity({ storeId: "sample", asins })).length, 5000);
+  assert.deepEqual(sizes, Array.from({ length: 25 }, () => 200));
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(filter.loadActivity({ storeId: "sample", asins, signal: controller.signal }), { name: "AbortError" });
+});
+
 test("selecting a filtered ASIN replaces the entire crawler draft with exactly that ASIN", () => {
   assert.equal(replaceCrawlerInputWithAsin("", "b0missing1"), missingAsin);
   assert.equal(replaceCrawlerInputWithAsin("B0EXIST001\nunfinished input", missingAsin), missingAsin);

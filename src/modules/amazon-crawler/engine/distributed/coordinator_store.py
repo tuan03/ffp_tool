@@ -48,7 +48,7 @@ from .protocol import product_source_key as _source_key
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from .retry_taxonomy import classify_task_error, parse_retry_after
-from .seo_pipeline_identity import load_active_seo_identities, match_active_seo_jobs
+from .seo_pipeline_identity import load_active_seo_identities, load_cancelled_seo_job_ids, match_active_seo_jobs
 from .fleet_circuit_breaker import acquire_capacity as acquire_fleet_capacity, record_failure as record_fleet_failure, record_success as record_fleet_success, snapshot as fleet_breaker_snapshot
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
@@ -411,6 +411,75 @@ class CoordinatorStore(CoordinatorObservability):
             ):
                 return retained.id
         return None
+
+    def filter_asin_activity(self, store_id: str, asins: list[str]) -> dict[str, Any]:
+        """Read current ownership, never treat a historical registry row as ownership."""
+        store_id = store_id.strip()
+        requested = list(dict.fromkeys(asin.strip().upper() for asin in asins))
+        if not store_id or not requested or len(requested) > 200 or any(
+            re.fullmatch(r"[A-Z0-9]{10}", asin) is None for asin in requested
+        ):
+            raise ValueError("storeId and 1 to 200 valid ASINs are required.")
+        with self.sessions() as session:
+            rows = session.scalars(select(AmazonAsinRegistry).where(
+                AmazonAsinRegistry.store_id == store_id,
+                AmazonAsinRegistry.marketplace == "amazon-us",
+                AmazonAsinRegistry.asin.in_(requested),
+            )).all()
+            parents = {row.asin: row.parent_asin for row in rows}
+            entries = {asin: {"asin": asin, "parentAsin": parents.get(asin, asin), "status": "available"} for asin in requested}
+            for row in rows:
+                if row.status == "synced" and row.synced_at is not None:
+                    # A change marker, not proof that Shopify still has the product.
+                    # It catches syncs completed between two browser polls.
+                    entries[row.asin]["shopifyRevision"] = utc_iso(row.synced_at)
+            family_members = {asin: parents.get(asin, asin) for asin in requested}
+            if parents:
+                family_members.update({row.asin: row.parent_asin for row in session.scalars(select(AmazonAsinRegistry).where(
+                    AmazonAsinRegistry.store_id == store_id,
+                    AmazonAsinRegistry.marketplace == "amazon-us",
+                    AmazonAsinRegistry.parent_asin.in_(set(parents.values())),
+                )).all()})
+            tasks = session.scalars(select(CrawlTask).join(CrawlJob).where(
+                CrawlJob.settings["storeId"].as_string() == store_id,
+                func.coalesce(CrawlJob.settings["channel"].as_string(), "amazon") == "amazon",
+                CrawlTask.asin.in_(family_members),
+                CrawlTask.status.in_(["queued", "leased", "running", "cancelling"]),
+            )).all()
+            for task in tasks:
+                for asin, entry in entries.items():
+                    if asin == task.asin or (asin in parents and parents[asin] == family_members.get(task.asin)):
+                        entry.update(status="crawling", jobId=task.job_id, relatedAsin=task.asin)
+            # Limit payload reads to candidate jobs/identities; polling must not load
+            # every product in a store. Exact aliases below prevent family-wide blocking.
+            candidates = session.scalars(select(CrawlProductItem).join(CrawlJob).where(
+                CrawlJob.settings["storeId"].as_string() == store_id,
+                CrawlProductItem.status.not_in(["deleted", "cancelled", "completed"]),
+                or_(
+                    CrawlProductItem.job_id.in_({row.last_job_id for row in rows if row.last_job_id}),
+                    CrawlProductItem.raw_payload["asin"].as_string().in_(requested),
+                    CrawlProductItem.normalized_payload["asin"].as_string().in_(requested),
+                    CrawlProductItem.raw_payload["parentAsin"].as_string().in_(set(parents.values())),
+                ),
+            )).all()
+            external_jobs = {
+                item.id: str(external["jobId"])
+                for item in candidates
+                if isinstance(external := (item.shopify_result or {}).get("externalSeo"), dict) and external.get("jobId")
+            }
+            cancelled_jobs = load_cancelled_seo_job_ids(session, store_id, set(external_jobs.values()))
+            for item in candidates:
+                if self._is_operator_cleared_seo_item(item) or (item.shopify_result or {}).get("skippedExistingPipeline"):
+                    continue
+                if item.status in {"received", "normalizing", "retry_wait", "seo", "failed"} and external_jobs.get(item.id) in cancelled_jobs:
+                    continue
+                aliases = self._product_exact_asins(item.raw_payload or item.normalized_payload or {})
+                for asin in aliases.intersection(entries):
+                    entries[asin].update(status="attention" if item.status in {"failed", "rejected", "reconciliation_required"} else "processing", jobId=item.job_id)
+            for identity in load_active_seo_identities(session, store_id, asins=set(requested)):
+                for asin in identity.asins.intersection(entries):
+                    entries[asin].update(status="processing")
+            return {"storeId": store_id, "entries": list(entries.values())}
 
     def resolve_asin_families(self, store_id: str, asins: list[str]) -> dict[str, Any]:
         normalized_store_id = store_id.strip()

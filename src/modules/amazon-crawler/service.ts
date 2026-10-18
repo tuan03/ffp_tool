@@ -5,6 +5,7 @@ import type {
   AmazonAsinPreflightResult,
   ShopifyAsinFilter,
   ShopifyAsinFilterMatch,
+  AsinFilterActivity,
   AmazonCrawlerInput,
   AmazonCrawlerDeadLetterActionInput,
   AmazonCrawlerDeadLetterActionResult,
@@ -273,8 +274,38 @@ export function createAmazonAsinChecker(
   };
 }
 
-export function createShopifyAsinFilter(fetchImplementation: typeof fetch = fetch): ShopifyAsinFilter {
-  return async ({ storeId, asins, signal, onProgress }) => {
+export function createShopifyAsinFilter(fetchImplementation: typeof fetch = fetch, coordinator?: { readonly engineUrl: string; readonly fetchImplementation?: typeof fetch }): ShopifyAsinFilter {
+  const loadActivity: NonNullable<ShopifyAsinFilter["loadActivity"]> = async ({ storeId, asins, signal }) => {
+    if (!storeId.trim() || asins.length > SHOPIFY_ASIN_FILTER_LIMIT || !isAsinList([...asins])) {
+      throw new AmazonCrawlerServiceError("Danh sách ASIN không hợp lệ.", "INVALID_ASIN_FILTER_INPUT");
+    }
+    const entries: AsinFilterActivity[] = [];
+    const unique = [...new Set(asins)];
+    for (let offset = 0; offset < unique.length; offset += 200) {
+      signal?.throwIfAborted();
+      const batch = unique.slice(offset, offset + 200);
+      const response = await (coordinator?.fetchImplementation ?? fetchImplementation)(`${normalizeEngineUrl(coordinator?.engineUrl ?? "")}/api/v1/asin-families/activity`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]),
+        body: JSON.stringify({ storeId, asins: batch }),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isRecord(body) || body.storeId !== storeId || !Array.isArray(body.entries) ||
+        body.entries.length !== batch.length || new Set(body.entries.map((entry: unknown) => isRecord(entry) ? entry.asin : null)).size !== batch.length ||
+        body.entries.some((entry: unknown) => !isRecord(entry) || typeof entry.asin !== "string" || !batch.includes(entry.asin) ||
+          typeof entry.parentAsin !== "string" || !/^[A-Z0-9]{10}$/.test(entry.parentAsin) ||
+          !["available", "crawling", "processing", "attention"].includes(String(entry.status)) ||
+          (entry.relatedAsin !== undefined && (typeof entry.relatedAsin !== "string" || !/^[A-Z0-9]{10}$/.test(entry.relatedAsin))) ||
+          (entry.shopifyRevision !== undefined && (typeof entry.shopifyRevision !== "string" || !Number.isFinite(Date.parse(entry.shopifyRevision)))) ||
+          (entry.jobId !== undefined && typeof entry.jobId !== "string"))) {
+        throw new AmazonCrawlerServiceError("Chưa xác minh được trạng thái cào/SEO trên server. Vui lòng kiểm tra lại trước khi cào.", "ASIN_ACTIVITY_UNVERIFIED");
+      }
+      entries.push(...body.entries as AsinFilterActivity[]);
+    }
+    signal?.throwIfAborted();
+    return entries;
+  };
+  const filter: ShopifyAsinFilter = async ({ storeId, asins, signal, onProgress }) => {
     if (!storeId.trim() || asins.length === 0 || asins.length > SHOPIFY_ASIN_FILTER_LIMIT || asins.some((asin) => !/^[A-Z0-9]{10}$/.test(asin))) {
       throw new AmazonCrawlerServiceError(`Chọn store và nhập 1–${SHOPIFY_ASIN_FILTER_LIMIT} ASIN hợp lệ.`, "INVALID_ASIN_FILTER_INPUT");
     }
@@ -329,8 +360,11 @@ export function createShopifyAsinFilter(fetchImplementation: typeof fetch = fetc
       after = page.pageInfo.hasNextPage && matches.size !== requestedSet.size ? String(next) : null;
     } while (after !== null);
     scanSignal.throwIfAborted();
-    return { storeId, matches: requestedAsins.flatMap((asin) => { const match = matches.get(asin); return match ? [match] : []; }), missingAsins: requestedAsins.filter((asin) => !matches.has(asin)), scannedProducts };
+    const missingAsins = requestedAsins.filter((asin) => !matches.has(asin));
+    const activity = coordinator ? await loadActivity({ storeId, asins: missingAsins, signal: scanSignal }) : undefined;
+    return { storeId, matches: requestedAsins.flatMap((asin) => { const match = matches.get(asin); return match ? [match] : []; }), missingAsins, scannedProducts, ...(activity ? { activity } : {}) };
   };
+  return coordinator ? Object.assign(filter, { loadActivity }) : filter;
 }
 
 function normalizeEngineUrl(engineUrl: string): string {

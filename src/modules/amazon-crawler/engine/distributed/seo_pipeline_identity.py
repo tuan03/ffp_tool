@@ -107,3 +107,16 @@ def match_active_seo_jobs(
     covered = set().union(*(identity.asins for identity in matches))
     # A mixed product containing a genuinely new variant must not be discarded.
     return sorted({identity.job_id for identity in matches}) if asins and asins <= covered else []
+
+
+def load_cancelled_seo_job_ids(session: Session, store_id: str, job_ids: set[str]) -> set[str]:
+    """Queue deletion can precede the crawler worker's next status poll."""
+    if not job_ids or not inspect(session.connection()).has_table("gpt_jobs"):
+        return set()
+    query = text("SELECT id FROM gpt_jobs WHERE store_id=:store_id AND status='CANCELLED' AND id IN :ids").bindparams(
+        bindparam("ids", expanding=True))
+    cancelled: set[str] = set()
+    ordered = sorted(job_ids)
+    for offset in range(0, len(ordered), 200):
+        cancelled.update(str(job_id) for job_id in session.scalars(query, {"store_id": store_id, "ids": ordered[offset:offset + 200]}))
+    return cancelled

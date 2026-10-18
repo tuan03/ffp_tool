@@ -5,6 +5,7 @@ import { Button } from "../../../shared/components/Button";
 import {
   createAmazonCrawlerRunner,
   createAmazonAsinChecker,
+  createShopifyAsinFilter,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerCommandController,
   createAmazonCrawlerAdmissionGateController,
@@ -31,6 +32,7 @@ type AmazonCrawlerOperatorPageProps = Required<Pick<AmazonCrawlerPageProps,
   | "retryAmazonCrawlerSyncs"
   | "imageProcessingProfiles"
   | "checkAmazonAsins"
+  | "filterShopifyAsins"
 >>;
 
 export function createAmazonCrawlerOperatorPageProps(
@@ -49,6 +51,7 @@ export function createAmazonCrawlerOperatorPageProps(
     retryAmazonCrawlerSyncs: createAmazonCrawlerSyncRetrier(options),
     imageProcessingProfiles: createImageProcessingProfileManager(options),
     checkAmazonAsins: createAmazonAsinChecker(fetch, { engineUrl, fetchImplementation }),
+    filterShopifyAsins: createShopifyAsinFilter(fetch, { engineUrl, fetchImplementation }),
   };
 }
 

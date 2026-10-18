@@ -11,7 +11,12 @@ import type {
 } from "../types";
 import { SHOPIFY_ASIN_FILTER_LIMIT } from "../types";
 
-export const filterMockShopifyAsins: ShopifyAsinFilter = async ({ storeId, asins, signal, onProgress }) => {
+const loadMockAsinActivity: NonNullable<ShopifyAsinFilter["loadActivity"]> = async ({ asins, signal }) => {
+  signal?.throwIfAborted();
+  return [...new Set(asins)].map((asin) => ({ asin, parentAsin: asin, status: "available" as const }));
+};
+
+const filterMockAsins: ShopifyAsinFilter = async ({ storeId, asins, signal, onProgress }) => {
   signal?.throwIfAborted();
   if (!storeId.trim() || asins.length === 0 || asins.length > SHOPIFY_ASIN_FILTER_LIMIT || asins.some((asin) => !/^[A-Z0-9]{10}$/.test(asin))) {
     throw new Error("Chọn store và nhập danh sách ASIN hợp lệ.");
@@ -23,8 +28,11 @@ export const filterMockShopifyAsins: ShopifyAsinFilter = async ({ storeId, asins
   }));
   onProgress?.({ scannedProducts: 1, pagesRead: 1 });
   signal?.throwIfAborted();
-  return { storeId, matches, missingAsins: requestedAsins.filter((asin) => !matches.some((match) => match.asin === asin)), scannedProducts: 1 };
+  const missingAsins = requestedAsins.filter((asin) => !matches.some((match) => match.asin === asin));
+  return { storeId, matches, missingAsins, scannedProducts: 1, activity: await loadMockAsinActivity({ storeId, asins: missingAsins, signal }) };
 };
+
+export const filterMockShopifyAsins: ShopifyAsinFilter = Object.assign(filterMockAsins, { loadActivity: loadMockAsinActivity });
 
 export async function clearMockAmazonCrawlerCache(): Promise<AmazonCrawlerCacheClearResult> {
   return { removedFiles: 0, removedBytes: 0 };

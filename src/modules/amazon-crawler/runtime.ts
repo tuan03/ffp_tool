@@ -7,8 +7,8 @@ import type { AppEnvironment } from "../../shared/types";
 import type { AmazonCrawlerStoreCrawlSettings } from "./types";
 import type { AmazonCrawlerAgentReleaseLoader, AmazonCrawlerCacheClearer, AmazonCrawlerClientsLoader, AmazonCrawlerJobController, AmazonCrawlerJobLoader, AmazonCrawlerReviewClient, AmazonCrawlerRunner, AmazonCrawlerSyncRetrier, ImageProcessingProfileManager, ShopifyAsinFilter } from "./types";
 
-export function getShopifyAsinFilter(environment: AppEnvironment): ShopifyAsinFilter {
-  return environment === "mock" ? filterMockShopifyAsins : createShopifyAsinFilter();
+export function getShopifyAsinFilter(environment: AppEnvironment, engineUrl = ""): ShopifyAsinFilter {
+  return environment === "mock" ? filterMockShopifyAsins : createShopifyAsinFilter(fetch, { engineUrl });
 }
 
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {

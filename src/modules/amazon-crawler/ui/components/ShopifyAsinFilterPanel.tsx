@@ -35,6 +35,61 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
   const isChecking = filterState.status === "checking";
   const hasTooManyAsins = parsed.asins.length > SHOPIFY_ASIN_FILTER_LIMIT;
   const verifiedResult = snapshot?.result ?? null;
+  const [isActivityVerified, setIsActivityVerified] = useState(!filterShopifyAsins.loadActivity);
+  const [activityError, setActivityError] = useState("");
+  const [activityNotice, setActivityNotice] = useState("");
+  const latest = useRef({ workspace, isChecking });
+  latest.current = { workspace, isChecking };
+  const activityKey = verifiedResult?.missingAsins.join(",") ?? "";
+  const busyEntries = verifiedResult?.activity?.filter((entry) => entry.status !== "available") ?? [];
+  const busyAsins = new Set(busyEntries.map((entry) => entry.asin));
+  const availableAsins = verifiedResult?.missingAsins.filter((asin) => !busyAsins.has(asin)) ?? [];
+  const canUseResults = !isChecking && isActivityVerified && filterState.status !== "unverified";
+
+  useEffect(() => {
+    const activityLoader = filterShopifyAsins.loadActivity;
+    if (!activityLoader || !activityKey) { setIsActivityVerified(true); return; }
+    const loadActivity = activityLoader;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    setIsActivityVerified(false);
+    async function refresh(): Promise<void> {
+      const previous = latest.current.workspace.snapshot;
+      const version = requestVersion.current;
+      try {
+        if (!previous || latest.current.isChecking || document.hidden) return;
+        const activity = await loadActivity({ storeId, asins: previous.result.missingAsins, signal: controller.signal });
+        if (controller.signal.aborted || version !== requestVersion.current) return;
+        const priorBusy = new Set(previous.result.activity?.filter((entry) => entry.status !== "available").map((entry) => entry.asin));
+        // A disappearing pipeline record can mean either Queue cleanup or a successful
+        // sync. Re-read Shopify before offering these ASINs for another crawl.
+        const priorRevisions = new Map(previous.result.activity?.map((entry) => [entry.asin, entry.shopifyRevision]));
+        const requiresShopifyCheck = activity.some((entry) =>
+          (entry.status === "available" && priorBusy.has(entry.asin)) ||
+          (entry.shopifyRevision && entry.shopifyRevision !== priorRevisions.get(entry.asin)));
+        const result = requiresShopifyCheck ? await filterShopifyAsins({
+          storeId, asins: parseAsinFilterInput(previous.inputText).asins, signal: controller.signal,
+        }) : { ...previous.result, activity };
+        if (controller.signal.aborted || version !== requestVersion.current) return;
+        const previouslyReceived = new Set(previous.result.activity?.filter((entry) => entry.status === "processing").map((entry) => entry.asin));
+        const newlyCovered = activity.filter((entry) => entry.status === "processing" && !previouslyReceived.has(entry.asin)).length;
+        if (newlyCovered) setActivityNotice(`${newlyCovered} ASIN trong danh sách đã được server nhận hoặc đang có trong SEO Queue/Review.`);
+        setWorkspace((current) => ({ ...current, snapshot: { ...previous, result,
+          checkedAt: requiresShopifyCheck ? new Date().toISOString() : previous.checkedAt } }));
+        setActivityError("");
+        setIsActivityVerified(true);
+      } catch {
+        if (!controller.signal.aborted && version === requestVersion.current) {
+          setActivityError("Chưa cập nhật được trạng thái trên server. Tạm ngưng dùng danh sách; hệ thống sẽ thử lại.");
+          setIsActivityVerified(false);
+        }
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(() => void refresh(), 10_000);
+      }
+    }
+    void refresh();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [activityKey, filterShopifyAsins, storeId]);
 
   useEffect(() => {
     return () => { requestVersion.current++; activeRequest.current?.abort(); activeRequest.current = null; };
@@ -77,6 +132,9 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
       if (version !== requestVersion.current || controller.signal.aborted) return;
       setWorkspace((current) => retainAsinFilterProgress({ ...current, inputText, snapshot: { result, inputText, checkedAt: new Date().toISOString() } }));
       setFilterState({ status: "idle" });
+      setIsActivityVerified(true);
+      setActivityError("");
+      setActivityNotice("");
     } catch (error: unknown) {
       if (version !== requestVersion.current) return;
       setFilterState({ status: "unverified", message: error instanceof AmazonCrawlerServiceError ? error.message : "Không thể hoàn tất kiểm tra Shopify. Danh sách chưa được xác minh; kiểm tra kết nối/quyền của store rồi thử lại." });
@@ -109,8 +167,8 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
   }
 
   function handleDownloadMissing(): void {
-    if (!verifiedResult || verifiedResult.missingAsins.length === 0) return;
-    const url = URL.createObjectURL(new Blob([verifiedResult.missingAsins.join("\n")], { type: "text/plain;charset=utf-8" }));
+    if (!canUseResults || availableAsins.length === 0) return;
+    const url = URL.createObjectURL(new Blob([availableAsins.join("\n")], { type: "text/plain;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
     link.download = `asin-chua-co-${storeId.replace(/[^a-zA-Z0-9_-]/g, "_")}.txt`;
@@ -158,12 +216,15 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
           <textarea aria-label="Danh sách ASIN chưa xác minh" readOnly value={parsed.asins.join("\n")} rows={4} className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 font-mono text-sm" />
         </section> : null}
         {verifiedResult ? <>
+          {activityError ? <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">{activityError}</p> : !isActivityVerified ? <p role="status" className="text-xs text-blue-600">Đang xác minh trạng thái cào/SEO trên server…</p> : null}
+          {activityNotice ? <p role="status" className="text-xs text-emerald-700 dark:text-emerald-300">{activityNotice}</p> : null}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
             <span className="text-sm font-bold text-slate-900 dark:text-slate-100">Kết quả kiểm tra</span>
             <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400" title={snapshot ? `Kết quả lưu lúc ${new Date(snapshot.checkedAt).toLocaleString("vi-VN")}; kiểm tra lại để cập nhật.` : undefined}>{snapshot ? `↻ Cập nhật: ${new Date(snapshot.checkedAt).toLocaleTimeString("vi-VN")}` : ""}</span>
           </div>
           <p role="status" className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-            <strong className="rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300">{verifiedResult.missingAsins.length} chưa có</strong>
+            <strong className="rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300">{availableAsins.length} cần cào</strong>
+            <span>· {busyEntries.length} đang cào/đã nhận</span>
             <span>· {verifiedResult.matches.length} đã có</span>
           </p>
           {snapshot?.inputText !== inputText ? (
@@ -175,7 +236,7 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
           <div className="grid min-w-0 gap-2.5">
             <section aria-label="ASIN chưa có trên Shopify" className="min-w-0 space-y-2">
               <ul aria-label="Danh sách ASIN chưa có trên Shopify" className="max-h-60 space-y-1.5 overflow-y-auto">
-                {verifiedResult.missingAsins.map((asin) => {
+                {availableAsins.map((asin) => {
                   const row = workspace.progress?.rows[asin];
                   const isLatest = workspace.progress?.lastAsin === asin;
                   const hasAction = row?.copied || row?.viewed || row?.selected;
@@ -193,7 +254,7 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                     </div> : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" aria-label={`Dùng ASIN này ${asin}`} disabled={isSelectionDisabled}
+                    <button type="button" aria-label={`Dùng ASIN này ${asin}`} disabled={isSelectionDisabled || !canUseResults}
                       onClick={async () => { if (await onSelectAsin(asin) === false) return; handleMarkRow(asin, "selected"); setCopyMessage(`Đã đưa ${asin} vào ô nhập. Chọn collection rồi bấm Bắt đầu cào.`); }}
                       className="min-h-7 whitespace-nowrap rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/80 dark:bg-blue-950/60 px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 transition hover:bg-blue-100/80 disabled:opacity-50">Dùng ASIN</button>
                     <a aria-label={`View Amazon ${asin}`} href={`https://www.amazon.com/dp/${asin}`} target="_blank" rel="noopener noreferrer"
@@ -203,12 +264,23 @@ export function ShopifyAsinFilterPanel({ storeId, filterShopifyAsins, onSelectAs
                 </li>;
                 })}
               </ul>
-              {verifiedResult.missingAsins.length === 0 ? <p className="text-xs text-slate-600 dark:text-slate-400">Tất cả ASIN đã tồn tại trong store này.</p> : <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => void handleCopy(verifiedResult.missingAsins.join("\n"))} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-2xs transition hover:bg-slate-50 dark:hover:bg-slate-800">Sao chép ASIN chưa có</button>
-                <button type="button" onClick={handleDownloadMissing} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-2xs transition hover:bg-slate-50 dark:hover:bg-slate-800">Tải TXT</button>
+              {availableAsins.length === 0 ? <p className="text-xs text-slate-600 dark:text-slate-400">Không còn ASIN cần cào trong danh sách này.</p> : <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={!canUseResults} onClick={() => void handleCopy(availableAsins.join("\n"))} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-2xs transition hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Sao chép ASIN cần cào</button>
+                <button type="button" disabled={!canUseResults} onClick={handleDownloadMissing} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-2xs transition hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Tải TXT</button>
               </div>}
               {copyMessage ? <p role="status" className="text-xs text-slate-700 dark:text-slate-300">{copyMessage}</p> : null}
             </section>
+            {busyEntries.length > 0 ? <details className="rounded-lg border border-blue-200 dark:border-blue-800 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-blue-700 dark:text-blue-300">Đang cào / Đã nhận ({busyEntries.length})</summary>
+              <ul aria-label="ASIN đang được xử lý" className="mt-2 max-h-60 space-y-2 overflow-y-auto text-xs">
+                {busyEntries.map((entry) => <li key={entry.asin} className="flex items-center justify-between gap-2">
+                  <div><span className="font-mono">{entry.asin}</span><p className={entry.status === "attention" ? "text-amber-600" : "text-blue-600 dark:text-blue-300"}>
+                    {entry.status === "crawling" ? `Đang cào${entry.relatedAsin && entry.relatedAsin !== entry.asin ? ` cùng ${entry.relatedAsin}` : ""}` : entry.status === "attention" ? "Cần xử lý lỗi ở phiên cào/Review" : "Đã nhận · đang xử lý SEO/Review"}
+                  </p></div>
+                  <a href={`https://www.amazon.com/dp/${entry.asin}`} target="_blank" rel="noopener noreferrer" className="text-blue-600">View ↗</a>
+                </li>)}
+              </ul>
+            </details> : null}
             <details className="min-w-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 px-3 py-2">
               <summary className="cursor-pointer text-xs font-medium text-slate-600 dark:text-slate-400">Đã có trên Shopify ({verifiedResult.matches.length})</summary>
               <section aria-label="ASIN đã có trên Shopify" className="mt-2 min-w-0 space-y-2">

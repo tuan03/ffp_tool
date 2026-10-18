@@ -40,6 +40,11 @@ const workspaceSchema = z.object({
         }),
       })).max(SHOPIFY_ASIN_FILTER_LIMIT),
       scannedProducts: z.number().int().nonnegative(),
+      activity: z.array(z.object({
+        asin: asinSchema, parentAsin: asinSchema,
+        status: z.enum(["available", "crawling", "processing", "attention"]),
+        relatedAsin: asinSchema.optional(), jobId: z.string().optional(), shopifyRevision: z.iso.datetime().optional(),
+      })).max(SHOPIFY_ASIN_FILTER_LIMIT).optional(),
     }),
   }).nullable(),
 });

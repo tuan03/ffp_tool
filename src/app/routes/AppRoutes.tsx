@@ -541,7 +541,7 @@ export function AppRoutes({
       amazonCrawlerJobs,
       loadAmazonCrawlerJob,
       environment === "mock" ? undefined : amazonCrawlerCoordinatorUrl,
-      getShopifyAsinFilter(environment),
+      getShopifyAsinFilter(environment, amazonCrawlerCoordinatorUrl),
     );
 
     return createBrowserRouter([

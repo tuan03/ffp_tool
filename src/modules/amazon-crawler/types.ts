@@ -126,9 +126,20 @@ export interface ShopifyAsinFilterResult {
   readonly matches: readonly ShopifyAsinFilterMatch[];
   readonly missingAsins: readonly string[];
   readonly scannedProducts: number;
+  readonly activity?: readonly AsinFilterActivity[];
+}
+
+export interface AsinFilterActivity {
+  readonly asin: string;
+  readonly parentAsin: string;
+  readonly status: "available" | "crawling" | "processing" | "attention";
+  readonly relatedAsin?: string;
+  readonly jobId?: string;
+  readonly shopifyRevision?: string;
 }
 
 export interface ShopifyAsinFilter {
+  readonly loadActivity?: (input: { readonly storeId: string; readonly asins: readonly string[]; readonly signal?: AbortSignal }) => Promise<readonly AsinFilterActivity[]>;
   (input: {
     readonly storeId: string;
     readonly asins: readonly string[];

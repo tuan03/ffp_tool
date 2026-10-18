@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from engine.distributed.coordinator_models import CrawlJob, CrawlProductItem, CrawlTask
+from engine.distributed.coordinator_models import AmazonAsinRegistry, CrawlJob, CrawlProductItem, CrawlTask
 from engine.tests import test_distributed
 from engine.tests.test_distributed import client_hello
 from engine.distributed.seo_pipeline_identity import load_active_seo_identities
@@ -62,6 +62,93 @@ class ActiveSeoDuplicateTests(unittest.TestCase):
         self.assertEqual(by_input["B0CHILD001"]["activeSeoAsins"], ["B0CHILD001"])
         self.assertEqual(by_input["B0CHILD002"].get("activeSeoAsins", []), [])
         self.assertEqual(by_input["B0PARENT01"].get("activeSeoAsins", []), [])
+
+    def test_filter_activity_is_exact_store_scoped_and_releases_cleared_queue(self):
+        self.seed_seo()
+        def states(store="sample"):
+            return {row["asin"]: row["status"] for row in self.store.filter_asin_activity(
+                store, ["B0CHILD001", "B0CHILD002", "B0PARENT01"])["entries"]}
+        self.assertEqual(states(), {"B0CHILD001": "processing", "B0CHILD002": "available", "B0PARENT01": "available"})
+        self.assertEqual(set(states("other").values()), {"available"})
+        with self.store.sessions.begin() as session:
+            session.execute(text("UPDATE gpt_jobs SET status='CANCELLED'"))
+        self.assertEqual(set(states().values()), {"available"})
+
+    def test_filter_activity_only_covers_received_children_and_does_not_lock_history(self):
+        product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01",
+                   "sourceKey": "amazon:B0PARENT01:color:red", "sourceVariants": [{"asin": "B0CHILD001"}]}
+        job, lease = self.start_crawl("B0CHILD001")
+        self.upload(job, lease, product)
+        def states():
+            return {row["asin"]: row["status"] for row in self.store.filter_asin_activity(
+                "sample", ["B0CHILD001", "B0CHILD002"])["entries"]}
+        self.assertEqual(states()["B0CHILD001"], "processing")
+        self.assertEqual(states()["B0CHILD002"], "available")
+        with self.store.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).status = "completed"
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"]))
+            item.status = "failed"
+            item.last_error = {"phase": "seo", "message": "GPT SEO job cancelled: Removed from Queue by operator"}
+        self.assertEqual(set(states().values()), {"available"})
+        for status in ["deleted", "cancelled", "completed"]:
+            with self.store.sessions.begin() as session:
+                session.scalar(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"])).status = status
+            self.assertEqual(set(states().values()), {"available"})
+
+    def test_filter_activity_ignores_cancelled_queue_before_worker_observes_cancellation(self):
+        job, lease = self.start_crawl("B0CHILD001")
+        product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01",
+                   "sourceKey": "amazon:B0PARENT01:color:red"}
+        self.upload(job, lease, product)
+        self.seed_seo(status="CANCELLED")
+        with self.store.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).status = "completed"
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"]))
+            item.status = "retry_wait"
+            item.shopify_result = {"externalSeo": {"jobId": "seo-existing"}}
+        self.assertEqual(self.store.filter_asin_activity("sample", ["B0CHILD001"])["entries"][0]["status"], "available")
+
+    def test_filter_activity_preserves_exact_variant_ownership_after_registry_job_changes(self):
+        job, lease = self.start_crawl("B0CHILD001")
+        product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01",
+                   "sourceKey": "amazon:B0PARENT01:color:red", "sourceVariants": [{"asin": "B0CHILD002"}]}
+        self.upload(job, lease, product)
+        with self.store.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).status = "completed"
+            row = session.scalar(select(AmazonAsinRegistry).where(AmazonAsinRegistry.asin == "B0CHILD002"))
+            row.last_job_id = None
+        entries = self.store.filter_asin_activity("sample", ["B0CHILD002", "B0PARENT01"])["entries"]
+        self.assertEqual([entry["status"] for entry in entries], ["processing", "available"])
+
+    def test_filter_activity_known_family_only_waits_while_crawl_task_is_active(self):
+        job, lease = self.start_crawl("B0CHILD001")
+        product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01", "sourceKey": "amazon:B0PARENT01:color:red"}
+        self.upload(job, lease, product)
+        with self.store.sessions.begin() as session:
+            self.store._upsert_asin_registry(session, store_id="sample", job_id=job["id"],
+                product={**product, "asin": "B0CHILD002"}, status="released")
+        entry = self.store.filter_asin_activity("sample", ["B0CHILD002"])["entries"][0]
+        self.assertEqual(entry["status"], "crawling")
+        self.assertEqual(entry["relatedAsin"], "B0CHILD001")
+        with self.store.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).status = "failed"
+        self.assertEqual(self.store.filter_asin_activity("sample", ["B0CHILD002"])["entries"][0]["status"], "available")
+
+    def test_filter_activity_reports_errors_and_sync_revision_without_blocking_deleted_shopify_products(self):
+        job, lease = self.start_crawl("B0CHILD001")
+        product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01", "sourceKey": "amazon:B0PARENT01:color:red"}
+        self.upload(job, lease, product)
+        with self.store.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).status = "completed"
+            session.scalar(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"])).status = "failed"
+        self.assertEqual(self.store.filter_asin_activity("sample", ["B0CHILD001"])["entries"][0]["status"], "attention")
+        with self.store.sessions.begin() as session:
+            session.scalar(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"])).status = "completed"
+            self.store._upsert_asin_registry(session, store_id="sample", job_id=job["id"], product=product,
+                status="synced", shopify_product_id="gid://shopify/Product/123")
+        entry = self.store.filter_asin_activity("sample", ["B0CHILD001"])["entries"][0]
+        self.assertEqual(entry["status"], "available", "historical sync is not proof of Shopify existence")
+        self.assertTrue(entry["shopifyRevision"].endswith("Z"))
 
     def test_different_store_inactive_and_cancelled_jobs_do_not_block_recrawl(self):
         self.seed_seo(store_id="other")
@@ -222,6 +309,16 @@ class IndexedActiveSeoDuplicateTests(ActiveSeoDuplicateTests):
 
 
 class SeoReceiptApiTests(unittest.TestCase):
+    def test_activity_endpoint_validates_and_returns_complete_store_scoped_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'activity.sqlite3').as_posix()}")
+            with TestClient(app) as client:
+                for payload in [{}, {"storeId": "sample", "asins": [123]}, {"storeId": "sample", "asins": ["invalid"]}]:
+                    self.assertEqual(client.post("/api/v1/asin-families/activity", json=payload).status_code, 422)
+                response = client.post("/api/v1/asin-families/activity", json={"storeId": "sample", "asins": ["B0CHILD001"]})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json(), {"storeId": "sample", "entries": [{"asin": "B0CHILD001", "parentAsin": "B0CHILD001", "status": "available"}]})
+
     def test_recovery_requires_pipeline_credentials_and_passes_only_the_claim_owner(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"SHOPIFY_PIPELINE_TOKEN": "fixture-key"}):
             app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'receipt.sqlite3').as_posix()}")
