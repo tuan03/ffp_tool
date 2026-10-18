@@ -22,6 +22,7 @@ export interface Money {
 }
 
 export interface AmazonCrawlerSettings {
+  sequentialBatch?: boolean;
   profileSlug: AmazonCrawlerProfile;
   imageProfileSlug: string;
   imageProfileRevision?: string | null;
@@ -62,6 +63,12 @@ export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
   urls: readonly string[];
   existingShopifyAsins?: readonly string[];
   refreshFamilyAsins?: readonly string[];
+  batchSkippedInputs?: readonly AmazonCrawlerBatchSkippedInput[];
+}
+
+export interface AmazonCrawlerBatchSkippedInput {
+  readonly asin: string;
+  readonly reason: "existing_shopify" | "existing_pipeline" | "attention";
 }
 
 export interface AmazonAsinPreflightMatch {
@@ -154,6 +161,7 @@ export interface AmazonCrawlerActiveVariant {
 }
 
 export interface AmazonCrawlerProgressItem {
+  skipReason?: AmazonCrawlerBatchSkippedInput["reason"] | "received";
   taskId?: string;
   source: string;
   asin: string;
@@ -180,6 +188,7 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
+  batch?: { readonly skippedShopify: number; readonly skippedPipeline: number; readonly covered: number; readonly attention: number };
   phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "image_processing" | "review" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;

@@ -7,6 +7,7 @@ import type {
   AmazonCrawlerProgress,
   AmazonCrawlerRunner,
   AmazonCrawlerSettings,
+  AmazonCrawlerBatchSkippedInput,
 } from "../types";
 import { DEFAULT_AMAZON_CRAWLER_SETTINGS } from "../types";
 import { firstProductMediaUrl, resolveSelectedProduct } from "./product-selection";
@@ -276,6 +277,7 @@ export interface StartCrawlerJobOptions {
   settings?: AmazonCrawlerSettings;
   existingShopifyAsins?: readonly string[];
   refreshFamilyAsins?: readonly string[];
+  batchSkippedInputs?: readonly AmazonCrawlerBatchSkippedInput[];
   onProducts?: (products: readonly AmazonCrawlerProduct[]) => void;
 }
 
@@ -285,6 +287,7 @@ export async function startCrawlerJob({
   settings,
   existingShopifyAsins,
   refreshFamilyAsins,
+  batchSkippedInputs,
   onProducts,
 }: StartCrawlerJobOptions): Promise<AmazonCrawlerOutput | null> {
   if (urls.length === 0 || sessionState.isRunning) return null;
@@ -326,7 +329,7 @@ export async function startCrawlerJob({
 
   try {
     const crawlerOutput = await runAmazonCrawler({
-      input: { ...jobSettings, urls, existingShopifyAsins, refreshFamilyAsins },
+      input: { ...jobSettings, urls, existingShopifyAsins, refreshFamilyAsins, batchSkippedInputs },
       onProgress: (nextProgress) => {
         sessionState = { ...sessionState, progress: nextProgress };
         if (nextProgress.phase === "captcha" && !didAlertCaptcha) {
@@ -394,10 +397,12 @@ export async function startCrawlerJob({
         summary,
       });
       const hasWarnings = completion?.tone !== "success" || crawlerOutput.errors.length > 0;
+      const batch = sessionState.progress?.batch;
+      const batchMessage = batch ? `Đã kiểm tra ${sessionState.progress?.completed}/${sessionState.progress?.total} link · ${batch.skippedShopify} đã có Shopify · ${batch.skippedPipeline} đang trong Queue/Review · ${batch.covered} lấy qua link khác${batch.attention ? ` · ${batch.attention} cần kiểm tra` : ""}. ` : "";
       notifyUser({
         title: summary.pending > 0 ? "⚡ Distributed Crawler: Đã nhận dữ liệu, đang bàn giao" : hasWarnings ? "⚡ Distributed Crawler: Phiên cào đã kết thúc" : summary.totalProducts > 0
           ? "⚡ Distributed Crawler: Đã bàn giao SEO Queue" : "⚡ Distributed Crawler: Đã kiểm tra ASIN",
-        message: `${completion?.label ?? "Phiên cào đã kết thúc."}${crawlerOutput.errors.length > 0 ? ` · ${crawlerOutput.errors.length} lỗi crawl` : ""}`,
+        message: `${batchMessage}${completion?.label ?? "Phiên cào đã kết thúc."}${crawlerOutput.errors.length > 0 ? ` · ${crawlerOutput.errors.length} lỗi crawl` : ""}`,
         type: hasWarnings ? "warning" : "success",
         sound: "chime",
         url: "/amazon-crawler",

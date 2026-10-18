@@ -6,6 +6,21 @@ import { resolveCrawlStatus } from "../ui/crawl-status";
 import { CrawlStatusNotice } from "../ui/components/CrawlStatusNotice";
 
 const base = { isRunning: false, isChecking: false, isStale: false, blockers: [], errors: [], summary: { totalProducts: 18, handedOver: 10, pending: 8, notHandedOver: 0 } };
+test("batch sticky separates input coverage from products and keeps skip counts after completion", () => {
+  const progress = { completed: 6, total: 10, phase: "product" as const, message: "", currentAsin: "B0CHILD003",
+    batch: { skippedShopify: 2, skippedPipeline: 1, covered: 3, attention: 0 } };
+  const running = resolveCrawlStatus({ ...base, progress, isRunning: true });
+  assert.match(running.title, /tự động/);
+  assert.match(running.detail, /6\/10 link/);
+  assert.match(running.detail, /3 lấy qua link khác/);
+  assert.match(running.detail, /10\/18 sản phẩm/);
+  const done = resolveCrawlStatus({ ...base, progress: { ...progress, completed: 10 },
+    summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 } });
+  assert.equal(done.tone, "success");
+  assert.match(done.detail, /2 đã có Shopify/);
+  assert.equal(resolveCrawlStatus({ ...base, progress: { ...progress, completed: 10, batch: { ...progress.batch, attention: 1 } },
+    summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 } }).tone, "warning");
+});
 test("completed links remain handing over until products reach Queue", () => {
   const status = resolveCrawlStatus({ ...base, isRunning: true, progress: { completed: 1, total: 1, phase: "seo", message: "" } });
   assert.match(status.title, /bàn giao/);

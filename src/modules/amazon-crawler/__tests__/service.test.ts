@@ -27,6 +27,32 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const input = { ...DEFAULT_AMAZON_CRAWLER_SETTINGS, urls: ["B0MOCK0001"] };
 
+test("runner sends sequential batch metadata and preserves durable input progress", async () => {
+  const batch = { skippedShopify: 1, skippedPipeline: 0, covered: 0, attention: 0 };
+  const batchSkippedInputs = [{ asin: "B0MOCK0001", reason: "existing_shopify" as const }];
+  let sawProgress = false;
+  const run = createAmazonCrawlerRunner({ engineUrl: "http://coordinator.test", pollIntervalMs: 0,
+    fetchImplementation: async (request, init) => {
+      const url = String(request);
+      if (url.endsWith("/clients")) return jsonResponse([{ id: "agent", displayName: "Agent", status: "online", isConnected: true, maxConcurrentInputs: 1, activeTasks: 0 }]);
+      if (init?.method === "POST") {
+        const payload: unknown = JSON.parse(String(init.body));
+        assert.deepEqual(payload, { ...input, sequentialBatch: true, batchSkippedInputs });
+        return jsonResponse({ id: "batch", status: "completed" }, 202);
+      }
+      if (url.endsWith("/results")) return jsonResponse({ ...amazonCrawlerMockOutput, jobId: "batch", products: [] });
+      return jsonResponse({ id: "batch", status: "completed", progress: { completed: 1, total: 1, batch,
+        items: [{ asin: "B0MOCK0001", source: "B0MOCK0001", status: "completed", skipReason: "existing_shopify", message: "Đã có Shopify" }] } });
+    },
+  });
+  await run({ input: { ...input, sequentialBatch: true, batchSkippedInputs }, onProgress: progress => {
+    assert.deepEqual(progress.batch, batch);
+    assert.equal(progress.items?.[0]?.skipReason, "existing_shopify");
+    sawProgress = true;
+  } });
+  assert.ok(sawProgress);
+});
+
 test("runner retains the durable handoff count when result cards are still empty", async () => {
   const handoff = { totalProducts: 18, handedOver: 18, pending: 0, notHandedOver: 0 };
   const run = createAmazonCrawlerRunner({ engineUrl: "http://coordinator.test", pollIntervalMs: 0,

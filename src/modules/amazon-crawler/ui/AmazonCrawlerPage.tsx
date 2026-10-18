@@ -30,6 +30,7 @@ import {
   type AmazonCrawlerStoreCrawlSettings,
   type AmazonCrawlerRunner,
   type AmazonCrawlerSettings,
+  type AmazonCrawlerBatchSkippedInput,
   type AmazonCrawlerJobLoader,
   type AmazonCrawlerJobSummary,
   type AmazonCrawlerSyncRetrier,
@@ -84,6 +85,7 @@ import {
   resolveInlineCrawlerHandoff,
 } from "./pipeline-status";
 import { runAfterAmazonAsinPreflight } from "./amazon-asin-preflight";
+import { prepareSequentialBatch } from "./sequential-batch-preflight";
 import { AddStoreModal } from "./components/AddStoreModal";
 import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
@@ -946,7 +948,9 @@ export function AmazonCrawlerPage({
     const activeJob = jobs.find((job) => job.jobId === activeJobId);
     if (!activeJob) return;
     const isActive = ["queued", "running", "waiting_captcha", "cancelling"].includes(activeJob.status);
-    updateCrawlerSession({ progress: activeJob.progress, isRunning: isActive });
+    updateCrawlerSession(current => ({ progress: { ...activeJob.progress,
+      items: activeJob.progress.items ?? (current.progress?.batch ? current.progress.items : undefined),
+    }, isRunning: isActive }));
     if (activeJob.status === "cancelling") {
       return;
     }
@@ -1309,7 +1313,9 @@ export function AmazonCrawlerPage({
       allowedSources: readonly string[],
       existingShopifyAsins: readonly string[],
       refreshFamilyAsins: readonly string[],
+      batchSkippedInputs?: readonly AmazonCrawlerBatchSkippedInput[],
     ) => Promise<void>,
+    sequentialBatch = false,
   ): Promise<void> {
     if (preflightInFlight.current) return;
     preflightInFlight.current = true;
@@ -1324,6 +1330,16 @@ export function AmazonCrawlerPage({
     setAsinPreflightStoreId(storeId);
     const checkedUrlText = urlText;
     try {
+      if (sequentialBatch) {
+        const batch = await prepareSequentialBatch(sources, storeId, filterShopifyAsins);
+        const current = getCrawlerSessionState();
+        if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId) {
+          throw new Error("Link hoặc store đã thay đổi. Vui lòng bấm Start để kiểm tra lại.");
+        }
+        setIsCheckingAsins(false);
+        await startJob(batch.urls, batch.existingShopifyAsins ?? [], [], batch.batchSkippedInputs);
+        return;
+      }
       const checked = await runAfterAmazonAsinPreflight(
         sources,
         storeId,
@@ -1367,13 +1383,14 @@ export function AmazonCrawlerPage({
       return;
     }
     const sources = [...urls];
-    const jobSettings = { ...settings, ...storeConfig.defaults, vendor: storeConfig.vendor ?? undefined,
+    const jobSettings = { ...settings, ...storeConfig.defaults, sequentialBatch: true, vendor: storeConfig.vendor ?? undefined,
       storeCrawlSettingsUpdatedAt: storeConfig.updatedAt ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true,
       ...(settings.classificationMode !== "manual" ? { classificationMode: "automatic" as const, collectionIds: [], collectionId: "", productType: "" } : {}) };
     await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
       allowedSources,
       existingShopifyAsins,
       refreshFamilyAsins,
+      batchSkippedInputs,
     ) => {
       setSyncMessage(null);
       setCancellationJobId(null);
@@ -1384,8 +1401,9 @@ export function AmazonCrawlerPage({
         settings: jobSettings,
         existingShopifyAsins,
         refreshFamilyAsins,
+        batchSkippedInputs,
       });
-    });
+    }, true);
   }
 
   async function handleStop(): Promise<void> {
@@ -2564,7 +2582,7 @@ export function AmazonCrawlerPage({
                 </label>
               </div>
               <div className="space-y-1.5">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Nhập ASIN, mỗi dòng một giá trị</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Dán tối đa 200 ASIN/link rồi bắt đầu một lần. Tự lọc Shopify, cào lần lượt và bỏ qua ASIN đã lấy qua link trước.</p>
                 <div id="crawler-input-summary" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-400">
                   <span>{inputAnalysis.lineCount} dòng · <strong className="font-semibold text-slate-900 dark:text-slate-100">{inputAnalysis.validCount} ASIN hợp lệ, không trùng</strong></span>
                   {inputAnalysis.duplicateCount > 0 ? <button type="button" disabled={isRunning || isCheckingAsins} className="min-h-8 text-blue-700 dark:text-blue-300 underline underline-offset-4 disabled:opacity-50" onClick={() => setCrawlerUrlText(inputAnalysis.deduplicatedText)}>Bỏ {inputAnalysis.duplicateCount} dòng trùng</button> : null}
@@ -3158,6 +3176,12 @@ export function AmazonCrawlerPage({
               </div>
             ) : null}
           </div>
+          {!isRunning && progress.batch && progress.items?.some(item => item.status === "failed") ? (
+            <button type="button" className="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
+              onClick={() => { setCrawlerUrlText((progress.items ?? []).filter(item => item.status === "failed").map(item => item.asin).join("\n")); crawlerInputRef.current?.focus(); }}>
+              Nạp các link lỗi để thử lại
+            </button>
+          ) : null}
           {(progress.items ?? []).length === 0 ? null : (
             <details>
               <summary className="cursor-pointer text-sm text-slate-700 dark:text-slate-300">Tiến độ từng ASIN ({progress.items?.length ?? 0}){progress.errors ? ` · ${progress.errors} lỗi cần kiểm tra` : ""}</summary>
@@ -3166,7 +3190,9 @@ export function AmazonCrawlerPage({
                 const variantPercent = progressItem.variantTotal > 0
                   ? Math.min(100, (progressItem.variantCompleted / progressItem.variantTotal) * 100)
                   : 0;
-                const statusStyle = progressItem.status === "completed"
+                const statusStyle = progressItem.skipReason === "attention"
+                  ? "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60"
+                  : progressItem.status === "completed"
                   ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60"
                   : progressItem.status === "failed"
                     ? "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60"
@@ -3181,7 +3207,7 @@ export function AmazonCrawlerPage({
                         <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">{progressPhaseLabel(progressItem.phase)}</p>
                       </div>
                       <strong className="shrink-0 text-sm">
-                        {progressItem.variantTotal > 0 ? `${progressItem.variantCompleted}/${progressItem.variantTotal}` : progressItem.status}
+                        {progressItem.skipReason ? progressItem.skipReason === "attention" ? "Cần kiểm tra" : "Đã bỏ qua" : progressItem.variantTotal > 0 ? `${progressItem.variantCompleted}/${progressItem.variantTotal}` : progressItem.status}
                       </strong>
                     </div>
                     <p className="mt-2 text-sm text-slate-900 dark:text-slate-100">{progressItem.message}</p>

@@ -34,6 +34,7 @@ export type {
   AmazonCrawlerHandoverHandler,
   AmazonCrawlerHydratedJob,
   AmazonCrawlerInput,
+  AmazonCrawlerBatchSkippedInput,
   AmazonCrawlerJobExecutionState,
   AmazonCrawlerJobLoader,
   AmazonCrawlerJobSnapshot,

@@ -465,6 +465,7 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
     ? value.executionState
     : "active";
   const isTerminal = ["review_pending", "completed", "partial", "cancelled"].includes(status);
+  const batch = value.progress.batch;
   return {
     id: value.id,
     status,
@@ -474,6 +475,9 @@ function readSnapshot(value: unknown): CoordinatorSnapshot {
       phase: typeof value.progress.phase === "string" ? value.progress.phase as AmazonCrawlerProgress["phase"] : (isTerminal ? "export" : "product"),
       completed,
       total,
+      ...(isRecord(batch) && ["skippedShopify", "skippedPipeline", "covered", "attention"].every(
+        key => typeof batch[key] === "number" && Number.isInteger(batch[key]) && batch[key] >= 0,
+      ) ? { batch: batch as unknown as NonNullable<AmazonCrawlerProgress["batch"]> } : {}),
       message: typeof value.progress.message === "string"
         ? value.progress.message
         : (isTerminal ? `Đã xử lý ${completed}/${total} link.` : `Đang xử lý ${completed}/${total} link trên các client.`),

@@ -1110,6 +1110,23 @@ class CoordinatorStore(CoordinatorObservability):
         if len(raw_urls) > 200:
             raise ValueError("A job may contain at most 200 inputs.")
         settings = CrawlSettings.from_api(payload).api_dict()
+        if "sequentialBatch" in payload:
+            if not isinstance(payload["sequentialBatch"], bool):
+                raise ValueError("sequentialBatch must be boolean.")
+            settings["sequentialBatch"] = payload["sequentialBatch"]
+        batch_skips = payload.get("batchSkippedInputs") or []
+        if not isinstance(batch_skips, list) or len(batch_skips) > 200:
+            raise ValueError("batchSkippedInputs must be an array of at most 200 entries.")
+        source_asins = {normalize_amazon_input(source).asin for source in raw_urls} if batch_skips else set()
+        if batch_skips and not settings.get("sequentialBatch"):
+            raise ValueError("batchSkippedInputs requires sequentialBatch.")
+        skipped_inputs = {}
+        for skipped in batch_skips:
+            if (not isinstance(skipped, dict) or skipped.get("asin") not in source_asins
+                    or skipped.get("reason") not in {"existing_shopify", "existing_pipeline", "attention"}
+                    or skipped["asin"] in skipped_inputs):
+                raise ValueError("Invalid or duplicate batchSkippedInputs entry.")
+            skipped_inputs[skipped["asin"]] = skipped["reason"]
         if "classificationMode" in payload:
             if payload["classificationMode"] not in {"automatic", "manual"}:
                 raise ValueError("classificationMode must be automatic or manual.")
@@ -1217,13 +1234,16 @@ class CoordinatorStore(CoordinatorObservability):
                         session, self._negative_key(normalized.asin, str(settings["amazonZip"])), utc_now()
                     )
                     is_terminal = negative is not None and negative.get("retryable") is False
-                    session.add(CrawlTask(
+                    task = CrawlTask(
                         id=_id(), job_id=job.id, ordinal=ordinal, source=source,
                         asin=normalized.asin, canonical_url=normalized.canonical_url,
                         status="dead_letter" if is_terminal else "queued",
                         last_error=classify_task_error(negative) if negative is not None else None,
                         completed_at=utc_now() if is_terminal else None,
-                    ))
+                    )
+                    session.add(task)
+                    if normalized.asin in skipped_inputs:
+                        self._skip_batch_input(session, task, skipped_inputs[normalized.asin])
                     accepted += 1
                 except ValueError as error:
                     session.add(InvalidJobInput(
@@ -1730,6 +1750,55 @@ class CoordinatorStore(CoordinatorObservability):
             client.global_admission_gate_state = state
             return True
 
+    @staticmethod
+    def _skip_batch_input(session, task: CrawlTask, reason: str, related_asin: str | None = None) -> None:
+        # Completed input, not a fabricated crawl result or a pipeline product.
+        task.status = "completed"
+        task.completed_at = utc_now()
+        task.last_error = None
+        CoordinatorStore._event(session, task.job_id, "batch_input_skipped", {
+            "taskId": task.id, "asin": task.asin, "reason": reason, "relatedAsin": related_asin,
+        })
+
+    def _batch_input_coverage(self, session, job: CrawlJob, task: CrawlTask) -> tuple[str, str | None] | None:
+        asin = task.asin
+        store_id = str(job.settings.get("storeId") or "").strip()
+        parents = set(session.scalars(select(AmazonAsinRegistry.parent_asin).where(
+            AmazonAsinRegistry.store_id == store_id, AmazonAsinRegistry.asin == asin,
+        )))
+        candidates = session.scalars(select(CrawlProductItem).join(CrawlJob).where(
+            CrawlJob.settings["storeId"].as_string() == store_id,
+            CrawlProductItem.status.not_in(["deleted", "cancelled"]),
+            or_(CrawlProductItem.job_id == job.id,
+                CrawlProductItem.raw_payload["asin"].as_string() == asin,
+                CrawlProductItem.normalized_payload["asin"].as_string() == asin,
+                CrawlProductItem.raw_payload["parentAsin"].as_string().in_(parents)),
+        )).all()
+        external_jobs = {item.id: str(external["jobId"]) for item in candidates
+                         if isinstance(external := (item.shopify_result or {}).get("externalSeo"), dict) and external.get("jobId")}
+        cancelled = load_cancelled_seo_job_ids(session, store_id, set(external_jobs.values()))
+        own_items = {item.id for item in candidates if item.task_id == task.id}
+        for item in candidates:
+            if item.task_id == task.id:
+                continue  # A partial stream cannot stand in for this task's final receipt.
+            if self._is_operator_cleared_seo_item(item) or external_jobs.get(item.id) in cancelled:
+                continue
+            if (item.shopify_result or {}).get("skippedExistingPipeline") or (item.shopify_result or {}).get("skippedExistingShopify"):
+                continue
+            if item.status == "completed" and item.job_id != job.id:
+                continue  # Historical sync is not proof the product still exists on Shopify.
+            if asin not in self._product_exact_asins(item.raw_payload or item.normalized_payload or {}):
+                continue
+            if item.status in {"failed", "rejected", "reconciliation_required"}:
+                return "attention", None
+            source_task = session.get(CrawlTask, item.task_id) if item.task_id else None
+            return ("received" if item.job_id == job.id else "existing_pipeline",
+                    source_task.asin if source_task else None)
+        if any(asin in identity.asins and identity.owner_item_id not in own_items
+               for identity in load_active_seo_identities(session, store_id, asins={asin})):
+            return "existing_pipeline", None
+        return None
+
     def lease_tasks(self, client_id: str, available_slots: int) -> list[dict[str, Any]]:
         count = max(0, min(32, int(available_slots)))
         if count == 0:
@@ -1737,6 +1806,25 @@ class CoordinatorStore(CoordinatorObservability):
         now = utc_now()
         leases: list[dict[str, Any]] = []
         with self.sessions.begin() as session:
+            if session.get_bind().dialect.name == "sqlite":
+                # SQLite has no row/advisory locks. Serialize scheduler writes across
+                # connections before reading eligibility (also used by local installs).
+                session.execute(text("BEGIN IMMEDIATE"))
+            batch_ids = set(session.scalars(select(CrawlJob.id).where(
+                CrawlJob.status.in_(["queued", "running"]),
+                CrawlJob.settings["sequentialBatch"].as_boolean() == True,
+            )))
+            unavailable_batches = set()
+            if session.get_bind().dialect.name == "postgresql":
+                for batch_id in sorted(batch_ids):
+                    if not session.scalar(text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+                                          {"key": f"crawler-batch:{batch_id}"}):
+                        unavailable_batches.add(batch_id)
+            if unavailable_batches and session.scalar(select(CrawlTask.id).join(CrawlJob).where(
+                CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]),
+                CrawlJob.id.not_in(unavailable_batches),
+            ).limit(1)) is None:
+                return []
             admission_gate = session.scalar(select(GlobalAdmissionGate)
                 .where(GlobalAdmissionGate.id == GLOBAL_ADMISSION_GATE_ID)
                 .with_for_update(read=True))
@@ -1782,6 +1870,7 @@ class CoordinatorStore(CoordinatorObservability):
                 .outerjoin(CrawlJobControl, CrawlJobControl.job_id == CrawlJob.id)
                 .where(
                     CrawlTask.status == "queued", CrawlJob.status.in_(["queued", "running"]),
+                    CrawlJob.id.not_in(unavailable_batches),
                     or_(CrawlJobControl.job_id.is_(None), CrawlJobControl.state == "active"),
                 )
                 .order_by(func.coalesce(CrawlJobControl.priority, 0).desc(), CrawlJob.created_at, CrawlTask.ordinal)
@@ -1843,6 +1932,23 @@ class CoordinatorStore(CoordinatorObservability):
             for task_id in task_ids:
                 if len(leases) >= count:
                     break
+                candidate = session.get(CrawlTask, task_id)
+                if candidate is None:
+                    continue
+                if candidate is not None and candidate.job_id in batch_ids:
+                    if session.scalar(select(CrawlTask.id).where(
+                        CrawlTask.job_id == candidate.job_id,
+                        CrawlTask.status.in_(["leased", "running", "cancelling"]),
+                    ).limit(1)) is not None:
+                        continue
+                    # Hold the entire batch behind the first non-terminal input,
+                    # including retry backoff, disconnected leases and pending upload.
+                    head = session.scalar(select(CrawlTask.id).where(
+                        CrawlTask.job_id == candidate.job_id,
+                        CrawlTask.status.not_in(TERMINAL_TASK_STATUSES),
+                    ).order_by(CrawlTask.ordinal).limit(1))
+                    if head != task_id:
+                        continue
                 # Lock only the task about to be leased; locking the whole queue
                 # made simultaneous ready agents serialize behind one caller.
                 task = session.scalar(select(CrawlTask).where(
@@ -1850,6 +1956,14 @@ class CoordinatorStore(CoordinatorObservability):
                 ).with_for_update(skip_locked=True).execution_options(populate_existing=True))
                 if task is None:
                     continue
+                if task.job_id in batch_ids:
+                    batch_job = session.get(CrawlJob, task.job_id)
+                    coverage = self._batch_input_coverage(session, batch_job, task)
+                    if coverage is not None:
+                        self._skip_batch_input(session, task, *coverage)
+                        session.flush()
+                        self._refresh_job(session, task.job_id)
+                        continue
                 if task.next_retry_at is not None and _as_utc(task.next_retry_at) > now:
                     continue
                 job = session.get(CrawlJob, task.job_id)
@@ -4797,7 +4911,7 @@ class CoordinatorStore(CoordinatorObservability):
             return {"id": job.id, "settings": job.settings}
 
     @staticmethod
-    def _job_summary(session, job: CrawlJob) -> dict[str, Any]:
+    def _job_summary(session, job: CrawlJob, *, include_batch_inputs: bool = True) -> dict[str, Any]:
         task_counts = dict(session.execute(
             select(CrawlTask.status, func.count(CrawlTask.id))
             .where(CrawlTask.job_id == job.id).group_by(CrawlTask.status)
@@ -4866,6 +4980,36 @@ class CoordinatorStore(CoordinatorObservability):
             message = f"Đang xử lý {phase}: {completed}/{job.accepted_inputs} link đã crawl."
         elif job.status in {"completed", "partial", "cancelled", "review_pending"}:
             message = f"Đã xử lý {completed}/{job.accepted_inputs} link."
+        batch_progress = {}
+        if (job.settings or {}).get("sequentialBatch"):
+            skip_counts = Counter(session.scalars(select(JobEvent.payload["reason"].as_string()).where(
+                JobEvent.job_id == job.id, JobEvent.event_type == "batch_input_skipped",
+            )))
+            batch_progress = {"batch": {
+                "skippedShopify": skip_counts["existing_shopify"],
+                "skippedPipeline": skip_counts["existing_pipeline"],
+                "covered": skip_counts["received"],
+                "attention": skip_counts["attention"] + int(task_counts.get("failed", 0))
+                    + int(task_counts.get("dead_letter", 0)) + int(task_counts.get("dead_letter_deleted", 0)),
+            }}
+            if include_batch_inputs:
+                skipped_inputs = {event.payload["taskId"]: event.payload for event in session.scalars(select(JobEvent).where(
+                    JobEvent.job_id == job.id, JobEvent.event_type == "batch_input_skipped",
+                ))}
+                batch_progress["items"] = []
+                for task in session.scalars(select(CrawlTask).where(CrawlTask.job_id == job.id).order_by(CrawlTask.ordinal)):
+                    skip = skipped_inputs.get(task.id)
+                    status = "running" if task.status == "leased" else "failed" if task.status in {"dead_letter", "dead_letter_deleted"} else task.status
+                    input_message = ("Đang chờ lượt trong lô." if status == "queued" else "Đang cào / chờ server nhận kết quả." if status == "running"
+                               else "Đã nhận kết quả." if status == "completed" else str((task.last_error or {}).get("message") or "Cần kiểm tra trạng thái task."))
+                    if skip:
+                        input_message = {"existing_shopify": "Bỏ qua: ASIN đã có chính xác trên Shopify.",
+                                   "existing_pipeline": "Bỏ qua: ASIN đang trong SEO Queue/Review.",
+                                   "attention": "Cần kiểm tra bản xử lý hiện có; không tự tạo bản trùng.",
+                                   "received": f"Đã lấy qua ASIN {skip.get('relatedAsin') or 'trước đó'}; không cào lại."}[skip["reason"]]
+                    batch_progress["items"].append({"taskId": task.id, "source": task.source, "asin": task.asin,
+                        "status": status, "phase": "queued" if status == "queued" else "product", "message": input_message,
+                        "variantCompleted": 0, "variantTotal": 0, **({"skipReason": skip["reason"]} if skip else {})})
         return {
             "id": job.id, "status": job.status,
             "executionState": CoordinatorStore._job_execution_state(session, job.id),
@@ -4874,6 +5018,7 @@ class CoordinatorStore(CoordinatorObservability):
             "progress": {
                 "phase": phase, "completed": completed, "total": job.accepted_inputs,
                 "message": message[:240],
+                **batch_progress,
             },
             "taskCounts": task_counts, "productCounts": product_counts,
             "seoQueueHandoff": handoff,
@@ -4894,7 +5039,7 @@ class CoordinatorStore(CoordinatorObservability):
                 if job.status == "cancelling":
                     snapshots.append(self._job_snapshot(session, job, include_task_details=False))
                     continue
-                snapshot = self._job_summary(session, job)
+                snapshot = self._job_summary(session, job, include_batch_inputs=False)
                 snapshot["settings"] = job.settings
                 snapshot["inputs"] = session.scalars(
                     select(CrawlTask.source).where(CrawlTask.job_id == job.id).order_by(CrawlTask.ordinal)
@@ -5239,6 +5384,9 @@ class CoordinatorStore(CoordinatorObservability):
             .order_by(JobEvent.id)
         ).all() if include_task_details else []
         latest_progress: dict[str, dict[str, Any]] = {}
+        skipped_inputs = {event.payload["taskId"]: event.payload for event in session.scalars(
+            select(JobEvent).where(JobEvent.job_id == job.id, JobEvent.event_type == "batch_input_skipped")
+        )} if (job.settings or {}).get("sequentialBatch") else {}
         latest_batch_progress: dict[str, Any] = {}
         for event in progress_events:
             payload = event.payload if isinstance(event.payload, dict) else {}
@@ -5253,6 +5401,8 @@ class CoordinatorStore(CoordinatorObservability):
             raw_items = task_progress.get("items") if isinstance(task_progress.get("items"), list) else []
             item = next((dict(value) for value in raw_items if isinstance(value, dict)), {})
             public_status = task.status if task.status in TERMINAL_TASK_STATUSES | {"cancelling"} else ("running" if task.status in {"leased", "running"} else "queued")
+            if (job.settings or {}).get("sequentialBatch") and task.status in {"dead_letter", "dead_letter_deleted"}:
+                public_status = "failed"
             item.update({
                 "taskId": task.id,
                 "source": task.source,
@@ -5284,6 +5434,15 @@ class CoordinatorStore(CoordinatorObservability):
                 })
                 item.pop("currentAsin", None)
                 item.pop("currentOptions", None)
+            if task.id in skipped_inputs:
+                skipped = skipped_inputs[task.id]
+                messages = {
+                    "existing_shopify": "Bỏ qua: ASIN đã có chính xác trên Shopify.",
+                    "existing_pipeline": "Bỏ qua: ASIN đang có trong SEO Queue/Review.",
+                    "attention": "Cần kiểm tra bản xử lý hiện có; không tự tạo bản trùng.",
+                    "received": f"Đã lấy qua ASIN {skipped.get('relatedAsin') or 'trước đó'}; không cào lại.",
+                }
+                item.update(message=messages[skipped["reason"]], skipReason=skipped["reason"])
             progress_items.append(item)
         product_counts = dict(session.execute(
             select(CrawlProductItem.status, func.count(CrawlProductItem.id))
@@ -5348,6 +5507,14 @@ class CoordinatorStore(CoordinatorObservability):
             "productCounts": product_counts,
             "seoQueueHandoff": handoff,
         }
+        if (job.settings or {}).get("sequentialBatch"):
+            skip_counts = Counter(entry["reason"] for entry in skipped_inputs.values())
+            progress["batch"] = {
+                "skippedShopify": skip_counts["existing_shopify"],
+                "skippedPipeline": skip_counts["existing_pipeline"],
+                "covered": skip_counts["received"],
+                "attention": skip_counts["attention"] + failed,
+            }
         if isinstance(latest_batch_progress.get("browserPool"), dict):
             progress["browserPool"] = latest_batch_progress["browserPool"]
         control = session.get(CrawlJobControl, job.id)

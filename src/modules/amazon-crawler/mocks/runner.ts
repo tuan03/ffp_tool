@@ -44,6 +44,34 @@ export async function runMockAmazonCrawler({
   signal,
 }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> {
   if (signal?.aborted) throw new DOMException("The crawler job was cancelled.", "AbortError");
+  if (input.sequentialBatch) {
+    const output = structuredClone(amazonCrawlerMockOutput);
+    output.jobId = "mock-sequential-batch";
+    output.settings = { ...input };
+    const skips = new Map((input.batchSkippedInputs ?? []).map(entry => [entry.asin, entry.reason]));
+    const sources = [...new Set(input.urls)];
+    const template = output.products[0];
+    output.products = template ? sources.filter(asin => !skips.has(asin)).map(asin => ({
+      ...structuredClone(template), id: `mock-${asin}`, asin, parentAsin: asin,
+      sourceKey: `amazon:${asin}:mock:default`, canonicalUrl: `https://www.amazon.com/dp/${asin}`,
+      sourceVariants: template.sourceVariants.map(variant => ({ ...variant, asin })),
+    })) : [];
+    output.seoQueueHandoff = { totalProducts: output.products.length, handedOver: output.products.length, pending: 0, notHandedOver: 0 };
+    output.completedAsins = sources;
+    output.statistics = { ...output.statistics, requestedInputs: sources.length, acceptedInputs: sources.length,
+      products: output.products.length,
+      sourceVariants: output.products.reduce((total, product) => total + product.sourceVariants.length, 0),
+      finalVariants: output.products.reduce((total, product) => total + product.variants.length, 0) };
+    onProgress?.({ phase: "export", completed: sources.length, total: sources.length, message: "Đã xử lý lô mẫu.",
+      batch: { skippedShopify: [...skips.values()].filter(reason => reason === "existing_shopify").length,
+        skippedPipeline: [...skips.values()].filter(reason => reason === "existing_pipeline").length,
+        attention: [...skips.values()].filter(reason => reason === "attention").length, covered: 0 },
+      items: sources.map(asin => ({ asin, source: asin, phase: "export", status: "completed",
+        message: skips.has(asin) ? "Đã bỏ qua ASIN trong lô mẫu." : "Đã cào trong lô mẫu.",
+        skipReason: skips.get(asin), variantCompleted: 0, variantTotal: 0 })),
+    });
+    return output;
+  }
   const source = input.urls[0] ?? "B0MOCK0001";
   onProgress?.({
     phase: "product",
@@ -95,6 +123,9 @@ export async function runMockAmazonCrawler({
 export function createMockAmazonCrawlerJobLoader(): AmazonCrawlerJobLoader {
   return {
     async loadJob(jobId?: string): Promise<AmazonCrawlerHydratedJob | null> {
+      // Generated batches live in the browser session, not the static fixture.
+      // Returning that unrelated fixture would overwrite their exact skip counts.
+      if (jobId === "mock-sequential-batch") return null;
       return {
         jobId: jobId || "mock-job-001",
         status: "completed",

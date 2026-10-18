@@ -20,7 +20,11 @@ export function resolveCrawlStatus(input: {
   readonly completion?: { readonly label: string; readonly tone: "success" | "warning" } | null;
 }): CrawlStatus {
   const summary = input.summary;
-  const counts = [summary.totalProducts > 0 ? `Đã bàn giao ${summary.handedOver}/${summary.totalProducts} sản phẩm` : null,
+  const batch = input.progress?.batch;
+  const counts = [batch && input.progress ? `Đã xử lý ${input.progress.completed}/${input.progress.total} link` : null,
+    batch ? `${batch.skippedShopify} đã có Shopify · ${batch.skippedPipeline} đang trong Queue/Review · ${batch.covered} lấy qua link khác` : null,
+    batch?.attention ? `${batch.attention} link cần kiểm tra` : null,
+    summary.totalProducts > 0 ? `Đã bàn giao ${summary.handedOver}/${summary.totalProducts} sản phẩm` : null,
     summary.pending > 0 ? `${summary.pending} đang chuẩn bị` : null,
     summary.notHandedOver > 0 ? `${summary.notHandedOver} chưa bàn giao` : null,
     summary.skippedExistingShopify ? `${summary.skippedExistingShopify} đã có Shopify` : null,
@@ -36,9 +40,13 @@ export function resolveCrawlStatus(input: {
     const progress = input.progress;
     if (progress?.phase === "captcha") return { title: "Cần xử lý CAPTCHA trên Agent", detail: counts || "Mở Agent để kiểm tra yêu cầu từ Amazon.", tone: "warning" };
     const crawled = progress && progress.total > 0 && progress.completed >= progress.total;
-    return { title: crawled ? "Đã cào xong link · Đang nhận dữ liệu và bàn giao SEO Queue" : progress?.phase === "queued" ? "Đang chờ Agent nhận việc" : "Đang cào sản phẩm",
-      detail: [progress ? `${progress.completed}/${progress.total} link` : null, counts, progress?.currentAsin].filter(Boolean).join(" · ") || "Đang chờ số liệu từ server…", tone: "working" };
+    return { title: crawled ? "Đã cào xong link · Đang nhận dữ liệu và bàn giao SEO Queue" : progress?.phase === "queued" ? "Đang chờ Agent nhận việc" : batch ? "Đang cào lô tự động · Mỗi lần một link" : "Đang cào sản phẩm",
+      detail: [progress && !batch ? `${progress.completed}/${progress.total} link` : null, counts, progress?.currentAsin].filter(Boolean).join(" · ") || "Đang chờ số liệu từ server…", tone: "working" };
   }
+  if (batch && input.progress && input.progress.completed >= input.progress.total) return {
+    title: summary.pending > 0 ? "Đã xử lý danh sách · Đang bàn giao SEO Queue" : batch.attention || summary.notHandedOver > 0 ? "Lô đã kết thúc · Có mục cần kiểm tra" : "Đã xử lý xong danh sách",
+    detail: counts, tone: summary.pending > 0 ? "working" : batch.attention || summary.notHandedOver > 0 ? "warning" : "success",
+  };
   if (input.completion && summary.pending > 0) return { title: "Đã nhận dữ liệu · Đang bàn giao SEO Queue", detail: input.completion.label, tone: "working" };
   if (input.completion) return { title: input.completion.tone === "success" ? "Phiên cào đã hoàn tất" : "Phiên kết thúc · Còn sản phẩm chưa bàn giao", detail: input.completion.label, tone: input.completion.tone };
   if (input.blockers.length) return { title: "Chưa thể bắt đầu cào", detail: input.blockers.join(" "), tone: "warning" };
