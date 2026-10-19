@@ -7,7 +7,7 @@ test("GPT SEO restart script validates root Compose and waits for a healthy serv
 
   assert.match(script, /set -Eeuo pipefail/);
   assert.match(script, /docker compose config -q/);
-  assert.match(script, /docker compose up -d --build --force-recreate --wait --wait-timeout 120 server/);
+  assert.match(script, /docker compose up -d --force-recreate --wait --wait-timeout 120 server/);
   assert.doesNotMatch(script, /compose\.prod\.yaml/);
   assert.doesNotMatch(script, /ffp-tool-app/);
   assert.match(script, /https:\/\/ffp\.b6-team\.site\/health/);
