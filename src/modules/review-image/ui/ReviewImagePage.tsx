@@ -587,23 +587,35 @@ export function ReviewImagePage({
           {/* Step 2 Card: Chọn ảnh nền từ kho */}
           <section className={`${cardClass} space-y-4`}>
             <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3.5">
+              <button
+                type="button"
+                aria-expanded={isTemplateManagerOpen}
+                aria-controls="review-image-template-section"
+                onClick={() => setIsTemplateManagerOpen((current) => !current)}
+                className="flex min-w-0 flex-1 items-start gap-3.5 text-left"
+              >
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
                   2
                 </span>
-                <div>
+                <div className="min-w-0 flex-1">
                   <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
                     <span className="sr-only">2. Chuẩn bị kho ảnh nền · </span>Chọn ảnh nền từ kho
+                    {templates ? (
+                      <span className="ml-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                        ({templates.length} template)
+                      </span>
+                    ) : null}
                   </h2>
                   <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
                     Chọn template có sẵn hoặc tải ảnh nền mới. Tất cả template được xoay ngẫu nhiên khi tạo ảnh.
                     <span className="sr-only"> Tất cả template trong kho sẽ được xoay vòng ngẫu nhiên khi tạo lô ảnh.</span>
                   </p>
                 </div>
-              </div>
+              </button>
               <button
                 type="button"
                 aria-expanded={isTemplateManagerOpen}
+                aria-controls="review-image-template-section"
                 onClick={() => setIsTemplateManagerOpen((current) => !current)}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 transition hover:bg-blue-50 dark:hover:bg-blue-950/40"
               >
@@ -612,55 +624,68 @@ export function ReviewImagePage({
                   <circle cx="8.5" cy="8.5" r="1.5" />
                   <path d="m21 15-5-5L5 21" />
                 </svg>
-                Xem kho template
+                <span>{isTemplateManagerOpen ? "Thu gọn kho template" : "Xem kho template"}</span>
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={`h-3.5 w-3.5 transition-transform ${isTemplateManagerOpen ? "rotate-180" : ""}`}
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 p-1.5">
-              <button
-                type="button"
-                aria-pressed={templateTab === "gallery"}
-                onClick={() => setTemplateTab("gallery")}
-                className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs transition ${
-                  templateTab === "gallery"
-                    ? "bg-white dark:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 shadow-xs"
-                    : "font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                }`}
-              >
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="m21 15-5-5L5 21" />
-                </svg>
-                Chọn từ kho template
-              </button>
-              <button
-                type="button"
-                aria-pressed={templateTab === "upload"}
-                onClick={() => setTemplateTab("upload")}
-                className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs transition ${
-                  templateTab === "upload"
-                    ? "bg-white dark:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 shadow-xs"
-                    : "font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                }`}
-              >
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                  <path d="M12 16V4" />
-                  <path d="m7 9 5-5 5 5" />
-                  <path d="M4 16v4h16v-4" />
-                </svg>
-                Tải ảnh nền mới
-              </button>
-            </div>
+            <div id="review-image-template-section" hidden={!isTemplateManagerOpen} className="space-y-4 border-t border-slate-100 dark:border-slate-800 pt-4">
+              <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-slate-100/90 dark:bg-slate-800 p-1.5">
+                <button
+                  type="button"
+                  aria-pressed={templateTab === "gallery"}
+                  onClick={() => setTemplateTab("gallery")}
+                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs transition ${
+                    templateTab === "gallery"
+                      ? "bg-white dark:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 shadow-xs"
+                      : "font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="m21 15-5-5L5 21" />
+                  </svg>
+                  Chọn từ kho template
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={templateTab === "upload"}
+                  onClick={() => setTemplateTab("upload")}
+                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs transition ${
+                    templateTab === "upload"
+                      ? "bg-white dark:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 shadow-xs"
+                      : "font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                    <path d="M12 16V4" />
+                    <path d="m7 9 5-5 5 5" />
+                    <path d="M4 16v4h16v-4" />
+                  </svg>
+                  Tải ảnh nền mới
+                </button>
+              </div>
 
-            {templateNotice ? (
-              <p role="status" className="rounded-xl bg-blue-50/80 dark:bg-blue-950/50 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-                {templateNotice}
-              </p>
-            ) : null}
+              {templateNotice ? (
+                <p role="status" className="rounded-xl bg-blue-50/80 dark:bg-blue-950/50 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+                  {templateNotice}
+                </p>
+              ) : null}
 
-            {/* Gallery Grid */}
-            <div hidden={templateTab !== "gallery"}>
+              {/* Gallery Grid */}
+              <div hidden={templateTab !== "gallery"}>
               {templates === null ? (
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
                   {Array.from({ length: 10 }).map((_, index) => (
@@ -715,107 +740,108 @@ export function ReviewImagePage({
                   })}
                 </div>
               )}
-            </div>
-
-            {/* Upload & Manage Templates Panel */}
-            <div hidden={templateTab !== "upload" && !isTemplateManagerOpen} className="space-y-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/50 p-4 text-xs">
-              <label className="block font-semibold text-blue-700 dark:text-blue-300">
-                Thêm ảnh nền mới vào kho
-                <input
-                  className={`${fieldClass} border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900`}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  multiple
-                  disabled={templateBusy}
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.target.value = "";
-                    void handleTemplateUpload(files);
-                  }}
-                />
-              </label>
-              <div
-                className="rounded-xl border border-dashed border-blue-300 dark:border-blue-800 bg-white dark:bg-slate-900 p-3 text-center text-blue-700 dark:text-blue-300 transition focus:border-blue-400 focus:bg-blue-50/50 focus-visible:ring-2 focus-visible:ring-blue-600/30"
-                tabIndex={0}
-                role="group"
-                aria-label="Vùng dán ảnh template"
-                onPaste={handleTemplatePaste}
-              >
-                Hoặc nhấn vào đây rồi Ctrl+V để dán một hay nhiều ảnh nền
               </div>
-              <p className="text-xs text-amber-700 dark:text-amber-300">
-                Checkbox chỉ dùng để đánh dấu template cần xóa. Nhấn tên template để xem ảnh lớn.
-              </p>
-              {templates && templates.length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <div className="mb-2 flex gap-3 text-xs">
-                      <button
-                        type="button"
-                        className="font-semibold text-blue-700 dark:text-blue-300"
-                        onClick={() => setSelectedTemplateNames(new Set(templates.map((template) => template.name)))}
-                      >
-                        Đánh dấu tất cả
-                      </button>
-                      <button
-                        type="button"
-                        className="text-slate-600 dark:text-slate-400"
-                        onClick={() => setSelectedTemplateNames(new Set())}
-                      >
-                        Bỏ đánh dấu
-                      </button>
-                    </div>
-                    <ul className="max-h-56 space-y-1 overflow-auto">
-                      {templates.map((template) => (
-                        <li
-                          key={template.name}
-                          className={`flex items-center gap-2 rounded-lg border p-2 transition ${
-                            previewTemplateName === template.name
-                              ? "border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60"
-                              : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            aria-label={`Đánh dấu xóa ${template.name}`}
-                            checked={selectedTemplateNames.has(template.name)}
-                            onChange={() =>
-                              setSelectedTemplateNames((current) => {
-                                const next = new Set(current);
-                                if (next.has(template.name)) next.delete(template.name);
-                                else next.add(template.name);
-                                return next;
-                              })
-                            }
-                          />
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 truncate text-left text-xs"
-                            onClick={() => setPreviewTemplateName(template.name)}
-                          >
-                            {template.name}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <figure className="flex min-h-40 items-center justify-center rounded-xl border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 p-2">
-                    {previewTemplateUrl ? (
-                      <img className="max-h-56 rounded-lg object-contain" src={previewTemplateUrl} alt={`Template ${previewTemplateName}`} />
-                    ) : (
-                      <figcaption className="text-slate-500 dark:text-slate-400">Nhấn tên template để xem ảnh.</figcaption>
-                    )}
-                  </figure>
+
+              {/* Upload & Manage Templates Panel */}
+              <div hidden={templateTab !== "upload"} className="space-y-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/50 p-4 text-xs">
+                <label className="block font-semibold text-blue-700 dark:text-blue-300">
+                  Thêm ảnh nền mới vào kho
+                  <input
+                    className={`${fieldClass} border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900`}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    multiple
+                    disabled={templateBusy}
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      event.target.value = "";
+                      void handleTemplateUpload(files);
+                    }}
+                  />
+                </label>
+                <div
+                  className="rounded-xl border border-dashed border-blue-300 dark:border-blue-800 bg-white dark:bg-slate-900 p-3 text-center text-blue-700 dark:text-blue-300 transition focus:border-blue-400 focus:bg-blue-50/50 focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                  tabIndex={0}
+                  role="group"
+                  aria-label="Vùng dán ảnh template"
+                  onPaste={handleTemplatePaste}
+                >
+                  Hoặc nhấn vào đây rồi Ctrl+V để dán một hay nhiều ảnh nền
                 </div>
-              ) : null}
-              <button
-                type="button"
-                className={`${buttonClass} border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300`}
-                disabled={!selectedTemplateNames.size || templateBusy}
-                onClick={() => void handleDeleteTemplates()}
-              >
-                {templateBusy ? "Đang xử lý…" : `Xóa template đã đánh dấu (${selectedTemplateNames.size})`}
-              </button>
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Checkbox chỉ dùng để đánh dấu template cần xóa. Nhấn tên template để xem ảnh lớn.
+                </p>
+                {templates && templates.length > 0 ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <div className="mb-2 flex gap-3 text-xs">
+                        <button
+                          type="button"
+                          className="font-semibold text-blue-700 dark:text-blue-300"
+                          onClick={() => setSelectedTemplateNames(new Set(templates.map((template) => template.name)))}
+                        >
+                          Đánh dấu tất cả
+                        </button>
+                        <button
+                          type="button"
+                          className="text-slate-600 dark:text-slate-400"
+                          onClick={() => setSelectedTemplateNames(new Set())}
+                        >
+                          Bỏ đánh dấu
+                        </button>
+                      </div>
+                      <ul className="max-h-56 space-y-1 overflow-auto">
+                        {templates.map((template) => (
+                          <li
+                            key={template.name}
+                            className={`flex items-center gap-2 rounded-lg border p-2 transition ${
+                              previewTemplateName === template.name
+                                ? "border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60"
+                                : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              aria-label={`Đánh dấu xóa ${template.name}`}
+                              checked={selectedTemplateNames.has(template.name)}
+                              onChange={() =>
+                                setSelectedTemplateNames((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(template.name)) next.delete(template.name);
+                                  else next.add(template.name);
+                                  return next;
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 truncate text-left text-xs"
+                              onClick={() => setPreviewTemplateName(template.name)}
+                            >
+                              {template.name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <figure className="flex min-h-40 items-center justify-center rounded-xl border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 p-2">
+                      {previewTemplateUrl ? (
+                        <img className="max-h-56 rounded-lg object-contain" src={previewTemplateUrl} alt={`Template ${previewTemplateName}`} />
+                      ) : (
+                        <figcaption className="text-slate-500 dark:text-slate-400">Nhấn tên template để xem ảnh.</figcaption>
+                      )}
+                    </figure>
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className={`${buttonClass} border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300`}
+                  disabled={!selectedTemplateNames.size || templateBusy}
+                  onClick={() => void handleDeleteTemplates()}
+                >
+                  {templateBusy ? "Đang xử lý…" : `Xóa template đã đánh dấu (${selectedTemplateNames.size})`}
+                </button>
+              </div>
             </div>
           </section>
 

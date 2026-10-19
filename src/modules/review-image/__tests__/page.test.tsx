@@ -16,6 +16,7 @@ test("review image page exposes multi-image, store template and Shopify approval
   assert.match(html, /Hướng dẫn/);
   assert.match(html, /Chọn ảnh nền từ kho/);
   assert.match(html, /Xem kho template/);
+  assert.match(html, /id="review-image-template-section"[^>]*hidden=""/);
   assert.match(html, /Chọn từ kho template/);
   assert.match(html, /Tải ảnh nền mới/);
   assert.match(html, /2\. Chuẩn bị kho ảnh nền/);
