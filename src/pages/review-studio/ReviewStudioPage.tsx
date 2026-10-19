@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AmazonReviewsPage } from "../../modules/amazon-reviews";
 import type { ReviewClient, ReviewShopifyAccess } from "../../modules/amazon-reviews";
@@ -11,6 +11,20 @@ interface ReviewStudioPageProps {
   readonly imageClient: ReviewImageClient;
 }
 
+export interface ReviewStudioSessionState {
+  readonly activeWorkflow: "images" | "reviews";
+  readonly imageStoreId: string;
+  readonly reviewStoreId: string;
+  readonly pictureUrlsByStore: Readonly<Record<string, readonly string[]>>;
+}
+
+interface KeyValueStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const REVIEW_STUDIO_STORAGE_KEY = "ffp_review_studio_session_v1";
+
 const STORE_LABELS: Readonly<Record<string, string>> = {
   preaureum: "Preaureum - Túi và ví",
   capozen: "Capozen - Thảm",
@@ -21,14 +35,82 @@ function getStoreLabel(storeId: string): string {
   return STORE_LABELS[storeId] ?? storeId;
 }
 
+function getDefaultStorage(): KeyValueStorage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readReviewStudioSession(
+  storage: KeyValueStorage | null = getDefaultStorage(),
+): ReviewStudioSessionState {
+  const empty: ReviewStudioSessionState = {
+    activeWorkflow: "images",
+    imageStoreId: "",
+    reviewStoreId: "",
+    pictureUrlsByStore: {},
+  };
+  if (!storage) return empty;
+  try {
+    const raw = storage.getItem(REVIEW_STUDIO_STORAGE_KEY);
+    if (!raw) return empty;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+    const record = parsed as Record<string, unknown>;
+    const pictureUrlsByStore: Record<string, readonly string[]> = {};
+    if (record.pictureUrlsByStore && typeof record.pictureUrlsByStore === "object" && !Array.isArray(record.pictureUrlsByStore)) {
+      for (const [store, urls] of Object.entries(record.pictureUrlsByStore as Record<string, unknown>)) {
+        if (Array.isArray(urls)) {
+          pictureUrlsByStore[store] = urls.filter((item): item is string => typeof item === "string");
+        }
+      }
+    }
+    return {
+      activeWorkflow: record.activeWorkflow === "reviews" ? "reviews" : "images",
+      imageStoreId: typeof record.imageStoreId === "string" ? record.imageStoreId : "",
+      reviewStoreId: typeof record.reviewStoreId === "string" ? record.reviewStoreId : "",
+      pictureUrlsByStore,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export function writeReviewStudioSession(
+  state: ReviewStudioSessionState,
+  storage: KeyValueStorage | null = getDefaultStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(REVIEW_STUDIO_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore storage quota or private-browsing errors.
+  }
+}
+
 export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: ReviewStudioPageProps): React.JSX.Element {
+  const initialSession = useMemo(() => readReviewStudioSession(), []);
   const [stores, setStores] = useState<readonly string[]>([]);
-  const [imageStoreId, setImageStoreId] = useState("");
-  const [reviewStoreId, setReviewStoreId] = useState("");
-  const [pictureUrlsByStore, setPictureUrlsByStore] = useState<Readonly<Record<string, readonly string[]>>>({});
+  const [imageStoreId, setImageStoreId] = useState(initialSession.imageStoreId);
+  const [reviewStoreId, setReviewStoreId] = useState(initialSession.reviewStoreId);
+  const [pictureUrlsByStore, setPictureUrlsByStore] = useState<Readonly<Record<string, readonly string[]>>>(
+    initialSession.pictureUrlsByStore,
+  );
   const [storeError, setStoreError] = useState("");
   const [isImageBusy, setIsImageBusy] = useState(false);
-  const [activeWorkflow, setActiveWorkflow] = useState<"images" | "reviews">("images");
+  const [activeWorkflow, setActiveWorkflow] = useState<"images" | "reviews">(initialSession.activeWorkflow);
+
+  useEffect(() => {
+    writeReviewStudioSession({
+      activeWorkflow,
+      imageStoreId,
+      reviewStoreId,
+      pictureUrlsByStore,
+    });
+  }, [activeWorkflow, imageStoreId, pictureUrlsByStore, reviewStoreId]);
 
   useEffect(() => {
     let active = true;
@@ -42,6 +124,11 @@ export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: R
     });
     return () => { active = false; };
   }, [reviewShopify]);
+
+  function handleImageStoreChange(nextStoreId: string): void {
+    setReviewStoreId((current) => (!current || current === imageStoreId ? nextStoreId : current));
+    setImageStoreId(nextStoreId);
+  }
 
   function handleShopifyFile(uploadStoreId: string, file: ReviewImageShopifyFile): void {
     setPictureUrlsByStore((current) => ({
@@ -137,7 +224,7 @@ export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: R
                   className="mt-1.5 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-medium text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800 disabled:opacity-50"
                   disabled={isImageBusy || stores.length === 0}
                   value={imageStoreId}
-                  onChange={(event) => setImageStoreId(event.target.value)}
+                  onChange={(event) => handleImageStoreChange(event.target.value)}
                 >
                   {stores.map((store) => (
                     <option key={store} value={store}>
@@ -180,7 +267,7 @@ export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: R
             client={imageClient}
             storeId={imageStoreId}
             stores={stores}
-            onStoreIdChange={setImageStoreId}
+            onStoreIdChange={handleImageStoreChange}
             onShopifyFile={handleShopifyFile}
             onBusyChange={setIsImageBusy}
             embedded

@@ -16,9 +16,96 @@ interface AmazonReviewsPageProps {
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
+const AMAZON_REVIEWS_SESSION_KEY = "ffp_amazon_reviews_session_v1";
+
+interface PersistedAmazonReviewsSession {
+  readonly source: string;
+  readonly storeId: string;
+  readonly productQuery: string;
+  readonly products: readonly ReviewProduct[];
+  readonly nextCursor?: string;
+  readonly selectedProducts: readonly string[];
+  readonly selectedReviews: readonly string[];
+  readonly reviewFilter: "all" | "real" | "ai";
+  readonly minRating: number;
+  readonly sampleCount: number;
+  readonly randomizeReviewCount: boolean;
+  readonly minReviewsPerProduct: number;
+  readonly extraPictureText: string;
+  readonly selectedGeneratedUrls: readonly string[];
+}
+
+function readAmazonReviewsSession(): PersistedAmazonReviewsSession {
+  const empty: PersistedAmazonReviewsSession = {
+    source: "",
+    storeId: "",
+    productQuery: "",
+    products: [],
+    selectedProducts: [],
+    selectedReviews: [],
+    reviewFilter: "all",
+    minRating: 3,
+    sampleCount: 10,
+    randomizeReviewCount: false,
+    minReviewsPerProduct: 1,
+    extraPictureText: "",
+    selectedGeneratedUrls: [],
+  };
+  if (typeof window === "undefined") return empty;
+  try {
+    const raw = window.localStorage.getItem(AMAZON_REVIEWS_SESSION_KEY);
+    if (!raw) return empty;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+    const record = parsed as Record<string, unknown>;
+    const products: ReviewProduct[] = Array.isArray(record.products)
+      ? record.products.filter(
+          (item): item is ReviewProduct =>
+            Boolean(item) &&
+            typeof item === "object" &&
+            !Array.isArray(item) &&
+            typeof (item as Record<string, unknown>).id === "string" &&
+            typeof (item as Record<string, unknown>).handle === "string" &&
+            typeof (item as Record<string, unknown>).title === "string",
+        )
+      : [];
+    const readStrings = (value: unknown): readonly string[] =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    const reviewFilter =
+      record.reviewFilter === "real" || record.reviewFilter === "ai" ? record.reviewFilter : "all";
+    return {
+      source: typeof record.source === "string" ? record.source : "",
+      storeId: typeof record.storeId === "string" ? record.storeId : "",
+      productQuery: typeof record.productQuery === "string" ? record.productQuery : "",
+      products,
+      ...(typeof record.nextCursor === "string" && record.nextCursor ? { nextCursor: record.nextCursor } : {}),
+      selectedProducts: readStrings(record.selectedProducts),
+      selectedReviews: readStrings(record.selectedReviews),
+      reviewFilter,
+      minRating: typeof record.minRating === "number" && record.minRating >= 1 && record.minRating <= 5 ? record.minRating : 3,
+      sampleCount: typeof record.sampleCount === "number" && record.sampleCount >= 1 && record.sampleCount <= 50 ? record.sampleCount : 10,
+      randomizeReviewCount: typeof record.randomizeReviewCount === "boolean" ? record.randomizeReviewCount : false,
+      minReviewsPerProduct: typeof record.minReviewsPerProduct === "number" && record.minReviewsPerProduct >= 1 ? record.minReviewsPerProduct : 1,
+      extraPictureText: typeof record.extraPictureText === "string" ? record.extraPictureText : "",
+      selectedGeneratedUrls: readStrings(record.selectedGeneratedUrls),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function writeAmazonReviewsSession(session: PersistedAmazonReviewsSession): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AMAZON_REVIEWS_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Ignore storage quota or private-browsing errors.
+  }
+}
 
 export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelectedStoreIdChange, generatedPictureUrls = [], embedded = false, showStoreSelector = true }: AmazonReviewsPageProps): React.JSX.Element {
-  const [source, setSource] = useState("");
+  const initialSession = useMemo(() => readAmazonReviewsSession(), []);
+  const [source, setSource] = useState(initialSession.source);
   const [jobId, setJobId] = useState(() => typeof window === "undefined" ? "" : window.localStorage.getItem("ffp_amazon_reviews_job_v1") ?? "");
   const [job, setJob] = useState<AmazonReviewJob | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -29,20 +116,23 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stores, setStores] = useState<readonly string[]>([]);
-  const [internalStoreId, setInternalStoreId] = useState("");
-  const [productQuery, setProductQuery] = useState("");
-  const [products, setProducts] = useState<readonly ReviewProduct[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
-  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
-  const [selectedReviews, setSelectedReviews] = useState<Set<string>>(new Set());
-  const [reviewFilter, setReviewFilter] = useState<"all" | "real" | "ai">("all");
-  const [minRating, setMinRating] = useState(3);
-  const [sampleCount, setSampleCount] = useState(10);
-  const [randomizeReviewCount, setRandomizeReviewCount] = useState(false);
-  const [minReviewsPerProduct, setMinReviewsPerProduct] = useState(1);
-  const [extraPictureText, setExtraPictureText] = useState("");
-  const [selectedGeneratedUrls, setSelectedGeneratedUrls] = useState<Set<string>>(new Set());
+  const [internalStoreId, setInternalStoreId] = useState(initialSession.storeId);
+  const [productQuery, setProductQuery] = useState(initialSession.productQuery);
+  const [products, setProducts] = useState<readonly ReviewProduct[]>(initialSession.products);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(initialSession.nextCursor);
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(() => new Set(initialSession.selectedProducts));
+  const [selectedReviews, setSelectedReviews] = useState<Set<string>>(() => new Set(initialSession.selectedReviews));
+  const [reviewFilter, setReviewFilter] = useState<"all" | "real" | "ai">(initialSession.reviewFilter);
+  const [minRating, setMinRating] = useState(initialSession.minRating);
+  const [sampleCount, setSampleCount] = useState(initialSession.sampleCount);
+  const [randomizeReviewCount, setRandomizeReviewCount] = useState(initialSession.randomizeReviewCount);
+  const [minReviewsPerProduct, setMinReviewsPerProduct] = useState(initialSession.minReviewsPerProduct);
+  const [extraPictureText, setExtraPictureText] = useState(initialSession.extraPictureText);
+  const [selectedGeneratedUrls, setSelectedGeneratedUrls] = useState<Set<string>>(
+    () => new Set(initialSession.selectedGeneratedUrls),
+  );
   const storeId = selectedStoreId ?? internalStoreId;
+  const previousStoreIdRef = useRef(initialSession.storeId || storeId);
 
   function handleStoreChange(nextStoreId: string): void {
     if (selectedStoreId === undefined) setInternalStoreId(nextStoreId);
@@ -53,6 +143,50 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   }
 
   useEffect(() => {
+    if (!storeId) return;
+    if (previousStoreIdRef.current && previousStoreIdRef.current !== storeId) {
+      setProducts([]);
+      setSelectedProducts(new Set());
+      setNextCursor(undefined);
+    }
+    previousStoreIdRef.current = storeId;
+  }, [storeId]);
+
+  useEffect(() => {
+    writeAmazonReviewsSession({
+      source,
+      storeId,
+      productQuery,
+      products,
+      ...(nextCursor ? { nextCursor } : {}),
+      selectedProducts: [...selectedProducts],
+      selectedReviews: [...selectedReviews],
+      reviewFilter,
+      minRating,
+      sampleCount,
+      randomizeReviewCount,
+      minReviewsPerProduct,
+      extraPictureText,
+      selectedGeneratedUrls: [...selectedGeneratedUrls],
+    });
+  }, [
+    extraPictureText,
+    minRating,
+    minReviewsPerProduct,
+    nextCursor,
+    productQuery,
+    products,
+    randomizeReviewCount,
+    reviewFilter,
+    sampleCount,
+    selectedGeneratedUrls,
+    selectedProducts,
+    selectedReviews,
+    source,
+    storeId,
+  ]);
+
+  useEffect(() => {
     if (jobId) window.localStorage.setItem("ffp_amazon_reviews_job_v1", jobId);
     else window.localStorage.removeItem("ffp_amazon_reviews_job_v1");
   }, [jobId]);
@@ -60,7 +194,11 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   useEffect(() => {
     void shopify.listStores().then((availableStores) => {
       setStores(availableStores);
-      if (selectedStoreId === undefined) setInternalStoreId((current) => current || availableStores[0] || "");
+      if (selectedStoreId === undefined) {
+        setInternalStoreId((current) =>
+          current && availableStores.includes(current) ? current : (availableStores[0] ?? ""),
+        );
+      }
     }).catch(() => setStores([]));
   }, [shopify, selectedStoreId]);
 

@@ -1,23 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { encodeImageFile } from "../service";
+import {
+  loadStoreProducts,
+  readReviewImageSettings,
+  saveStoreProducts,
+  writeReviewImageSettings,
+} from "../session-storage";
+import type { PersistedReviewProductImage as ReviewProductImage } from "../session-storage";
 import { buildTemplateSequence, getReviewImageStorePreset } from "../store-presets";
 import type { ReviewImageClient, ReviewImageJob, ReviewImageScope, ReviewImageShopifyFile, ReviewImageTemplate } from "../types";
-
-type BatchStatus = "ready" | "queued" | "running" | "completed" | "failed" | "cancelled" | "uploading" | "uploaded";
-
-interface ReviewProductImage {
-  readonly id: string;
-  readonly name: string;
-  readonly dataUrl: string;
-  readonly dimensions?: string;
-  readonly status: BatchStatus;
-  readonly job?: ReviewImageJob;
-  readonly resultDataUrl?: string;
-  readonly shopifyFile?: ReviewImageShopifyFile;
-  readonly error?: string;
-  readonly conversationSessionId?: string;
-}
 
 export interface ReviewImagePageProps {
   readonly client: ReviewImageClient;
@@ -83,16 +75,25 @@ export function ReviewImagePage({
   embedded = false,
   showStoreSelector = true,
 }: ReviewImagePageProps): React.JSX.Element {
-  const [internalStoreId, setInternalStoreId] = useState(stores[0] ?? "preaureum");
+  const initialSettings = useMemo(() => readReviewImageSettings(), []);
+  const [internalStoreId, setInternalStoreId] = useState(() =>
+    initialSettings.selectedStoreId && stores.includes(initialSettings.selectedStoreId)
+      ? initialSettings.selectedStoreId
+      : (stores[0] ?? "preaureum"),
+  );
   const storeId = controlledStoreId ?? internalStoreId;
   const preset = useMemo(() => getReviewImageStorePreset(storeId), [storeId]);
-  const [scope, setScope] = useState<ReviewImageScope>(preset.scope);
-  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const [scopeDrafts, setScopeDrafts] = useState<Readonly<Record<string, ReviewImageScope>>>(initialSettings.scopes);
+  const scope: ReviewImageScope = preset.supportsBagSet ? (scopeDrafts[storeId] ?? preset.scope) : preset.scope;
+  const [promptDrafts, setPromptDrafts] = useState<Readonly<Record<string, string>>>(initialSettings.promptDrafts);
   const prompt = promptDrafts[storeId] ?? preset.prompt;
   const [products, setProducts] = useState<readonly ReviewProductImage[]>([]);
   const [templates, setTemplates] = useState<readonly ReviewImageTemplate[] | null>(null);
   const [templateUrls, setTemplateUrls] = useState<Readonly<Record<string, string>>>({});
-  const [previewTemplateName, setPreviewTemplateName] = useState("");
+  const [previewTemplateNames, setPreviewTemplateNames] = useState<Readonly<Record<string, string>>>(
+    initialSettings.previewTemplateNames,
+  );
+  const previewTemplateName = previewTemplateNames[storeId] ?? "";
   const [previewTemplateUrl, setPreviewTemplateUrl] = useState("");
   const [selectedTemplateNames, setSelectedTemplateNames] = useState<Set<string>>(new Set());
   const [templateBusy, setTemplateBusy] = useState(false);
@@ -106,10 +107,37 @@ export function ReviewImagePage({
   const [isBulkUploading, setIsBulkUploading] = useState(false);
   const [error, setError] = useState("");
   const [extensionConnected, setExtensionConnected] = useState<boolean | undefined>(undefined);
-  const [gatewayToken, setGatewayToken] = useState("");
+  const [gatewayToken, setGatewayToken] = useState(initialSettings.gatewayToken);
   const stopRequestedRef = useRef(false);
   const activeJobRef = useRef<{ readonly jobId: string; readonly itemId: string } | null>(null);
+  const hydratedStoreIdRef = useRef<string | null>(null);
+  const onShopifyFileRef = useRef(onShopifyFile);
+  onShopifyFileRef.current = onShopifyFile;
   const isBusy = isBatchRunning || isBulkUploading || templateBusy;
+
+  const setScope = (nextScope: ReviewImageScope): void => {
+    setScopeDrafts((current) => ({ ...current, [storeId]: nextScope }));
+  };
+
+  const setPreviewTemplateName = (name: string): void => {
+    setPreviewTemplateNames((current) => ({ ...current, [storeId]: name }));
+  };
+
+  useEffect(() => {
+    if (initialSettings.gatewayToken) {
+      client.setGatewayToken(initialSettings.gatewayToken);
+    }
+  }, [client, initialSettings.gatewayToken]);
+
+  useEffect(() => {
+    writeReviewImageSettings({
+      selectedStoreId: storeId,
+      gatewayToken,
+      scopes: scopeDrafts,
+      promptDrafts,
+      previewTemplateNames,
+    });
+  }, [gatewayToken, previewTemplateNames, promptDrafts, scopeDrafts, storeId]);
 
   useEffect(() => { onBusyChange?.(isBusy); }, [isBusy, onBusyChange]);
 
@@ -134,22 +162,92 @@ export function ReviewImagePage({
 
   useEffect(() => {
     let active = true;
+    hydratedStoreIdRef.current = null;
     setTemplates(null);
     setTemplateUrls({});
     setSelectedTemplateNames(new Set());
-    setPreviewTemplateName("");
     setTemplateNotice("");
     setProducts([]);
-    setScope(preset.scope);
+
+    const resumeJobAfterReload = async (itemId: string, jobId: string): Promise<void> => {
+      try {
+        while (active) {
+          const job = await client.job(jobId);
+          if (!active) return;
+          updateProduct(itemId, { job, status: job.status });
+          if (job.status === "completed") {
+            const resultDataUrl = await blobToDataUrl(await client.image(job.job_id));
+            if (active) updateProduct(itemId, { job, status: "completed", resultDataUrl });
+            return;
+          }
+          if (job.status === "failed") {
+            updateProduct(itemId, { job, status: "failed", error: job.error || "Tạo ảnh thất bại." });
+            return;
+          }
+          if (job.status === "cancelled") {
+            updateProduct(itemId, { job, status: "cancelled", error: undefined });
+            return;
+          }
+          await delay(POLL_INTERVAL_MS);
+        }
+      } catch (cause) {
+        if (active) {
+          updateProduct(itemId, {
+            status: "failed",
+            error: cause instanceof Error ? cause.message : "Không thể khôi phục trạng thái ảnh.",
+          });
+        }
+      }
+    };
+
+    const restoreMissingResultImage = async (itemId: string, jobId: string): Promise<void> => {
+      try {
+        const resultDataUrl = await blobToDataUrl(await client.image(jobId));
+        if (active) updateProduct(itemId, { resultDataUrl });
+      } catch {
+        // Keep existing item metadata if result image cannot be re-fetched.
+      }
+    };
+
+    void loadStoreProducts(storeId).then((restored) => {
+      if (!active) return;
+      hydratedStoreIdRef.current = storeId;
+      setProducts((current) => {
+        if (current.length === 0) return restored;
+        const existingIds = new Set(current.map((item) => item.id));
+        return [...restored.filter((item) => !existingIds.has(item.id)), ...current];
+      });
+      for (const item of restored) {
+        if (item.shopifyFile) {
+          onShopifyFileRef.current?.(storeId, item.shopifyFile);
+        }
+        if ((item.status === "queued" || item.status === "running") && item.job?.job_id) {
+          void resumeJobAfterReload(item.id, item.job.job_id);
+        } else if ((item.status === "completed" || item.status === "uploaded") && !item.resultDataUrl && item.job?.job_id) {
+          void restoreMissingResultImage(item.id, item.job.job_id);
+        }
+      }
+    });
+
     void client.listTemplates(storeId).then((items) => {
       if (!active) return;
       setTemplates(items);
-      setPreviewTemplateName(items[0]?.name ?? "");
+      setPreviewTemplateNames((current) => {
+        const saved = current[storeId];
+        if (saved && items.some((item) => item.name === saved)) return current;
+        const fallback = items[0]?.name ?? "";
+        return fallback ? { ...current, [storeId]: fallback } : current;
+      });
     }).catch((cause: unknown) => {
       if (active) setError(cause instanceof Error ? cause.message : "Không tải được template.");
     });
     return () => { active = false; };
-  }, [client, preset.scope, storeId]);
+  }, [client, storeId]);
+
+  useEffect(() => {
+    if (hydratedStoreIdRef.current !== storeId) return;
+    void saveStoreProducts(storeId, products);
+  }, [products, storeId]);
 
   useEffect(() => {
     if (!templates || templates.length === 0) {

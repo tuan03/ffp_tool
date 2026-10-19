@@ -4,6 +4,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { ReviewImagePage } from "../ui/ReviewImagePage";
 import { createReviewImageClient } from "../service";
+import {
+  clearMemoryStoreProducts,
+  loadStoreProducts,
+  normalizeRestoredProductImage,
+  readReviewImageSettings,
+  saveStoreProducts,
+  writeReviewImageSettings,
+} from "../session-storage";
+import type { KeyValueStorage } from "../session-storage";
 
 test("review image page exposes multi-image, store template and Shopify approval controls", () => {
   const client = createReviewImageClient(async () => { throw new Error("No network during render"); });
@@ -49,4 +58,59 @@ test("template upload accepts several image files in one selection", () => {
   assert.ok(templateInput);
   assert.match(templateInput, /multiple=""/);
 });
+
+test("review image session storage persists settings and per-store product images across reloads", async () => {
+  const map = new Map<string, string>();
+  const fakeStorage: KeyValueStorage = {
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => {
+      map.set(key, value);
+    },
+  };
+
+  writeReviewImageSettings(
+    {
+      selectedStoreId: "capozen",
+      gatewayToken: "gw-token-123",
+      scopes: { preaureum: "set", capozen: "single" },
+      promptDrafts: { capozen: "Custom rug prompt" },
+      previewTemplateNames: { capozen: "rug-scene-2.png" },
+    },
+    fakeStorage,
+  );
+
+  const restoredSettings = readReviewImageSettings(fakeStorage);
+  assert.equal(restoredSettings.selectedStoreId, "capozen");
+  assert.equal(restoredSettings.gatewayToken, "gw-token-123");
+  assert.equal(restoredSettings.scopes.preaureum, "set");
+  assert.equal(restoredSettings.promptDrafts.capozen, "Custom rug prompt");
+  assert.equal(restoredSettings.previewTemplateNames.capozen, "rug-scene-2.png");
+
+  clearMemoryStoreProducts();
+  await saveStoreProducts("capozen", [
+    {
+      id: "img-1",
+      name: "deer-rug.png",
+      dataUrl: "data:image/png;base64,AAA",
+      dimensions: "1200 × 1200",
+      status: "completed",
+      resultDataUrl: "data:image/png;base64,BBB",
+    },
+  ]);
+
+  const loaded = await loadStoreProducts("capozen");
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0]?.name, "deer-rug.png");
+  assert.equal(loaded[0]?.resultDataUrl, "data:image/png;base64,BBB");
+
+  const interruptedUpload = normalizeRestoredProductImage({
+    id: "img-2",
+    name: "bag.png",
+    dataUrl: "data:image/png;base64,CCC",
+    status: "uploading",
+  });
+  assert.equal(interruptedUpload?.status, "completed");
+  clearMemoryStoreProducts();
+});
+
 
