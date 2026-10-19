@@ -2153,6 +2153,7 @@ class AmazonCrawler:
             fingerprints = sorted({variant["customizationFingerprint"] for variant in source_variants if variant.get("customizationFingerprint")})
             representative = next((variant for variant in source_variants if variant.get("customization") is not None), source_variants[0])
             customization = deepcopy(representative.get("customization"))
+            customization_audit_source = deepcopy(customization)
             description = next((variant.get("description") for variant in source_variants if variant.get("description")), family.get("description"))
             bullet_points = next((variant.get("bulletPoints") for variant in source_variants if variant.get("bulletPoints")), family.get("bulletPoints", []))
             categories = next((variant.get("categories") for variant in source_variants if variant.get("categories")), family.get("categories", []))
@@ -2253,6 +2254,7 @@ class AmazonCrawler:
                     if key != "diagnostics" or variant.get("diagnostics") is not None
                 } for variant in source_variants],
                 "variants": final_variants, "variantMatrix": matrix, "customization": customization,
+                "customizationAuditSource": customization_audit_source,
                 "splitContext": {"attribute": split_attribute, "value": split_value, "groupKey": group_key, "sourceAsins": source_asins},
                 "sourceKey": (
                     f"amazon:{family['parentAsin']}:"

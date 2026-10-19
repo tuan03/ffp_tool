@@ -1079,6 +1079,8 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(products[0]["title"].startswith("Bedding - "))
         self.assertTrue(all(product["preset"] == PRESET_ID and len(product["variants"]) == 47 for product in products))
         self.assertEqual(products[0]["customization"]["optionGroups"], [])
+        self.assertEqual(products[0]["customizationAuditSource"]["optionGroups"][0]["id"], "free")
+        self.assertEqual(products[0]["customizationAuditSource"]["textInputs"][0]["id"], "name")
 
     def test_split_products_use_only_their_source_variant_media(self) -> None:
         ocean = source_variant("B012345678", "Ocean", "Twin")

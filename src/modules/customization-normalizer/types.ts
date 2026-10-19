@@ -125,6 +125,7 @@ export interface CrawlProduct {
   readonly variants?: readonly unknown[];
   readonly variantMatrix?: unknown;
   customization?: ProductCustomization | null;
+  readonly customizationAuditSource?: ProductCustomization | null;
   readonly splitContext?: Record<string, unknown>;
   readonly [key: string]: unknown;
 }

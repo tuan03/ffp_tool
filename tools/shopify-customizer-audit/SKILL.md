@@ -43,6 +43,24 @@ For every product record the exact evidence and one outcome: `valid`, `redundant
 
 Examples: a generic `Customize Your Blanket` field on a visually fixed design is a suspect, not automatic proof of redundancy; a sports design displaying a name and number does not by itself establish which are editable; a restored generic Amazon field can still mismatch a product that genuinely supports name and number; character-choice artwork without JSON may need customization but requires source evidence. Never copy a generic preview or another product's JSON just to make the modal appear.
 
+## FFP pre-sync SEO integration
+
+When FFP supplies `customizerAudit` in an SEO worker job, perform this audit in
+the same AI pass before Review and Shopify sync. View `firstImageId`, compare
+`current` with the preserved crawler `source`, and return one of the following
+server-constrained actions in the final SEO submission:
+
+- `keep_current` for valid or uncertain data.
+- `remove_customizer` only for high-confidence, positively evidenced redundancy.
+- `restore_source` only for high-confidence missing or mismatched data when the
+  exact preserved source controls are supported by the image and source evidence.
+
+Do not construct arbitrary JSON in this path. The server, not the model, applies
+the selected snapshot. This prevents invented fields, IDs, requiredness,
+placements, previews, prices, variants, assets, and unrelated copied controls.
+This pre-sync path applies only when the versioned audit context is present;
+existing-store audits continue to use the full safe-change workflow below.
+
 ## Safe changes and verification
 
 If and only if changes were authorized:
