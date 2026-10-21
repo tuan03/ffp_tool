@@ -542,6 +542,30 @@ class AgentCommandExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(agent._agent_runtime_config.maxConcurrentInputs, 3)
             self.assertEqual(agent.store.server_command_status("config-2"), "FAILED")
 
+    async def test_local_headless_survives_remote_reload_and_restart(self) -> None:
+        for local_headless in (False, True):
+            with self.subTest(local_headless=local_headless), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = AgentConfig(server_url="http://127.0.0.1:9999", display_name="fixture",
+                    max_concurrent_inputs=2, limits=AgentLimits(headless=local_headless), data_directory=root / "agent")
+                agent = DistributedCrawlerAgent(project_root=root, config=config)
+                remote_config = {
+                    "maxConcurrentInputs": 3, "heartbeatIntervalSeconds": 10,
+                    "clientOfflineAfterSeconds": 30, "leaseSeconds": 60,
+                    "limits": {"productThreads": 3, "variantThreads": 7, "urllibThreads": 11,
+                        "browserProfiles": 2, "browserTabs": 1, "headless": not local_headless},
+                }
+                command = {"commandId": "config-1", "sequence": 1, "type": "RELOAD_CONFIG",
+                    "payload": {"configVersion": 1, "config": remote_config}, "createdAt": utc_now().isoformat(),
+                    "expiresAt": (utc_now() + timedelta(minutes=5)).isoformat()}
+                await agent._process_command_batch({"commands": [command], "latestCommandSequence": 1})
+                for current in (agent, DistributedCrawlerAgent(project_root=root, config=config)):
+                    effective = current._agent_limits().apply({"headless": not local_headless})
+                    self.assertEqual(effective["headless"], local_headless)
+                    self.assertEqual(effective["productThreads"], 3)
+                    self.assertEqual(current.status_snapshot()["limits"]["headless"], local_headless)
+                    self.assertEqual(current._agent_limits().headless, local_headless)
+
     async def test_restart_workers_resets_only_worker_health_after_idle_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

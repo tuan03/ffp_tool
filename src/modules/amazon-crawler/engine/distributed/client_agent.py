@@ -223,7 +223,8 @@ class DistributedCrawlerAgent:
             urllib_threads=values.urllibThreads,
             browser_profiles=values.browserProfiles,
             browser_tabs=values.browserTabs,
-            headless=values.headless,
+            # Browser visibility belongs to this Windows installation, not a server config revision.
+            headless=self.config.limits.headless,
         )
 
     def _record_worker_failure(self, event: dict[str, Any]) -> None:

@@ -126,7 +126,7 @@ class AgentConnectionWindow:
             if chosen:
                 proxy.set(chosen)
         ttk.Button(shell, text="Chọn…", command=choose_proxy).grid(row=7, column=1, padx=8)
-        ttk.Label(shell, text="Dữ liệu và danh tính được giữ riêng theo server.\nCấu hình quản trị trên server có thể ghi đè giới hạn này.", wraplength=410).grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
+        ttk.Label(shell, text="Dữ liệu và danh tính được giữ riêng theo server. Chế độ ẩn trình duyệt do máy này quyết định. Sau khi Áp dụng, bấm Kết nối để lưu.", wraplength=410).grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
         error = ttk.Label(shell, foreground="#b91c1c")
         error.grid(row=9, column=0, columnspan=2, sticky="w")
         def save() -> None:

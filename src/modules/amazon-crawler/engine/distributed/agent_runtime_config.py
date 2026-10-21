@@ -14,7 +14,7 @@ class AgentRuntimeLimits(BaseModel):
     urllibThreads: int = Field(default=12, ge=1, le=64)
     browserProfiles: int = Field(default=4, ge=1, le=8)
     browserTabs: int = Field(default=2, ge=1, le=12)
-    headless: bool = False
+    headless: bool = False  # Legacy wire field; the Agent's local setting controls browser visibility.
 
 
 class AgentRuntimeConfig(BaseModel):

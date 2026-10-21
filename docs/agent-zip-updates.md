@@ -81,6 +81,11 @@ matching `.sha256`, and `latest-zip.json`. The ZIP includes a safe example
   alone does not roll back a valid runtime. Resume explicitly after verification.
 - Server-triggered authenticated UPDATE_AGENT retains its existing DRAIN and ACK
   command workflow and uses the same ZIP verifier when ZIP trust is installed.
+- From Agent 5.3.9 onward, browser visibility is controlled per Windows Agent by
+  its local Advanced setting. A stored server runtime config may still contain
+  the legacy `limits.headless` field, but it cannot override the local choice.
+  The dashboard reports the effective mode; existing browser contexts finish
+  before the new mode is visible on subsequent crawl tasks.
 
 ## Recovery and acceptance limits
 

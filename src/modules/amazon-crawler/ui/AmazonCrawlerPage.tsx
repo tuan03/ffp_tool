@@ -3016,7 +3016,7 @@ export function AmazonCrawlerPage({
           <NumberSetting label="Matrix cap" min={1} max={5000} value={settings.maxMatrixVariants} onChange={(value) => updateSetting("maxMatrixVariants", value)} />
           <label className="grid gap-1 text-sm text-slate-700 dark:text-slate-300">Amazon ZIP<input className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" value={settings.amazonZip} onChange={(event) => updateSetting("amazonZip", event.target.value)} /></label>
           <label className="grid gap-1 text-sm text-slate-700 dark:text-slate-300">Chỉ định Agent group (không bắt buộc)<input className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" value={settings.allowedAgentGroup ?? ""} onChange={(event) => updateSetting("allowedAgentGroup", event.target.value.trim() || undefined)} placeholder="Ví dụ: amazon-us" /></label>
-          <label className="flex items-center gap-2 self-end p-2 text-sm"><input checked={settings.headless} type="checkbox" onChange={(event) => updateSetting("headless", event.target.checked)} /> Headless browser</label>
+          <p className="self-end text-xs text-slate-600 dark:text-slate-400">Chế độ ẩn/hiện Chrome được đặt riêng trên từng Windows Agent.</p>
           <details className="sm:col-span-3">
             <summary className="cursor-pointer text-sm font-semibold text-blue-700 dark:text-blue-300">Giới hạn thời gian xử lý</summary>
             <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">Đơn vị giây. Mỗi bước tuân theo thời gian còn lại của child, family và job. Tăng giới hạn family hoặc job khi crawl nhiều variants.</p>

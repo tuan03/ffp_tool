@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from engine.distributed.client_dashboard_state import DashboardState
+from engine.distributed.client_dashboard_window import browser_mode_text
 from engine.distributed.client_store import ClientStore
 from engine.distributed.client_agent import DistributedCrawlerAgent
 from engine.distributed.client_config import AgentConfig
@@ -26,6 +27,13 @@ def assignment(task_id: str = "task-a", lease_id: str = "lease-a", channel: str 
     return {"taskId": task_id, "leaseId": lease_id, "jobId": "job-a", "channel": channel,
             "asin": "B012345678", "source": "Desk lamps" if channel == "pinterest" else "B012345678",
             "url": "https://amazon.com/dp/B012345678", "settingsFingerprint": "settings"}
+
+
+class BrowserModeLabelTests(unittest.TestCase):
+    def test_reports_effective_local_browser_visibility(self) -> None:
+        self.assertEqual(browser_mode_text({"limits": {"headless": True}}), "Chạy ẩn (headless)")
+        self.assertEqual(browser_mode_text({"limits": {"headless": False}}), "Hiện cửa sổ Chrome")
+        self.assertEqual(browser_mode_text({}), "Chưa xác định")
 
 
 class DashboardStateTests(unittest.TestCase):

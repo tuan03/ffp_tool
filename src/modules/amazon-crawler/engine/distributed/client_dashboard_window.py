@@ -60,6 +60,15 @@ def variant_progress(task: Mapping[str, object]) -> str:
     return "Đang xử lý…" if task.get("state") in {"running", "captcha"} else "—"
 
 
+def browser_mode_text(snapshot: Mapping[str, object]) -> str:
+    headless = _mapping(snapshot.get("limits")).get("headless")
+    if headless is True:
+        return "Chạy ẩn (headless)"
+    if headless is False:
+        return "Hiện cửa sổ Chrome"
+    return "Chưa xác định"
+
+
 class AgentDashboardWindow:
     def __init__(self, snapshot: Callable[[], Mapping[str, object]], action: Callable[[str], None], *, start_minimized: bool = False) -> None:
         self._snapshot = snapshot
@@ -301,7 +310,7 @@ class AgentDashboardWindow:
             operating = "Đang làm việc" if snapshot.get("activeTasks") else "Sẵn sàng nhận việc"
         if _mapping(snapshot.get("storage")).get("blocked"):
             operating = "Tạm ngưng nhận việc do lưu trữ"
-        self.connection.configure(text=f"{connected}  •  {operating}\n{snapshot.get('serverUrl', '')}",
+        self.connection.configure(text=f"{connected}  •  {operating}\nTrình duyệt Amazon: {browser_mode_text(snapshot)} (đặt trên máy)\n{snapshot.get('serverUrl', '')}",
                                   foreground="#047857" if snapshot.get("isConnected") else "#b45309")
         self.counters.configure(text=f"{snapshot.get('runningTasks', 0)} chạy · {snapshot.get('queuedTasks', 0)} chờ · {snapshot.get('activeTasks', 0)}/{snapshot.get('maxConcurrentInputs', 0)} slot")
         self.metrics[1].configure(text=f"{snapshot.get('pendingProducts', 0)} sản phẩm · {snapshot.get('pendingResults', 0)} kết quả")
@@ -357,6 +366,7 @@ class AgentDashboardWindow:
         self._set_text(self.info, "\n".join((
             f"Agent: {snapshot.get('displayName', '')}", f"ID: {snapshot.get('clientId', '')}",
             f"Phiên bản: {snapshot.get('agentVersion', '')}", f"Server: {snapshot.get('serverUrl', '')}",
+            f"Trình duyệt Amazon: {browser_mode_text(snapshot)} (do máy này quyết định)",
             f"Link đồng thời: đã chọn {snapshot.get('configuredMaxConcurrentInputs', '—')} · đang áp dụng {snapshot.get('maxConcurrentInputs', '—')} · cấu hình quản trị v{snapshot.get('agentConfigVersion', 0)}",
             f"Khởi động: {display_time(snapshot.get('startedAt'))}",
             f"Giới hạn: {json_limits(_mapping(snapshot.get('limits')))}",
