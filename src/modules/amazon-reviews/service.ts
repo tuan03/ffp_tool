@@ -1,4 +1,25 @@
-import type { AmazonReview, AmazonReviewJob, ReviewClient } from "./types";
+import { z } from "zod";
+
+import type { AmazonReviewJob, ReviewClient, ReviewGenerationJob } from "./types";
+
+const generationSchema = z.object({ id: z.string(), contextJobId: z.string(), storeId: z.string(), count: z.number(),
+  status: z.enum(["queued", "running", "validating", "saving", "save_failed", "completed", "partial", "failed", "cancelled", "interrupted"]),
+  createdAt: z.string(), accepted: z.number(), rejected: z.number(), warnings: z.array(z.string()), error: z.string().optional() });
+function readGeneration(value: unknown): ReviewGenerationJob {
+  return z.object({ job: generationSchema }).parse(value).job;
+}
+
+export function reviewGenerationErrorMessage(error: unknown): string {
+  const messages: Readonly<Record<string, string>> = {
+    REVIEW_EXTENSION_OFFLINE: "Chưa kết nối ChatGPT Bridge. Bật extension và ghim tab ChatGPT đã đăng nhập.",
+    REVIEW_EXTENSION_UPDATE_REQUIRED: "Cần cập nhật ChatGPT Bridge lên 1.5.0 hoặc mới hơn, rồi reload extension và tab ChatGPT.",
+    REVIEW_CONTEXT_UNAVAILABLE: "Ngữ cảnh không còn hoặc server chưa đọc được. Kiểm tra kết nối và lấy lại ngữ cảnh nếu cần.",
+    REVIEW_REQUEST_CONFLICT: "Ngữ cảnh này đang có tác vụ khác. Chờ tác vụ hiện tại kết thúc.",
+    REVIEW_SAMPLE_LIMIT: "Mỗi ngữ cảnh chỉ lưu tối đa 500 mẫu QA.",
+    REVIEW_CANCEL_UNCONFIRMED: "Chưa xác nhận dừng trên ChatGPT. Kiểm tra tab đã ghim trước khi tạo lượt mới.",
+  };
+  return error instanceof Error && messages[error.message] ? messages[error.message] : "Chưa thực hiện được yêu cầu. Kiểm tra ChatGPT Bridge và kết nối server; không cần cào lại ngữ cảnh.";
+}
 
 interface ServiceOptions {
   readonly coordinatorUrl: string;
@@ -65,11 +86,18 @@ export function createReviewClient(options: ServiceOptions): ReviewClient {
       if (!response.ok && response.status !== 404) await readResponse(response);
     },
     async generate(input) {
-      const response = await send("/api/amazon-reviews/samples", input);
-      if (!isRecord(response) || !Array.isArray(response.samples) || typeof response.rejected !== "number" || !Array.isArray(response.warnings)) {
-        throw new Error("Gateway returned invalid AI review samples.");
-      }
-      return response as { samples: AmazonReview[]; rejected: number; warnings: string[] };
+      return readGeneration(await send("/api/amazon-reviews/samples", input));
+    },
+    async latestGeneration(contextJobId, storeId) {
+      const query = new URLSearchParams({ contextJobId, storeId });
+      const response = await readResponse(await fetchImplementation(`/api/amazon-reviews/samples?${query}`));
+      return z.object({ job: generationSchema.nullable() }).parse(response).job;
+    },
+    async cancelGeneration(id) {
+      return readGeneration(await send(`/api/amazon-reviews/samples/${encodeURIComponent(id)}/cancel`, {}));
+    },
+    async retryGenerationSave(id) {
+      return readGeneration(await send(`/api/amazon-reviews/samples/${encodeURIComponent(id)}/retry-save`, {}));
     },
     async saveSamples(jobId, samples) {
       await send(`${baseUrl}/api/v1/review-jobs/${encodeURIComponent(jobId)}/samples`, { samples });

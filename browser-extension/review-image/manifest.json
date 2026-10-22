@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "FFP Review Image Bridge",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "minimum_chrome_version": "116",
-  "description": "Connects to FFP Review Studio and executes image tasks in your pinned ChatGPT tab.",
+  "description": "Connects to FFP Review Studio for image and QA review text tasks in your pinned ChatGPT tab.",
   "optional_host_permissions": ["https://*/*"],
   "permissions": [
     "storage",

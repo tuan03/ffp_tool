@@ -1,6 +1,11 @@
 from pydantic import BaseModel, Field
 
 
+class CreateReviewText(BaseModel):
+    prompt: str = Field(min_length=1, max_length=200_000)
+    session: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class CreateImage(BaseModel):
     storeId: str
     productDataUrl: str = Field(min_length=1, max_length=7_100_000)

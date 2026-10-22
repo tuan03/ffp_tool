@@ -3,6 +3,15 @@ import test from "node:test";
 
 import { buildReviewPlan, generateReviewSamples } from "../amazon-reviews-generator";
 
+test("a failed repair preserves samples accepted from the first response", async () => {
+  let attempts = 0;
+  const output = await generateReviewSamples({ asin: "B012345678", count: 2, product: { title: "Floral rug" }, sourceReviews: [], priorSamples: [] }, async () => {
+    if (++attempts === 2) throw new Error("Bridge disconnected");
+    return [{ author: "Morgan Reed", rating: 5, body: "A floral pattern covers this rug.", variantText: "", verifiedPurchase: false }];
+  });
+  assert.equal(output.samples.length, 1); assert.equal(output.rejected, 1); assert.equal(attempts, 2);
+});
+
 test("review plans include three, four and five stars and continue across batches", () => {
   const input = { asin: "B012345678", count: 3, product: { title: "Floral rug" }, sourceReviews: [], priorSamples: [] };
   assert.deepEqual(new Set(buildReviewPlan(input).map((plan) => plan.rating)), new Set([3, 4, 5]));

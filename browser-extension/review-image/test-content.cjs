@@ -301,6 +301,19 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
     previousImageSources: new Set(), timeoutMs: 10_000, jobId: 'cancelled-hidden-image-job'
   }), /cancelled/);
   assert.equal(pollMessages.length, completedPollCount, 'cancellation must stop background polling');
+  pollClock = 0;
+  assert.equal(context.readAssistantAnswer({ innerText: 'json Copy code {"samples":[]}',
+    querySelectorAll: () => [{ textContent: '{"samples":[]}' }] }), '{"samples":[]}');
+  assert.equal(context.readAssistantAnswer({ innerText: 'Cannot complete this request.', querySelectorAll: () => [] }), 'Cannot complete this request.');
+  context.xpathAll = xpath => xpath === '//stop' ? (pollClock < 4000 ? [backgroundStopButton] : [])
+    : [{ innerText: pollClock < 800 ? 'old answer' : '{"samples":[]}' }];
+  const textAnswer = await context.waitForAnswer({ assistantMessagesXPath: '//assistant', stopButtonXPath: '//stop',
+    previousCount: 1, previousLastText: 'old answer', timeoutMs: 10_000, jobId: 'text-answer' });
+  assert.equal(textAnswer, '{"samples":[]}');
+  assert.ok(pollClock >= 4000, 'text must not complete while a background stop control is present');
+  vm.runInContext("cancelledJobs.add('cancelled-text-job')", context);
+  await assert.rejects(() => context.waitForAnswer({ assistantMessagesXPath: '//assistant', previousCount: 0,
+    previousLastText: '', timeoutMs: 1000, jobId: 'cancelled-text-job' }), /cancelled/);
   context.Date = realDate;
   context.sleep = async () => {};
   let sentPrompt = '';
@@ -346,5 +359,18 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
     xpaths: { prompt_input: '//input', send_button: '//send', assistant_messages: '//assistant' }
   }), /attachment|đính kèm/i);
   assert.equal(promptWasSent, false, 'never send when one of the two references disappears');
+  let newChats = 0;
+  let textResult;
+  context.openNewChat = async () => { newChats++; };
+  context.attachImageReferences = async () => { throw new Error('Text must not attach images'); };
+  context.waitForEnabledXPath = async () => ({ click() {} });
+  context.waitForAnswer = async () => '{"samples":[]}';
+  context.chrome.runtime.sendMessage = message => { textResult = message; };
+  await context.executeJob({ job_id: 'text-job', kind: 'text', prompt: 'QA text only', conversation_mode: 'new',
+    xpaths: { prompt_input: '//input', send_button: '//send', assistant_messages: '//assistant' } });
+  assert.equal(newChats, 1);
+  assert.equal(sentPrompt, 'QA text only');
+  assert.equal(textResult.answer, '{"samples":[]}');
+  assert.equal(textResult.image, undefined);
   console.log('image attachment order passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

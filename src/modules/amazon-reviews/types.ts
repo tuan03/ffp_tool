@@ -64,7 +64,23 @@ export interface ReviewClient {
   create(source: string, maxPages?: number): Promise<{ readonly jobId: string }>;
   get(jobId: string): Promise<AmazonReviewJob>;
   clear(jobId: string): Promise<void>;
-  generate(input: { readonly asin: string; readonly count: number; readonly startIndex: number; readonly product: AmazonReviewContext; readonly sourceReviews: readonly AmazonReview[]; readonly priorSamples: readonly AmazonReview[] }): Promise<{ readonly samples: readonly AmazonReview[]; readonly rejected: number; readonly warnings: readonly string[] }>;
+  generate(input: { readonly contextJobId: string; readonly storeId: string; readonly count: number; readonly requestId: string }): Promise<ReviewGenerationJob>;
+  latestGeneration(contextJobId: string, storeId: string): Promise<ReviewGenerationJob | null>;
+  cancelGeneration(id: string): Promise<ReviewGenerationJob>;
+  retryGenerationSave(id: string): Promise<ReviewGenerationJob>;
   saveSamples(jobId: string, samples: readonly AmazonReview[]): Promise<void>;
   export(jobId: string, input: { readonly kind: "real" | "ai" | "preview"; readonly reviewIds: readonly string[]; readonly products: readonly ReviewProduct[]; readonly extraPictureUrls: readonly string[]; readonly randomizeReviewCount: boolean; readonly minReviewsPerProduct: number }): Promise<Blob>;
+}
+
+export interface ReviewGenerationJob {
+  readonly id: string;
+  readonly contextJobId: string;
+  readonly storeId: string;
+  readonly count: number;
+  readonly status: "queued" | "running" | "validating" | "saving" | "save_failed" | "completed" | "partial" | "failed" | "cancelled" | "interrupted";
+  readonly createdAt: string;
+  readonly accepted: number;
+  readonly rejected: number;
+  readonly warnings: readonly string[];
+  readonly error?: string;
 }

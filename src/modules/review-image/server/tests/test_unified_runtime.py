@@ -15,6 +15,52 @@ PIPELINE = "pipeline-fixture-credential-123456"
 HEADERS = {"X-Bridge-Token": INTERNAL}
 
 
+def test_text_bridge_requires_capability_and_returns_answer(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    with TestClient(make_app(tmp_path)) as client:
+        assert client.post("/api/review-images/text", json={"prompt": "QA", "session": "text-1"}).status_code == 401
+        with client.websocket_connect("/api/review-images/extension", headers={"origin": "chrome-extension://fixture"}) as socket:
+            socket.send_json({"type": "authenticate", "token": EXTENSION, "capabilities": ["review_text_v1"]})
+            socket.receive_json()
+            assert client.get("/api/review-images/health", headers=HEADERS).json()["textCapable"] is True
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                response = pool.submit(client.post, "/api/review-images/text", headers=HEADERS, json={"prompt": "QA", "session": "text-1"})
+                task = socket.receive_json()
+                assert task["kind"] == "text"
+                assert task["conversation_mode"] == "new"
+                assert "images" not in task
+                socket.send_json({"type": "job_result", "job_id": task["job_id"], "answer": '{"samples":[]}'})
+                assert response.result(timeout=3).json() == {"answer": '{"samples":[]}'}
+
+
+def test_text_waits_for_image_and_cancelled_waiter_does_not_interrupt_image(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    app = make_app(tmp_path)
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/review-images/extension", headers={"origin": "chrome-extension://fixture"}) as socket:
+            socket.send_json({"type": "authenticate", "token": EXTENSION, "capabilities": ["review_text_v1"]})
+            socket.receive_json()
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                image = pool.submit(client.portal.call, app.state.bridge.generate, "image", [], "image-session")
+                image_task = socket.receive_json()
+                text = pool.submit(client.post, "/api/review-images/text", headers=HEADERS, json={"prompt": "QA", "session": "text-cancel"})
+                for _ in range(100):
+                    if client.get("/api/review-images/text/text-cancel", headers=HEADERS).json()["status"] == "queued":
+                        break
+                    time.sleep(0.01)
+                assert client.get("/api/review-images/text/text-cancel", headers=HEADERS).json()["status"] == "queued"
+                assert client.post("/api/review-images/text/text-cancel/cancel", headers=HEADERS).status_code == 200
+                socket.send_json({"type": "job_result", "job_id": image_task["job_id"], "image": {"data": "fixture"}})
+                assert image.result(timeout=3) == {"data": "fixture"}
+                assert text.result(timeout=3).status_code == 502
+                following = pool.submit(client.post, "/api/review-images/text", headers=HEADERS, json={"prompt": "Next QA", "session": "text-next"})
+                next_task = socket.receive_json()
+                assert next_task["kind"] == "text"
+                assert next_task["conversation_session_id"] == "text-next"
+                socket.send_json({"type": "job_result", "job_id": next_task["job_id"], "answer": "{}"})
+                assert following.result(timeout=3).status_code == 200
+
+
 def make_app(root):
     return create_app(engine=create_engine(f"sqlite:///{root}/review.sqlite3", connect_args={"check_same_thread": False}),
                       runtime_root=root / "assets", internal_token=INTERNAL, extension_token=EXTENSION, pipeline_token=PIPELINE)

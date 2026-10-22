@@ -214,7 +214,7 @@ async function connectIfEnabled() {
 
   socket.onopen = () => {
     if (url.pathname !== "/ws/extension") {
-      socket.send(JSON.stringify({ type: "authenticate", token: settings.token }));
+      socket.send(JSON.stringify({ type: "authenticate", token: settings.token, capabilities: ["review_text_v1"] }));
     }
     console.log("Đã kết nối ChatGPT Bridge Server");
 

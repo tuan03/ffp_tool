@@ -4,6 +4,16 @@ import test from "node:test";
 import { createReviewClient, isMissingReviewJobError } from "../index";
 import { isReviewJobConflictError } from "../service";
 
+test("review generation submits a durable job without sending browser context or API credentials", async () => {
+  const job = { id: "generation", contextJobId: "context", storeId: "fixture", count: 10, status: "queued", createdAt: "2026-01-01", accepted: 0, rejected: 0, warnings: [] };
+  const client = createReviewClient({ coordinatorUrl: "http://localhost", fetchImplementation: async (url, options) => {
+    assert.equal(url, "/api/amazon-reviews/samples");
+    assert.deepEqual(JSON.parse(String(options?.body)), { contextJobId: "context", storeId: "fixture", count: 10, requestId: "request" });
+    return Response.json({ job }, { status: 202 });
+  } });
+  assert.equal((await client.generate({ contextJobId: "context", storeId: "fixture", count: 10, requestId: "request" })).status, "queued");
+});
+
 test("review client distinguishes an active job conflict from connection failures", async () => {
   for (const status of [409, 503]) {
     const client = createReviewClient({

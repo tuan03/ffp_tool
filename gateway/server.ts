@@ -24,6 +24,7 @@ import { serveStaticFile } from "./static-server";
 import { GatewayDispatcher } from "./dispatcher";
 import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
+import { closeReviewTextRuntime } from "./review-text-runtime";
 import { getAutoSeoDatabaseUrl } from "./auto-seo-database-url";
 import { bootstrapAutoSeoSchema } from "./auto-seo-startup";
 import type { AutoSeoStartupOptions } from "./auto-seo-startup";
@@ -476,7 +477,7 @@ export function startGatewayServer(
       return;
     }
 
-    if (url === "/api/amazon-reviews/samples") {
+    if (/^\/api\/amazon-reviews\/samples(?:[/?]|$)/.test(url)) {
       await handleAmazonReviewsHttpRequest(req, res, { authToken, maxBodyBytes });
       return;
     }
@@ -538,7 +539,10 @@ export function startGatewayServer(
     res.end(JSON.stringify({ error: "Not Found" }));
   });
 
-  server.on("close", () => { void closePerformanceRuntime().catch(() => { console.error("[SEO Performance] Shutdown failed."); }); });
+  server.on("close", () => {
+    void closeReviewTextRuntime().catch(() => console.error("[Review text] Shutdown failed."));
+    void closePerformanceRuntime().catch(() => { console.error("[SEO Performance] Shutdown failed."); });
+  });
   server.listen(port, host, () => {
     console.log(`[Shopify Gateway] Standalone server running on http://${host}:${port}/api/shopify`);
   });

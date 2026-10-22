@@ -33,9 +33,7 @@ test("mock clear removes context and samples and allows a fresh job", async () =
   const created = await client.create("B012345678");
   const job = await client.get(created.jobId);
   assert.ok(job.reviewData.context);
-  const generated = await client.generate({ asin: job.asin, count: 1, startIndex: 1,
-    product: job.reviewData.context, sourceReviews: [], priorSamples: [] });
-  await client.saveSamples(job.jobId, generated.samples);
+  await client.generate({ contextJobId: job.jobId, storeId: "mock-store", count: 1, requestId: "request-1" });
   await client.clear(job.jobId);
   await client.clear(job.jobId);
   await assert.rejects(client.get(job.jobId), /not found/i);
@@ -50,9 +48,7 @@ test("mock context jobs return fresh data and reset generated samples", async ()
   const created = await client.create("B012345678");
   const job = await client.get(created.jobId);
   assert.ok(job.reviewData.context);
-  const generated = await client.generate({ asin: job.asin, count: 1, startIndex: 1,
-    product: job.reviewData.context, sourceReviews: [], priorSamples: [] });
-  await client.saveSamples(job.jobId, generated.samples);
+  await client.generate({ contextJobId: job.jobId, storeId: "mock-store", count: 1, requestId: "request-1" });
   assert.equal((await client.get(job.jobId)).samples.length, 1);
   assert.equal(job.samples.length, 0);
   await client.create("B012345678");
@@ -64,8 +60,8 @@ test("mock AI reviews include three, four and five stars across batches", async 
   const created = await client.create("B012345678");
   const job = await client.get(created.jobId);
   assert.ok(job.reviewData.context);
-  const input = { asin: job.asin, product: job.reviewData.context, sourceReviews: [], priorSamples: [] };
-  const first = await client.generate({ ...input, count: 2, startIndex: 1 });
-  const second = await client.generate({ ...input, count: 1, startIndex: 3 });
-  assert.deepEqual([...first.samples, ...second.samples].map((review) => review.rating), [5, 4, 3]);
+  const input = { contextJobId: job.jobId, storeId: "mock-store" };
+  await client.generate({ ...input, count: 2, requestId: "request-1" });
+  await client.generate({ ...input, count: 1, requestId: "request-2" });
+  assert.deepEqual((await client.get(job.jobId)).samples.map((review) => review.rating), [5, 4, 3]);
 });

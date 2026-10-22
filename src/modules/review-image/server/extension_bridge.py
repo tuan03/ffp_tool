@@ -19,6 +19,8 @@ class ExtensionBridge:
         self.cancelled = {}
         self.loop = None
         self.stopping = False
+        self.capabilities = set()
+        self.text_states = {}
 
     async def connect(self, socket: WebSocket):
         origin = socket.headers.get("origin", "")
@@ -39,6 +41,8 @@ class ExtensionBridge:
                 await socket.close(code=4409)
                 return
             self.socket = socket
+            capabilities = message.get("capabilities", [])
+            self.capabilities = set(value for value in capabilities if isinstance(value, str)) if isinstance(capabilities, list) else set()
             xpaths = json.loads(Path(__file__).with_name("xpathGPT.txt").read_text(encoding="utf-8"))
             await socket.send_json({"type": "hello", "xpaths": xpaths})
             while True:
@@ -52,11 +56,18 @@ class ExtensionBridge:
                 if not pending or pending["future"].done():
                     continue
                 if message.get("type") == "job_result":
-                    pending["future"].set_result(message.get("image", {}))
+                    if pending.get("kind") == "text":
+                        answer = message.get("answer")
+                        if not isinstance(answer, str) or not 0 < len(answer) <= 200_000:
+                            pending["future"].set_exception(RuntimeError("Invalid text response from extension"))
+                        else:
+                            pending["future"].set_result(answer)
+                    else:
+                        pending["future"].set_result(message.get("image", {}))
                 elif message.get("type") == "job_error":
                     detail = str(message.get("error") or "").strip()[:500]
                     error_text = (
-                        f"Extension could not generate the image: {detail}"
+                        f"Extension could not complete the task: {detail}"
                         if detail
                         else "Extension could not generate the image. Inspect the pinned ChatGPT tab."
                     )
@@ -66,6 +77,7 @@ class ExtensionBridge:
         finally:
             if self.socket is socket:
                 self.socket = None
+                self.capabilities = set()
                 for pending in list(self.pending.values()):
                     if not pending["future"].done():
                         pending["future"].set_exception(RuntimeError("Extension disconnected; inspect ChatGPT before retrying."))
@@ -95,6 +107,32 @@ class ExtensionBridge:
                 raise RuntimeError("Image generation timed out; inspect ChatGPT before retrying.") from None
             finally:
                 self.pending.pop(job_id, None)
+
+    async def generate_text(self, prompt, session):
+        self.text_states[session] = "queued"
+        try:
+            async with asyncio.timeout(1800):
+                async with self.lock:
+                    if self.cancelled.pop(session, None):
+                        raise RuntimeError("Text generation cancelled")
+                    if self.socket is None or self.stopping or "review_text_v1" not in self.capabilities:
+                        raise RuntimeError("Update and connect the ChatGPT Bridge extension")
+                    job_id = uuid.uuid4().hex
+                    future = asyncio.get_running_loop().create_future()
+                    self.pending[job_id] = {"session": session, "kind": "text", "future": future}
+                    try:
+                        await self.socket.send_json({"type": "job", "kind": "text", "job_id": job_id,
+                                                     "prompt": prompt, "conversation_mode": "new", "conversation_session_id": session})
+                        self.text_states[session] = "running"
+                        return await asyncio.wait_for(future, 600)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        if self.socket:
+                            await self.socket.send_json({"type": "cancel", "job_id": job_id})
+                        raise RuntimeError("Text generation interrupted; inspect ChatGPT before retrying") from None
+                    finally:
+                        self.pending.pop(job_id, None)
+        finally:
+            self.text_states.pop(session, None)
 
     def generate_sync(self, prompt, images, session):
         if self.loop is None or self.stopping:

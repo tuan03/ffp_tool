@@ -4,6 +4,7 @@ import { GatewayDispatcher } from "./dispatcher";
 import { getCustomGptRuntime } from "./custom-gpt-seo/runtime";
 import { handleAutoSeoEligibilityHttpRequest, handleAutoSeoHttpRequest } from "./auto-seo-handler";
 import { handleAmazonReviewsHttpRequest } from "./amazon-reviews-handler";
+import { closeReviewTextRuntime } from "./review-text-runtime";
 import { handleSeoReviewHttpRequest } from "./seo-review-handler";
 import { handleReviewImageHttpRequest } from "./review-image-handler";
 import {
@@ -36,6 +37,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
   return {
     name: "shopify-gateway-dev",
     configureServer(server) {
+      server.httpServer?.on("close", () => { void closeReviewTextRuntime().catch(() => console.error("[Review text] Shutdown failed.")); });
       const env = loadLocalEnv();
       const rawAuthToken = options?.authToken ?? env.GATEWAY_AUTH_TOKEN ?? process.env.GATEWAY_AUTH_TOKEN;
       const authToken =
@@ -92,7 +94,7 @@ export function shopifyGatewayDevPlugin(options?: ShopifyGatewayDevPluginOptions
         }
         const isShopify = req.url && (req.url === "/api/shopify" || req.url.startsWith("/api/shopify?"));
         const isAutoSeoRun = req.url && (req.url === "/api/auto-seo/run" || req.url.startsWith("/api/auto-seo/run?"));
-        const isAmazonReviews = req.url === "/api/amazon-reviews/samples";
+        const isAmazonReviews = /^\/api\/amazon-reviews\/samples(?:[/?]|$)/.test(req.url ?? "");
         const isAutoSeoEligibility = req.url && (req.url === "/api/auto-seo/eligibility" || req.url.startsWith("/api/auto-seo/eligibility?"));
         const isAutoSeo = isAutoSeoRun || isAutoSeoEligibility;
         const isPinterestPodHandover = req.url && (req.url === "/api/pinterest-pod/handover-seo" || req.url.startsWith("/api/pinterest-pod/handover-seo?"));

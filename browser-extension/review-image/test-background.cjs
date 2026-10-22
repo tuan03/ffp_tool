@@ -60,6 +60,7 @@ vm.runInContext(fs.readFileSync('browser-extension/review-image/background.js', 
   testSocket.onopen();
   assert.equal(testSocket.sent[0].type, 'authenticate');
   assert.equal(testSocket.sent[0].token, 'extension-fixture');
+  assert.ok(testSocket.sent[0].capabilities.includes('review_text_v1'));
   vm.runInContext('closeSocket()', context);
   console.log('extension settings preserved on update');
 })().catch(error => { console.error(error); process.exitCode = 1; });

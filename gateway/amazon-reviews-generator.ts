@@ -135,7 +135,13 @@ export async function generateReviewSamples(input: GenerateReviewInput, provider
     else if (sample) accepted.set(plan.index, sample);
   }
   if (failures.length) {
-    const repaired = await provider(failures.map((failure) => plans[failure.index]).filter((plan): plan is ReviewPlanItem => Boolean(plan)), input, failures);
+    // Keep already accepted samples if the single repair attempt is interrupted.
+    let repaired: readonly RawReviewSample[] = [];
+    try {
+      repaired = await provider(failures.map((failure) => plans[failure.index]).filter((plan): plan is ReviewPlanItem => Boolean(plan)), input, failures);
+    } catch {
+      failures = failures.map(failure => ({ ...failure, errors: [...failure.errors, "Repair interrupted; accepted samples retained"] }));
+    }
     const remaining: typeof failures = [];
     failures.forEach((failure, repairIndex) => {
       const sample = repaired[repairIndex];

@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.routing import Match
 
-from .contracts import CreateImage, DeleteTemplates, FinishUpload, UploadImage, UploadTemplate
+from .contracts import CreateImage, CreateReviewText, DeleteTemplates, FinishUpload, UploadImage, UploadTemplate
 from .extension_bridge import ExtensionBridge
 from .persistence import ReviewRepository
 from .review_image_generator import ReviewImageBusyError, ReviewImageService
@@ -60,7 +60,24 @@ def create_review_app(*, engine, runtime_root, internal_token, extension_token, 
     @app.get("/api/review-images/health", dependencies=secured)
     def health():
         repository.ready()
-        return {"ok": True, "templates": len(repository.all("template")), "extensionConnected": bridge.socket is not None}
+        return {"ok": True, "templates": len(repository.all("template")), "extensionConnected": bridge.socket is not None,
+                "textCapable": "review_text_v1" in bridge.capabilities}
+
+    @app.post("/api/review-images/text", dependencies=secured)
+    async def generate_text(body: CreateReviewText):
+        try:
+            return {"answer": await bridge.generate_text(body.prompt, body.session)}
+        except (RuntimeError, TimeoutError) as error:
+            raise HTTPException(502, "ChatGPT Bridge interrupted; inspect the pinned tab before retrying.") from error
+
+    @app.get("/api/review-images/text/{session}", dependencies=secured)
+    def text_status(session: str):
+        return {"status": bridge.text_states.get(session, "idle")}
+
+    @app.post("/api/review-images/text/{session}/cancel", dependencies=secured)
+    async def cancel_text(session: str):
+        await bridge.cancel(session)
+        return {"cancelled": True}
 
     @app.get("/api/review-images/templates", dependencies=secured)
     def templates(storeId: str):

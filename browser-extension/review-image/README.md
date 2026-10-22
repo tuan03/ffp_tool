@@ -21,3 +21,15 @@ Reference roles: the server adds a visible `SCENE_BACKGROUND` or `REPLACEMENT_PR
 After updating to extension 1.4.1, reload the unpacked extension at `chrome://extensions` and reload the pinned ChatGPT tab. Docker updates do not reload a browser content script. Server-side visual labels also work with older extensions; 1.4.1 repeats the label/framing rule at the final send step. Previously generated images are not automatically regenerated or uploaded to Shopify. Test a new image and visually compare both its scene and product with the two sources before approval.
 
 Extension 1.4.2 prevents duplicate attachments for all stores (including Preaureum, Jeminise and Capozen). Each file is dispatched once; an ambiguous confirmation timeout stops the job instead of uploading again. The composer must start empty, gain exactly one preview per upload, and contain exactly two completed attachments immediately before Send. Wrapping cards and their image previews count as one attachment. Extra/missing attachments or an unrecognized composer stop the job without sending or deleting operator content. Inspect/clear leftover drafts or open a new chat before retrying. Reload both the unpacked extension and its pinned ChatGPT tab to activate this change; no Windows Agent update is needed.
+# Review text support (1.5.0)
+
+The unified Review Studio runtime now supports synthetic QA review text as well as
+image tasks. Reload this extension and the pinned ChatGPT tab after upgrading;
+keep the existing server URL and token. No Vertex credentials or Windows crawler
+update are needed. Use the unified `/api/review-images/extension` connection.
+
+Image and text tasks share one serial executor. Text prompts open a fresh chat so
+previous image instructions cannot affect the response. Do not manually edit the
+composer while a task is running. If ChatGPT requests login/verification or reaches
+a usage limit, resolve it manually; the bridge does not bypass those requirements.
+See `docs/review-text-bridge.md` for job persistence, cancellation and save retry.

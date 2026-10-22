@@ -17,7 +17,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (busy && (!message.job_id || message.job_id === activeJobId)) {
       cancelledJobs.add(activeJobId);
       const stopButton = activeJobXpaths?.stop_button ? xpathFirst(activeJobXpaths.stop_button) : null;
-      if (stopButton && isVisible(stopButton)) stopButton.click();
+      if (stopButton && isGenerationControlPresent(stopButton)) stopButton.click();
     }
     sendResponse({ accepted: true });
     return false;
@@ -34,14 +34,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== "execute_job") return;
 
   if (busy) {
-    // A previous bridge request may have timed out while this tab continued
-    // waiting. Cancel that stale browser-side job so the next queued request
-    // can recover instead of receiving busy errors forever.
-    if (activeJobId) {
-      cancelledJobs.add(activeJobId);
-      const stopButton = activeJobXpaths?.stop_button ? xpathFirst(activeJobXpaths.stop_button) : null;
-      if (stopButton && isVisible(stopButton)) stopButton.click();
-    }
+    // Only an explicit cancellation of the matching task may stop the current prompt.
     reportError(message.job_id, "The extension is already processing another prompt.");
     sendResponse({ accepted: false });
     return;
@@ -81,6 +74,10 @@ async function executeJob(job) {
   if (job.kind === "image_edit" && job.conversation_mode === "session") {
     await prepareImageConversation(job.conversation_session_id, xpaths);
   } else if (job.conversation_mode === "new") {
+    // Text and image tasks share one tab; never reuse image-session context after text.
+    activeImageConversationSessionId = null;
+    activeImageConversationPath = null;
+    activeImageConversationJobCount = 0;
     await openNewChat(xpaths);
   }
 
@@ -460,6 +457,18 @@ function setPromptValue(element, text) {
   throw new Error("The prompt XPath does not point to an input or contenteditable element.");
 }
 
+function readAssistantAnswer(candidate) {
+  if (!candidate) return '';
+  // ChatGPT wraps JSON code blocks with language/copy controls. Only collect code,
+  // never those UI labels; multiple blocks remain invalid rather than guessed.
+  const blocks = [...(candidate.querySelectorAll?.('pre code') || [])];
+  if (blocks.length === 1) {
+    const code = (blocks[0].innerText || blocks[0].textContent || '').trim();
+    if (code.startsWith('{')) return code;
+  }
+  return candidate.innerText?.trim() || '';
+}
+
 async function waitForAnswer({
   assistantMessagesXPath,
   stopButtonXPath,
@@ -477,7 +486,7 @@ async function waitForAnswer({
     if (cancelledJobs.has(jobId)) throw new Error("ChatGPT job cancelled.");
     const messages = xpathAll(assistantMessagesXPath);
     const candidate = messages.at(-1);
-    const text = candidate?.innerText?.trim() || "";
+    const text = readAssistantAnswer(candidate);
 
     const isNewMessage =
       messages.length > previousCount ||
@@ -493,7 +502,7 @@ async function waitForAnswer({
     }
 
     const stopVisible = stopButtonXPath
-      ? xpathAll(stopButtonXPath).some(isVisible)
+      ? xpathAll(stopButtonXPath).some(isGenerationControlPresent)
       : false;
 
     if (
@@ -505,7 +514,8 @@ async function waitForAnswer({
       return lastText;
     }
 
-    await sleep(400);
+    const poll = await chrome.runtime.sendMessage({ type: "wait_for_image_poll", delay_ms: 400 });
+    if (!poll?.ok) throw new Error("Reload the ChatGPT Bridge extension and pinned tab.");
   }
 
   throw new Error("Timed out while waiting for ChatGPT to finish generating.");

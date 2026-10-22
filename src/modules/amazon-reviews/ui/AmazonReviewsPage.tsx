@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { hasUsableReviewContext } from "../product-context";
 import { mergeReviewPictureUrls } from "../picture-urls";
-import { isMissingReviewJobError, isReviewJobConflictError } from "../service";
+import { isMissingReviewJobError, isReviewJobConflictError, reviewGenerationErrorMessage } from "../service";
 import { getContextPresentation, isSameContextSource, recoverContextIssue } from "../context-status";
 import type { ReviewContextIssue } from "../context-status";
-import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewProduct, ReviewShopifyAccess } from "../types";
+import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewGenerationJob, ReviewProduct, ReviewShopifyAccess } from "../types";
 
 interface AmazonReviewsPageProps {
   readonly client: ReviewClient;
@@ -19,6 +19,13 @@ interface AmazonReviewsPageProps {
 
 const TERMINAL_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
 const AMAZON_REVIEWS_SESSION_KEY = "ffp_amazon_reviews_session_v1";
+const GENERATION_ACTIVE = new Set(["queued", "running", "validating", "saving"]);
+const GENERATION_LABELS: Readonly<Record<ReviewGenerationJob["status"], string>> = {
+  queued: "Đang chờ ChatGPT hoàn tất tác vụ hiện tại", running: "ChatGPT đang tạo review",
+  validating: "Đang kiểm tra nội dung", saving: "Đang lưu review", save_failed: "Đã tạo review, chưa lưu được",
+  completed: "Đã tạo và lưu review", partial: "Đã lưu các mẫu đạt yêu cầu", failed: "Chưa tạo được review",
+  cancelled: "Đã hủy", interrupted: "Tác vụ bị gián đoạn",
+};
 
 interface PersistedAmazonReviewsSession {
   readonly source: string;
@@ -112,6 +119,11 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   const [job, setJob] = useState<AmazonReviewJob | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generation, setGeneration] = useState<ReviewGenerationJob | null>(null);
+  const [generationIssue, setGenerationIssue] = useState("");
+  const [generationActionError, setGenerationActionError] = useState("");
+  const attemptedGenerationRef = useRef(false);
+  const refreshedGenerationRef = useRef("");
   const [isClearing, setIsClearing] = useState(false);
   const [productSearchStatus, setProductSearchStatus] = useState<"idle" | "searching" | "loading-more">("idle");
   const jobRevisionRef = useRef(0);
@@ -136,6 +148,8 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
     () => new Set(initialSession.selectedGeneratedUrls),
   );
   const storeId = selectedStoreId ?? internalStoreId;
+  const scopedGeneration = generation?.contextJobId === jobId && generation.storeId === storeId ? generation : null;
+  const hasActiveGeneration = Boolean(scopedGeneration && GENERATION_ACTIVE.has(scopedGeneration.status));
   const previousStoreIdRef = useRef(initialSession.storeId || storeId);
 
   function handleStoreChange(nextStoreId: string): void {
@@ -255,6 +269,37 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
     return () => { isDisposed = true; window.clearInterval(timer); };
   }, [client, jobId, job?.status, contextIssue?.jobId]);
 
+  useEffect(() => {
+    setGeneration(null); setGenerationIssue(""); setGenerationActionError(""); attemptedGenerationRef.current = false; refreshedGenerationRef.current = "";
+    if (!jobId || !storeId) return;
+    let disposed = false;
+    let loading = false;
+    const refresh = async (): Promise<void> => {
+      if (loading) return;
+      loading = true;
+      try {
+        const latest = await client.latestGeneration(jobId, storeId);
+        if (disposed) return;
+        setGeneration(current => current && latest && current.createdAt > latest.createdAt ? current : latest);
+        setGenerationIssue("");
+        if (latest && attemptedGenerationRef.current && GENERATION_ACTIVE.has(latest.status)) setGenerationActionError("");
+        if (latest && ["completed", "partial"].includes(latest.status) && refreshedGenerationRef.current !== latest.id) {
+          const loaded = await client.get(jobId);
+          if (disposed) return;
+          setJob(loaded);
+          setSelectedReviews(new Set([...(loaded.reviewData.reviews ?? []), ...loaded.samples].map(review => review.reviewId)));
+          refreshedGenerationRef.current = latest.id;
+          setGenerationActionError("");
+        }
+      } catch {
+        if (!disposed) setGenerationIssue("Chưa cập nhật được trạng thái tạo review. Đang thử kết nối lại; không cần bấm tạo thêm.");
+      } finally { loading = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2500);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [client, jobId, storeId]);
+
   const reviews = useMemo(() => [...(job?.reviewData.reviews ?? []), ...(job?.samples ?? [])], [job]);
   const hasAiContext = hasUsableReviewContext(job?.reviewData.context);
   const hasAmazonReviews = (job?.reviewData.reviews?.length ?? 0) > 0;
@@ -268,7 +313,7 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
     review.rating >= minRating && (reviewFilter === "all" || (reviewFilter === "ai") === review.synthetic));
 
   async function handleFetchContext(): Promise<void> {
-    if (isBusy || isContextPending) return;
+    if (isBusy || isContextPending || hasActiveGeneration) return;
     if (job && hasAiContext && isSameContextSource(source, job)) {
       setContextIssue(null);
       setNotice("Ngữ cảnh của ASIN này đã sẵn sàng bên dưới. Không cần lấy lại; chọn Xóa kết quả nếu muốn bắt đầu mới.");
@@ -306,7 +351,7 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   }
 
   async function handleClearResults(): Promise<void> {
-    if (!jobId || isBusy) return;
+    if (!jobId || isBusy || hasActiveGeneration || scopedGeneration?.status === "save_failed") return;
     setIsBusy(true); setIsClearing(true); setError(""); setNotice("");
     try {
       await client.clear(jobId);
@@ -324,25 +369,29 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   }
 
   async function handleGenerateSamples(): Promise<void> {
-    const context = job?.reviewData.context;
-    if (!job || !hasUsableReviewContext(context)) { setError("Chưa có dữ kiện sản phẩm đủ dùng để tạo review AI. Hãy lấy lại ngữ cảnh sau khi xử lý đăng nhập hoặc CAPTCHA."); return; }
-    setIsBusy(true); setIsGenerating(true); setError("");
-    setNotice(`Đang tạo ${sampleCount} review AI. Vui lòng chờ…`);
+    if (!job || !hasAiContext || !storeId || hasActiveGeneration || isBusy || scopedGeneration?.status === "save_failed") return;
+    if (!Number.isInteger(sampleCount) || sampleCount < 1 || sampleCount > 50) { setError("Nhập số mẫu từ 1 đến 50."); return; }
+    const revision = jobRevisionRef.current;
+    const requestKey = `ffp_review_text_request:${job.jobId}:${storeId}:${sampleCount}`;
+    setIsBusy(true); setIsGenerating(true); setGenerationActionError(""); attemptedGenerationRef.current = true;
+    setNotice("");
     try {
-      const generated = await client.generate({
-        asin: job.asin, count: sampleCount, startIndex: job.samples.length + 1,
-        product: context, sourceReviews: job.reviewData.reviews ?? [], priorSamples: job.samples,
-      });
-      setNotice("Đang lưu review AI vừa tạo…");
-      await client.saveSamples(job.jobId, generated.samples);
-      const updatedJob = await client.get(job.jobId);
-      setJob(updatedJob);
-      setSelectedReviews(new Set([
-        ...(updatedJob.reviewData.reviews ?? []), ...updatedJob.samples,
-      ].map((review) => review.reviewId)));
-      setNotice(`Đã tạo ${generated.samples.length} mẫu QA${generated.rejected ? `; loại ${generated.rejected} mẫu chưa đạt` : ""}. ${generated.warnings.join(" ")}`);
-    } catch { setNotice(""); setError("Không tạo được review AI. Kiểm tra ngữ cảnh sản phẩm và cấu hình Vertex AI."); }
+      const requestId = window.localStorage.getItem(requestKey) || crypto.randomUUID();
+      window.localStorage.setItem(requestKey, requestId);
+      const created = await client.generate({ contextJobId: job.jobId, storeId, count: sampleCount, requestId });
+      window.localStorage.removeItem(requestKey);
+      if (revision === jobRevisionRef.current) { setGeneration(created); setGenerationIssue(""); }
+    } catch (cause) { setGenerationActionError(reviewGenerationErrorMessage(cause)); }
     finally { setIsBusy(false); setIsGenerating(false); }
+  }
+
+  async function handleGenerationAction(action: "cancel" | "retry"): Promise<void> {
+    if (!scopedGeneration || isBusy) return;
+    setIsBusy(true); setGenerationActionError("");
+    try {
+      setGeneration(await (action === "cancel" ? client.cancelGeneration(scopedGeneration.id) : client.retryGenerationSave(scopedGeneration.id)));
+    } catch (cause) { setGenerationActionError(reviewGenerationErrorMessage(cause)); }
+    finally { setIsBusy(false); }
   }
 
   async function handleExport(kind: "real" | "ai" | "preview"): Promise<void> {
@@ -381,8 +430,8 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
         <p className="text-sm text-slate-500 dark:text-slate-400">Chỉ lấy dữ kiện sản phẩm để tạo mẫu AI, không thu thập đánh giá của khách hàng Amazon.</p>
         <form className="grid items-end gap-3 md:grid-cols-[1fr_auto_auto]" onSubmit={(event) => { event.preventDefault(); void handleFetchContext(); }}>
           <label className="grid gap-1.5 text-sm">URL Amazon hoặc ASIN<input className={fieldClass} value={source} onChange={(event) => setSource(event.target.value)} required /></label>
-          <button className={primaryButtonClass} type="submit" disabled={isBusy || isContextPending}>{isFetchingContext || isContextPending ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />Đang lấy ngữ cảnh…</> : "Lấy ngữ cảnh"}</button>
-          <button className="rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300" type="button" disabled={isBusy || !jobId} onClick={() => void handleClearResults()} title="Xóa ngữ cảnh và toàn bộ review mẫu của lần đang mở">{isClearing ? "Đang xóa…" : "Xóa kết quả"}</button>
+          <button className={primaryButtonClass} type="submit" disabled={isBusy || isContextPending || hasActiveGeneration}>{isFetchingContext || isContextPending ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />Đang lấy ngữ cảnh…</> : "Lấy ngữ cảnh"}</button>
+          <button className="rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300" type="button" disabled={isBusy || !jobId || hasActiveGeneration || scopedGeneration?.status === "save_failed"} onClick={() => void handleClearResults()} title="Hủy tác vụ tạo review trước khi xóa ngữ cảnh">{isClearing ? "Đang xóa…" : "Xóa kết quả"}</button>
         </form>
         {contextIssue ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{contextIssue.message}</p> : null}
         {isContextPending && !job ? <p role="status" className="text-sm text-blue-700 dark:text-blue-300">Đang tải trạng thái tác vụ. Kết quả sẽ tự cập nhật.</p> : null}
@@ -417,9 +466,20 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
           <h2 className="font-semibold">3. Tạo review AI để kiểm tra</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">Mẫu AI phục vụ QA, không phải đánh giá thật của khách hàng.</p>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="grid gap-1.5 text-sm">Số mẫu AI<input className={`${fieldClass} max-w-24`} type="number" min="1" max="50" disabled={isGenerating} value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label>
-            <button type="button" className={primaryButtonClass} disabled={isBusy || !hasAiContext} onClick={() => void handleGenerateSamples()}>{isGenerating ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />Đang tạo review AI…</> : "Tạo review AI cho QA"}</button>
+            <label className="grid gap-1.5 text-sm">Số mẫu AI<input className={`${fieldClass} max-w-24`} type="number" min="1" max="50" disabled={isGenerating || hasActiveGeneration} value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label>
+            <button type="button" className={primaryButtonClass} disabled={isBusy || !hasAiContext || !storeId || hasActiveGeneration || scopedGeneration?.status === "save_failed"} onClick={() => void handleGenerateSamples()}>{isGenerating || hasActiveGeneration ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />Đang xử lý…</> : "Tạo review bằng ChatGPT"}</button>
           </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Dùng tab ChatGPT đã ghim trong Bridge 1.5.0+. Tác vụ text và ảnh chạy lần lượt, không cần Vertex API.</p>
+          {generationIssue ? <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{generationIssue}</p> : null}
+          {generationActionError ? <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">{generationActionError}</p> : null}
+          {scopedGeneration ? <div role="status" className={`space-y-2 rounded-lg border p-3 text-sm ${hasActiveGeneration ? "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200" : ["completed", "partial"].includes(scopedGeneration.status) ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200" : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"}`}>
+            <p className="font-semibold">{GENERATION_LABELS[scopedGeneration.status]}</p>
+            {scopedGeneration.accepted > 0 ? <p>{scopedGeneration.accepted}/{scopedGeneration.count} mẫu đạt yêu cầu · {scopedGeneration.rejected} mẫu chưa đạt</p> : null}
+            {scopedGeneration.error ? <p>{scopedGeneration.error.startsWith("REVIEW_") ? reviewGenerationErrorMessage(new Error(scopedGeneration.error)) : scopedGeneration.error}</p> : null}
+            {scopedGeneration.warnings.length ? <details><summary className="cursor-pointer">Chi tiết kiểm tra chất lượng</summary><ul className="mt-2 list-inside list-disc">{scopedGeneration.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></details> : null}
+            {scopedGeneration.status === "save_failed" ? <button type="button" className={primaryButtonClass} disabled={isBusy} onClick={() => void handleGenerationAction("retry")}>Thử lưu lại</button> : null}
+            {(hasActiveGeneration && scopedGeneration.status !== "saving" || scopedGeneration.status === "save_failed") ? <button type="button" className="ml-2 underline disabled:opacity-50" disabled={isBusy} onClick={() => void handleGenerationAction("cancel")}>Hủy tạo review</button> : null}
+          </div> : null}
           <p className="text-sm text-slate-500 dark:text-slate-400">{!hasAiContext ? "Cần lấy ngữ cảnh thành công trước khi tạo mẫu." : reviews.length ? `Đã có ${reviews.length} review. Xem và chọn mẫu cần xuất ở bước 4.` : "Ngữ cảnh đã sẵn sàng. Bấm tạo mẫu để có nội dung xem và xuất file."}</p>
         </section>
       </div> : null}
