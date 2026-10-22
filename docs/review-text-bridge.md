@@ -78,3 +78,11 @@ A disconnected send is no longer acknowledged as successful to the content scrip
 Reload both extension and pinned ChatGPT tab after updating. Existing timed-out jobs
 are not replayed or recovered from tab history automatically; retain the conversation
 if its output needs manual recovery. No production data is changed by this upgrade.
+
+Extension 1.5.2 also recognizes the current `DilResponseRoot-` renderer when
+assistant-role nodes and `.markdown` are absent. It uses a localized Copy message
+button scoped to the same response as an optional completion signal. The Bridge
+still requires stable text and no active generation Stop control. The long-running
+Gateway request uses a dedicated dispatcher whose response-header timeout matches
+the Bridge's 30-minute queue bound; the default five-minute HTTP timeout must not
+terminate an otherwise active text task.

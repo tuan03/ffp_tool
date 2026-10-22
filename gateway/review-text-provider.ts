@@ -1,3 +1,4 @@
+import { Agent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 
 import { generateReviewSamples, REVIEW_PROMPT } from "./amazon-reviews-generator";
@@ -5,6 +6,9 @@ import type { GenerateReviewInput, RawReviewSample } from "./amazon-reviews-gene
 import type { ReviewTextPhase, ReviewTextResult, ReviewTextStatus } from "./review-text-repository";
 
 const sampleSchema = z.object({ author: z.string(), body: z.string(), rating: z.number(), variantText: z.string(), verifiedPurchase: z.boolean() });
+// The Python Bridge can wait behind an image task. Undici's default response-header
+// timeout is five minutes, shorter than the Bridge's permitted queue wait.
+const textBridgeDispatcher = new Agent({ headersTimeout: 30 * 60_000 + 10_000, bodyTimeout: 30 * 60_000 + 10_000 });
 export function parseChatGptSamples(answer: string): RawReviewSample[] {
   const trimmed = answer.trim().replace(/^```(?:json)?\s*\n?/i, "").replace(/\s*```$/, "");
   let parsed: unknown;
@@ -39,10 +43,11 @@ export function createBridgeReviewGenerator(options: { baseUrl: string; token: s
           } catch { /* The main request reports transport failures; status is observational. */ }
         });
       }, 2000);
-      let response: Response;
-      try { response = await fetch(new URL("/api/review-images/text", options.baseUrl), {
+      let response: Awaited<ReturnType<typeof undiciFetch>>;
+      try { response = await undiciFetch(new URL("/api/review-images/text", options.baseUrl), {
         method: "POST", headers: { "Content-Type": "application/json", "X-Bridge-Token": options.token },
         body: JSON.stringify({ prompt, session: id }),
+        dispatcher: textBridgeDispatcher,
         signal: AbortSignal.any([signal, AbortSignal.timeout(30 * 60_000)]),
       }); } finally { isFinished = true; clearInterval(timer); await statusRequest; }
       if (!response.ok) throw new Error("REVIEW_BRIDGE_FAILED");

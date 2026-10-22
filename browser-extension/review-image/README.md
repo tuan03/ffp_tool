@@ -1,5 +1,9 @@
 # FFP Review Image Bridge
 
+Version 1.5.2 reads ChatGPT's current DIL response renderer and its localized
+message Copy action. Reload the extension and the pinned ChatGPT tab after update.
+No server address or token change is needed.
+
 Version 1.5.1 fixes QA text completion detection and reports waiting/reading/sending
 progress. Reload both the extension and the pinned ChatGPT tab after updating;
 settings and credentials remain unchanged. A timed-out response is not resent automatically.

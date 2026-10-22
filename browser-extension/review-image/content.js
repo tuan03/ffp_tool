@@ -476,6 +476,10 @@ function findAssistantMessages(xpath) {
   // Author role is independent of ChatGPT's changing div/section wrappers.
   const messages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
   if (messages.length) return messages;
+  // The DIL renderer no longer emits assistant roles or the old .markdown class.
+  // Match the semantic class prefix, not its generated suffix.
+  const responseRoots = [...document.querySelectorAll('main [class*="DilResponseRoot-"]')];
+  if (responseRoots.length) return responseRoots;
   const configured = xpathAll(xpath);
   if (configured.length) return configured;
   return [...document.querySelectorAll('[data-turn="assistant"] .markdown')];
@@ -484,7 +488,17 @@ function findAssistantMessages(xpath) {
 function hasCompletedResponseActions(candidate) {
   const turn = candidate?.closest?.('article, [data-testid^="conversation-turn-"], [data-turn="assistant"]');
   // Do not use a global Copy button: it could belong to an earlier answer or code block.
-  return Boolean(turn && [...turn.querySelectorAll('button[data-testid="copy-turn-action-button"], button[data-testid="good-response-turn-action-button"], button[data-testid="bad-response-turn-action-button"]')].some(isGenerationControlPresent));
+  if (turn && [...turn.querySelectorAll('button[data-testid="copy-turn-action-button"], button[data-testid="good-response-turn-action-button"], button[data-testid="bad-response-turn-action-button"]')].some(isGenerationControlPresent)) return true;
+  if (!String(candidate?.className || '').includes('DilResponseRoot-')) return false;
+  const main = document.querySelector('main');
+  for (let wrapper = candidate.parentElement; wrapper && wrapper !== main; wrapper = wrapper.parentElement) {
+    if (wrapper.querySelectorAll('[class*="DilResponseRoot-"]').length > 1) break;
+    const copy = [...wrapper.querySelectorAll('button[aria-label]')].find(button =>
+      /^(sao chép tin nhắn|copy message)$/i.test(button.getAttribute('aria-label')?.trim() || '') && isGenerationControlPresent(button)
+    );
+    if (copy) return true;
+  }
+  return false;
 }
 
 function isTextGenerationStop(element) {

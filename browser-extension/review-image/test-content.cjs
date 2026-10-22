@@ -342,6 +342,33 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.ok(pollMessages.some(message => message.type === 'content_progress' && message.phase === 'reading_response'));
   assert.equal(context.readAssistantAnswer({ innerText: 'Copy Good response {"samples":[]}',
     querySelectorAll: () => [], querySelector: () => ({ textContent: '{"samples":[]}' }) }), '{"samples":[]}');
+  const dilAnswer = new FakeElement();
+  dilAnswer.innerText = '{"samples":[]}';
+  dilAnswer.querySelectorAll = () => [];
+  dilAnswer.querySelector = () => null;
+  dilAnswer.className = 'DilResponseRoot-HfQrEh';
+  const localizedCopy = new FakeElement();
+  localizedCopy.getAttribute = name => name === 'aria-label' ? 'Sao chép tin nhắn' : null;
+  const mainRoot = new FakeElement();
+  const dilWrapper = new FakeElement();
+  dilWrapper.parentElement = mainRoot;
+  dilWrapper.querySelectorAll = selector => selector.includes('DilResponseRoot-') ? [dilAnswer]
+    : selector === 'button[aria-label]' ? [localizedCopy] : [];
+  dilAnswer.parentElement = dilWrapper;
+  const oldQuerySelectorAll = context.document.querySelectorAll;
+  const oldQuerySelector = context.document.querySelector;
+  context.document.querySelectorAll = selector => selector === 'main [class*="DilResponseRoot-"]' ? [dilAnswer] : [];
+  context.document.querySelector = selector => selector === 'main' ? mainRoot : oldQuerySelector(selector);
+  context.xpathAll = () => [];
+  assert.equal(context.findAssistantMessages('//obsolete-div-only-selector').at(-1), dilAnswer,
+    'read current ChatGPT DilResponseRoot content when legacy assistant roles are absent');
+  assert.equal(context.readAssistantAnswer(dilAnswer), '{"samples":[]}');
+  assert.equal(context.hasCompletedResponseActions(dilAnswer), true, 'localized Copy message belongs to this response');
+  dilWrapper.querySelectorAll = selector => selector.includes('DilResponseRoot-') ? [dilAnswer, new FakeElement()]
+    : selector === 'button[aria-label]' ? [localizedCopy] : [];
+  assert.equal(context.hasCompletedResponseActions(dilAnswer), false, 'Copy from another response cannot confirm this one');
+  context.document.querySelectorAll = oldQuerySelectorAll;
+  context.document.querySelector = oldQuerySelector;
   context.document.querySelectorAll = () => [];
   vm.runInContext("cancelledJobs.add('cancelled-text-job')", context);
   await assert.rejects(() => context.waitForAnswer({ assistantMessagesXPath: '//assistant', previousCount: 0,
