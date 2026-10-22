@@ -23,6 +23,10 @@ export function isMissingReviewJobError(error: unknown): boolean {
   return error instanceof ReviewRequestError && error.status === 404;
 }
 
+export function isReviewJobConflictError(error: unknown): boolean {
+  return error instanceof ReviewRequestError && error.status === 409;
+}
+
 async function readResponse(response: Response): Promise<unknown> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {

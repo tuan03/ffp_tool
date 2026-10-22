@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { hasUsableReviewContext } from "../product-context";
 import { mergeReviewPictureUrls } from "../picture-urls";
-import { isMissingReviewJobError } from "../service";
+import { isMissingReviewJobError, isReviewJobConflictError } from "../service";
+import { getContextPresentation, isSameContextSource, recoverContextIssue } from "../context-status";
+import type { ReviewContextIssue } from "../context-status";
 import type { AmazonReview, AmazonReviewJob, ReviewClient, ReviewProduct, ReviewShopifyAccess } from "../types";
 
 interface AmazonReviewsPageProps {
@@ -114,6 +116,8 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   const [productSearchStatus, setProductSearchStatus] = useState<"idle" | "searching" | "loading-more">("idle");
   const jobRevisionRef = useRef(0);
   const [error, setError] = useState("");
+  const [contextIssue, setContextIssue] = useState<ReviewContextIssue | null>(null);
+  const [isFetchingContext, setIsFetchingContext] = useState(false);
   const [notice, setNotice] = useState("");
   const [stores, setStores] = useState<readonly string[]>([]);
   const [internalStoreId, setInternalStoreId] = useState(initialSession.storeId);
@@ -212,17 +216,21 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   useEffect(() => {
     if (!jobId) return;
     let isDisposed = false;
+    let isLoading = false;
     const jobRevision = jobRevisionRef.current;
     const load = async (): Promise<void> => {
+      if (isLoading) return;
+      isLoading = true;
       try {
         const loaded = await client.get(jobId);
         if (isDisposed || jobRevision !== jobRevisionRef.current) return;
         setJob(loaded);
+        setContextIssue((current) => recoverContextIssue(current, loaded));
         setSelectedReviews((current) => {
           if (current.size) return current;
           return new Set([...(loaded.reviewData.reviews ?? []), ...loaded.samples].map((review) => review.reviewId));
         });
-        if (!productQuery) setProductQuery(`tag:amazon-parent-${loaded.asin.toLowerCase()}`);
+        setProductQuery((current) => current || `tag:amazon-parent-${loaded.asin.toLowerCase()}`);
       } catch (cause) {
         if (isDisposed || jobRevision !== jobRevisionRef.current) return;
         if (isMissingReviewJobError(cause)) {
@@ -232,35 +240,51 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
           setJob(null);
           setSelectedReviews(new Set());
           setNotice("Kết quả cũ không còn trên coordinator và đã được dọn. Hãy nhập URL hoặc ASIN để lấy ngữ cảnh mới.");
-          setError("");
+          setContextIssue(null);
           return;
         }
-        setError("Không tải được ngữ cảnh sản phẩm. Kiểm tra kết nối coordinator.");
+        setContextIssue({ jobId, source: "", message: "Tạm thời chưa cập nhật được tiến độ. Đang thử kết nối lại; dữ liệu đã nhận được giữ nguyên." });
+      } finally {
+        isLoading = false;
       }
     };
     void load();
     const timer = window.setInterval(() => {
-      if (!isDisposed && !TERMINAL_STATUSES.has(job?.status ?? "")) void load();
+      if (!isDisposed && (!TERMINAL_STATUSES.has(job?.status ?? "") || contextIssue?.jobId === jobId)) void load();
     }, 2000);
     return () => { isDisposed = true; window.clearInterval(timer); };
-  }, [client, jobId, job?.status, productQuery]);
+  }, [client, jobId, job?.status, contextIssue?.jobId]);
 
   const reviews = useMemo(() => [...(job?.reviewData.reviews ?? []), ...(job?.samples ?? [])], [job]);
   const hasAiContext = hasUsableReviewContext(job?.reviewData.context);
   const hasAmazonReviews = (job?.reviewData.reviews?.length ?? 0) > 0;
+  const isContextPending = Boolean(jobId && (!job || !TERMINAL_STATUSES.has(job.status)));
+  const contextPresentation = job ? getContextPresentation(job) : null;
+  const canExport = selectedProducts.size > 0 && selectedReviews.size > 0;
+  const cardClass = "space-y-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900";
+  const fieldClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900";
+  const primaryButtonClass = "inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50";
   const visibleReviews = reviews.filter((review) =>
     review.rating >= minRating && (reviewFilter === "all" || (reviewFilter === "ai") === review.synthetic));
 
   async function handleFetchContext(): Promise<void> {
-    setIsBusy(true); setError(""); setNotice(""); setJob(null); setSelectedReviews(new Set()); setSelectedProducts(new Set());
-    setReviewFilter("all");
+    if (isBusy || isContextPending) return;
+    if (job && hasAiContext && isSameContextSource(source, job)) {
+      setContextIssue(null);
+      setNotice("Ngữ cảnh của ASIN này đã sẵn sàng bên dưới. Không cần lấy lại; chọn Xóa kết quả nếu muốn bắt đầu mới.");
+      return;
+    }
+    setIsBusy(true); setIsFetchingContext(true); setContextIssue(null); setNotice("");
     try {
       const created = await client.create(source.trim());
+      jobRevisionRef.current += 1;
+      setJob(null); setSelectedReviews(new Set()); setSelectedProducts(new Set()); setProducts([]); setNextCursor(undefined); setProductQuery(""); setReviewFilter("all");
       setJobId(created.jobId);
-      setNotice("Đã yêu cầu lấy ngữ cảnh sản phẩm. Tiến độ sẽ tự cập nhật.");
-    } catch {
-      setError("Không lấy được ngữ cảnh sản phẩm. Kiểm tra URL/ASIN và kết nối coordinator.");
-    } finally { setIsBusy(false); }
+    } catch (cause) {
+      setContextIssue({ jobId: null, source: source.trim(), message: isReviewJobConflictError(cause)
+        ? "Đang có tác vụ chưa kết thúc trên server. Theo dõi tác vụ hiện tại và kiểm tra agent đã tiếp tục nhận việc; không cần gửi yêu cầu liên tục."
+        : "Không tạo được lượt lấy ngữ cảnh mới. Kiểm tra URL/ASIN và kết nối; kết quả trước đó vẫn được giữ nguyên." });
+    } finally { setIsBusy(false); setIsFetchingContext(false); }
   }
 
   async function handleProductSearch(cursor?: string): Promise<void> {
@@ -290,6 +314,7 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
       jobRevisionRef.current += 1;
       if (!source.trim()) setSource(job?.sourceUrl || job?.asin || "");
       setJobId(""); setJob(null); setSelectedReviews(new Set());
+      setContextIssue(null);
       setProducts([]); setSelectedProducts(new Set()); setNextCursor(undefined);
       setProductQuery(""); setReviewFilter("all");
       setNotice("Đã xóa ngữ cảnh và toàn bộ review mẫu. Bạn có thể lấy ngữ cảnh và tạo lại.");
@@ -322,6 +347,7 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
 
   async function handleExport(kind: "real" | "ai" | "preview"): Promise<void> {
     if (!job) return;
+    if (!canExport) { setError("Chọn ít nhất một sản phẩm Shopify và một review trước khi xuất file."); return; }
     setIsBusy(true); setError("");
     try {
       const chosenProducts = products.filter((product) => selectedProducts.has(product.id));
@@ -350,49 +376,72 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
   return (
     <section className="space-y-6 text-slate-900 dark:text-slate-100">
       {!embedded ? <div><h1 className="text-2xl font-semibold">Amazon Reviews</h1><p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Lấy ngữ cảnh sản phẩm Amazon và tạo mẫu AI để kiểm tra trong file QA.</p></div> : null}
-      <form className="grid gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 md:grid-cols-[1fr_auto_auto]" onSubmit={(event) => { event.preventDefault(); void handleFetchContext(); }}>
-        <label className="grid gap-1 text-sm">URL Amazon hoặc ASIN<input className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" value={source} onChange={(event) => setSource(event.target.value)} required /></label>
-        <button className="self-end rounded bg-blue-600 px-4 py-2 font-medium disabled:opacity-50" type="submit" disabled={isBusy}>Lấy ngữ cảnh</button>
-        <button className="self-end rounded border border-rose-200 dark:border-rose-800 px-4 py-2 font-medium text-rose-700 dark:text-rose-300 disabled:opacity-50" type="button" disabled={isBusy || !jobId} onClick={() => void handleClearResults()} title="Xóa ngữ cảnh và toàn bộ review mẫu của lần đang mở">{isClearing ? "Đang xóa…" : "Xóa kết quả"}</button>
-      </form>
+      <section className={cardClass}>
+        <h2 className="font-semibold">1. Lấy thông tin sản phẩm</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400">Chỉ lấy dữ kiện sản phẩm để tạo mẫu AI, không thu thập đánh giá của khách hàng Amazon.</p>
+        <form className="grid items-end gap-3 md:grid-cols-[1fr_auto_auto]" onSubmit={(event) => { event.preventDefault(); void handleFetchContext(); }}>
+          <label className="grid gap-1.5 text-sm">URL Amazon hoặc ASIN<input className={fieldClass} value={source} onChange={(event) => setSource(event.target.value)} required /></label>
+          <button className={primaryButtonClass} type="submit" disabled={isBusy || isContextPending}>{isFetchingContext || isContextPending ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />Đang lấy ngữ cảnh…</> : "Lấy ngữ cảnh"}</button>
+          <button className="rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300" type="button" disabled={isBusy || !jobId} onClick={() => void handleClearResults()} title="Xóa ngữ cảnh và toàn bộ review mẫu của lần đang mở">{isClearing ? "Đang xóa…" : "Xóa kết quả"}</button>
+        </form>
+        {contextIssue ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{contextIssue.message}</p> : null}
+        {isContextPending && !job ? <p role="status" className="text-sm text-blue-700 dark:text-blue-300">Đang tải trạng thái tác vụ. Kết quả sẽ tự cập nhật.</p> : null}
+      </section>
       {error ? <p role="alert" className="rounded border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/60 p-3 text-rose-700 dark:text-rose-300">{error}</p> : null}
       {notice ? <p role="status" className="rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 p-3 text-blue-700 dark:text-blue-300">{notice}</p> : null}
-      {job ? <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-sm">
-        <p><strong>{job.asin}</strong> · {job.status} · {job.samples.length} mẫu QA</p>
-        <p className="mt-1 text-slate-600 dark:text-slate-400">{job.progress?.message || (hasAiContext ? "Đã lấy ngữ cảnh sản phẩm." : TERMINAL_STATUSES.has(job.status) ? "Chưa lấy được ngữ cảnh sản phẩm." : "Đang chờ agent lấy ngữ cảnh sản phẩm.")}</p>
-        {job.reviewData.stopReason === "captcha" || job.reviewData.stopReason === "signin" ? <p className="mt-2 text-amber-700 dark:text-amber-300">Mở browser của crawler agent để xử lý đăng nhập hoặc CAPTCHA, rồi chạy lại job.</p> : null}
-        {job.error ? <p className="mt-2 text-rose-700 dark:text-rose-300">Agent gặp lỗi khi lấy ngữ cảnh. Kiểm tra trạng thái agent rồi thử lại.</p> : null}
-        {hasAiContext ? <details className="mt-2 rounded border border-slate-300 dark:border-slate-700 p-2"><summary className="cursor-pointer">Ngữ cảnh sản phẩm dùng cho AI: {job.reviewData.context?.title || job.asin}</summary>
+      {job && contextPresentation ? <div className={`space-y-2 rounded-xl border p-4 text-sm ${contextPresentation.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200" : contextPresentation.tone === "progress" ? "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200" : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"}`}>
+        <div role="status" className="flex flex-wrap items-center gap-2 font-semibold">
+          {contextPresentation.tone === "progress" ? <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700 motion-reduce:animate-none" /> : <span aria-hidden="true">{hasAiContext ? "✓" : "!"}</span>}
+          {contextPresentation.title}<span className="rounded border border-current/20 px-2 py-0.5 font-mono text-xs">{job.asin}</span>
+        </div>
+        {hasAiContext ? <p className="font-medium">{job.reviewData.context?.title || job.asin}</p> : null}
+        <p>{contextPresentation.description}</p>
+        {hasAiContext ? <details className="pt-1"><summary className="cursor-pointer text-xs font-medium underline underline-offset-4">Xem dữ kiện đã lấy</summary>
           {job.reviewData.context?.description ? <p className="mt-2">Mô tả: {job.reviewData.context.description}</p> : null}
           {job.reviewData.context?.bullets?.length ? <p className="mt-2">Điểm nổi bật: {job.reviewData.context.bullets.join(" · ")}</p> : null}
           {Object.keys(job.reviewData.context?.details ?? {}).length ? <p className="mt-2">Chi tiết: {Object.entries(job.reviewData.context?.details ?? {}).map(([name, value]) => `${name}: ${value}`).join(" · ")}</p> : null}
-        </details> : <p className="mt-2 text-amber-700 dark:text-amber-300">Chưa lấy được ngữ cảnh sản phẩm đủ dùng cho AI. Hãy đợi agent hoàn tất hoặc lấy lại ngữ cảnh nếu có lỗi.</p>}
+        </details> : null}
       </div> : null}
       {job ? <div className="grid gap-4 lg:grid-cols-2">
-        <section className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <h2 className="font-semibold">Review ({visibleReviews.length}/{reviews.length})</h2>
-          <div className="flex flex-wrap gap-3 text-sm">{hasAmazonReviews ? <label>Bộ lọc <select className="ml-1 rounded bg-white dark:bg-slate-900 p-1" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value as "all" | "real" | "ai")}><option value="all">Tất cả</option><option value="real">Amazon thật</option><option value="ai">AI QA</option></select></label> : null}<label>Rating từ <input className="ml-1 w-14 rounded bg-white dark:bg-slate-900 p-1" type="number" min="1" max="5" value={minRating} onChange={(event) => setMinRating(Number(event.target.value))} /></label></div>
-          <p className="text-xs text-slate-600 dark:text-slate-400">Rating từ là bộ lọc hiển thị. Mẫu AI mới được phân bổ từ 3 đến 5 sao.</p>
-          <button type="button" className="text-sm text-blue-700 dark:text-blue-300" onClick={() => setSelectedReviews(new Set(visibleReviews.map((review) => review.reviewId)))}>Chọn review đang hiển thị</button>
-          <div className="max-h-96 space-y-2 overflow-auto">{visibleReviews.length ? visibleReviews.map((review) => <label key={review.reviewId} className="flex gap-2 rounded border border-slate-200 dark:border-slate-700 p-2 text-sm"><input type="checkbox" checked={selectedReviews.has(review.reviewId)} onChange={() => toggleReview(review)} /><span><strong>{review.author || "Ẩn danh"}</strong> · {review.rating}★ · {review.synthetic ? "AI QA" : "Amazon"}<br />{review.body}</span></label>) : <p className="text-sm text-slate-600 dark:text-slate-400">Không có review phù hợp.</p>}</div>
-        </section>
-        <section aria-busy={productSearchStatus !== "idle"} className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <h2 className="font-semibold">Shopify product</h2>
-          {showStoreSelector ? <label className="grid gap-1 text-sm">Store<select className="rounded bg-white dark:bg-slate-900 p-2" value={storeId} onChange={(event) => handleStoreChange(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label> : null}
-          <label className="grid gap-1 text-sm">Tìm theo ASIN tag hoặc từ khóa<input className="rounded bg-white dark:bg-slate-900 p-2" value={productQuery} onChange={(event) => setProductQuery(event.target.value)} /></label>
+        <section aria-busy={productSearchStatus !== "idle"} className={cardClass}>
+          <h2 className="font-semibold">2. Chọn sản phẩm Shopify</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Chọn sản phẩm nhận dữ liệu trong file XLSX. Chưa ghi review lên Shopify ở bước này.</p>
+          {showStoreSelector ? <label className="grid gap-1 text-sm">Store<select className={fieldClass} value={storeId} onChange={(event) => handleStoreChange(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label> : null}
+          <label className="grid gap-1.5 text-sm">Tìm theo ASIN tag hoặc từ khóa<input className={fieldClass} value={productQuery} onChange={(event) => setProductQuery(event.target.value)} /></label>
           <button type="button" className="flex items-center gap-2 rounded bg-slate-100 dark:bg-slate-700 px-3 py-2 text-sm disabled:opacity-50" disabled={isBusy} onClick={() => void handleProductSearch()}>{productSearchStatus === "searching" ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />Đang tìm product…</> : "Tìm product"}</button>
           <div className="max-h-64 space-y-2 overflow-auto">{products.map((product) => <label key={product.id} className="flex gap-2 rounded border border-slate-200 dark:border-slate-700 p-2 text-sm"><input type="checkbox" checked={selectedProducts.has(product.id)} onChange={() => setSelectedProducts((current) => { const next = new Set(current); if (next.has(product.id)) next.delete(product.id); else next.add(product.id); return next; })} /><span>{product.title}<br /><small className="text-slate-600 dark:text-slate-400">{product.handle} · {product.status}</small></span></label>)}</div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{products.length ? `Đã chọn ${selectedProducts.size}/${products.length} sản phẩm.` : "Chưa có sản phẩm được chọn. Bấm Tìm product để tìm trong store hiện tại."}</p>
           {nextCursor ? <button type="button" className="text-sm text-blue-700 dark:text-blue-300 disabled:opacity-50" disabled={isBusy} onClick={() => void handleProductSearch(nextCursor)}>{productSearchStatus === "loading-more" ? "Đang tải thêm product…" : "Tải thêm product"}</button> : null}
         </section>
+        <section aria-busy={isGenerating} className={cardClass}>
+          <h2 className="font-semibold">3. Tạo review AI để kiểm tra</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Mẫu AI phục vụ QA, không phải đánh giá thật của khách hàng.</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grid gap-1.5 text-sm">Số mẫu AI<input className={`${fieldClass} max-w-24`} type="number" min="1" max="50" disabled={isGenerating} value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label>
+            <button type="button" className={primaryButtonClass} disabled={isBusy || !hasAiContext} onClick={() => void handleGenerateSamples()}>{isGenerating ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />Đang tạo review AI…</> : "Tạo review AI cho QA"}</button>
+          </div>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{!hasAiContext ? "Cần lấy ngữ cảnh thành công trước khi tạo mẫu." : reviews.length ? `Đã có ${reviews.length} review. Xem và chọn mẫu cần xuất ở bước 4.` : "Ngữ cảnh đã sẵn sàng. Bấm tạo mẫu để có nội dung xem và xuất file."}</p>
+        </section>
       </div> : null}
-      {job ? <section aria-busy={isGenerating} className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-        <h2 className="font-semibold">Tạo mẫu AI và xuất XLSX</h2>
-        <div className="flex flex-wrap items-end gap-3"><label className="grid gap-1 text-sm">Số mẫu AI<input className="w-28 rounded bg-white dark:bg-slate-900 p-2" type="number" min="1" max="50" disabled={isGenerating} value={sampleCount} onChange={(event) => setSampleCount(Number(event.target.value))} /></label><button type="button" className="flex items-center gap-2 rounded bg-blue-50 dark:bg-blue-950/60 px-4 py-2 disabled:opacity-50" disabled={isBusy || !hasAiContext} onClick={() => void handleGenerateSamples()}>{isGenerating ? <><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white motion-reduce:animate-none" />Đang tạo review AI…</> : "Tạo review AI cho QA"}</button></div>
+      {job ? <section className={cardClass}>
+        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">4. Kiểm tra và xuất XLSX</h2><p className="text-sm text-slate-500 dark:text-slate-400">{selectedReviews.size} review đã chọn · {selectedProducts.size} sản phẩm</p></div>
+        {reviews.length ? <>
+          <div className="flex flex-wrap items-end gap-3 text-sm">
+            {hasAmazonReviews ? <label>Bộ lọc <select className={fieldClass} value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value as "all" | "real" | "ai")}><option value="all">Tất cả</option><option value="real">Amazon thật</option><option value="ai">AI QA</option></select></label> : null}
+            <label>Hiển thị từ <input className={`${fieldClass} max-w-20`} aria-label="Rating tối thiểu" type="number" min="1" max="5" value={minRating} onChange={(event) => setMinRating(Number(event.target.value))} /></label>
+            <button type="button" className="py-2 text-blue-700 dark:text-blue-300" onClick={() => setSelectedReviews(new Set(visibleReviews.map((review) => review.reviewId)))}>Chọn review đang hiển thị ({visibleReviews.length})</button>
+          </div>
+          <div className="grid max-h-80 gap-2 overflow-auto md:grid-cols-2">{visibleReviews.map((review) => <label key={review.reviewId} className="flex gap-2 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700"><input type="checkbox" checked={selectedReviews.has(review.reviewId)} onChange={() => toggleReview(review)} /><span><strong>{review.author || "Ẩn danh"}</strong> · {review.rating}★ · {review.synthetic ? "AI QA" : "Amazon"}<br />{review.body}</span></label>)}</div>
+          {!visibleReviews.length ? <p className="text-sm text-slate-500">Không có review phù hợp với bộ lọc. Giảm mức rating để xem các mẫu khác.</p> : null}
+        </> : <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">Chưa tạo review AI. Đây không phải lỗi lấy ngữ cảnh — hãy tạo mẫu ở bước 3.</p>}
+        <details className="rounded-lg border border-slate-200 p-3 dark:border-slate-700"><summary className="cursor-pointer text-sm font-medium">Tùy chọn ảnh và phân bổ review</summary><div className="mt-3 space-y-3">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={randomizeReviewCount} onChange={(event) => setRandomizeReviewCount(event.target.checked)} />Số review ngẫu nhiên theo product</label>
-        {randomizeReviewCount ? <label className="grid max-w-48 gap-1 text-sm">Tối thiểu mỗi product<input className="rounded bg-white dark:bg-slate-900 p-2" type="number" min="1" value={minReviewsPerProduct} onChange={(event) => setMinReviewsPerProduct(Number(event.target.value))} /></label> : null}
+        {randomizeReviewCount ? <label className="grid max-w-48 gap-1 text-sm">Tối thiểu mỗi product<input className={fieldClass} type="number" min="1" value={minReviewsPerProduct} onChange={(event) => setMinReviewsPerProduct(Number(event.target.value))} /></label> : null}
         {generatedPictureUrls.length > 0 ? <fieldset className="space-y-2 rounded border border-slate-300 dark:border-slate-700 p-3 text-sm"><legend className="px-1 font-medium">Ảnh review đã upload lên Shopify</legend>{generatedPictureUrls.map((url) => <label key={url} className="flex items-start gap-2"><input type="checkbox" checked={selectedGeneratedUrls.has(url)} onChange={() => setSelectedGeneratedUrls((current) => { const next = new Set(current); if (next.has(url)) next.delete(url); else next.add(url); return next; })} /><span className="min-w-0 break-all text-blue-700 dark:text-blue-300">{url}</span></label>)}</fieldset> : null}
-        <label className="grid gap-1 text-sm">Link ảnh bổ sung thủ công (mỗi link một dòng)<textarea className="min-h-20 rounded bg-white dark:bg-slate-900 p-2" value={extraPictureText} onChange={(event) => setExtraPictureText(event.target.value)} /></label>
-        <div className="flex flex-wrap gap-2">{hasAmazonReviews ? <button type="button" className="rounded bg-emerald-50 dark:bg-emerald-950/60 px-3 py-2 disabled:opacity-50" disabled={isBusy || !reviews.some((review) => selectedReviews.has(review.reviewId) && !review.synthetic)} onClick={() => void handleExport("real")}>XLSX review thật · Judge.me</button> : null}<button type="button" className="rounded bg-blue-50 dark:bg-blue-950/60 px-3 py-2 disabled:opacity-50" disabled={isBusy || !reviews.some((review) => selectedReviews.has(review.reviewId) && review.synthetic)} onClick={() => void handleExport("ai")}>XLSX AI · QA</button><button type="button" className="rounded bg-slate-100 dark:bg-slate-700 px-3 py-2 disabled:opacity-50" disabled={isBusy || selectedReviews.size === 0} onClick={() => void handleExport("preview")}>XLSX kết hợp · QA preview</button></div>
+        <label className="grid gap-1 text-sm">Link ảnh bổ sung thủ công (mỗi link một dòng)<textarea className={`${fieldClass} min-h-20`} value={extraPictureText} onChange={(event) => setExtraPictureText(event.target.value)} /></label>
+        </div></details>
+        <div className="flex flex-wrap gap-2">{hasAmazonReviews ? <button type="button" className="rounded bg-emerald-50 dark:bg-emerald-950/60 px-3 py-2 disabled:opacity-50" disabled={isBusy || !canExport || !reviews.some((review) => selectedReviews.has(review.reviewId) && !review.synthetic)} onClick={() => void handleExport("real")}>XLSX review thật · Judge.me</button> : null}<button type="button" className={primaryButtonClass} disabled={isBusy || !canExport || !reviews.some((review) => selectedReviews.has(review.reviewId) && review.synthetic)} onClick={() => void handleExport("ai")}>XLSX AI · QA</button>{hasAmazonReviews ? <button type="button" className="rounded bg-slate-100 dark:bg-slate-700 px-3 py-2 disabled:opacity-50" disabled={isBusy || !canExport} onClick={() => void handleExport("preview")}>XLSX kết hợp · QA preview</button> : null}</div>
+        {!canExport ? <p className="text-xs text-slate-500 dark:text-slate-400">Để xuất file, chọn ít nhất một sản phẩm Shopify ở bước 2 và một review ở đây.</p> : null}
       </section> : null}
     </section>
   );

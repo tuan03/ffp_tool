@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createReviewClient, isMissingReviewJobError } from "../index";
+import { isReviewJobConflictError } from "../service";
+
+test("review client distinguishes an active job conflict from connection failures", async () => {
+  for (const status of [409, 503]) {
+    const client = createReviewClient({
+      coordinatorUrl: "http://127.0.0.1:8766",
+      fetchImplementation: async () => Response.json({ detail: "Request rejected" }, { status }),
+    });
+    const error = await client.create("B012345678").catch((cause: unknown) => cause);
+    assert.equal(isReviewJobConflictError(error), status === 409);
+  }
+  assert.equal(isReviewJobConflictError(new Error("Network unavailable")), false);
+});
 
 test("review client requests only product context from the coordinator", async () => {
   const client = createReviewClient({
