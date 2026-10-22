@@ -158,9 +158,10 @@ function bindImageReferencePrompt(job) {
     imageNumber === '1' ? 'SCENE_BACKGROUND' : 'REPLACEMENT_PRODUCT'
   );
   return `REFERENCE FILE IDENTITIES FOR THIS MESSAGE (use filenames, regardless of the order of attachment previews):
-SCENE_BACKGROUND = attachment "${templateFileName}". Use only its background, environment, framing and lighting. Remove its original product.
-REPLACEMENT_PRODUCT = attachment "${productFileName}". Use it only as the source of the replacement product and design; follow the product-specific placement instructions below. Discard its background.
+SCENE_BACKGROUND = attachment "${templateFileName}" (step 2 template). When visible role headers are present, match this file to the SCENE_BACKGROUND header. Use only the photograph below it as background, environment, framing and lighting. Remove its original product.
+REPLACEMENT_PRODUCT = attachment "${productFileName}" (step 3 selected product). When visible role headers are present, match this file to the REPLACEMENT_PRODUCT header. Use only its product and design; follow the product-specific placement instructions below. Discard its background.
 Edit SCENE_BACKGROUND by inserting REPLACEMENT_PRODUCT. Never place the template's product into the product photo's background. Use only these two files, ignoring previous attachments and generated images.
+Never render reference headers, role labels, reference IDs or padding in the finished image. Preserve the scene photograph's framing, not the padded reference canvas.
 
 ${prompt}`;
 }

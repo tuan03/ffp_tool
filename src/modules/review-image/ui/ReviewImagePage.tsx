@@ -705,7 +705,7 @@ export function ReviewImagePage({
                     ) : null}
                   </h2>
                   <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                    Chọn template có sẵn hoặc tải ảnh nền mới. Tất cả template được xoay ngẫu nhiên khi tạo ảnh.
+                    Chỉ lấy bối cảnh của template; sản phẩm có sẵn trong ảnh sẽ được thay bằng sản phẩm ở mục 3. Template được xoay ngẫu nhiên khi tạo ảnh.
                     <span className="sr-only"> Tất cả template trong kho sẽ được xoay vòng ngẫu nhiên khi tạo lô ảnh.</span>
                   </p>
                 </div>
@@ -954,7 +954,7 @@ export function ReviewImagePage({
                   <span className="sr-only">3. </span>Thêm ảnh sản phẩm cần tạo review
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                  Mỗi ảnh đầu vào sẽ tạo một ảnh review riêng. Bạn có thể chọn nhiều file cùng lúc.
+                  Lấy đúng sản phẩm trong ảnh này, bỏ nền gốc và đặt vào bối cảnh ở mục 2. Mỗi ảnh đầu vào sẽ tạo một ảnh review riêng.
                 </p>
               </div>
             </div>

@@ -81,6 +81,10 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.match(boundPrompt, /Insert the rug from REPLACEMENT_PRODUCT/);
   assert.doesNotMatch(boundPrompt, /\bImage\s*[12]\b/i);
   assert.match(boundPrompt, /regardless of the order/i);
+  assert.match(boundPrompt, /step 2 template/);
+  assert.match(boundPrompt, /step 3 selected product/);
+  assert.match(boundPrompt, /Never render reference headers/);
+  assert.match(boundPrompt, /not the padded reference canvas/);
   // ChatGPT may display the most recently uploaded attachment first.
   acceptedNames = [];
   const originalDispatchEvent = input.dispatchEvent;

@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
@@ -48,6 +48,18 @@ class ReviewImageServiceTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("Review image job did not finish")
 
+    def assert_labeled_reference(self, part, original_bytes, role):
+        with Image.open(io.BytesIO(base64.b64decode(part["data"]))) as reference:
+            with Image.open(io.BytesIO(original_bytes)) as original:
+                original = ImageOps.exif_transpose(original)
+                self.assertGreater(reference.height, original.height)
+                left = (reference.width - original.width) // 2
+                content = reference.crop((left, reference.height - original.height, left + original.width, reference.height))
+                self.assertEqual(content.convert("RGB").tobytes(), original.convert("RGB").tobytes())
+                header = reference.crop((0, 0, reference.width, reference.height - original.height))
+                self.assertGreater(len(header.getcolors(header.width * header.height)), 1, "header must contain visible text")
+                self.assertEqual(reference.info.get("reference_role"), role)
+
     def test_orders_template_then_product_and_gates_download_on_approval(self) -> None:
         created = self.service.submit(image_data_url(), "Replace old bag", "main")
         job_id = created["job_id"]
@@ -57,7 +69,7 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertIn("two newest image attachments", prompt)
         self.assertTrue(conversation_session_id.startswith("single-"))
         self.assertEqual([part["name"] for part in images], ["template", "product"])
-        self.assertEqual(base64.b64decode(images[0]["data"]), self.template_bytes)
+        self.assert_labeled_reference(images[0], self.template_bytes, "SCENE_BACKGROUND")
         with self.assertRaises(ValueError):
             self.service.image_path(job_id, approved_only=True)
         self.service.approve(job_id)
@@ -93,8 +105,51 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assertIn("Do not invent exact centimeter or inch measurements", prompt)
         self.assertIn("Keep the product geometry", prompt)
         self.assertEqual([part["name"] for part in images], ["template", "product"])
-        self.assertEqual(base64.b64decode(images[0]["data"]), self.template_bytes)
-        self.assertEqual(base64.b64decode(images[1]["data"]), base64.b64decode(product_data_url.split(",", 1)[1]))
+        self.assert_labeled_reference(images[0], self.template_bytes, "SCENE_BACKGROUND")
+        self.assert_labeled_reference(images[1], base64.b64decode(product_data_url.split(",", 1)[1]), "REPLACEMENT_PRODUCT")
+
+    def test_every_store_gets_visible_roles_without_modifying_saved_templates(self) -> None:
+        for store_id in ("capozen", "jeminise", "future-store"):
+            with self.subTest(store_id=store_id):
+                template_name = self.service.save_template("scene.png", image_data_url("red"), store_id=store_id)
+                created = self.service.submit(image_data_url("green"), "Edit Image 1 using Image 2", "single", store_id=store_id, template_name=template_name)
+                self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
+                prompt, images, _ = self.calls[-1]
+                self.assertIn("visible header", prompt)
+                self.assertIn("Never include the reference headers", prompt)
+                self.assertIn("background from SCENE_BACKGROUND + product from REPLACEMENT_PRODUCT", prompt)
+                self.assertNotRegex(prompt, r"(?i)\bImage\s*[12]\b")
+                self.assert_labeled_reference(images[0], self.template_bytes, "SCENE_BACKGROUND")
+                self.assert_labeled_reference(images[1], base64.b64decode(image_data_url("green").split(",", 1)[1]), "REPLACEMENT_PRODUCT")
+                self.assertEqual(self.service.template_path(template_name, store_id).read_bytes(), self.template_bytes)
+
+    def test_reference_respects_phone_photo_orientation(self) -> None:
+        stream = io.BytesIO()
+        source = Image.new("RGB", (80, 40), "green")
+        source.paste("red", (0, 0, 40, 40))
+        exif = source.getexif()
+        exif[274] = 6
+        source.save(stream, format="JPEG", exif=exif)
+        product_bytes = stream.getvalue()
+        created = self.service.submit("data:image/jpeg;base64," + base64.b64encode(product_bytes).decode(), "Prompt", "single")
+        self.assertEqual(self.wait_for_job(created["job_id"])["status"], "completed")
+        self.assert_labeled_reference(self.calls[-1][1][1], product_bytes, "REPLACEMENT_PRODUCT")
+
+    def test_large_reference_keeps_whole_photograph_within_bridge_limits(self) -> None:
+        stream = io.BytesIO()
+        source = Image.new("RGB", (2048, 4096), "green")
+        source.paste("red", (0, 0, 2048, 128))
+        source.paste("blue", (0, 3968, 2048, 4096))
+        source.save(stream, format="PNG")
+        created = self.service.submit("data:image/png;base64," + base64.b64encode(stream.getvalue()).decode(), "Prompt", "single")
+        self.assertEqual(self.wait_for_service_job(self.service, created["job_id"])["status"], "completed")
+        encoded = base64.b64decode(self.calls[-1][1][1]["data"])
+        self.assertLessEqual(len(encoded), 5 * 1024 * 1024)
+        with Image.open(io.BytesIO(encoded)) as reference:
+            self.assertLessEqual(max(reference.size), 4096)
+            self.assertEqual(reference.getpixel((reference.width // 2, reference.height - 1)), (0, 0, 255))
+            # Both ends of the original photograph survive; it is not cropped to fit the label.
+            self.assertIn((255, 0, 0), [reference.getpixel((reference.width // 2, y)) for y in range(reference.height)])
 
     def test_forwards_a_shared_conversation_session_for_batch_jobs(self) -> None:
         first = self.service.submit(image_data_url(), "Prompt", "main", conversation_session_id="preaureum-batch-1")

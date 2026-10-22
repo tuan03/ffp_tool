@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFont, ImageOps, PngImagePlugin, UnidentifiedImageError
 
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -23,6 +23,19 @@ CONVERSATION_SESSION_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 CONVERSATION_ISOLATION_INSTRUCTION = (
     "Use only the two newest image attachments in this message. Ignore all templates, products and generated images "
     "from earlier messages in this conversation."
+)
+REFERENCE_ROLE_INSTRUCTION = (
+    "IMAGE ROLE CONTRACT (takes priority over conflicting wording below): Identify each current attachment by its "
+    "visible header, not its preview position or the order in which it appears. "
+    "SCENE_BACKGROUND is the template from step 2: use ONLY the photograph below its header as the background. "
+    "Keep that photograph's framing, room, floor, furniture and lighting; remove its original product. "
+    "REPLACEMENT_PRODUCT is the selected product from step 3: extract ONLY that product, preserving its identity, "
+    "artwork, colors and proportions. Discard its room, floor and all other background elements. "
+    "Final composition = background from SCENE_BACKGROUND + product from REPLACEMENT_PRODUCT. Never reverse these roles. "
+    "The colored headers and any surrounding padding are reference labels, not part of either photograph. "
+    "Never include the reference headers, role names, reference IDs, borders or padding in the output. "
+    "Use the scene photograph's original aspect ratio, excluding the header and padding. "
+    "Before returning the image, verify both the background source and the product source independently."
 )
 RUG_REFERENCE_INSTRUCTION = (
     "Identify the two current attachments by filename, regardless of their display order: "
@@ -50,6 +63,45 @@ RUG_REFERENCE_INSTRUCTION = (
 
 class ReviewImageBusyError(Exception):
     """The bounded bridge queue has no capacity for another image job."""
+
+
+def _labeled_reference(image_bytes: bytes, name: str, reference_id: str) -> dict[str, str]:
+    """Label a transport-only copy: filenames alone may not identify an image to the model."""
+    role, instruction, color = {
+        "template": ("SCENE_BACKGROUND", "KEEP BACKGROUND - REMOVE OLD PRODUCT", "#153e75"),
+        "product": ("REPLACEMENT_PRODUCT", "KEEP PRODUCT - IGNORE ITS BACKGROUND", "#166534"),
+    }[name]
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        photograph = ImageOps.exif_transpose(source).convert("RGBA")
+    canvas_width = max(640, photograph.width)
+    font_size = max(24, canvas_width // 28)
+    header_height = max(112, font_size * 5)
+    # Keep the entire photograph and its aspect ratio within attachment limits.
+    photograph.thumbnail((4096, 4096 - header_height), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (canvas_width, photograph.height + header_height), "white")
+    canvas.paste(photograph, ((canvas.width - photograph.width) // 2, header_height), photograph)
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 0, canvas.width, header_height - 1), fill=color)
+    font = ImageFont.load_default(size=font_size)
+    draw.text((font_size, font_size // 2), role, font=font, fill="white")
+    draw.text((font_size, font_size * 2), instruction, font=font, fill="white")
+    draw.text((font_size, font_size * 7 // 2), f"REFERENCE {reference_id}", font=ImageFont.load_default(size=font_size * 3 // 4), fill="white")
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("reference_role", role)
+    stream = io.BytesIO()
+    canvas.save(stream, format="PNG", pnginfo=metadata)
+    mime_type = "image/png"
+    # Large photographic PNGs can exceed the legacy bridge's 5 MB attachment limit.
+    if stream.tell() > MAX_IMAGE_BYTES:
+        mime_type = "image/jpeg"
+        for quality in (90, 80, 70):
+            stream = io.BytesIO()
+            canvas.save(stream, format="JPEG", quality=quality)
+            if stream.tell() <= MAX_IMAGE_BYTES:
+                break
+    if stream.tell() > MAX_IMAGE_BYTES:
+        raise ValueError("Ảnh tham chiếu quá lớn sau khi gắn nhãn; hãy giảm kích thước ảnh rồi tạo lại.")
+    return {"name": name, "mime_type": mime_type, "data": base64.b64encode(stream.getvalue()).decode()}
 
 
 def _validate_image_bytes(image_bytes: bytes, declared_mime: str) -> None:
@@ -233,7 +285,7 @@ class ReviewImageService:
         exclude_template: str | None = None,
         conversation_session_id: str | None = None,
     ) -> dict:
-        product_mime, product_bytes = decode_image_data_url(product_data_url)
+        _, product_bytes = decode_image_data_url(product_data_url)
         prompt = prompt.strip()
         if not prompt or len(prompt) > 10_000:
             raise ValueError("Prompt phải có từ 1 đến 10.000 ký tự.")
@@ -249,12 +301,13 @@ class ReviewImageService:
         if clean_store_id == "capozen":
             # Bind older UI drafts to filenames instead of ambiguous attachment positions.
             prompt = RUG_REFERENCE_INSTRUCTION + "\n\n" + prompt
-            prompt = re.sub(
-                r"\bImage\s*([12])\b",
-                lambda match: "SCENE_BACKGROUND" if match.group(1) == "1" else "REPLACEMENT_PRODUCT",
-                prompt,
-                flags=re.IGNORECASE,
-            )
+        prompt = REFERENCE_ROLE_INSTRUCTION + "\n\n" + prompt
+        prompt = re.sub(
+            r"\bImage\s*([12])\b",
+            lambda match: "SCENE_BACKGROUND" if match.group(1) == "1" else "REPLACEMENT_PRODUCT",
+            prompt,
+            flags=re.IGNORECASE,
+        )
         if len(prompt) > 10_200:
             raise ValueError("Prompt quá dài sau khi thêm hướng dẫn chọn sản phẩm; hãy rút ngắn prompt.")
         templates = self._templates(clean_store_id)
@@ -294,7 +347,7 @@ class ReviewImageService:
                 raise
         worker = threading.Thread(
             target=self._run,
-            args=(job_id, prompt, template, product_mime, product_bytes, clean_conversation_session_id),
+            args=(job_id, prompt, template, product_bytes, clean_conversation_session_id),
             daemon=True,
         )
         try:
@@ -309,17 +362,16 @@ class ReviewImageService:
             raise
         return self.snapshot(job_id)
 
-    def _run(self, job_id: str, prompt: str, template: Path, product_mime: str, product_bytes: bytes, conversation_session_id: str) -> None:
+    def _run(self, job_id: str, prompt: str, template: Path, product_bytes: bytes, conversation_session_id: str) -> None:
         try:
             with self.lock:
                 if self.jobs[job_id]["status"] == "cancelled":
                     return
                 self.jobs[job_id]["status"] = "running"
                 self._persist(job_id)
-            template_mime = IMAGE_FORMATS[{".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}[template.suffix.lower()]][0]
             images = [
-                {"name": "template", "mime_type": template_mime, "data": base64.b64encode(template.read_bytes()).decode()},
-                {"name": "product", "mime_type": product_mime, "data": base64.b64encode(product_bytes).decode()},
+                _labeled_reference(template.read_bytes(), "template", job_id[:12]),
+                _labeled_reference(product_bytes, "product", job_id[:12]),
             ]
             response = self.bridge_call(prompt, images, conversation_session_id)
             result_mime = response.get("mime_type", "")
