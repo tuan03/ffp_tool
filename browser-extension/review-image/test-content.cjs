@@ -134,6 +134,7 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
     { name: 'template', mime_type: 'image/png', data: 'YQ==' },
     { name: 'product', mime_type: 'image/png', data: 'Yg==' }
   ], composer, 'first-job');
+  acceptedNames = []; // Sending the previous message clears its composer attachments.
   await context.attachImageReferences([
     { name: 'template', mime_type: 'image/png', data: 'YQ==' },
     { name: 'product', mime_type: 'image/png', data: 'Yg==' }
@@ -144,6 +145,37 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
     'consecutive jobs must not reuse an attachment filename'
   );
   assert.equal(unclearedUploadCount, 0, 'file input must be cleared before every upload');
+
+  const uploadCountBeforeStale = uploads.length;
+  await assert.rejects(() => context.attachImageReferences(imageJob.images, composer, 'stale-job'), /attachment|đính kèm/i);
+  assert.equal(uploads.length, uploadCountBeforeStale, 'do not add files to a nonempty composer');
+  acceptedNames = [];
+  const originalWaitForAttachment = context.waitForImageAttachment;
+  const uploadCountBeforeTimeout = uploads.length;
+  context.waitForImageAttachment = async () => { throw new Error('confirmation timed out'); };
+  await assert.rejects(() => context.attachImageReferences(imageJob.images, composer, 'timeout-job'), /timed out/);
+  assert.equal(uploads.length, uploadCountBeforeTimeout + 1, 'ambiguous upload must never be retried');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(acceptedNames.length, 1, 'late confirmation must not create a second copy');
+  context.waitForImageAttachment = originalWaitForAttachment;
+  acceptedNames = [];
+  const originalComposerQueryAll = composer.querySelectorAll;
+  const attachmentPreview = { tagName: 'IMG', src: 'blob:preview', contains() { return false; } };
+  const previewCard = { tagName: 'DIV', contains(node) { return node === attachmentPreview; } };
+  composer.querySelectorAll = () => [previewCard, attachmentPreview];
+  assert.equal(context.captureAttachmentState(composer).markerCount, 1, 'nested image and attachment card count as one file');
+  composer.querySelectorAll = originalComposerQueryAll;
+  input.dispatchEvent = function(event) {
+    if (event.type === 'change') {
+      uploads.push([...this.files]);
+      acceptedNames.push(this.files[0].name, this.files[0].name);
+    }
+  };
+  const uploadCountBeforeDuplicate = uploads.length;
+  await assert.rejects(() => context.attachImageReferences(imageJob.images, composer, 'duplicate-preview'), /đính kèm thừa/);
+  assert.equal(uploads.length, uploadCountBeforeDuplicate + 1, 'stop before uploading the product if the template is duplicated');
+  input.dispatchEvent = originalDispatchEvent;
+  acceptedNames = [];
   const generated = new FakeElement();
   generated.complete = true;
   generated.naturalWidth = 1024;
@@ -280,6 +312,7 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   context.attachImageReferences = async (images, _composer, jobId) => {
     assert.equal(images, imageJob.images);
     assert.equal(jobId, imageJob.job_id);
+    acceptedNames = images.map((image, index) => context.getImageAttachmentFileName(image, index, jobId));
   };
   context.setPromptValue = (_input, prompt) => { sentPrompt = prompt; };
   context.waitForEnabledXPath = async () => ({ click() { promptWasSent = true; } });
@@ -294,5 +327,24 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   });
   assert.equal(promptWasSent, true);
   assert.equal(sentPrompt, boundPrompt, 'the submitted ChatGPT prompt must bind to the actual attachment filenames');
+  promptWasSent = false;
+  context.waitForEnabledXPath = async () => {
+    acceptedNames.push('unexpected-extra.png');
+    return { click() { promptWasSent = true; } };
+  };
+  await assert.rejects(() => context.executeJob({
+    ...imageJob, kind: 'image_edit', conversation_mode: 'session', conversation_session_id: 'extra-image',
+    xpaths: { prompt_input: '//input', send_button: '//send', assistant_messages: '//assistant' }
+  }), /attachment|đính kèm/i);
+  assert.equal(promptWasSent, false, 'never send a prompt after an extra attachment appears');
+  context.waitForEnabledXPath = async () => {
+    acceptedNames.pop();
+    return { click() { promptWasSent = true; } };
+  };
+  await assert.rejects(() => context.executeJob({
+    ...imageJob, kind: 'image_edit', conversation_mode: 'session', conversation_session_id: 'missing-image',
+    xpaths: { prompt_input: '//input', send_button: '//send', assistant_messages: '//assistant' }
+  }), /attachment|đính kèm/i);
+  assert.equal(promptWasSent, false, 'never send when one of the two references disappears');
   console.log('image attachment order passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

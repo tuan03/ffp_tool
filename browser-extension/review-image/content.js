@@ -105,6 +105,10 @@ async function executeJob(job) {
   await sleep(150);
 
   const sendButton = await waitForEnabledXPath(xpaths.send_button, 10_000, input.closest('form'));
+  if (job.kind === "image_edit") {
+    // Check again after waiting for Send: uploads or manual edits can change the composer.
+    assertAttachmentCount(resolveComposerRoot(input.closest('form'), xpaths.prompt_input), 2);
+  }
   sendButton.click();
 
   if (cancelledJobs.has(job.job_id)) throw new Error("ChatGPT job cancelled.");
@@ -170,49 +174,32 @@ async function attachImageReferences(images, composerRoot = document, jobId = ''
   if (images.length !== 2 || images[0]?.name !== "template" || images[1]?.name !== "product") {
     throw new Error("Image job requires the template first and the product second.");
   }
+  let verifiedComposer = composerRoot;
   for (const [imageIndex, image] of images.entries()) {
     const bytes = Uint8Array.from(atob(image.data), character => character.charCodeAt(0));
     const fileName = getImageAttachmentFileName(image, imageIndex, jobId);
-    let lastError = null;
-
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const activeComposer = resolveComposerRoot(composerRoot, promptInputXPath);
-      const input = await findAttachmentInput(activeComposer);
-      if (!input) throw new Error("ChatGPT image attachment input was not found. Reload the pinned tab.");
-      const composer = input.closest('form') || activeComposer;
-      const previousState = captureAttachmentState(composer);
-      const file = new File([bytes], fileName, { type: image.mime_type });
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      try {
-        input.value = '';
-      } catch {
-        // Some browser-managed file inputs reject direct value assignment.
-      }
-      input.files = transfer.files;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-
-      try {
-        await waitForImageAttachment({
-          composer,
-          filename: file.name,
-          previousState,
-          input,
-          promptInputXPath,
-          timeoutMs: 30_000
-        });
-        lastError = null;
-        break;
-      } catch (error) {
-        lastError = error;
-        if (/rejected|upload failed/i.test(error?.message || '')) throw error;
-        await sleep(500);
-      }
+    const activeComposer = resolveComposerRoot(composerRoot, promptInputXPath);
+    const input = await findAttachmentInput(activeComposer);
+    if (!input) throw new Error("ChatGPT image attachment input was not found. Reload the pinned tab.");
+    const composer = input.closest('form') || activeComposer;
+    verifiedComposer = composer;
+    assertAttachmentCount(composer, imageIndex);
+    const previousState = captureAttachmentState(composer);
+    const file = new File([bytes], fileName, { type: image.mime_type });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    try {
+      input.value = '';
+    } catch {
+      // Some browser-managed file inputs reject direct value assignment.
     }
-
-    if (lastError) throw lastError;
+    input.files = transfer.files;
+    // One dispatch only. Listening to both events can enqueue the same file twice.
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    // A timeout is ambiguous: ChatGPT may accept the file later. Never upload it again.
+    await waitForImageAttachment({ composer, filename: file.name, previousState, input, promptInputXPath, timeoutMs: 60_000 });
   }
+  assertAttachmentCount(resolveComposerRoot(verifiedComposer, promptInputXPath), 2);
 }
 
 async function findAttachmentInput(composerRoot) {
@@ -247,14 +234,17 @@ async function findAttachmentInput(composerRoot) {
 
 function resolveComposerRoot(preferredRoot, promptInputXPath) {
   const promptInput = findPromptInput(promptInputXPath);
-  const activeComposer = promptInput?.closest('form');
+  const activeComposer = promptInput?.closest?.('form, [data-testid="composer"], #composer-background');
   if (activeComposer && activeComposer.isConnected !== false) return activeComposer;
   if (preferredRoot && preferredRoot.isConnected !== false) return preferredRoot;
   return document.querySelector('form') || document.body || document;
 }
 
 function captureAttachmentState(composer) {
-  const markers = [...composer.querySelectorAll('[data-testid*="attachment"], [data-testid*="upload"], img')];
+  const candidates = [...composer.querySelectorAll('[data-testid*="attachment"], [data-testid*="upload"], [data-testid*="file-thumbnail"], img')]
+    .filter(node => !['BUTTON', 'INPUT'].includes(node.tagName));
+  // A preview and its wrapping attachment card represent ONE file, not two.
+  const markers = candidates.filter(node => !candidates.some(other => other !== node && node.contains?.(other)));
   return {
     markerCount: markers.length,
     imageSources: new Set(
@@ -264,6 +254,19 @@ function captureAttachmentState(composer) {
         .filter(Boolean)
     )
   };
+}
+
+function assertAttachmentCount(composer, expectedCount) {
+  if (!composer || composer === document || composer === document.body || composer.isConnected === false) {
+    throw new Error("Không xác định được ô chat để kiểm tra ảnh đính kèm. Reload tab ChatGPT rồi thử lại.");
+  }
+  if (/upload failed|failed to upload|could not upload|không thể tải|tải lên thất bại/i.test(composer.textContent || '')) {
+    throw new Error("ChatGPT upload failed. Kiểm tra ảnh đính kèm trước khi thử lại.");
+  }
+  const count = captureAttachmentState(composer).markerCount;
+  if (count !== expectedCount || composer.querySelector('[role="progressbar"], [aria-busy="true"]')) {
+    throw new Error(`Ảnh đính kèm chưa đúng: cần ${expectedCount}, thấy ${count}. Không gửi prompt. Xóa ảnh còn sót trong ô chat hoặc mở chat mới rồi thử lại.`);
+  }
 }
 
 async function waitForImageAttachment({ composer, filename, previousState, input, promptInputXPath, timeoutMs }) {
@@ -287,14 +290,17 @@ async function waitForImageAttachment({ composer, filename, previousState, input
     const hasNewImage = [...latestState.imageSources].some(source => !previousState.imageSources.has(source));
     const hasPreview = latestState.markerCount > previousState.markerCount || hasNewImage;
     isUploading = Boolean(currentComposer.querySelector('[role="progressbar"], [aria-busy="true"]'));
-    if ((evidence.includes(filename) || hasPreview) && !isUploading) return;
+    if (latestState.markerCount > previousState.markerCount + 1) {
+      throw new Error("Có ảnh đính kèm thừa trong ô chat. Không gửi prompt; hãy kiểm tra rồi tạo lại.");
+    }
+    if (latestState.markerCount === previousState.markerCount + 1 && (evidence.includes(filename) || hasPreview) && !isUploading) return;
     if (input?.isConnected === false && Date.now() - started >= 1_000) {
       throw new Error(`ChatGPT replaced the composer while attaching ${filename}.`);
     }
     await sleep(250);
   }
   throw new Error(
-    `ChatGPT did not confirm attachment ${filename} after 2 attempts ` +
+    `ChatGPT did not confirm attachment ${filename}. Upload was not retried; inspect the composer before trying again ` +
     `(composerConnected=${currentComposer?.isConnected !== false}, ` +
     `inputConnected=${input?.isConnected !== false}, ` +
     `markersBefore=${previousState.markerCount}, markersAfter=${latestState.markerCount}, ` +

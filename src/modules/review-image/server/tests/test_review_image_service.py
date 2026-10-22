@@ -109,7 +109,7 @@ class ReviewImageServiceTests(unittest.TestCase):
         self.assert_labeled_reference(images[1], base64.b64decode(product_data_url.split(",", 1)[1]), "REPLACEMENT_PRODUCT")
 
     def test_every_store_gets_visible_roles_without_modifying_saved_templates(self) -> None:
-        for store_id in ("capozen", "jeminise", "future-store"):
+        for store_id in ("capozen", "preaureum", "jeminise", "future-store"):
             with self.subTest(store_id=store_id):
                 template_name = self.service.save_template("scene.png", image_data_url("red"), store_id=store_id)
                 created = self.service.submit(image_data_url("green"), "Edit Image 1 using Image 2", "single", store_id=store_id, template_name=template_name)
