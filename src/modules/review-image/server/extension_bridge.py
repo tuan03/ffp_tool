@@ -54,7 +54,13 @@ class ExtensionBridge:
                 if message.get("type") == "job_result":
                     pending["future"].set_result(message.get("image", {}))
                 elif message.get("type") == "job_error":
-                    pending["future"].set_exception(RuntimeError("Extension could not generate the image. Inspect the pinned ChatGPT tab."))
+                    detail = str(message.get("error") or "").strip()[:500]
+                    error_text = (
+                        f"Extension could not generate the image: {detail}"
+                        if detail
+                        else "Extension could not generate the image. Inspect the pinned ChatGPT tab."
+                    )
+                    pending["future"].set_exception(RuntimeError(error_text))
         except (WebSocketDisconnect, RuntimeError, ValueError, asyncio.TimeoutError):
             pass
         finally:

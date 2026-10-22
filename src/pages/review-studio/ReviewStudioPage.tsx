@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { PageHeader } from "../../shared/components/PageHeader";
 import { AmazonReviewsPage } from "../../modules/amazon-reviews";
 import type { ReviewClient, ReviewShopifyAccess } from "../../modules/amazon-reviews";
 import { ReviewImagePage } from "../../modules/review-image";
@@ -12,24 +11,106 @@ interface ReviewStudioPageProps {
   readonly imageClient: ReviewImageClient;
 }
 
+export interface ReviewStudioSessionState {
+  readonly activeWorkflow: "images" | "reviews";
+  readonly imageStoreId: string;
+  readonly reviewStoreId: string;
+  readonly pictureUrlsByStore: Readonly<Record<string, readonly string[]>>;
+}
+
+interface KeyValueStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const REVIEW_STUDIO_STORAGE_KEY = "ffp_review_studio_session_v1";
+
 const STORE_LABELS: Readonly<Record<string, string>> = {
-  preaureum: "Preaureum · Túi và ví",
-  capozen: "Capozen · Thảm",
-  jeminise: "Jeminise · Chăn ga",
+  preaureum: "Preaureum - Túi và ví",
+  capozen: "Capozen - Thảm",
+  jeminise: "Jeminise - Chăn ga",
 };
 
 function getStoreLabel(storeId: string): string {
   return STORE_LABELS[storeId] ?? storeId;
 }
 
+function getDefaultStorage(): KeyValueStorage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readReviewStudioSession(
+  storage: KeyValueStorage | null = getDefaultStorage(),
+): ReviewStudioSessionState {
+  const empty: ReviewStudioSessionState = {
+    activeWorkflow: "images",
+    imageStoreId: "",
+    reviewStoreId: "",
+    pictureUrlsByStore: {},
+  };
+  if (!storage) return empty;
+  try {
+    const raw = storage.getItem(REVIEW_STUDIO_STORAGE_KEY);
+    if (!raw) return empty;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+    const record = parsed as Record<string, unknown>;
+    const pictureUrlsByStore: Record<string, readonly string[]> = {};
+    if (record.pictureUrlsByStore && typeof record.pictureUrlsByStore === "object" && !Array.isArray(record.pictureUrlsByStore)) {
+      for (const [store, urls] of Object.entries(record.pictureUrlsByStore as Record<string, unknown>)) {
+        if (Array.isArray(urls)) {
+          pictureUrlsByStore[store] = urls.filter((item): item is string => typeof item === "string");
+        }
+      }
+    }
+    return {
+      activeWorkflow: record.activeWorkflow === "reviews" ? "reviews" : "images",
+      imageStoreId: typeof record.imageStoreId === "string" ? record.imageStoreId : "",
+      reviewStoreId: typeof record.reviewStoreId === "string" ? record.reviewStoreId : "",
+      pictureUrlsByStore,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export function writeReviewStudioSession(
+  state: ReviewStudioSessionState,
+  storage: KeyValueStorage | null = getDefaultStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(REVIEW_STUDIO_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore storage quota or private-browsing errors.
+  }
+}
+
 export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: ReviewStudioPageProps): React.JSX.Element {
+  const initialSession = useMemo(() => readReviewStudioSession(), []);
   const [stores, setStores] = useState<readonly string[]>([]);
-  const [imageStoreId, setImageStoreId] = useState("");
-  const [reviewStoreId, setReviewStoreId] = useState("");
-  const [pictureUrlsByStore, setPictureUrlsByStore] = useState<Readonly<Record<string, readonly string[]>>>({});
+  const [imageStoreId, setImageStoreId] = useState(initialSession.imageStoreId);
+  const [reviewStoreId, setReviewStoreId] = useState(initialSession.reviewStoreId);
+  const [pictureUrlsByStore, setPictureUrlsByStore] = useState<Readonly<Record<string, readonly string[]>>>(
+    initialSession.pictureUrlsByStore,
+  );
   const [storeError, setStoreError] = useState("");
   const [isImageBusy, setIsImageBusy] = useState(false);
-  const [activeWorkflow, setActiveWorkflow] = useState<"images" | "reviews">("images");
+  const [activeWorkflow, setActiveWorkflow] = useState<"images" | "reviews">(initialSession.activeWorkflow);
+
+  useEffect(() => {
+    writeReviewStudioSession({
+      activeWorkflow,
+      imageStoreId,
+      reviewStoreId,
+      pictureUrlsByStore,
+    });
+  }, [activeWorkflow, imageStoreId, pictureUrlsByStore, reviewStoreId]);
 
   useEffect(() => {
     let active = true;
@@ -44,6 +125,11 @@ export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: R
     return () => { active = false; };
   }, [reviewShopify]);
 
+  function handleImageStoreChange(nextStoreId: string): void {
+    setReviewStoreId((current) => (!current || current === imageStoreId ? nextStoreId : current));
+    setImageStoreId(nextStoreId);
+  }
+
   function handleShopifyFile(uploadStoreId: string, file: ReviewImageShopifyFile): void {
     setPictureUrlsByStore((current) => ({
       ...current,
@@ -51,27 +137,208 @@ export function ReviewStudioPage({ reviewClient, reviewShopify, imageClient }: R
     }));
   }
 
-  return <div className="w-full min-w-0 space-y-5">
-    <PageHeader title="Review Studio" description="Chuẩn bị ảnh review, lưu vào Shopify Files và tạo review để xuất XLSX." />
-    <nav aria-label="Quy trình Review Studio" className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700 pb-2">
-      {(["images", "reviews"] as const).map(workflow => <button key={workflow} type="button" aria-pressed={activeWorkflow === workflow} aria-controls={`review-studio-${workflow}`} onClick={() => setActiveWorkflow(workflow)} className={`min-h-9 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${activeWorkflow === workflow ? "bg-blue-600 text-white" : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700"}`}>{workflow === "images" ? `1. Chuẩn bị ảnh${isImageBusy ? " · Đang xử lý" : ""}` : "2. Tạo review & xuất XLSX"}</button>)}
-    </nav>
-    {/* Keep both workflows mounted: tab changes must not interrupt image or review jobs. */}
-    <section id="review-studio-images" aria-label="Chuẩn bị ảnh review" hidden={activeWorkflow !== "images"} className="space-y-5">
-    <header className="space-y-3">
-      <section className="max-w-xl rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-        <label className="block text-sm font-semibold text-blue-700 dark:text-blue-300">1. Chọn store và loại sản phẩm<select className="mt-2 w-full rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800 disabled:opacity-50" disabled={isImageBusy || stores.length === 0} value={imageStoreId} onChange={(event) => setImageStoreId(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{getStoreLabel(store)}</option>)}</select></label>
-        <p className="mt-2 text-xs leading-5 text-blue-700 dark:text-blue-300">Chọn đúng store để hệ thống tự dùng kho ảnh nền và prompt phù hợp. Ảnh đã duyệt cũng sẽ được lưu vào Shopify Files của store này.</p>
+  return (
+    <div className="w-full min-w-0 space-y-5">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Review Studio</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
+            Tạo review sản phẩm
+          </h1>
+          <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
+            Chuẩn bị hình ảnh, lựa chọn template và tạo review để xuất ra file XLSX cho Shopify.
+          </p>
+        </div>
+
+        <nav aria-label="Quy trình Review Studio" className="flex shrink-0 items-start gap-2 sm:gap-3">
+          {(["images", "reviews"] as const).map((workflow, index) => {
+            const isActive = activeWorkflow === workflow;
+            const stepNumber = index + 1;
+            const label =
+              workflow === "images"
+                ? `Chuẩn bị ảnh${isImageBusy ? " · Đang xử lý" : ""}`
+                : "Tạo review & xuất XLSX";
+
+            return (
+              <div key={workflow} className="flex items-start gap-2 sm:gap-3">
+                {index > 0 ? (
+                  <div
+                    aria-hidden="true"
+                    className="mt-4 w-12 border-t border-dashed border-slate-300 dark:border-slate-700 sm:w-20"
+                  />
+                ) : null}
+                <button
+                  type="button"
+                  aria-pressed={isActive}
+                  aria-controls={`review-studio-${workflow}`}
+                  onClick={() => setActiveWorkflow(workflow)}
+                  className="group flex flex-col items-center gap-1.5 rounded-xl px-2 py-1 text-center transition"
+                >
+                  <span
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition ${
+                      isActive
+                        ? "bg-blue-600 text-white shadow-sm shadow-blue-600/30"
+                        : "bg-slate-400 text-white group-hover:bg-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    {stepNumber}
+                  </span>
+                  <span
+                    className={`text-xs font-semibold transition sm:text-sm ${
+                      isActive
+                        ? "text-blue-600 dark:text-blue-400"
+                        : "text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-200"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </nav>
+      </header>
+
+      {/* Keep both workflows mounted: tab changes must not interrupt image or review jobs. */}
+      <section
+        id="review-studio-images"
+        aria-label="Chuẩn bị ảnh review"
+        hidden={activeWorkflow !== "images"}
+        className="space-y-5"
+      >
+        <section className="rounded-2xl border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs sm:p-5">
+          <div className="grid gap-4 lg:grid-cols-12 lg:items-center">
+            <div className="flex items-center gap-3.5 lg:col-span-6">
+              <span
+                aria-hidden="true"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <path d="M6 8h12l-1 12H7L6 8Z" />
+                  <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+                </svg>
+              </span>
+              <label className="min-w-0 flex-1 text-sm font-bold text-slate-900 dark:text-slate-100">
+                <span className="sr-only">1. </span>Chọn store và loại sản phẩm
+                <select
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-medium text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800 disabled:opacity-50"
+                  disabled={isImageBusy || stores.length === 0}
+                  value={imageStoreId}
+                  onChange={(event) => handleImageStoreChange(event.target.value)}
+                >
+                  {stores.map((store) => (
+                    <option key={store} value={store}>
+                      {getStoreLabel(store)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="flex items-start gap-2.5 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/40 px-4 py-3 text-xs leading-5 text-blue-700 dark:text-blue-300 lg:col-span-6">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
+              <p>
+                Chọn đúng store để hệ thống sử dụng kho ảnh nền và prompt phù hợp. Ảnh đã duyệt cũng sẽ được lưu vào Shopify Files của store này.
+              </p>
+            </div>
+          </div>
+          {storeError ? (
+            <p role="alert" className="mt-3 text-sm text-rose-700 dark:text-rose-300">
+              {storeError}
+            </p>
+          ) : null}
+        </section>
+
+        {imageStoreId ? (
+          <ReviewImagePage
+            client={imageClient}
+            storeId={imageStoreId}
+            stores={stores}
+            onStoreIdChange={handleImageStoreChange}
+            onShopifyFile={handleShopifyFile}
+            onBusyChange={setIsImageBusy}
+            embedded
+            showStoreSelector={false}
+          />
+        ) : (
+          <p className="rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-4 text-sm text-amber-700 dark:text-amber-300">
+            Chưa có Shopify store khả dụng để lưu ảnh.
+          </p>
+        )}
       </section>
-      {storeError ? <p role="alert" className="text-rose-700 dark:text-rose-300">{storeError}</p> : null}
-    </header>
-    {imageStoreId ? <section className="space-y-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300">Tạo ảnh review</p><h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Chuẩn bị ảnh nền và ảnh sản phẩm</h2></div><ReviewImagePage client={imageClient} storeId={imageStoreId} stores={stores} onStoreIdChange={setImageStoreId} onShopifyFile={handleShopifyFile} onBusyChange={setIsImageBusy} embedded showStoreSelector={false} /></section> : <p className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-4 text-amber-700 dark:text-amber-300">Chưa có Shopify store khả dụng để lưu ảnh.</p>}
-    </section>
-    <section id="review-studio-reviews" aria-label="Tạo review và xuất XLSX" hidden={activeWorkflow !== "reviews"} className="space-y-3">
-      <div><p className="text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300">Amazon Reviews</p><h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Tạo review và xuất XLSX</h2></div>
-      <label className="block max-w-sm text-sm font-medium text-slate-900 dark:text-slate-100">Store sản phẩm nhận review/XLSX<select className="mt-2 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 disabled:opacity-50" disabled={stores.length === 0} value={reviewStoreId} onChange={(event) => setReviewStoreId(event.target.value)}>{stores.map((store) => <option key={store} value={store}>{store}</option>)}</select></label>
-      <p className="text-xs text-slate-500 dark:text-slate-400">Store này được dùng để tìm Shopify product và gắn dữ liệu khi xuất XLSX; không thay đổi nơi lưu ảnh.</p>
-      {reviewStoreId ? <AmazonReviewsPage client={reviewClient} shopify={reviewShopify} selectedStoreId={reviewStoreId} onSelectedStoreIdChange={setReviewStoreId} generatedPictureUrls={pictureUrlsByStore[imageStoreId] ?? []} embedded showStoreSelector={false} /> : <p className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-4 text-amber-700 dark:text-amber-300">Chưa có Shopify store khả dụng để nhận review.</p>}
-    </section>
-  </div>;
+
+      <section
+        id="review-studio-reviews"
+        aria-label="Tạo review và xuất XLSX"
+        hidden={activeWorkflow !== "reviews"}
+        className="space-y-4"
+      >
+        <section className="rounded-2xl border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs sm:p-5">
+          <div className="grid gap-4 lg:grid-cols-12 lg:items-center">
+            <div className="flex items-center gap-3.5 lg:col-span-6">
+              <span
+                aria-hidden="true"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <path d="M6 8h12l-1 12H7L6 8Z" />
+                  <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+                </svg>
+              </span>
+              <label className="min-w-0 flex-1 text-sm font-bold text-slate-900 dark:text-slate-100">
+                Store sản phẩm nhận review/XLSX
+                <select
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-medium text-slate-900 dark:text-slate-100 disabled:opacity-50"
+                  disabled={stores.length === 0}
+                  value={reviewStoreId}
+                  onChange={(event) => setReviewStoreId(event.target.value)}
+                >
+                  {stores.map((store) => (
+                    <option key={store} value={store}>
+                      {getStoreLabel(store)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="flex items-start gap-2.5 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/40 px-4 py-3 text-xs leading-5 text-blue-700 dark:text-blue-300 lg:col-span-6">
+              <p>
+                Store này được dùng để tìm Shopify product và gắn dữ liệu khi xuất XLSX; không thay đổi nơi lưu ảnh.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {reviewStoreId ? (
+          <AmazonReviewsPage
+            client={reviewClient}
+            shopify={reviewShopify}
+            selectedStoreId={reviewStoreId}
+            onSelectedStoreIdChange={setReviewStoreId}
+            generatedPictureUrls={pictureUrlsByStore[imageStoreId] ?? []}
+            embedded
+            showStoreSelector={false}
+          />
+        ) : (
+          <p className="rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-4 text-sm text-amber-700 dark:text-amber-300">
+            Chưa có Shopify store khả dụng để nhận review.
+          </p>
+        )}
+      </section>
+    </div>
+  );
 }
+
