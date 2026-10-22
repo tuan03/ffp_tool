@@ -55,6 +55,11 @@ class ExtensionBridge:
                 pending = self.pending.get(str(message.get("job_id", "")))
                 if not pending or pending["future"].done():
                     continue
+                if message.get("type") == "job_progress" and pending.get("kind") == "text":
+                    phase = message.get("phase")
+                    if phase in ("waiting_response", "reading_response", "sending_response"):
+                        self.text_states[pending["session"]] = phase
+                    continue
                 if message.get("type") == "job_result":
                     if pending.get("kind") == "text":
                         answer = message.get("answer")

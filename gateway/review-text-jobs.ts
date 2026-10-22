@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import type { GenerateReviewInput } from "./amazon-reviews-generator";
-import type { ReviewTextJob, ReviewTextRepository, ReviewTextResult, ReviewTextStatus } from "./review-text-repository";
+import type { ReviewTextJob, ReviewTextPhase, ReviewTextRepository, ReviewTextResult, ReviewTextStatus } from "./review-text-repository";
 
 interface ReviewTextDependencies {
   readContext(contextJobId: string): Promise<GenerateReviewInput>;
   checkBridge(): Promise<void>;
-  generate(input: GenerateReviewInput, id: string, signal: AbortSignal, progress: (status: ReviewTextStatus) => Promise<void>): Promise<ReviewTextResult>;
+  generate(input: GenerateReviewInput, id: string, signal: AbortSignal, progress: (status: ReviewTextStatus, phase?: ReviewTextPhase) => Promise<void>): Promise<ReviewTextResult>;
   save(contextJobId: string, result: ReviewTextResult): Promise<void>;
   cancelBridge(id: string): Promise<void>;
 }
@@ -45,8 +45,8 @@ export class ReviewTextJobs {
     this.tasks.set(job.id, { promise, controller, job });
   }
   private async run(job: ReviewTextJob, signal: AbortSignal, saveOnly: boolean): Promise<void> {
-    const progress = async (status: ReviewTextStatus): Promise<void> => {
-      signal.throwIfAborted(); job.status = status; job.updatedAt = new Date().toISOString(); await this.repository.update(job);
+    const progress = async (status: ReviewTextStatus, phase?: ReviewTextPhase): Promise<void> => {
+      signal.throwIfAborted(); job.status = status; job.phase = phase; job.updatedAt = new Date().toISOString(); await this.repository.update(job);
     };
     try {
       if (!saveOnly) {

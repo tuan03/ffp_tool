@@ -21,11 +21,16 @@ const TERMINAL_STATUSES = new Set(["completed", "partial", "failed", "cancelled"
 const AMAZON_REVIEWS_SESSION_KEY = "ffp_amazon_reviews_session_v1";
 const GENERATION_ACTIVE = new Set(["queued", "running", "validating", "saving"]);
 const GENERATION_LABELS: Readonly<Record<ReviewGenerationJob["status"], string>> = {
-  queued: "Đang chờ ChatGPT hoàn tất tác vụ hiện tại", running: "ChatGPT đang tạo review",
+  queued: "Đang chờ ChatGPT hoàn tất tác vụ hiện tại", running: "Đang chờ Bridge nhận câu trả lời từ ChatGPT",
   validating: "Đang kiểm tra nội dung", saving: "Đang lưu review", save_failed: "Đã tạo review, chưa lưu được",
   completed: "Đã tạo và lưu review", partial: "Đã lưu các mẫu đạt yêu cầu", failed: "Chưa tạo được review",
   cancelled: "Đã hủy", interrupted: "Tác vụ bị gián đoạn",
 };
+const GENERATION_PHASE_LABELS = {
+  waiting_response: "Đã gửi yêu cầu · đang chờ câu trả lời ChatGPT",
+  reading_response: "Đang đọc câu trả lời · chờ ChatGPT hoàn tất",
+  sending_response: "ChatGPT đã xong · đang gửi kết quả về server",
+} as const;
 
 interface PersistedAmazonReviewsSession {
   readonly source: string;
@@ -473,7 +478,7 @@ export function AmazonReviewsPage({ client, shopify, selectedStoreId, onSelected
           {generationIssue ? <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{generationIssue}</p> : null}
           {generationActionError ? <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">{generationActionError}</p> : null}
           {scopedGeneration ? <div role="status" className={`space-y-2 rounded-lg border p-3 text-sm ${hasActiveGeneration ? "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200" : ["completed", "partial"].includes(scopedGeneration.status) ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200" : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"}`}>
-            <p className="font-semibold">{GENERATION_LABELS[scopedGeneration.status]}</p>
+            <p className="font-semibold">{scopedGeneration.status === "running" && scopedGeneration.phase ? GENERATION_PHASE_LABELS[scopedGeneration.phase] : GENERATION_LABELS[scopedGeneration.status]}</p>
             {scopedGeneration.accepted > 0 ? <p>{scopedGeneration.accepted}/{scopedGeneration.count} mẫu đạt yêu cầu · {scopedGeneration.rejected} mẫu chưa đạt</p> : null}
             {scopedGeneration.error ? <p>{scopedGeneration.error.startsWith("REVIEW_") ? reviewGenerationErrorMessage(new Error(scopedGeneration.error)) : scopedGeneration.error}</p> : null}
             {scopedGeneration.warnings.length ? <details><summary className="cursor-pointer">Chi tiết kiểm tra chất lượng</summary><ul className="mt-2 list-inside list-disc">{scopedGeneration.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></details> : null}

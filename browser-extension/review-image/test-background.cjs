@@ -61,6 +61,12 @@ vm.runInContext(fs.readFileSync('browser-extension/review-image/background.js', 
   assert.equal(testSocket.sent[0].type, 'authenticate');
   assert.equal(testSocket.sent[0].token, 'extension-fixture');
   assert.ok(testSocket.sent[0].capabilities.includes('review_text_v1'));
+  let delivery;
+  onMessage({ type: 'content_progress', job_id: 'text-fixture', phase: 'reading_response' }, {}, response => { delivery = response; });
+  assert.equal(delivery.ok, true);
+  assert.equal(testSocket.sent.at(-1).type, 'job_progress');
   vm.runInContext('closeSocket()', context);
+  onMessage({ type: 'content_result', job_id: 'text-fixture', answer: 'fixture' }, {}, response => { delivery = response; });
+  assert.equal(delivery.ok, false, 'a disconnected socket must never report successful delivery');
   console.log('extension settings preserved on update');
 })().catch(error => { console.error(error); process.exitCode = 1; });

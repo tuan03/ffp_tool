@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { generateReviewSamples, REVIEW_PROMPT } from "./amazon-reviews-generator";
 import type { GenerateReviewInput, RawReviewSample } from "./amazon-reviews-generator";
-import type { ReviewTextResult, ReviewTextStatus } from "./review-text-repository";
+import type { ReviewTextPhase, ReviewTextResult, ReviewTextStatus } from "./review-text-repository";
 
 const sampleSchema = z.object({ author: z.string(), body: z.string(), rating: z.number(), variantText: z.string(), verifiedPurchase: z.boolean() });
 export function parseChatGptSamples(answer: string): RawReviewSample[] {
@@ -18,23 +18,24 @@ export function parseChatGptSamples(answer: string): RawReviewSample[] {
 }
 
 export function createBridgeReviewGenerator(options: { baseUrl: string; token: string }) {
-  return async (input: GenerateReviewInput, id: string, signal: AbortSignal, progress: (status: ReviewTextStatus) => Promise<void>): Promise<ReviewTextResult> => {
+  return async (input: GenerateReviewInput, id: string, signal: AbortSignal, progress: (status: ReviewTextStatus, phase?: ReviewTextPhase) => Promise<void>): Promise<ReviewTextResult> => {
     return generateReviewSamples(input, async (plans, context, repair) => {
       signal.throwIfAborted(); await progress("queued");
       const prompt = `${REVIEW_PROMPT}\n\nReturn ONLY the JSON object, without commentary or Markdown.\nContext:\n${JSON.stringify({ product: context.product, sourceReviews: context.sourceReviews, priorSamples: context.priorSamples, reviewPlan: plans, count: plans.length, repair })}`;
       let isFinished = false;
-      let didStart = false;
+      let lastPhase: ReviewTextPhase | undefined;
       let statusRequest = Promise.resolve();
       const timer = setInterval(() => {
-        if (isFinished || didStart) return;
+        if (isFinished) return;
         statusRequest = statusRequest.then(async () => {
-          if (isFinished || didStart) return;
+          if (isFinished) return;
           try {
             const response = await fetch(new URL(`/api/review-images/text/${id}`, options.baseUrl), {
               headers: { "X-Bridge-Token": options.token }, signal: AbortSignal.any([signal, AbortSignal.timeout(4000)]),
             });
             const snapshot = z.object({ status: z.string() }).parse(await response.json());
-            if (!isFinished && snapshot.status === "running") { didStart = true; await progress("running"); }
+            const phase = z.enum(['waiting_response', 'reading_response', 'sending_response']).safeParse(snapshot.status === 'running' ? 'waiting_response' : snapshot.status);
+            if (!isFinished && phase.success && phase.data !== lastPhase) { lastPhase = phase.data; await progress("running", phase.data); }
           } catch { /* The main request reports transport failures; status is observational. */ }
         });
       }, 2000);

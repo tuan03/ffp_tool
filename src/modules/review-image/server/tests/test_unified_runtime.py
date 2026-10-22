@@ -29,6 +29,15 @@ def test_text_bridge_requires_capability_and_returns_answer(tmp_path):
                 assert task["kind"] == "text"
                 assert task["conversation_mode"] == "new"
                 assert "images" not in task
+                for phase in ("waiting_response", "reading_response", "sending_response"):
+                    socket.send_json({"type": "job_progress", "job_id": task["job_id"], "phase": phase})
+                    socket.send_json({"type": "ping"})
+                    assert socket.receive_json()["type"] == "pong"
+                    assert client.get("/api/review-images/text/text-1", headers=HEADERS).json()["status"] == phase
+                socket.send_json({"type": "job_progress", "job_id": task["job_id"], "phase": "completed"})
+                socket.send_json({"type": "ping"})
+                socket.receive_json()
+                assert client.get("/api/review-images/text/text-1", headers=HEADERS).json()["status"] == "sending_response"
                 socket.send_json({"type": "job_result", "job_id": task["job_id"], "answer": '{"samples":[]}'})
                 assert response.result(timeout=3).json() == {"answer": '{"samples":[]}'}
 

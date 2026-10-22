@@ -81,9 +81,9 @@ async function executeJob(job) {
     await openNewChat(xpaths);
   }
 
-  const previousMessages = xpathAll(xpaths.assistant_messages);
+  const previousMessages = job.kind === 'image_edit' ? xpathAll(xpaths.assistant_messages) : findAssistantMessages(xpaths.assistant_messages);
   const previousCount = previousMessages.length;
-  const previousLastText = previousMessages.at(-1)?.innerText?.trim() || "";
+  const previousLastText = readAssistantAnswer(previousMessages.at(-1));
   const previousImageSources = new Set([...document.querySelectorAll('img')].map(img => img.currentSrc || img.src));
 
   let input = await waitForPromptInput(xpaths.prompt_input, 20_000);
@@ -133,11 +133,13 @@ async function executeJob(job) {
     jobId: job.job_id
   });
 
-  chrome.runtime.sendMessage({
+  await chrome.runtime.sendMessage({ type: 'content_progress', job_id: job.job_id, phase: 'sending_response' });
+  const delivery = await chrome.runtime.sendMessage({
     type: "content_result",
     job_id: job.job_id,
     answer
   });
+  if (!delivery?.ok) throw new Error('ChatGPT finished, but Bridge could not send the response. Keep this chat and check the connection before retrying.');
 }
 
 function getImageAttachmentFileName(image, imageIndex, jobId) {
@@ -466,7 +468,31 @@ function readAssistantAnswer(candidate) {
     const code = (blocks[0].innerText || blocks[0].textContent || '').trim();
     if (code.startsWith('{')) return code;
   }
-  return candidate.innerText?.trim() || '';
+  const body = candidate.querySelector?.('.markdown, [data-message-content]') || candidate;
+  return (body.innerText || body.textContent || '').trim();
+}
+
+function findAssistantMessages(xpath) {
+  // Author role is independent of ChatGPT's changing div/section wrappers.
+  const messages = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+  if (messages.length) return messages;
+  const configured = xpathAll(xpath);
+  if (configured.length) return configured;
+  return [...document.querySelectorAll('[data-turn="assistant"] .markdown')];
+}
+
+function hasCompletedResponseActions(candidate) {
+  const turn = candidate?.closest?.('article, [data-testid^="conversation-turn-"], [data-turn="assistant"]');
+  // Do not use a global Copy button: it could belong to an earlier answer or code block.
+  return Boolean(turn && [...turn.querySelectorAll('button[data-testid="copy-turn-action-button"], button[data-testid="good-response-turn-action-button"], button[data-testid="bad-response-turn-action-button"]')].some(isGenerationControlPresent));
+}
+
+function isTextGenerationStop(element) {
+  if (!isGenerationControlPresent(element) || element.disabled) return false;
+  const testId = element.getAttribute?.('data-testid');
+  const label = element.getAttribute?.('aria-label') || '';
+  // "Stop reading aloud" and voice controls must not keep a completed text job alive.
+  return testId === 'stop-button' || /^(stop (generating|streaming)|dừng (tạo|tạo câu trả lời|phản hồi))$/i.test(label.trim());
 }
 
 async function waitForAnswer({
@@ -481,10 +507,12 @@ async function waitForAnswer({
   let observedNewAnswer = false;
   let lastText = "";
   let stableSince = 0;
+  let lastCandidate = null;
+  let phase = '';
 
   while (Date.now() - startedAt < timeoutMs) {
     if (cancelledJobs.has(jobId)) throw new Error("ChatGPT job cancelled.");
-    const messages = xpathAll(assistantMessagesXPath);
+    const messages = findAssistantMessages(assistantMessagesXPath);
     const candidate = messages.at(-1);
     const text = readAssistantAnswer(candidate);
 
@@ -495,21 +523,35 @@ async function waitForAnswer({
     if (isNewMessage && text) {
       observedNewAnswer = true;
 
-      if (text !== lastText) {
+      if (text !== lastText || candidate !== lastCandidate) {
         lastText = text;
+        lastCandidate = candidate;
         stableSince = Date.now();
       }
     }
 
     const stopVisible = stopButtonXPath
-      ? xpathAll(stopButtonXPath).some(isGenerationControlPresent)
+      ? xpathAll(stopButtonXPath).some(isTextGenerationStop)
       : false;
+    const nextPhase = observedNewAnswer ? 'reading_response' : 'waiting_response';
+    if (phase !== nextPhase) {
+      const progress = await chrome.runtime.sendMessage({ type: 'content_progress', job_id: jobId, phase: nextPhase });
+      if (!progress?.ok) throw new Error('Bridge disconnected while waiting for the ChatGPT response. Keep this chat before retrying.');
+      phase = nextPhase;
+    }
+    const hasActions = hasCompletedResponseActions(candidate);
+    // Without recognizable actions, accept only a complete review JSON envelope
+    // after a longer quiet period. A closing brace alone is not completion.
+    let hasCompleteJson = false;
+    try { hasCompleteJson = Array.isArray(JSON.parse(lastText).samples); } catch { /* Still streaming or not JSON. */ }
 
     if (
       observedNewAnswer &&
       lastText &&
+      text === lastText &&
       !stopVisible &&
-      Date.now() - stableSince >= 1_800
+      (hasActions || hasCompleteJson) &&
+      Date.now() - stableSince >= (hasActions ? 1_800 : 5_000)
     ) {
       return lastText;
     }
@@ -518,7 +560,9 @@ async function waitForAnswer({
     if (!poll?.ok) throw new Error("Reload the ChatGPT Bridge extension and pinned tab.");
   }
 
-  throw new Error("Timed out while waiting for ChatGPT to finish generating.");
+  throw new Error(observedNewAnswer
+    ? 'ChatGPT text was detected, but Bridge could not confirm completion. Keep this chat and check the response controls.'
+    : 'Bridge could not read an assistant response. Keep this chat and reload the updated extension before a new attempt.');
 }
 
 async function waitForXPath(xpath, timeoutMs) {

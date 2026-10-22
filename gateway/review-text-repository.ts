@@ -4,6 +4,7 @@ import type { GenerateReviewInput, generateReviewSamples } from "./amazon-review
 
 export type ReviewTextStatus = "queued" | "running" | "validating" | "saving" | "save_failed" | "completed" | "partial" | "failed" | "cancelled" | "interrupted";
 export type ReviewTextResult = Awaited<ReturnType<typeof generateReviewSamples>>;
+export type ReviewTextPhase = "waiting_response" | "reading_response" | "sending_response";
 export interface ReviewTextJob {
   readonly id: string;
   readonly requestId: string;
@@ -12,6 +13,7 @@ export interface ReviewTextJob {
   readonly count: number;
   readonly createdAt: string;
   status: ReviewTextStatus;
+  phase?: ReviewTextPhase;
   updatedAt: string;
   error?: string;
   input?: GenerateReviewInput;

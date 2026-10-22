@@ -62,3 +62,19 @@ Test disconnection recovery, duplicate clicks, reload, image/text interleaving,
 cancellation, invalid JSON, partial repair, save retry, and context deletion.
 Fixture WebSocket/browser tests do not establish successful real ChatGPT generation;
 report a live pinned-tab trial separately.
+
+## Completion detection (extension 1.5.1)
+
+Text collection supports assistant-role elements regardless of their HTML tag and
+reads message content without copying toolbar labels. Completion uses the current
+answer's action controls and stable text, never a global Copy control. When those
+controls are unavailable, a valid review JSON envelope must remain stable for five
+seconds with no generation Stop control. Read-aloud Stop controls do not block text
+completion; actual generation controls still do, including in background tabs.
+
+The extension reports waiting/reading/sending phases. The Gateway validates and
+saves results before marking success; a WebSocket send is not a persistence receipt.
+A disconnected send is no longer acknowledged as successful to the content script.
+Reload both extension and pinned ChatGPT tab after updating. Existing timed-out jobs
+are not replayed or recovered from tab history automatically; retain the conversation
+if its output needs manual recovery. No production data is changed by this upgrade.

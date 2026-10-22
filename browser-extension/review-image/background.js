@@ -85,15 +85,21 @@ chrome.runtime.onMessage.addListener(
       return true;
     }
 
+    if (message?.type === 'content_progress') {
+      const validPhase = ['waiting_response', 'reading_response', 'sending_response'].includes(message.phase);
+      sendResponse({ ok: validPhase && sendToServer({ type: 'job_progress', job_id: message.job_id, phase: message.phase }) });
+      return false;
+    }
+
     if (message?.type === "content_result") {
-      sendToServer({
+      const delivered = sendToServer({
         type: "job_result",
         job_id: message.job_id,
         ...(message.image ? { image: message.image } : { answer: message.answer })
       });
 
       sendResponse({
-        ok: true
+        ok: delivered
       });
 
       return false;
@@ -529,12 +535,17 @@ function normalizeVisibleMessageLimit(value) {
 
 function sendToServer(payload) {
   if (socket?.readyState !== WebSocket.OPEN) {
-    console.warn("WebSocket chưa kết nối. Không thể gửi:", payload);
+    console.warn("WebSocket chưa kết nối. Không thể gửi loại thông điệp:", payload.type);
     return false;
   }
 
-  socket.send(JSON.stringify(payload));
-  return true;
+  try {
+    socket.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    console.warn('WebSocket send failed:', payload.type);
+    return false;
+  }
 }
 
 function scheduleReconnect() {

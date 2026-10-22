@@ -26,6 +26,14 @@ test("review client distinguishes an active job conflict from connection failure
   assert.equal(isReviewJobConflictError(new Error("Network unavailable")), false);
 });
 
+test("review client retains the Bridge response phase while generation is running", async () => {
+  const client = createReviewClient({ coordinatorUrl: "http://localhost", fetchImplementation: async () => Response.json({
+    job: { id: "generation", contextJobId: "context", storeId: "fixture", count: 5, status: "running",
+      phase: "sending_response", createdAt: "2026-01-01", accepted: 0, rejected: 0, warnings: [] },
+  }) });
+  assert.equal((await client.latestGeneration("context", "fixture"))?.phase, "sending_response");
+});
+
 test("review client requests only product context from the coordinator", async () => {
   const client = createReviewClient({
     coordinatorUrl: "http://127.0.0.1:8766/",

@@ -88,7 +88,11 @@ test("background generation preserves accepted samples on save failure and retri
     async readContext() { return { asin: "B012345678", count: 1, product: { title: "Floral rug" }, sourceReviews: [], priorSamples: [], startIndex: 1 }; },
     async checkBridge() {}, async cancelBridge() {},
     async generate(_input, _id, _signal, progress) {
-      generations++; await progress("validating");
+      generations++;
+      await progress("running", "reading_response");
+      assert.equal((await service.get(_id))?.phase, "reading_response");
+      await progress("validating");
+      assert.equal((await service.get(_id))?.phase, undefined, "browser phase must clear after server receives the response");
       return { samples: [{ reviewId: "SYNTH-B012345678-001", author: "Morgan Reed", rating: 5, body: "A floral pattern covers this rug.", variantText: "", verifiedPurchase: false, synthetic: true, source: "ai_sample", promptVersion: "review_sample_v3", qualityStatus: "accepted", qualityWarnings: [] }], rejected: 0, warnings: [], promptVersion: "review_sample_v3" };
     },
     async save() { if (++saves === 1) throw new Error("Unavailable"); },

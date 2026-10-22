@@ -4,6 +4,7 @@ import type { AmazonReviewJob, ReviewClient, ReviewGenerationJob } from "./types
 
 const generationSchema = z.object({ id: z.string(), contextJobId: z.string(), storeId: z.string(), count: z.number(),
   status: z.enum(["queued", "running", "validating", "saving", "save_failed", "completed", "partial", "failed", "cancelled", "interrupted"]),
+  phase: z.enum(["waiting_response", "reading_response", "sending_response"]).optional(),
   createdAt: z.string(), accepted: z.number(), rejected: z.number(), warnings: z.array(z.string()), error: z.string().optional() });
 function readGeneration(value: unknown): ReviewGenerationJob {
   return z.object({ job: generationSchema }).parse(value).job;

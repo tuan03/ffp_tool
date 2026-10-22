@@ -1,5 +1,9 @@
 # FFP Review Image Bridge
 
+Version 1.5.1 fixes QA text completion detection and reports waiting/reading/sending
+progress. Reload both the extension and the pinned ChatGPT tab after updating;
+settings and credentials remain unchanged. A timed-out response is not resent automatically.
+
 Load this directory as an unpacked Chrome extension (Chrome 116+). With Docker, connect to `ws://127.0.0.1:3011/api/review-images/extension` (adjust the published client port), or `wss://YOUR_DOMAIN/api/review-images/extension` remotely. Nginx forwards this socket to Review Image inside the existing Coordinator process. No separate Review Image server is needed.
 
 Configure distinct, random `REVIEW_IMAGE_BRIDGE_TOKEN` and `REVIEW_IMAGE_EXTENSION_TOKEN` values (at least 24 characters), plus `SHOPIFY_PIPELINE_TOKEN`, in the server `.env` before running `docker compose up -d --build`. Keep these secrets out of Git and browser build variables. Enter only `REVIEW_IMAGE_EXTENSION_TOKEN` in the extension popup. The internal bridge token must not be shared with the extension. The Review Studio UI continues to use the Gateway operator credential.

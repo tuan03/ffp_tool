@@ -274,6 +274,7 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   backgroundStopButton.isConnected = false;
   assert.equal(context.isGenerationControlPresent(backgroundStopButton), false);
   backgroundStopButton.isConnected = true;
+  backgroundStopButton.getAttribute = name => name === 'data-testid' ? 'stop-button' : null;
   const realDate = Date;
   context.Date = class extends Date { static now() { return pollClock; } };
   context.document.querySelectorAll = selector => selector.includes('generated-image-preview') ? [preview] : [];
@@ -282,7 +283,7 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   const pollMessages = [];
   context.chrome.runtime.sendMessage = async message => {
     pollMessages.push(message);
-    pollClock += message.delay_ms;
+    pollClock += message.delay_ms || 0;
     return { ok: true };
   };
   context.fetchGeneratedImage = async () => ({ mime_type: 'image/png', data: 'Yw==' });
@@ -305,12 +306,43 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(context.readAssistantAnswer({ innerText: 'json Copy code {"samples":[]}',
     querySelectorAll: () => [{ textContent: '{"samples":[]}' }] }), '{"samples":[]}');
   assert.equal(context.readAssistantAnswer({ innerText: 'Cannot complete this request.', querySelectorAll: () => [] }), 'Cannot complete this request.');
-  context.xpathAll = xpath => xpath === '//stop' ? (pollClock < 4000 ? [backgroundStopButton] : [])
-    : [{ innerText: pollClock < 800 ? 'old answer' : '{"samples":[]}' }];
+  const streamingAnswer = { innerText: 'old answer' };
+  context.xpathAll = xpath => {
+    streamingAnswer.innerText = pollClock < 800 ? 'old answer' : '{"samples":[]}';
+    return xpath === '//stop' ? (pollClock < 4000 ? [backgroundStopButton] : []) : [streamingAnswer];
+  };
   const textAnswer = await context.waitForAnswer({ assistantMessagesXPath: '//assistant', stopButtonXPath: '//stop',
     previousCount: 1, previousLastText: 'old answer', timeoutMs: 10_000, jobId: 'text-answer' });
   assert.equal(textAnswer, '{"samples":[]}');
   assert.ok(pollClock >= 4000, 'text must not complete while a background stop control is present');
+  // A read-aloud Stop button elsewhere on the page is not generation progress.
+  const audioStop = new FakeElement();
+  audioStop.getAttribute = name => name === 'aria-label' ? 'Stop reading aloud' : null;
+  const copyAction = new FakeElement();
+  const completedTurn = { querySelectorAll: selector => selector.includes('copy-turn') ? [copyAction] : [] };
+  const completedAnswer = { innerText: '{"samples":[]}', closest: () => completedTurn, querySelectorAll: () => [] };
+  pollClock = 0;
+  context.xpathAll = xpath => xpath === '//stop' ? [audioStop] : [];
+  context.document.querySelectorAll = selector => selector === '[data-message-author-role="assistant"]' ? [completedAnswer] : [];
+  assert.equal(await context.waitForAnswer({ assistantMessagesXPath: '//obsolete-div-only-selector', stopButtonXPath: '//stop',
+    previousCount: 0, previousLastText: '', timeoutMs: 10_000, jobId: 'completed-text' }), '{"samples":[]}');
+  assert.ok(pollClock < 4000, 'completed response toolbar plus stable text should finish promptly');
+  pollClock = 0;
+  context.xpathAll = xpath => xpath === '//stop' ? [backgroundStopButton] : [];
+  await assert.rejects(() => context.waitForAnswer({ assistantMessagesXPath: '//obsolete', stopButtonXPath: '//stop',
+    previousCount: 0, previousLastText: '', timeoutMs: 6000, jobId: 'still-generating' }), /could not confirm completion/);
+  // A complete-looking JSON object cannot override a real active Stop control.
+  pollClock = 0;
+  context.xpathAll = () => [];
+  completedAnswer.innerText = '{"samples":[';
+  completedAnswer.closest = () => null;
+  await assert.rejects(() => context.waitForAnswer({ assistantMessagesXPath: '//obsolete', stopButtonXPath: '//stop',
+    previousCount: 0, previousLastText: '', timeoutMs: 6000, jobId: 'partial-json' }), /could not confirm completion/);
+  completedAnswer.innerText = '{"samples":[]}';
+  assert.ok(pollMessages.some(message => message.type === 'content_progress' && message.phase === 'reading_response'));
+  assert.equal(context.readAssistantAnswer({ innerText: 'Copy Good response {"samples":[]}',
+    querySelectorAll: () => [], querySelector: () => ({ textContent: '{"samples":[]}' }) }), '{"samples":[]}');
+  context.document.querySelectorAll = () => [];
   vm.runInContext("cancelledJobs.add('cancelled-text-job')", context);
   await assert.rejects(() => context.waitForAnswer({ assistantMessagesXPath: '//assistant', previousCount: 0,
     previousLastText: '', timeoutMs: 1000, jobId: 'cancelled-text-job' }), /cancelled/);
@@ -365,7 +397,7 @@ context.sleep = () => new Promise(resolve => setTimeout(resolve, 5));
   context.attachImageReferences = async () => { throw new Error('Text must not attach images'); };
   context.waitForEnabledXPath = async () => ({ click() {} });
   context.waitForAnswer = async () => '{"samples":[]}';
-  context.chrome.runtime.sendMessage = message => { textResult = message; };
+  context.chrome.runtime.sendMessage = async message => { textResult = message; return { ok: true }; };
   await context.executeJob({ job_id: 'text-job', kind: 'text', prompt: 'QA text only', conversation_mode: 'new',
     xpaths: { prompt_input: '//input', send_button: '//send', assistant_messages: '//assistant' } });
   assert.equal(newChats, 1);

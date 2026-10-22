@@ -73,6 +73,7 @@ export interface ReviewClient {
 }
 
 export interface ReviewGenerationJob {
+  readonly phase?: "waiting_response" | "reading_response" | "sending_response";
   readonly id: string;
   readonly contextJobId: string;
   readonly storeId: string;
