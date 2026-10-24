@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { executeProductPublishAll } from "../operations/publications";
+import {
+  executeProductPublicationStatus,
+  executeProductPublishAll,
+  executeProductSetPublication,
+} from "../operations/publications";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { StoreConfig } from "../types";
 import { GatewayDispatcher } from "../dispatcher";
@@ -77,4 +81,115 @@ test("publication operation respects preview, request IDs and cached replay", as
   assert.equal(reads, 1);
   await dispatcher.dispatch({ ...input, mode: "apply", requestId: "publish-2" });
   assert.equal(reads, 2);
+});
+
+test("reads product publication status for one exact app catalog", async () => {
+  const client = clientWithQuery(async (document, variables) => {
+    if (document.includes("query PublicationChannels")) {
+      return {
+        publications: {
+          nodes: [
+            { id: "gid://shopify/Publication/1", catalog: { __typename: "AppCatalog", title: "Online Store" } },
+            { id: "gid://shopify/Publication/2", catalog: { __typename: "AppCatalog", title: "Shop" } },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      };
+    }
+    assert.deepEqual(variables, {
+      ids: ["gid://shopify/Product/1", "gid://shopify/Product/2"],
+      publicationId: "gid://shopify/Publication/2",
+    });
+    return {
+      nodes: [
+        { id: "gid://shopify/Product/1", status: "ACTIVE", publishedOnPublication: true },
+        { id: "gid://shopify/Product/2", status: "ACTIVE", publishedOnPublication: false },
+      ],
+    };
+  });
+
+  const result = await executeProductPublicationStatus(store, client, {
+    productIds: ["gid://shopify/Product/1", "gid://shopify/Product/2"],
+    publicationName: "Shop",
+  });
+
+  assert.equal(result.publication.id, "gid://shopify/Publication/2");
+  assert.deepEqual(result.products, [
+    { id: "gid://shopify/Product/1", status: "ACTIVE", published: true },
+    { id: "gid://shopify/Product/2", status: "ACTIVE", published: false },
+  ]);
+});
+
+test("updates only changed products on one publication and verifies the result", async () => {
+  const publishedIds = new Set(["gid://shopify/Product/1"]);
+  let mutationInput: unknown;
+  const client = clientWithQuery(async (document, variables) => {
+    if (document.includes("query PublicationChannels")) {
+      return {
+        publications: {
+          nodes: [{ id: "gid://shopify/Publication/2", catalog: { __typename: "AppCatalog", title: "Shop" } }],
+          pageInfo: { hasNextPage: false },
+        },
+      };
+    }
+    if (document.includes("mutation UpdatePublicationProducts")) {
+      mutationInput = variables?.input;
+      for (const id of (variables?.input as { publishablesToAdd: readonly string[] }).publishablesToAdd) {
+        publishedIds.add(id);
+      }
+      return { publicationUpdate: { publication: { id: variables?.id }, userErrors: [] } };
+    }
+    return {
+      nodes: (variables?.ids as readonly string[]).map(id => ({
+        id,
+        status: "ACTIVE",
+        publishedOnPublication: publishedIds.has(id),
+      })),
+    };
+  });
+
+  const result = await executeProductSetPublication(store, client, {
+    productIds: ["gid://shopify/Product/1", "gid://shopify/Product/2"],
+    publicationName: "Shop",
+    published: true,
+  });
+
+  assert.deepEqual(mutationInput, { publishablesToAdd: ["gid://shopify/Product/2"] });
+  assert.equal(result.changed, 1);
+  assert.equal(result.unchanged, 1);
+  assert.ok(result.products.every(product => product.published));
+});
+
+test("publication targeting rejects ambiguous catalogs, invalid IDs and oversized batches", async () => {
+  const ambiguousClient = clientWithQuery(async () => ({
+    publications: {
+      nodes: [
+        { id: "gid://shopify/Publication/1", catalog: { __typename: "AppCatalog", title: "Shop" } },
+        { id: "gid://shopify/Publication/2", catalog: { __typename: "AppCatalog", title: "shop" } },
+      ],
+      pageInfo: { hasNextPage: false },
+    },
+  }));
+
+  await assert.rejects(
+    executeProductPublicationStatus(store, ambiguousClient, {
+      productIds: ["gid://shopify/Product/1"],
+      publicationName: "Shop",
+    }),
+    /exactly one/i,
+  );
+  await assert.rejects(
+    executeProductPublicationStatus(store, ambiguousClient, {
+      productIds: ["invalid"],
+      publicationName: "Shop",
+    }),
+    /product ID/i,
+  );
+  await assert.rejects(
+    executeProductPublicationStatus(store, ambiguousClient, {
+      productIds: Array.from({ length: 101 }, (_, index) => `gid://shopify/Product/${index + 1}`),
+      publicationName: "Shop",
+    }),
+    /100/i,
+  );
 });

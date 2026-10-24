@@ -15,7 +15,13 @@ import { executeConnectionTest } from "./operations/connection-test";
 import { executeProductsGet, executeProductsList } from "./operations/products";
 import { executeProductMediaPage } from "./operations/product-media";
 import { executeProductMetafieldPage } from "./operations/product-metafield-page";
-import { executeProductPublishAll, previewProductPublishAll } from "./operations/publications";
+import {
+  executeProductPublicationStatus,
+  executeProductPublishAll,
+  executeProductSetPublication,
+  previewProductPublishAll,
+  previewProductSetPublication,
+} from "./operations/publications";
 import {
   executeProductsBulkUpdate,
   executeProductsCreate,
@@ -51,6 +57,7 @@ import type { GatewayErrorCode, GatewayRequest, GatewayResponse, StoreConfig } f
 const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "products.create",
   "products.publishAll",
+  "products.setPublication",
   "products.update",
   "products.bulkUpdate",
   "products.delete",
@@ -415,6 +422,8 @@ export class GatewayDispatcher {
         return executeConnectionTest(store, this.graphqlClient, payload);
       case "products.list":
         return executeProductsList(store, this.graphqlClient, payload);
+      case "products.publicationStatus":
+        return executeProductPublicationStatus(store, this.graphqlClient, payload);
       case "products.get":
         return executeProductsGet(store, this.graphqlClient, payload);
       case "products.mediaPage":
@@ -445,6 +454,9 @@ export class GatewayDispatcher {
       case "products.publishAll":
         if (mode === "preview") return previewProductPublishAll(payload);
         return executeProductPublishAll(store, this.graphqlClient, payload);
+      case "products.setPublication":
+        if (mode === "preview") return previewProductSetPublication(payload);
+        return executeProductSetPublication(store, this.graphqlClient, payload);
       case "products.create":
         return executeProductsCreate(store, this.graphqlClient, payload, mode, requestId);
       case "products.update":
