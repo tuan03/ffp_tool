@@ -22,13 +22,13 @@ export function resolveCrawlStatus(input: {
   const summary = input.summary;
   const batch = input.progress?.batch;
   const counts = [batch && input.progress ? `Đã xử lý ${input.progress.completed}/${input.progress.total} link` : null,
-    batch ? `${batch.skippedShopify} đã có Shopify · ${batch.skippedPipeline} đang trong Queue/Review · ${batch.covered} lấy qua link khác` : null,
+    batch ? `${batch.skippedShopify} link đã có Shopify · ${batch.skippedPipeline} link đang trong Queue/Review · ${batch.covered} link lấy qua link khác` : null,
     batch?.attention ? `${batch.attention} link cần kiểm tra` : null,
-    summary.totalProducts > 0 ? `Đã bàn giao ${summary.handedOver}/${summary.totalProducts} sản phẩm` : null,
+    summary.totalProducts > 0 ? `Đã bàn giao ${summary.handedOver}/${summary.totalProducts} sản phẩm` : `Bàn giao mới: 0 sản phẩm`,
     summary.pending > 0 ? `${summary.pending} đang chuẩn bị` : null,
     summary.notHandedOver > 0 ? `${summary.notHandedOver} chưa bàn giao` : null,
-    summary.skippedExistingShopify ? `${summary.skippedExistingShopify} đã có Shopify` : null,
-    summary.skippedExistingPipeline ? `${summary.skippedExistingPipeline} đã có trong Queue/Review` : null,
+    summary.skippedExistingShopify ? `${summary.skippedExistingShopify} sản phẩm bỏ qua: đã có Shopify` : null,
+    summary.skippedExistingPipeline ? `${summary.skippedExistingPipeline} sản phẩm bỏ qua: đã có trong Queue/Review` : null,
   ].filter(Boolean).join(" · ");
   if (input.isChecking && !input.isRunning) return { title: "Đang kiểm tra ASIN", detail: "Kiểm tra Shopify và SEO Queue trước khi tạo phiên mới…", tone: "working" };
   if (input.errors.length) return { title: input.isRunning ? "Phiên đang chạy có lỗi cần kiểm tra" : "Có lỗi cần kiểm tra", detail: counts || "Kết quả đã nhận được giữ nguyên. Mở Xem lỗi để biết bước cần xử lý.", tone: "error" };

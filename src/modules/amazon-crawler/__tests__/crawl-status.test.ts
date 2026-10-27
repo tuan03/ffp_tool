@@ -12,14 +12,24 @@ test("batch sticky separates input coverage from products and keeps skip counts 
   const running = resolveCrawlStatus({ ...base, progress, isRunning: true });
   assert.match(running.title, /tự động/);
   assert.match(running.detail, /6\/10 link/);
-  assert.match(running.detail, /3 lấy qua link khác/);
+  assert.match(running.detail, /3 link lấy qua link khác/);
   assert.match(running.detail, /10\/18 sản phẩm/);
   const done = resolveCrawlStatus({ ...base, progress: { ...progress, completed: 10 },
     summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 } });
   assert.equal(done.tone, "success");
-  assert.match(done.detail, /2 đã có Shopify/);
+  assert.match(done.detail, /2 link đã có Shopify/);
   assert.equal(resolveCrawlStatus({ ...base, progress: { ...progress, completed: 10, batch: { ...progress.batch, attention: 1 } },
     summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 } }).tone, "warning");
+});
+test("zero new handoffs stay explicit and link skips cannot be confused with product skips", () => {
+  const status = resolveCrawlStatus({ ...base,
+    progress: { completed: 19, total: 19, phase: "review", message: "",
+      batch: { skippedShopify: 10, skippedPipeline: 0, covered: 0, attention: 0 } },
+    summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0, skippedExistingPipeline: 85 },
+  });
+  assert.match(status.detail, /10 link đã có Shopify/);
+  assert.match(status.detail, /Bàn giao mới: 0 sản phẩm/);
+  assert.match(status.detail, /85 sản phẩm.*Queue\/Review/);
 });
 test("completed links remain handing over until products reach Queue", () => {
   const status = resolveCrawlStatus({ ...base, isRunning: true, progress: { completed: 1, total: 1, phase: "seo", message: "" } });

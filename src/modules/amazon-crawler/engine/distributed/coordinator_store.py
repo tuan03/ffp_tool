@@ -393,7 +393,7 @@ class CoordinatorStore(CoordinatorObservability):
         if not store_id or identity is None:
             return None
         aliases = cls._product_exact_asins(product)
-        for retained in session.scalars(select(CrawlProductItem).join(CrawlJob).where(
+        candidates = session.scalars(select(CrawlProductItem).join(CrawlJob).where(
             CrawlJob.settings["storeId"].as_string() == store_id,
             CrawlProductItem.job_id != job.id,
             CrawlProductItem.status != "deleted",
@@ -402,8 +402,10 @@ class CoordinatorStore(CoordinatorObservability):
                 CrawlProductItem.raw_payload["asin"].as_string().in_(aliases),
                 CrawlProductItem.normalized_payload["asin"].as_string().in_(aliases),
             ),
-        )).all():
-            if (retained.shopify_result or {}).get("skippedExistingPipeline"):
+        )).all()
+        cleared_ids = cls._cleared_seo_product_ids(session, store_id, candidates)
+        for retained in candidates:
+            if retained.id in cleared_ids or (retained.shopify_result or {}).get("skippedExistingPipeline"):
                 continue
             retained_aliases = cls._product_exact_asins(retained.raw_payload or retained.normalized_payload or {})
             if (aliases and aliases <= retained_aliases) or (
@@ -411,6 +413,28 @@ class CoordinatorStore(CoordinatorObservability):
             ):
                 return retained.id
         return None
+
+    @classmethod
+    def _cleared_seo_product_ids(cls, session, store_id: str, items: list[CrawlProductItem]) -> set[str]:
+        """Cancellation releases pre-review ownership only after the crawler claim ends.
+
+        Share this rule between preflight and both upload transports. A retained
+        crawl payload is history, not proof of a live SEO job after queue clear.
+        """
+        candidates = [item for item in items
+                      if item.status in {"received", "normalizing", "retry_wait", "seo", "failed", "cancelled"}
+                      and not item.claimed_by and item.claim_expires_at is None
+                      and not (item.shopify_result or {}).get("review")
+                      and not (item.shopify_result or {}).get("productId")]
+        external_jobs = {
+            item.id: str(external["jobId"])
+            for item in candidates
+            if isinstance(external := (item.shopify_result or {}).get("externalSeo"), dict) and external.get("jobId")
+        }
+        cancelled_jobs = load_cancelled_seo_job_ids(session, store_id, set(external_jobs.values()))
+        return {item.id for item in candidates
+                if external_jobs.get(item.id) in cancelled_jobs
+                or (item.id not in external_jobs and cls._is_operator_cleared_seo_item(item))}
 
     def filter_asin_activity(self, store_id: str, asins: list[str]) -> dict[str, Any]:
         """Read current ownership, never treat a historical registry row as ownership."""
@@ -462,16 +486,9 @@ class CoordinatorStore(CoordinatorObservability):
                     CrawlProductItem.raw_payload["parentAsin"].as_string().in_(set(parents.values())),
                 ),
             )).all()
-            external_jobs = {
-                item.id: str(external["jobId"])
-                for item in candidates
-                if isinstance(external := (item.shopify_result or {}).get("externalSeo"), dict) and external.get("jobId")
-            }
-            cancelled_jobs = load_cancelled_seo_job_ids(session, store_id, set(external_jobs.values()))
+            cleared_ids = self._cleared_seo_product_ids(session, store_id, candidates)
             for item in candidates:
-                if self._is_operator_cleared_seo_item(item) or (item.shopify_result or {}).get("skippedExistingPipeline"):
-                    continue
-                if item.status in {"received", "normalizing", "retry_wait", "seo", "failed"} and external_jobs.get(item.id) in cancelled_jobs:
+                if item.id in cleared_ids or (item.shopify_result or {}).get("skippedExistingPipeline"):
                     continue
                 aliases = self._product_exact_asins(item.raw_payload or item.normalized_payload or {})
                 for asin in aliases.intersection(entries):

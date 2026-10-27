@@ -398,7 +398,7 @@ export async function startCrawlerJob({
       });
       const hasWarnings = completion?.tone !== "success" || crawlerOutput.errors.length > 0;
       const batch = sessionState.progress?.batch;
-      const batchMessage = batch ? `Đã kiểm tra ${sessionState.progress?.completed}/${sessionState.progress?.total} link · ${batch.skippedShopify} đã có Shopify · ${batch.skippedPipeline} đang trong Queue/Review · ${batch.covered} lấy qua link khác${batch.attention ? ` · ${batch.attention} cần kiểm tra` : ""}. ` : "";
+      const batchMessage = batch ? `Đã kiểm tra ${sessionState.progress?.completed}/${sessionState.progress?.total} link · ${batch.skippedShopify} link đã có Shopify · ${batch.skippedPipeline} link đang trong Queue/Review · ${batch.covered} link lấy qua link khác${batch.attention ? ` · ${batch.attention} link cần kiểm tra` : ""}. ` : "";
       notifyUser({
         title: summary.pending > 0 ? "⚡ Distributed Crawler: Đã nhận dữ liệu, đang bàn giao" : hasWarnings ? "⚡ Distributed Crawler: Phiên cào đã kết thúc" : summary.totalProducts > 0
           ? "⚡ Distributed Crawler: Đã bàn giao SEO Queue" : "⚡ Distributed Crawler: Đã kiểm tra ASIN",

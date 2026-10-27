@@ -108,6 +108,71 @@ class ActiveSeoDuplicateTests(unittest.TestCase):
             item.shopify_result = {"externalSeo": {"jobId": "seo-existing"}}
         self.assertEqual(self.store.filter_asin_activity("sample", ["B0CHILD001"])["entries"][0]["status"], "available")
 
+    def prepare_cleared_recrawl(self, *, observed=True):
+        old, lease = self.start_crawl("B0CHILD001")
+        product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01",
+                   "sourceKey": "amazon:B0PARENT01:color:red"}
+        accepted = self.upload(old, lease, product)
+        self.seed_seo(status="CANCELLED", active=False)
+        with self.store.sessions.begin() as session:
+            session.get(CrawlTask, lease["taskId"]).status = "completed"
+            session.get(CrawlJob, old["id"]).status = "completed"
+            item = session.get(CrawlProductItem, accepted["productItemId"])
+            item.status = "failed" if observed else "retry_wait"
+            item.shopify_result = {"externalSeo": {"jobId": "seo-existing"}}
+            if observed:
+                item.last_error = {"phase": "seo", "message": "GPT SEO job cancelled: Removed from Queue by operator"}
+        return product, accepted["productItemId"]
+
+    def test_recrawl_after_queue_clear_accepts_stream_and_final_without_duplicate_handoff(self):
+        product, old_id = self.prepare_cleared_recrawl()
+        self.assertEqual(self.store.filter_asin_activity("sample", [product["asin"]])["entries"][0]["status"], "available")
+        job, lease = self.start_crawl("B0CHILD001")
+        self.assertEqual(self.upload(job, lease, product)["status"], "accepted")
+        self.assertEqual(self.upload(job, lease, product)["status"], "duplicate", "replayed upload does not create a second item")
+        self.store.accept_result(lease["taskId"], "client-a", lease["leaseId"], "final", {
+            "jobId": job["id"], "products": [product], "errors": [],
+        })
+        with self.store.sessions() as session:
+            self.assertEqual(len(session.scalars(select(CrawlProductItem).where(CrawlProductItem.job_id == job["id"])).all()), 1)
+            self.assertEqual(session.get(CrawlProductItem, old_id).status, "failed", "preserve the old cancellation history")
+        summary = self.store.get_job(job["id"])["seoQueueHandoff"]
+        self.assertEqual(summary["totalProducts"], 1)
+        self.assertEqual(summary.get("skippedExistingPipeline", 0), 0)
+
+    def test_final_only_recrawl_accepts_cancelled_seo_before_worker_observes_clear(self):
+        product, _ = self.prepare_cleared_recrawl(observed=False)
+        job, lease = self.start_crawl("B0CHILD001")
+        self.store.accept_result(lease["taskId"], "client-a", lease["leaseId"], "final", {
+            "jobId": job["id"], "products": [product], "errors": [],
+        })
+        self.assertEqual(self.store.get_job(job["id"])["seoQueueHandoff"]["totalProducts"], 1)
+
+    def test_cancelled_seo_does_not_release_a_claimed_crawler_item(self):
+        product, old_id = self.prepare_cleared_recrawl()
+        with self.store.sessions.begin() as session:
+            session.get(CrawlProductItem, old_id).claimed_by = "still-draining-worker"
+        self.assertNotEqual(self.store.filter_asin_activity("sample", [product["asin"]])["entries"][0]["status"], "available")
+        job, lease = self.start_crawl("B0CHILD001")
+        self.assertEqual(self.upload(job, lease, product)["reason"], "existing_pipeline_product")
+
+    def test_queue_clear_does_not_release_retained_review_or_shopify_write(self):
+        product, old_id = self.prepare_cleared_recrawl()
+        job, lease = self.start_crawl("B0CHILD001")
+        for status in ("waiting_review", "sync_queued", "syncing", "shopify_writing", "reconciliation_required"):
+            with self.subTest(status=status):
+                with self.store.sessions.begin() as session:
+                    session.get(CrawlProductItem, old_id).status = status
+                candidate = {**product, "sourceKey": product["sourceKey"] + ":" + status}
+                self.assertEqual(self.upload(job, lease, candidate)["reason"], "existing_pipeline_product")
+
+    def test_old_cancellation_error_does_not_override_live_seo_job(self):
+        product, _ = self.prepare_cleared_recrawl()
+        with self.store.sessions.begin() as session:
+            session.execute(text("UPDATE gpt_jobs SET status='REVIEW_READY'"))
+        job, lease = self.start_crawl("B0CHILD001")
+        self.assertEqual(self.upload(job, lease, product)["reason"], "existing_pipeline_product")
+
     def test_filter_activity_preserves_exact_variant_ownership_after_registry_job_changes(self):
         job, lease = self.start_crawl("B0CHILD001")
         product = {"id": "one", "asin": "B0CHILD001", "parentAsin": "B0PARENT01",
