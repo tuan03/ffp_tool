@@ -126,6 +126,11 @@ confirmed progress and supports stopping between groups or resuming an interrupt
 group while the page remains open. Reloading discards the local progress display;
 refresh the Queue before starting another run. No new schema or environment is needed.
 
+Production Compose gives the server healthcheck a 120-second startup grace period;
+deployment waits up to 300 seconds for services to become healthy. Readiness checks
+and the client's healthy-server dependency remain enabled. These are maximum grace
+and wait windows, not fixed delays when startup succeeds sooner.
+
 ```text
 src/
 ├── app/                 # Main owner: app composition, providers, routes, runtime wiring

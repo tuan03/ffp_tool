@@ -99,7 +99,7 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
-      start_period: 5s
+      start_period: 120s
     cpus: "${SERVER_CPUS:-2.0}"
     mem_limit: ${SERVER_MEMORY_LIMIT:-3g}
     pids_limit: ${SERVER_PIDS_LIMIT:-512}
