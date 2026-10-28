@@ -10,6 +10,7 @@ import { parseSeoGenerationInput, SEO_WORKER_SCHEMA_VERSION } from "./input-cont
 import { readReviewListQuery } from "../review-list-query";
 import { buildQueueCatalogJob } from "./queue-catalog";
 import { SeoWorkerError } from "../seo-worker/protocol";
+import type { QueueRetryOutcome } from "../../src/modules/custom-gpt-seo";
 
 export interface CustomGptHandlerOptions {
   readonly queue: SeoQueue;
@@ -126,7 +127,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
       const leaseToken = String(body.leaseToken || "");
       const requestId = String(body.requestId || "");
       const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset")) || 0));
-      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/reviews", "admin/review-list", "admin/review-detail", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
+      const readRoutes = ["capabilities", "context", "queue", "waiting-jobs", "batch", "job", "images", "public-image", "media", "result", "admin/settings", "admin/jobs", "admin/retry-candidates", "admin/reviews", "admin/review-list", "admin/review-detail", "admin/job", "admin/image", "admin/review-state", "admin/sync-state"];
       if (req.method === "GET" && !readRoutes.includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       if (req.method === "POST" && readRoutes.includes(route) && !["admin/settings", "admin/review-state"].includes(route)) { send(res, 405, { error: { code: "METHOD_NOT_ALLOWED" } }); return; }
       let result: unknown;
@@ -228,7 +229,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             queue.countFiltered(storeId, filters),
             queue.visibleCounts(storeId),
           ]);
-          result = { jobs: jobs.map(buildQueueCatalogJob), counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
+          result = { jobs: jobs.map(buildQueueCatalogJob), filteredCount, counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
         case "admin/review-list": {
@@ -266,6 +267,21 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             providerId: provider, pipelineVersion: SEO_WORKER_SCHEMA_VERSION, originalSnapshot: body.original,
           }, settings: { ...storeSettings, provider } };
           result = (await queue.enqueue(input)); break;
+        }
+        case "admin/retry-candidates": {
+          const filters = parseJobFilters(url);
+          result = { jobIds: await queue.retryCandidates(storeId, filters.provider) }; break;
+        }
+        case "admin/retry-batch": {
+          const ids: unknown = body.jobIds;
+          if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20 || ids.some(id => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(id))
+            || typeof body.requestId !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(body.requestId)) throw new Error("Invalid retry batch");
+          const outcomes: QueueRetryOutcome[] = [];
+          for (const id of [...new Set(ids as string[])]) {
+            try { outcomes.push(await queue.retrySafely(storeId, id, body.requestId)); }
+            catch { outcomes.push({ jobId: id, status: "failed" }); }
+          }
+          result = { outcomes }; break;
         }
         case "admin/retry": (await queue.retry(storeId, jobId)); result = { status: "PENDING" }; break;
         case "admin/requeue": {

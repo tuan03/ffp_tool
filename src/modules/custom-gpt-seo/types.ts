@@ -123,6 +123,10 @@ export interface AgentRunPage {
 export type ExternalSeoProvider = Exclude<SeoProvider, "gemini">;
 export type GptJobStatus = "PENDING" | "IN_PROGRESS" | "WAITING_INPUT" | "VALIDATING" | "NEEDS_CHANGES" | "REVIEW_READY" | "FAILED" | "CANCELLED";
 export type GptStage = "analysis" | "research" | "keywords" | "submission";
+export interface QueueRetryOutcome {
+  readonly jobId: string;
+  readonly status: "retried" | "skipped" | "failed";
+}
 export type GptSeoInput = SeoContentGenerationInput;
 export interface GptSeoSettings {
   readonly provider: SeoProvider;

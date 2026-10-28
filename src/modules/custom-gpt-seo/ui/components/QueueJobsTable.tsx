@@ -8,17 +8,22 @@ interface QueueJobsTableProps {
   readonly jobs: readonly GptSeoJob[];
   readonly isBusy: boolean;
   readonly retryingJobIds?: ReadonlySet<string>;
+  readonly selectedJobIds?: ReadonlySet<string>;
+  readonly onToggleSelection?: (jobId: string) => void;
+  readonly onTogglePage?: () => void;
   readonly onOpenJob: (jobId: string) => void;
   readonly onRetryJob: (job: GptSeoJob) => void;
 }
 
-export function QueueJobsTable({ jobs, isBusy, retryingJobIds, onOpenJob, onRetryJob }: QueueJobsTableProps): React.JSX.Element {
+export function QueueJobsTable({ jobs, isBusy, retryingJobIds, selectedJobIds, onToggleSelection, onTogglePage, onOpenJob, onRetryJob }: QueueJobsTableProps): React.JSX.Element {
+  const selectable = jobs.filter(canRetryJob);
+  const selectedCount = selectable.filter(job => selectedJobIds?.has(job.id)).length;
   return <div role="region" aria-label="Danh sách sản phẩm SEO có thể cuộn" tabIndex={0} className="max-h-[max(360px,calc(100dvh-420px))] overflow-auto">
     <table className="w-full min-w-[940px] table-fixed text-left text-sm">
       <caption className="sr-only">Sản phẩm, checkpoint đã lưu, trạng thái và thao tác xử lý SEO</caption>
-      <colgroup><col className="w-[39%]" /><col className="w-[22%]" /><col className="w-[25%]" /><col className="w-[14%]" /></colgroup>
+      <colgroup>{onToggleSelection && <col className="w-[4%]" />}<col className={onToggleSelection ? "w-[35%]" : "w-[39%]"} /><col className="w-[22%]" /><col className="w-[25%]" /><col className="w-[14%]" /></colgroup>
       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
-        <tr><th scope="col" className="px-5 py-3 font-medium">Sản phẩm / Nguồn</th><th scope="col" className="px-4 py-3 font-medium">Tiến độ đã ghi nhận</th><th scope="col" className="px-4 py-3 font-medium">Trạng thái / Cần xử lý</th><th scope="col" className="px-4 py-3 text-right font-medium">Thao tác</th></tr>
+        <tr>{onToggleSelection && <th scope="col" className="px-3 py-3"><input type="checkbox" aria-label="Chọn tất cả trang này" disabled={isBusy || selectable.length === 0} checked={selectedCount > 0 && selectedCount === selectable.length} ref={node => { if (node) node.indeterminate = selectedCount > 0 && selectedCount < selectable.length; }} onChange={onTogglePage} /></th>}<th scope="col" className="px-5 py-3 font-medium">Sản phẩm / Nguồn</th><th scope="col" className="px-4 py-3 font-medium">Tiến độ đã ghi nhận</th><th scope="col" className="px-4 py-3 font-medium">Trạng thái / Cần xử lý</th><th scope="col" className="px-4 py-3 text-right font-medium">Thao tác</th></tr>
       </thead>
       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
         {jobs.map(job => {
@@ -26,6 +31,7 @@ export function QueueJobsTable({ jobs, isBusy, retryingJobIds, onOpenJob, onRetr
           const issue = getJobIssueSummary(job);
           const title = getJobSourceTitle(job);
           return <tr key={job.id} className="align-top transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/60">
+            {onToggleSelection && <td className="px-3 py-4"><input type="checkbox" aria-label={`Chọn ${title}`} checked={selectedJobIds?.has(job.id) ?? false} disabled={isBusy || !canRetryJob(job) || retryingJobIds?.has(job.id)} onChange={() => onToggleSelection(job.id)} /></td>}
             <td className="px-5 py-4"><div className="flex items-start gap-3">
               <QueueProductImage url={job.input.images[0]?.url} />
               <div className="min-w-0 flex-1">

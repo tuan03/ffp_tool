@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { ClearQueueResult, ExternalSeoProvider, GptCheckpointMutation, GptJobStatus, GptSeoBatch, GptSeoEnqueue, GptSeoJob, GptSeoSettings, SeoProvider } from "../../src/modules/custom-gpt-seo";
 import { canonicalizeJson } from "../canonical-json";
 import { normalizeSeoEnqueue } from "./input-contract";
+import type { QueueRetryOutcome } from "../../src/modules/custom-gpt-seo";
 
 const LEASE_MS = 30 * 60_000;
 const DEFAULT_SETTINGS: GptSeoSettings = { provider: "gemini", batchSize: 5, version: 1, language: "en-US", instructions: "Use only grounded product facts. Never invent certifications, materials or performance claims." };
@@ -281,13 +282,37 @@ export class CustomGptQueue {
       this.write({ ...job, status: "WAITING_INPUT", error: message.slice(0, 1000) });
     });
   }
+  retryCandidates(storeId: string, provider?: SeoProvider): readonly string[] {
+    const rows = this.db.prepare(`SELECT id FROM gpt_jobs WHERE store_id=?
+      AND status IN ('WAITING_INPUT','NEEDS_CHANGES','FAILED')
+      AND COALESCE(json_extract(payload,'$.queueArchivedAt'),'')=''
+      ${provider ? "AND provider=?" : ""} ORDER BY created_at,id`).all(...(provider ? [storeId, provider] : [storeId]));
+    return rows.map(row => String(row.id));
+  }
+  retrySafely(storeId: string, jobId: string, requestId: string): QueueRetryOutcome {
+    return this.transaction(() => {
+      const scope = `bulk-retry:${storeId}:${jobId}`;
+      const previous = this.db.prepare("SELECT response FROM gpt_mutations WHERE scope=? AND request_id=?").get(scope, requestId);
+      if (previous) return json(previous.response) as QueueRetryOutcome;
+      const row = this.db.prepare("SELECT payload FROM gpt_jobs WHERE store_id=? AND id=?").get(storeId, jobId);
+      const job = row ? json(row.payload) as GptSeoJob : null;
+      const canRetry = job && !job.queueArchivedAt && ["WAITING_INPUT", "NEEDS_CHANGES", "FAILED"].includes(job.status);
+      if (canRetry) this.retryInTransaction(job);
+      const outcome: QueueRetryOutcome = { jobId, status: canRetry ? "retried" : "skipped" };
+      this.db.prepare("INSERT INTO gpt_mutations(scope,request_id,digest,response) VALUES (?,?,?,?)").run(scope, requestId, hash({ storeId, jobId }), JSON.stringify(outcome));
+      return outcome;
+    });
+  }
   retry(storeId: string, jobId: string): void {
     this.transaction(() => {
       const job = this.get(storeId, jobId);
       if (!["WAITING_INPUT", "FAILED", "NEEDS_CHANGES"].includes(job.status)) throw new Error("Job cannot be retried in this state");
-      this.write({ ...job, status: "PENDING", error: undefined, finalizeAttempts: 0, nextAttemptAt: undefined });
-      this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL WHERE id=?").run(jobId);
+      this.retryInTransaction(job);
     });
+  }
+  private retryInTransaction(job: GptSeoJob): void {
+    this.write({ ...job, status: "PENDING", error: undefined, finalizeAttempts: 0, nextAttemptAt: undefined });
+    this.db.prepare("UPDATE gpt_jobs SET batch_id=NULL WHERE id=?").run(job.id);
   }
   requeue(storeId: string, jobId: string, options?: { provider?: SeoProvider; instructions?: string }): GptSeoJob {
     return this.transaction(() => {

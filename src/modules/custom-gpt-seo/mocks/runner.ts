@@ -1,9 +1,12 @@
 import type { CustomGptClient } from "../service";
 import { mockJobs, mockSettings } from "./data";
 import { mockWorkerMetrics } from "./worker-metrics";
+import type { QueueRetryOutcome } from "../types";
 
 export function createMockCustomGptClient(): CustomGptClient {
   let settings = structuredClone(mockSettings);
+  let jobs = [...structuredClone(mockJobs)];
+  const retryReceipts = new Map<string, QueueRetryOutcome>();
   return {
     reviewList: async () => ({ items: [], total: 0, nextOffset: null }),
     reviewDetail: async (storeId, jobId) => {
@@ -62,7 +65,25 @@ export function createMockCustomGptClient(): CustomGptClient {
     ],
     settings: async () => structuredClone(settings),
     configure: async (_storeId, next) => { settings = { ...next }; return structuredClone(settings); },
-    list: async () => ({ jobs: structuredClone(mockJobs), counts: { PENDING: 1 }, activeBatch: null, activeBatches: [], nextOffset: 50 }),
+    list: async (storeId, offset = 0, filters = {}) => {
+      const visible = jobs.filter(job => job.storeId === storeId && job.status !== "CANCELLED" && !job.queueArchivedAt);
+      const filtered = visible.filter(job => (!filters.statuses?.length || filters.statuses.includes(job.status)) && (!filters.provider || job.settings.provider === filters.provider));
+      const counts: Record<string, number> = {};
+      for (const job of visible) counts[job.status] = (counts[job.status] ?? 0) + 1;
+      return { jobs: structuredClone(filtered.slice(offset, offset + 50)), filteredCount: filtered.length, counts, activeBatch: null, activeBatches: [], nextOffset: offset + 50 < filtered.length ? offset + 50 : null };
+    },
+    retryCandidates: async (storeId, provider) => ({ jobIds: jobs.filter(job => job.storeId === storeId && !job.queueArchivedAt && ["FAILED", "WAITING_INPUT", "NEEDS_CHANGES"].includes(job.status) && (!provider || job.settings.provider === provider)).map(job => job.id) }),
+    retryBatch: async (storeId, ids, requestId) => ({ outcomes: ids.map(jobId => {
+      const key = `${storeId}:${requestId}:${jobId}`;
+      const saved = retryReceipts.get(key);
+      if (saved) return { ...saved };
+      const job = jobs.find(candidate => candidate.id === jobId && candidate.storeId === storeId);
+      const canRetry = job && !job.queueArchivedAt && ["FAILED", "WAITING_INPUT", "NEEDS_CHANGES"].includes(job.status);
+      if (canRetry) jobs = jobs.map(candidate => candidate.id === jobId && candidate.storeId === storeId ? { ...candidate, status: "PENDING", error: undefined } : candidate);
+      const outcome: QueueRetryOutcome = { jobId, status: canRetry ? "retried" : "skipped" };
+      retryReceipts.set(key, outcome);
+      return { ...outcome };
+    }) }),
     reviews: async () => ({ reviews: [], counts: { PENDING: 1 }, nextOffset: null }),
     job: async () => structuredClone(mockJobs[0]),
     enqueue: async () => structuredClone(mockJobs[0]),

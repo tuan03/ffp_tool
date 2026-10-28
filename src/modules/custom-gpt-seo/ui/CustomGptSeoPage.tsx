@@ -25,6 +25,8 @@ import { QUEUE_FIELD_CLASS_NAME as FIELD_CLASS_NAME, QUEUE_PRIMARY_BUTTON_CLASS_
 import { QueueJobDetail } from "./components/QueueJobDetail";
 import { QueueJobsTable } from "./components/QueueJobsTable";
 import { applyConfirmedQueueRetry } from "./queue-retry";
+import { useQueueBulkRetry } from "./useQueueBulkRetry";
+import { QueueBulkRetryControls } from "./components/QueueBulkRetryControls";
 
 interface Notice {
   readonly kind: "success" | "error";
@@ -47,6 +49,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [selectedRetryIds, setSelectedRetryIds] = useState<ReadonlySet<string>>(new Set());
   const [retryingKeys, setRetryingKeys] = useState<ReadonlySet<string>>(new Set());
   const pendingRetries = useRef(new Set<string>());
   const storeGeneration = useRef(0);
@@ -114,6 +117,26 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   }, [client, offset, providerFilter, statusGroup, storeId]);
   const latestRefresh = useRef(refresh);
   latestRefresh.current = refresh;
+  const bulkRetry = useQueueBulkRetry({ client, storeId,
+    ...(providerFilter === "all" ? {} : { provider: providerFilter }),
+    onConfirmed: outcomes => {
+      refreshGeneration.current += 1;
+      refreshController.current?.abort();
+      setQueue(previous => previous ? outcomes.reduce((page, outcome) => outcome.status === "retried" ? applyConfirmedQueueRetry(page, outcome.jobId) : page, previous) : previous);
+      setSelectedJob(previous => previous && outcomes.some(outcome => outcome.jobId === previous.id && outcome.status === "retried") ? { ...previous, status: "PENDING", error: undefined } : previous);
+      setSelectedRetryIds(previous => new Set([...previous].filter(id => !outcomes.some(outcome => outcome.jobId === id && outcome.status !== "failed"))));
+    },
+    onFinish: () => {
+      const generation = storeGeneration.current;
+      const backgroundRefresh = latestRefresh.current(true);
+      const readGeneration = refreshGeneration.current;
+      void backgroundRefresh.catch(error => {
+        if (storeGeneration.current === generation && refreshGeneration.current === readGeneration && !(error instanceof Error && error.name === "AbortError")) setNotice({ kind: "error", text: "Chưa tải lại được danh sách. Kết quả thử lại đã xác nhận được giữ nguyên; bấm Làm mới để đối chiếu." });
+      });
+    },
+  });
+  const isInteractionBusy = isBusy || bulkRetry.isRunning;
+  useEffect(() => { setSelectedRetryIds(new Set()); }, [storeId, providerFilter, statusGroup, query]);
   useEffect(() => () => { storeGeneration.current += 1; }, []);
 
   useEffect(() => {
@@ -172,6 +195,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   }
 
   async function handleRetryJob(job: GptSeoJob): Promise<void> {
+    if (bulkRetry.isRunning) return;
     const key = `${storeId}:${job.id}`;
     if (pendingRetries.current.has(key)) return;
     const generation = storeGeneration.current;
@@ -272,6 +296,22 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const totalCount = summaries.reduce((total, summary) => total + summary.count, 0);
   const canTransferSelectedJob = selectedJob ? TRANSFERABLE_STATUSES.some(status => status === selectedJob.status) : false;
   const retryingJobIds = new Set([...retryingKeys].filter(key => key.startsWith(`${storeId}:`)).map(key => key.slice(storeId.length + 1)));
+  function toggleRetrySelection(jobId: string): void {
+    setSelectedRetryIds(previous => {
+      const next = new Set(previous);
+      if (next.has(jobId)) next.delete(jobId); else next.add(jobId);
+      return next;
+    });
+  }
+  function toggleRetryPage(): void {
+    const ids = filteredJobs.filter(canRetryJob).map(job => job.id);
+    setSelectedRetryIds(previous => {
+      const next = new Set(previous);
+      const isSelected = ids.every(id => previous.has(id));
+      for (const id of ids) { if (isSelected) next.delete(id); else next.add(id); }
+      return next;
+    });
+  }
 
   return (
     <section className="space-y-5" aria-labelledby="seo-queue-title">
@@ -281,8 +321,8 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <p className="mt-1.5 text-sm leading-6 text-slate-600 dark:text-slate-400">Theo dõi tiến độ, xử lý sản phẩm bị gián đoạn và chuyển kết quả sang bước duyệt.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <StoreSelector stores={stores} selectedStoreId={storeId} isLoading={isStoreListLoading} onChange={handleStoreChange} />
-          <button type="button" disabled={isBusy} onClick={() => void perform(async () => undefined, "Đã cập nhật hàng đợi.")} className={SECONDARY_BUTTON_CLASS_NAME}><AppIcon name="refresh" className={`h-4 w-4 ${isBusy ? "animate-spin" : ""}`} />{isBusy ? "Đang tải…" : "Làm mới"}</button>
+          <StoreSelector stores={stores} selectedStoreId={storeId} isLoading={isStoreListLoading || bulkRetry.isRunning} onChange={handleStoreChange} />
+          <button type="button" disabled={isInteractionBusy} onClick={() => void perform(async () => undefined, "Đã cập nhật hàng đợi.")} className={SECONDARY_BUTTON_CLASS_NAME}><AppIcon name="refresh" className={`h-4 w-4 ${isBusy ? "animate-spin" : ""}`} />{isBusy ? "Đang tải…" : "Làm mới"}</button>
           <Link className={PRIMARY_BUTTON_CLASS_NAME} to={`/seo-review?storeId=${encodeURIComponent(storeId)}`}>Mở SEO Review<AppIcon name="arrow" /></Link>
         </div>
       </header>
@@ -303,7 +343,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       <div id="seo-queue-workspace" hidden={isAgentPanelOpen} className="space-y-5">
       <div className="grid grid-cols-4 gap-3" aria-label="Tổng quan hàng đợi của store">
         {visibleSummaries.map(summary => (
-          <button key={summary.key} type="button" disabled={isBusy} aria-pressed={statusGroup === summary.key} onClick={() => { setOffset(0); setStatusGroup(current => current === summary.key ? "all" : summary.key); }} className={`rounded-xl border p-4 text-left transition disabled:cursor-wait ${statusGroup === summary.key ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500 dark:border-blue-400 dark:bg-blue-950/50 dark:ring-blue-400" : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-500"}`}>
+          <button key={summary.key} type="button" disabled={isInteractionBusy} aria-pressed={statusGroup === summary.key} onClick={() => { setOffset(0); setStatusGroup(current => current === summary.key ? "all" : summary.key); }} className={`rounded-xl border p-4 text-left transition disabled:cursor-wait ${statusGroup === summary.key ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500 dark:border-blue-400 dark:bg-blue-950/50 dark:ring-blue-400" : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-500"}`}>
             <div className="flex items-start justify-between gap-3">
               <div><p className="text-sm font-medium text-slate-700 dark:text-slate-300">{summary.label}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{summary.description}</p></div>
               <span className={`text-3xl font-semibold tabular-nums ${summary.accentClassName}`}>{queue ? summary.count : "—"}</span>
@@ -321,28 +361,35 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
         <div className="space-y-4 border-b border-slate-200 p-5 dark:border-slate-700">
           <div className="flex items-center justify-between gap-4">
             <div><div className="flex items-center gap-2"><h2 id="queue-list-title" className="scroll-mt-24 font-semibold text-slate-900 dark:text-slate-100">Sản phẩm trong hàng đợi</h2><span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">{queue ? totalCount : "—"}</span></div><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Tổng quan tính trên toàn store · Bộ lọc trạng thái và AI áp dụng trước phân trang.</p></div>
-            <button type="button" aria-pressed={statusGroup === "all"} disabled={isBusy} onClick={() => { setOffset(0); setStatusGroup("all"); }} className={SECONDARY_BUTTON_CLASS_NAME}>Tất cả trạng thái</button>
+            <button type="button" aria-pressed={statusGroup === "all"} disabled={isInteractionBusy} onClick={() => { setOffset(0); setStatusGroup("all"); }} className={SECONDARY_BUTTON_CLASS_NAME}>Tất cả trạng thái</button>
           </div>
           <div className="grid grid-cols-[minmax(220px,1fr)_180px_180px] gap-3">
-            <label className="relative"><span className="sr-only">Tìm sản phẩm trong trang này</span><span aria-hidden="true" className="pointer-events-none absolute left-3 top-3 text-slate-400"><AppIcon name="search" /></span><input className={`${FIELD_CLASS_NAME} w-full pl-9`} value={query} onChange={event => setQuery(event.target.value)} placeholder="Tìm trong trang: tên, ASIN, handle, job ID…" /></label>
-            <label><span className="sr-only">Lọc trạng thái</span><select className={`${FIELD_CLASS_NAME} w-full`} value={statusGroup} disabled={isBusy} onChange={event => { setOffset(0); setStatusGroup(event.target.value as QueueStatusGroup); }}><option value="all">Mọi trạng thái</option><option value="waiting">Chờ xử lý</option><option value="processing">Đang xử lý</option><option value="attention">Cần xử lý</option><option value="ready">Sẵn sàng duyệt</option><option value="cancelled">Đã hủy</option></select></label>
-            <label><span className="sr-only">Lọc AI xử lý</span><select className={`${FIELD_CLASS_NAME} w-full`} value={providerFilter} disabled={isBusy} onChange={event => { setOffset(0); setProviderFilter(event.target.value as QueueProviderFilter); }}><option value="all">Mọi AI xử lý</option><option value="gemini">Gemini</option><option value="custom_gpt">GPT Custom</option><option value="codex_mcp">Codex MCP</option></select></label>
+            <label className="relative"><span className="sr-only">Tìm sản phẩm trong trang này</span><span aria-hidden="true" className="pointer-events-none absolute left-3 top-3 text-slate-400"><AppIcon name="search" /></span><input className={`${FIELD_CLASS_NAME} w-full pl-9`} value={query} disabled={bulkRetry.isRunning} onChange={event => setQuery(event.target.value)} placeholder="Tìm trong trang: tên, ASIN, handle, job ID…" /></label>
+            <label><span className="sr-only">Lọc trạng thái</span><select className={`${FIELD_CLASS_NAME} w-full`} value={statusGroup} disabled={isInteractionBusy} onChange={event => { setOffset(0); setStatusGroup(event.target.value as QueueStatusGroup); }}><option value="all">Mọi trạng thái</option><option value="waiting">Chờ xử lý</option><option value="processing">Đang xử lý</option><option value="attention">Cần xử lý</option><option value="ready">Sẵn sàng duyệt</option><option value="cancelled">Đã hủy</option></select></label>
+            <label><span className="sr-only">Lọc AI xử lý</span><select className={`${FIELD_CLASS_NAME} w-full`} value={providerFilter} disabled={isInteractionBusy} onChange={event => { setOffset(0); setProviderFilter(event.target.value as QueueProviderFilter); }}><option value="all">Mọi AI xử lý</option><option value="gemini">Gemini</option><option value="custom_gpt">GPT Custom</option><option value="codex_mcp">Codex MCP</option></select></label>
           </div>
-          {(query || statusGroup !== "all" || providerFilter !== "all") && <div className="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400"><span>{queue ? `${filteredJobs.length}/${queue.jobs.length} sản phẩm trên trang khớp bộ lọc` : "Đang tải bộ lọc…"}</span><button type="button" onClick={() => { setOffset(0); setQuery(""); setStatusGroup("all"); setProviderFilter("all"); }} className="font-medium text-blue-700 dark:text-blue-300">Xóa bộ lọc</button></div>}
+          {(query || statusGroup !== "all" || providerFilter !== "all") && <div className="flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400"><span>{queue ? `${filteredJobs.length}/${queue.jobs.length} sản phẩm trên trang khớp bộ lọc` : "Đang tải bộ lọc…"}</span><button type="button" disabled={isInteractionBusy} onClick={() => { setOffset(0); setQuery(""); setStatusGroup("all"); setProviderFilter("all"); }} className="font-medium text-blue-700 dark:text-blue-300">Xóa bộ lọc</button></div>}
         </div>
 
+        {statusGroup === "attention" && <QueueBulkRetryControls selectedCount={selectedRetryIds.size} totalCount={queue?.filteredCount}
+          isDisabled={isBusy || retryingJobIds.size > 0 || hasQueueLoadError} hasPageSearch={Boolean(query.trim())}
+          isRunning={bulkRetry.isRunning} run={bulkRetry.run} error={bulkRetry.error}
+          onSelected={() => void bulkRetry.start([...selectedRetryIds])} onAll={() => void bulkRetry.start()}
+          onResume={() => void bulkRetry.resume()} onStop={bulkRetry.stop} />}
         {hasQueueLoadError ? (
-          <div className="px-6 py-12 text-center"><AppIcon name="warning" className="mx-auto h-6 w-6 text-amber-600" /><h3 className="mt-3 font-medium text-slate-900 dark:text-slate-100">Chưa tải được hàng đợi</h3><p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Trạng thái có thể đã thay đổi. Làm mới để kiểm tra trước khi thao tác.</p><button type="button" disabled={isBusy} className={`${SECONDARY_BUTTON_CLASS_NAME} mt-4`} onClick={() => void perform(async () => undefined, "Đã cập nhật hàng đợi.")}>Tải lại hàng đợi</button></div>
+          <div className="px-6 py-12 text-center"><AppIcon name="warning" className="mx-auto h-6 w-6 text-amber-600" /><h3 className="mt-3 font-medium text-slate-900 dark:text-slate-100">Chưa tải được hàng đợi</h3><p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Trạng thái có thể đã thay đổi. Làm mới để kiểm tra trước khi thao tác.</p><button type="button" disabled={isInteractionBusy} className={`${SECONDARY_BUTTON_CLASS_NAME} mt-4`} onClick={() => void perform(async () => undefined, "Đã cập nhật hàng đợi.")}>Tải lại hàng đợi</button></div>
         ) : queue === null ? (
           <div className="space-y-3 p-5" role="status" aria-label="Đang tải hàng đợi">{[1, 2, 3].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />)}</div>
         ) : filteredJobs.length > 0 ? (
-          <QueueJobsTable jobs={filteredJobs} isBusy={isBusy} retryingJobIds={retryingJobIds} onOpenJob={handleOpenJob} onRetryJob={job => void handleRetryJob(job)} />
+          <QueueJobsTable jobs={filteredJobs} isBusy={isInteractionBusy} retryingJobIds={retryingJobIds}
+            {...(statusGroup === "attention" ? { selectedJobIds: selectedRetryIds, onToggleSelection: toggleRetrySelection, onTogglePage: toggleRetryPage } : {})}
+            onOpenJob={handleOpenJob} onRetryJob={job => void handleRetryJob(job)} />
         ) : (
           <div className="px-6 py-14 text-center"><AppIcon name="queue" className="mx-auto h-7 w-7 text-slate-400" /><h3 className="mt-4 font-medium text-slate-900 dark:text-slate-100">{totalCount === 0 ? "Chưa có sản phẩm trong hàng đợi" : "Không có sản phẩm khớp bộ lọc trên trang này"}</h3><p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{totalCount === 0 ? "Sản phẩm được gửi sang SEO sẽ xuất hiện tại đây." : "Thử đổi trạng thái, xóa từ khóa hoặc chuyển trang. Tìm kiếm chỉ áp dụng trên trang đang xem."}</p></div>
         )}
 
         {queue && (queue.jobs.length > 0 || offset > 0) && (
-          <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-700 px-5 py-3 text-xs text-slate-500 dark:text-slate-400"><span>Trang {Math.floor(offset / 50) + 1} · hiển thị {filteredJobs.length}/{queue.jobs.length} sản phẩm trên trang</span><div className="flex gap-2"><button type="button" disabled={offset === 0 || isBusy} onClick={() => handlePageChange(Math.max(0, offset - 50))} className={SECONDARY_BUTTON_CLASS_NAME}>Trang trước</button><button type="button" disabled={queue.nextOffset === null || isBusy} onClick={() => handlePageChange(queue.nextOffset ?? offset)} className={SECONDARY_BUTTON_CLASS_NAME}>Trang sau</button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-700 px-5 py-3 text-xs text-slate-500 dark:text-slate-400"><span>Trang {Math.floor(offset / 50) + 1} · hiển thị {filteredJobs.length}/{queue.jobs.length} sản phẩm trên trang</span><div className="flex gap-2"><button type="button" disabled={offset === 0 || isInteractionBusy} onClick={() => handlePageChange(Math.max(0, offset - 50))} className={SECONDARY_BUTTON_CLASS_NAME}>Trang trước</button><button type="button" disabled={queue.nextOffset === null || isInteractionBusy} onClick={() => handlePageChange(queue.nextOffset ?? offset)} className={SECONDARY_BUTTON_CLASS_NAME}>Trang sau</button></div></div>
         )}
       </section>
 
@@ -353,12 +400,12 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
             <label className="space-y-2"><span className="block text-sm font-medium text-slate-700 dark:text-slate-300">AI xử lý</span><select className={`${FIELD_CLASS_NAME} w-full`} value={settings.provider} onChange={event => handleProviderChange(event.target.value)}><option value="gemini">Gemini — tự động qua API</option><option value="custom_gpt">GPT Custom — xử lý thủ công</option><option value="codex_mcp">Codex MCP — xử lý thủ công</option></select><span className="block text-xs text-slate-500 dark:text-slate-400">Chỉ áp dụng cho sản phẩm mới; sản phẩm đang chạy giữ nguyên AI hiện tại.</span></label>
             <div className="grid grid-cols-2 gap-3"><label className="space-y-2"><span className="block text-sm font-medium text-slate-700 dark:text-slate-300">Số sản phẩm mỗi lượt</span><input className={`${FIELD_CLASS_NAME} w-full`} type="number" min={1} max={10} value={settings.batchSize} onChange={event => setSettings({ ...settings, batchSize: Number(event.target.value) })} /></label><label className="space-y-2"><span className="block text-sm font-medium text-slate-700 dark:text-slate-300">Ngôn ngữ đầu ra</span><input className={`${FIELD_CLASS_NAME} w-full`} value={settings.language} onChange={event => setSettings({ ...settings, language: event.target.value })} /></label></div>
             <label className="space-y-2 lg:col-span-2"><span className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quy tắc nội dung</span><textarea className={`${FIELD_CLASS_NAME} min-h-24 w-full resize-y`} value={settings.instructions} onChange={event => setSettings({ ...settings, instructions: event.target.value })} /></label>
-            <div className="lg:col-span-2"><button type="submit" disabled={isBusy} className={PRIMARY_BUTTON_CLASS_NAME}>Lưu cấu hình</button></div>
+            <div className="lg:col-span-2"><button type="submit" disabled={isInteractionBusy} className={PRIMARY_BUTTON_CLASS_NAME}>Lưu cấu hình</button></div>
           </form>
         )}
         <div className="flex items-center justify-between gap-6 border-t border-slate-200 px-5 py-4 dark:border-slate-700">
           <div><h3 className="text-sm font-medium text-slate-800 dark:text-slate-200">Dọn hàng đợi của store {storeId}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Thao tác trên toàn store, không chỉ những dòng đang lọc. Bạn sẽ được yêu cầu xác nhận.</p></div>
-          <button type="button" disabled={isBusy || totalCount === 0 || hasQueueLoadError} onClick={() => void handleClearQueue()} className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/50"><AppIcon name="trash" />Dọn Queue</button>
+          <button type="button" disabled={isInteractionBusy || totalCount === 0 || hasQueueLoadError} onClick={() => void handleClearQueue()} className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/50"><AppIcon name="trash" />Dọn Queue</button>
         </div>
       </details>
 
@@ -370,7 +417,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <h2 id="active-batches-title" className="border-b border-blue-200 px-4 py-3 text-sm font-medium text-blue-800 dark:border-blue-800 dark:text-blue-200">Batch đang được xử lý ({queue.activeBatches.length})</h2>
           <div className="divide-y divide-blue-200 dark:divide-blue-800">{queue.activeBatches.map(batch => <div key={batch.id} className="flex items-center justify-between gap-4 px-4 py-3">
             <div className="min-w-0 text-blue-800 dark:text-blue-200"><p className="text-sm font-medium">{getBatchOwnerLabel(batch.ownerId)} · {getProviderPresentation(batch.provider).label}</p><p className="mt-1 truncate font-mono text-xs">{batch.id}</p><p className="mt-1 text-xs">{batch.jobs.length} sản phẩm · hết hạn {new Date(batch.expiresAt).toLocaleString("vi-VN")}</p></div>
-            <button type="button" disabled={isBusy} onClick={() => void perform(() => client.release(storeId, batch.id), `Đã thu hồi batch của ${getBatchOwnerLabel(batch.ownerId)}.`)} className={SECONDARY_BUTTON_CLASS_NAME}>Thu hồi</button>
+            <button type="button" disabled={isInteractionBusy} onClick={() => void perform(() => client.release(storeId, batch.id), `Đã thu hồi batch của ${getBatchOwnerLabel(batch.ownerId)}.`)} className={SECONDARY_BUTTON_CLASS_NAME}>Thu hồi</button>
           </div>)}</div>
         </section>}
       </section>
@@ -380,7 +427,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <button type="button" tabIndex={-1} aria-label="Đóng chi tiết sản phẩm" onClick={() => setSelectedJobId(null)} className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" />
           <aside className="absolute inset-y-0 right-0 w-full max-w-[760px] overflow-y-auto border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-5 py-4 backdrop-blur"><div><p className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">Chi tiết sản phẩm</p><h2 id="job-detail-title" className="mt-1 max-w-xl line-clamp-2 font-semibold text-slate-900 dark:text-slate-100">{selectedJob ? getJobSourceTitle(selectedJob) : "Đang tải…"}</h2></div><button type="button" aria-label="Đóng" onClick={() => setSelectedJobId(null)} className="rounded-lg p-2 text-slate-600 dark:text-slate-400 transition hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100">✕</button></div>
-            {selectedJob ? <QueueJobDetail job={selectedJob} storeId={storeId} isBusy={isBusy || retryingJobIds.has(selectedJob.id)} canTransfer={canTransferSelectedJob} onRetry={() => void handleRetryJob(selectedJob)} onTransfer={provider => void perform(() => client.transfer(storeId, selectedJob.id, provider), `Đã chuyển sang ${getProviderPresentation(provider).label}.`)} /> : <div className="space-y-3 p-5" aria-label="Đang tải chi tiết sản phẩm">{[1, 2, 3, 4].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-white dark:bg-slate-900" />)}</div>}
+            {selectedJob ? <QueueJobDetail job={selectedJob} storeId={storeId} isBusy={isInteractionBusy || retryingJobIds.has(selectedJob.id)} canTransfer={canTransferSelectedJob} onRetry={() => void handleRetryJob(selectedJob)} onTransfer={provider => void perform(() => client.transfer(storeId, selectedJob.id, provider), `Đã chuyển sang ${getProviderPresentation(provider).label}.`)} /> : <div className="space-y-3 p-5" aria-label="Đang tải chi tiết sản phẩm">{[1, 2, 3, 4].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-white dark:bg-slate-900" />)}</div>}
           </aside>
         </div>
       )}

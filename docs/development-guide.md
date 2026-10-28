@@ -114,6 +114,18 @@ the current filtered page in the background. A failed background refresh must no
 report the already-accepted retry as a failed mutation. Store switches and newer
 reads fence stale responses.
 
+The attention filter supports selecting rows across pages, selecting the current
+page, and retrying all matching store/provider jobs. Page-local text search disables
+retry-all to avoid silently including unrelated matches. The admin-only
+`GET admin/retry-candidates` snapshots eligible IDs once; `POST admin/retry-batch`
+accepts `storeId`, `jobIds` (at most 20), and `requestId`. Each job is rechecked
+transactionally, so active leases, completed reviews and archived jobs are skipped.
+Per-job receipts in `gpt_mutations` make replay of the same request safe after a
+lost response. Individual failures do not roll back other jobs. The UI retains
+confirmed progress and supports stopping between groups or resuming an interrupted
+group while the page remains open. Reloading discards the local progress display;
+refresh the Queue before starting another run. No new schema or environment is needed.
+
 ```text
 src/
 ├── app/                 # Main owner: app composition, providers, routes, runtime wiring

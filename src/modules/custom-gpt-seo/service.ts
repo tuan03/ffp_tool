@@ -1,8 +1,10 @@
 import type { WorkerMetrics, WorkerReviewHistory, AgentAccessPage, AgentRunPage, ClearQueueResult, GptSeoEnqueue, GptSeoJob, GptSeoSettings, GptSeoBatch, SeoProvider, SeoPublishReceipt, SeoProductLifecycleDto, SeoRollbackDraftRequestDto, SeoVersionDiffDto, SeoVersionPageDto } from "./types";
 import { readSeoReviewListPage } from "../../shared/seo-review-list";
 import type { SeoReviewListQuery } from "../../shared/seo-review-list";
+import type { QueueRetryOutcome } from "./types";
 
 export interface GptQueuePage {
+  readonly filteredCount?: number;
   readonly jobs: readonly GptSeoJob[];
   readonly counts: Readonly<Record<string, number>>;
   readonly activeBatch: GptSeoBatch | null;
@@ -162,6 +164,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     job: (storeId: string, jobId: string) => request<GptSeoJob>(`job?jobId=${encodeURIComponent(jobId)}`, storeId),
     enqueue: (input: GptSeoEnqueue) => request<GptSeoJob>("enqueue", input.execution.storeId, input),
     retry: (storeId: string, jobId: string) => request<unknown>("retry", storeId, { jobId }),
+    retryCandidates: (storeId: string, provider?: SeoProvider) => request<{ readonly jobIds: readonly string[] }>(`retry-candidates?${provider ? `provider=${encodeURIComponent(provider)}` : ""}`, storeId),
+    retryBatch: (storeId: string, jobIds: readonly string[], requestId: string) => request<{ readonly outcomes: readonly QueueRetryOutcome[] }>("retry-batch", storeId, { jobIds, requestId }),
     requeue: (storeId: string, jobIds: readonly string[], options?: { provider?: SeoProvider; instructions?: string }) =>
       request<{ readonly requeued: number }>("requeue", storeId, { jobIds, ...options }),
     cancelReview: (storeId: string, jobId: string) => request<{ readonly cancelled: boolean }>("cancel", storeId, { jobId }),

@@ -17,6 +17,7 @@ import { buildAutomaticSeoReview } from "../seo-worker/auto-publish-review";
 import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
 import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import { QUEUE_CATALOG_PAYLOAD_SQL } from "./queue-catalog";
+import type { QueueRetryOutcome } from "../../src/modules/custom-gpt-seo";
 import { reviewListWhere, reviewStageSql } from "../review-list-query";
 import { getAmazonPipelineAsins } from "./amazon-pipeline-identity";
 import { emptySeoReviewCounts, getSeoReviewActions } from "../../src/shared/seo-review-list";
@@ -467,6 +468,32 @@ export class PostgresCustomGptQueue implements SeoQueue {
       if (!["IN_PROGRESS", "NEEDS_CHANGES", "WAITING_INPUT"].includes(job.status)) throw new Error("Job state does not accept issue reports");
       (await this.write({ ...job, status: "WAITING_INPUT", error: message.slice(0, 1000) }));
     }));
+  }
+  async retryCandidates(storeId: string, provider?: SeoProvider): Promise<readonly string[]> {
+    const rows = await this.db.prepare(`SELECT j.id FROM gpt_jobs j LEFT JOIN seo_worker_jobs w ON w.job_id=j.id
+      WHERE j.store_id=? AND j.status!='CANCELLED' AND COALESCE(j.payload::jsonb->>'queueArchivedAt','')=''
+      AND ${EFFECTIVE_STATUS_SQL} IN ('WAITING_INPUT','NEEDS_CHANGES','FAILED')
+      ${provider ? "AND j.provider=?" : ""} ORDER BY j.created_at,j.id`).all(...(provider ? [storeId, provider] : [storeId]));
+    return rows.map(row => String(row.id));
+  }
+  async retrySafely(storeId: string, jobId: string, requestId: string): Promise<QueueRetryOutcome> {
+    return this.transaction(async () => {
+      const scope = `bulk-retry:${storeId}:${jobId}`;
+      const previous = await this.db.prepare("SELECT response FROM gpt_mutations WHERE scope=? AND request_id=?").get(scope, requestId);
+      if (previous) return json(previous.response) as QueueRetryOutcome;
+      // The same queue transaction fences worker claims and operator mutations.
+      const row = await this.db.prepare(`SELECT j.status,j.payload::jsonb->>'queueArchivedAt' AS archived,
+        w.state AS worker_state,w.lease_id FROM gpt_jobs j LEFT JOIN seo_worker_jobs w ON w.job_id=j.id
+        WHERE j.store_id=? AND j.id=?`).get(storeId, jobId);
+      const workerEligible = row?.worker_state != null
+        ? ["BLOCKED", "FAILED_FINAL", "RETRY_WAIT"].includes(String(row.worker_state)) && row.lease_id === null
+        : ["WAITING_INPUT", "NEEDS_CHANGES", "FAILED"].includes(String(row?.status));
+      const canRetry = Boolean(row && !row.archived && ["PENDING", "WAITING_INPUT", "NEEDS_CHANGES", "FAILED"].includes(String(row.status)) && workerEligible);
+      if (canRetry) await this.retry(storeId, jobId);
+      const outcome: QueueRetryOutcome = { jobId, status: canRetry ? "retried" : "skipped" };
+      await this.db.prepare("INSERT INTO gpt_mutations(scope,request_id,digest,response) VALUES (?,?,?,?)").run(scope, requestId, hash({ storeId, jobId }), JSON.stringify(outcome));
+      return outcome;
+    });
   }
   async retry(storeId: string, jobId: string): Promise<void> {
     (await this.transaction(async () => {
