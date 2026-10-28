@@ -16,6 +16,7 @@ import { SeoReviewHistoryRepository } from "../seo-worker/review-history";
 import { buildAutomaticSeoReview } from "../seo-worker/auto-publish-review";
 import { SeoPublishVersioningIntegration, SeoVersionRepository } from "../seo-versioning";
 import { normalizeSeoEnqueue, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
+import { QUEUE_CATALOG_PAYLOAD_SQL } from "./queue-catalog";
 import { reviewListWhere, reviewStageSql } from "../review-list-query";
 import { getAmazonPipelineAsins } from "./amazon-pipeline-identity";
 import { emptySeoReviewCounts, getSeoReviewActions } from "../../src/shared/seo-review-list";
@@ -300,9 +301,14 @@ export class PostgresCustomGptQueue implements SeoQueue {
       parameters.push(...statuses);
     }
     parameters.push(offset);
-    const rows = await this.db.prepare(`SELECT j.payload,w.state AS worker_state,w.last_error_code AS worker_error_code
+    const rows = await this.db.prepare(`WITH page AS MATERIALIZED (
+      SELECT j.payload,j.created_at,j.id,w.state AS worker_state,w.last_error_code AS worker_error_code
       FROM gpt_jobs j LEFT JOIN seo_worker_jobs w ON w.job_id=j.id
-      WHERE ${conditions.join(" AND ")} ORDER BY j.created_at,j.id LIMIT 50 OFFSET ?`).all(...parameters);
+      WHERE ${conditions.join(" AND ")} ORDER BY j.created_at,j.id LIMIT 50 OFFSET ?
+    ), snapshots AS MATERIALIZED (
+      SELECT payload::jsonb AS snapshot,created_at,id,worker_state,worker_error_code FROM page
+    ) SELECT ${QUEUE_CATALOG_PAYLOAD_SQL} AS payload,worker_state,worker_error_code
+      FROM snapshots ORDER BY created_at,id`).all(...parameters);
     return rows.map(projectWorkerStatus);
   }
   async countFiltered(storeId: string, filters: QueueListFilters): Promise<number> {

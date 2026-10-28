@@ -16,3 +16,21 @@ test("queue warm reads are isolated by store/filter and invalidated by writes", 
   const controller = new AbortController(); controller.abort();
   await assert.rejects(client.list("one", 0, { signal: controller.signal }), { name: "AbortError" });
 });
+
+test("a read during retry cannot cache pre-retry state after the server confirms it", async () => {
+  let resolveRetry: (response: Response) => void = () => undefined;
+  const pendingRetry = new Promise<Response>(resolve => { resolveRetry = resolve; });
+  let reads = 0;
+  const fetcher: typeof fetch = async (_input, init) => {
+    if (init?.method === "POST") return pendingRetry;
+    reads += 1;
+    return Response.json({ jobs: [], counts: {}, activeBatches: [], activeBatch: null, nextOffset: null });
+  };
+  const client = createCustomGptClient(fetcher);
+  const retry = client.retry("sample", "job");
+  await client.list("sample");
+  resolveRetry(Response.json({ status: "PENDING" }));
+  await retry;
+  await client.list("sample");
+  assert.equal(reads, 2);
+});

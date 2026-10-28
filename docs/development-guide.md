@@ -98,6 +98,22 @@ this change does not rebuild or redistribute the Windows installer.
 
 ## 2. Folder ownership
 
+### SEO Queue catalog performance
+
+PostgreSQL uses `gpt_visible_queue_idx` to filter non-cancelled, non-archived Queue
+jobs without repeatedly decoding source snapshots. The partial index is maintained
+by PostgreSQL on every write, including Queue clear and recovery. Initialization
+creates it for existing databases; the first deployment needs time to build the
+index and can briefly block writes to `gpt_jobs`. No historical records are removed.
+Queue status still projects `BLOCKED`, `FAILED_FINAL`, and `RETRY_WAIT` from workers.
+
+The paginated catalog returns one thumbnail and checkpoint stage names; full
+images, snapshots and checkpoint bodies remain available through the job detail
+endpoint. A confirmed retry updates the affected row immediately, then refreshes
+the current filtered page in the background. A failed background refresh must not
+report the already-accepted retry as a failed mutation. Store switches and newer
+reads fence stale responses.
+
 ```text
 src/
 ├── app/                 # Main owner: app composition, providers, routes, runtime wiring

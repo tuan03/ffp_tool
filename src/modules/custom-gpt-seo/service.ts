@@ -89,6 +89,8 @@ export function createCustomGptClient(fetcher: typeof fetch = fetch) {
     if (cached && cached.expiresAt > Date.now()) return structuredClone(cached.payload) as T;
     const response = await fetcher(`/api/v1/gpt-seo/admin/${route}${route.includes("?") ? "&" : "?"}storeId=${encodeURIComponent(storeId)}`, { method: body === undefined ? "GET" : "POST", signal, headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const payload: unknown = await response.json();
+    // Reads made while a mutation was in flight may still contain its old status.
+    if (body !== undefined) { readCache.clear(); cacheRevision += 1; }
     if (!response.ok) {
       const error = payload && typeof payload === "object" && "error" in payload ? payload.error : undefined;
       throw new Error(error && typeof error === "object" && "message" in error ? String(error.message) : `GPT SEO request failed (${response.status})`);

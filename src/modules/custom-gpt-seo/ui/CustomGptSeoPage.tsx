@@ -24,6 +24,7 @@ import type { QueueProviderFilter, QueueStatusGroup } from "./seo-queue-view-mod
 import { QUEUE_FIELD_CLASS_NAME as FIELD_CLASS_NAME, QUEUE_PRIMARY_BUTTON_CLASS_NAME as PRIMARY_BUTTON_CLASS_NAME, QUEUE_SECONDARY_BUTTON_CLASS_NAME as SECONDARY_BUTTON_CLASS_NAME } from "./queue-styles";
 import { QueueJobDetail } from "./components/QueueJobDetail";
 import { QueueJobsTable } from "./components/QueueJobsTable";
+import { applyConfirmedQueueRetry } from "./queue-retry";
 
 interface Notice {
   readonly kind: "success" | "error";
@@ -46,6 +47,9 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [retryingKeys, setRetryingKeys] = useState<ReadonlySet<string>>(new Set());
+  const pendingRetries = useRef(new Set<string>());
+  const storeGeneration = useRef(0);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<GptSeoJob | null>(null);
   const [query, setQuery] = useState("");
@@ -88,7 +92,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     return () => { cancelled = true; };
   }, [client]);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const refresh = useCallback(async (isBackground = false): Promise<void> => {
     const generation = ++refreshGeneration.current;
     refreshController.current?.abort();
     const controller = new AbortController();
@@ -104,10 +108,13 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
       setHasQueueLoadError(false);
       setLastRefreshedAt(new Date().toLocaleTimeString("vi-VN"));
     } catch (error) {
-      if (generation === refreshGeneration.current && !controller.signal.aborted) setHasQueueLoadError(true);
+      if (!isBackground && generation === refreshGeneration.current && !controller.signal.aborted) setHasQueueLoadError(true);
       throw error;
     }
   }, [client, offset, providerFilter, statusGroup, storeId]);
+  const latestRefresh = useRef(refresh);
+  latestRefresh.current = refresh;
+  useEffect(() => () => { storeGeneration.current += 1; }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +123,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     setNotice(null);
     void refresh()
       .catch(error => {
-        if (!cancelled) {
+        if (!cancelled && !(error instanceof Error && error.name === "AbortError")) {
           setHasQueueLoadError(true);
           setNotice({ kind: "error", text: error instanceof Error ? error.message : "Không tải được hàng đợi." });
         }
@@ -164,8 +171,41 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
     }
   }
 
+  async function handleRetryJob(job: GptSeoJob): Promise<void> {
+    const key = `${storeId}:${job.id}`;
+    if (pendingRetries.current.has(key)) return;
+    const generation = storeGeneration.current;
+    pendingRetries.current.add(key);
+    setRetryingKeys(new Set(pendingRetries.current));
+    setNotice(null);
+    try {
+      await client.retry(storeId, job.id);
+      if (storeGeneration.current !== generation) return;
+      // Fence reads that started before the confirmed mutation.
+      refreshGeneration.current += 1;
+      refreshController.current?.abort();
+      setQueue(previous => previous ? applyConfirmedQueueRetry(previous, job.id) : previous);
+      setSelectedJob(previous => previous?.id === job.id ? { ...previous, status: "PENDING", error: undefined } : previous);
+      setNotice({ kind: "success", text: `Đã đưa “${getJobSourceTitle(job)}” vào hàng đợi xử lý lại.` });
+      // A slow catalog must not delay confirmation or turn a successful retry into an error.
+      const backgroundRefresh = latestRefresh.current(true);
+      const readGeneration = refreshGeneration.current;
+      void backgroundRefresh.catch(error => {
+        if (storeGeneration.current === generation && refreshGeneration.current === readGeneration && !(error instanceof Error && error.name === "AbortError")) {
+          setNotice({ kind: "success", text: "Đã đưa sản phẩm vào hàng đợi xử lý lại. Chưa tải lại được danh sách; bấm Làm mới để đối chiếu." });
+        }
+      });
+    } catch (error) {
+      if (storeGeneration.current === generation) setNotice({ kind: "error", text: error instanceof Error ? error.message : "Chưa xác nhận được yêu cầu thử lại. Làm mới để kiểm tra trạng thái." });
+    } finally {
+      pendingRetries.current.delete(key);
+      setRetryingKeys(new Set(pendingRetries.current));
+    }
+  }
+
   function handleStoreChange(nextStoreId: string): void {
     if (!nextStoreId || nextStoreId === storeId) return;
+    storeGeneration.current += 1;
     persistBrowserActiveStoreId(nextStoreId);
     setSearchParams({ storeId: nextStoreId }, { replace: true });
     refreshGeneration.current += 1;
@@ -231,6 +271,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
   );
   const totalCount = summaries.reduce((total, summary) => total + summary.count, 0);
   const canTransferSelectedJob = selectedJob ? TRANSFERABLE_STATUSES.some(status => status === selectedJob.status) : false;
+  const retryingJobIds = new Set([...retryingKeys].filter(key => key.startsWith(`${storeId}:`)).map(key => key.slice(storeId.length + 1)));
 
   return (
     <section className="space-y-5" aria-labelledby="seo-queue-title">
@@ -295,7 +336,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
         ) : queue === null ? (
           <div className="space-y-3 p-5" role="status" aria-label="Đang tải hàng đợi">{[1, 2, 3].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />)}</div>
         ) : filteredJobs.length > 0 ? (
-          <QueueJobsTable jobs={filteredJobs} isBusy={isBusy} onOpenJob={handleOpenJob} onRetryJob={job => void perform(() => client.retry(storeId, job.id), `Đã đưa “${getJobSourceTitle(job)}” vào xử lý lại.`)} />
+          <QueueJobsTable jobs={filteredJobs} isBusy={isBusy} retryingJobIds={retryingJobIds} onOpenJob={handleOpenJob} onRetryJob={job => void handleRetryJob(job)} />
         ) : (
           <div className="px-6 py-14 text-center"><AppIcon name="queue" className="mx-auto h-7 w-7 text-slate-400" /><h3 className="mt-4 font-medium text-slate-900 dark:text-slate-100">{totalCount === 0 ? "Chưa có sản phẩm trong hàng đợi" : "Không có sản phẩm khớp bộ lọc trên trang này"}</h3><p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{totalCount === 0 ? "Sản phẩm được gửi sang SEO sẽ xuất hiện tại đây." : "Thử đổi trạng thái, xóa từ khóa hoặc chuyển trang. Tìm kiếm chỉ áp dụng trên trang đang xem."}</p></div>
         )}
@@ -339,7 +380,7 @@ export function CustomGptSeoPage({ client }: { readonly client: CustomGptClient 
           <button type="button" tabIndex={-1} aria-label="Đóng chi tiết sản phẩm" onClick={() => setSelectedJobId(null)} className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" />
           <aside className="absolute inset-y-0 right-0 w-full max-w-[760px] overflow-y-auto border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-5 py-4 backdrop-blur"><div><p className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">Chi tiết sản phẩm</p><h2 id="job-detail-title" className="mt-1 max-w-xl line-clamp-2 font-semibold text-slate-900 dark:text-slate-100">{selectedJob ? getJobSourceTitle(selectedJob) : "Đang tải…"}</h2></div><button type="button" aria-label="Đóng" onClick={() => setSelectedJobId(null)} className="rounded-lg p-2 text-slate-600 dark:text-slate-400 transition hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100">✕</button></div>
-            {selectedJob ? <QueueJobDetail job={selectedJob} storeId={storeId} isBusy={isBusy} canTransfer={canTransferSelectedJob} onRetry={() => void perform(() => client.retry(storeId, selectedJob.id), "Đã đưa sản phẩm vào xử lý lại.")} onTransfer={provider => void perform(() => client.transfer(storeId, selectedJob.id, provider), `Đã chuyển sang ${getProviderPresentation(provider).label}.`)} /> : <div className="space-y-3 p-5" aria-label="Đang tải chi tiết sản phẩm">{[1, 2, 3, 4].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-white dark:bg-slate-900" />)}</div>}
+            {selectedJob ? <QueueJobDetail job={selectedJob} storeId={storeId} isBusy={isBusy || retryingJobIds.has(selectedJob.id)} canTransfer={canTransferSelectedJob} onRetry={() => void handleRetryJob(selectedJob)} onTransfer={provider => void perform(() => client.transfer(storeId, selectedJob.id, provider), `Đã chuyển sang ${getProviderPresentation(provider).label}.`)} /> : <div className="space-y-3 p-5" aria-label="Đang tải chi tiết sản phẩm">{[1, 2, 3, 4].map(row => <div key={row} className="h-20 animate-pulse rounded-lg bg-white dark:bg-slate-900" />)}</div>}
           </aside>
         </div>
       )}

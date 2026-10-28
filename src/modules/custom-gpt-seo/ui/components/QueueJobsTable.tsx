@@ -7,11 +7,12 @@ import { QueueStatusBadge } from "./QueueStatusBadge";
 interface QueueJobsTableProps {
   readonly jobs: readonly GptSeoJob[];
   readonly isBusy: boolean;
+  readonly retryingJobIds?: ReadonlySet<string>;
   readonly onOpenJob: (jobId: string) => void;
   readonly onRetryJob: (job: GptSeoJob) => void;
 }
 
-export function QueueJobsTable({ jobs, isBusy, onOpenJob, onRetryJob }: QueueJobsTableProps): React.JSX.Element {
+export function QueueJobsTable({ jobs, isBusy, retryingJobIds, onOpenJob, onRetryJob }: QueueJobsTableProps): React.JSX.Element {
   return <div role="region" aria-label="Danh sách sản phẩm SEO có thể cuộn" tabIndex={0} className="max-h-[max(360px,calc(100dvh-420px))] overflow-auto">
     <table className="w-full min-w-[940px] table-fixed text-left text-sm">
       <caption className="sr-only">Sản phẩm, checkpoint đã lưu, trạng thái và thao tác xử lý SEO</caption>
@@ -39,7 +40,7 @@ export function QueueJobsTable({ jobs, isBusy, onOpenJob, onRetryJob }: QueueJob
             </td>
             <td className="px-4 py-4"><QueueStatusBadge status={job.status} />{issue && <p className="mt-2 max-w-72 text-xs leading-5 text-amber-800 dark:text-amber-300">{issue}</p>}</td>
             <td className="px-4 py-4"><div className="flex flex-col items-end gap-2">
-              {canRetryJob(job) && <button type="button" disabled={isBusy} onClick={() => onRetryJob(job)} className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-950">Thử lại</button>}
+              {canRetryJob(job) && <button type="button" disabled={isBusy || retryingJobIds?.has(job.id)} aria-busy={retryingJobIds?.has(job.id) || undefined} onClick={() => onRetryJob(job)} className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-950">{retryingJobIds?.has(job.id) ? "Đang thử lại…" : "Thử lại"}</button>}
               <button type="button" onClick={() => onOpenJob(job.id)} className="whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/60">Xem chi tiết</button>
             </div></td>
           </tr>;

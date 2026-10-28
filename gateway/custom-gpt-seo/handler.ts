@@ -8,7 +8,7 @@ import { verifyImageSignature, downloadProductImage } from "./images";
 import { createExternalSeoWorkflow } from "./workflow";
 import { parseSeoGenerationInput, SEO_WORKER_SCHEMA_VERSION } from "./input-contract";
 import { readReviewListQuery } from "../review-list-query";
-import { buildQueueDisplay } from "./queue-display";
+import { buildQueueCatalogJob } from "./queue-catalog";
 import { SeoWorkerError } from "../seo-worker/protocol";
 
 export interface CustomGptHandlerOptions {
@@ -220,7 +220,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           break;
         }
         case "admin/jobs": {
-          // Expire leases before taking catalog counts; this read may also perform queue housekeeping.
+          // The legacy SQLite adapter expires batches here before catalog reads.
           const activeBatches = await queue.activeBatches(storeId);
           const filters = parseJobFilters(url);
           const [jobs, filteredCount, counts] = await Promise.all([
@@ -228,7 +228,7 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
             queue.countFiltered(storeId, filters),
             queue.visibleCounts(storeId),
           ]);
-          result = { jobs: jobs.map(job => ({ ...job, queueDisplay: buildQueueDisplay(job), original: null, execution: { ...job.execution, originalSnapshot: null }, checkpoints: {}, result: undefined, settings: { ...job.settings, instructions: "" }, input: job.input })), counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
+          result = { jobs: jobs.map(buildQueueCatalogJob), counts, activeBatch: activeBatches[0] ?? null, activeBatches, nextOffset: offset + jobs.length < filteredCount ? offset + jobs.length : null };
           break;
         }
         case "admin/review-list": {
