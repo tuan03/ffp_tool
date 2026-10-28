@@ -6,6 +6,16 @@ import { resolveCrawlStatus } from "../ui/crawl-status";
 import { CrawlStatusNotice } from "../ui/components/CrawlStatusNotice";
 
 const base = { isRunning: false, isChecking: false, isStale: false, blockers: [], errors: [], summary: { totalProducts: 18, handedOver: 10, pending: 8, notHandedOver: 0 } };
+test("unavailable handoff worker replaces spinner without losing received counts", () => {
+  const status = resolveCrawlStatus({ ...base, isRunning: true,
+    summary: { ...base.summary, workerStatus: "unavailable" } });
+  assert.equal(status.tone, "warning");
+  assert.match(status.title, /bàn giao.*gián đoạn/);
+  assert.match(status.detail, /10\/18/);
+  assert.match(status.detail, /không cần cào lại/i);
+  assert.equal(resolveCrawlStatus({ ...base, isRunning: true,
+    summary: { ...base.summary, pending: 0, workerStatus: "unavailable" } }).tone, "working");
+});
 test("batch sticky separates input coverage from products and keeps skip counts after completion", () => {
   const progress = { completed: 6, total: 10, phase: "product" as const, message: "", currentAsin: "B0CHILD003",
     batch: { skippedShopify: 2, skippedPipeline: 1, covered: 3, attention: 0 } };

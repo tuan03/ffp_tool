@@ -7,6 +7,7 @@ import type { ProductClassification } from "../gateway/seo-worker/product-classi
 import { applySizeOptionNormalization } from "../gateway/seo-worker/size-option-normalization";
 import { applyCustomizerAudit } from "../gateway/seo-worker/customizer-audit";
 import { startReviewImageUploadWorker } from "./review-image-upload-worker";
+import { createPipelineHealth, shutdownPipeline, waitForCoordinator } from "./pipeline-worker-lifecycle";
 import { acquireCustomGptSync, finishFailedCustomGptSync } from "./custom-gpt-sync-guard";
 import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import { resolvePipelineVendor } from "./pipeline-vendor";
@@ -236,11 +237,15 @@ function pipelineHeaders(): Record<string, string> {
 }
 
 async function postJson<TResponse>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<TResponse> {
+  const isActivityRequest = path === "/api/v1/internal/product-pipeline/claim" || path.endsWith("/heartbeat");
+  const requestSignal = isActivityRequest
+    ? signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000)
+    : signal;
   const response = await fetch(`${coordinatorUrl}${path}`, {
     method: "POST",
     headers: pipelineHeaders(),
     body: JSON.stringify(body),
-    signal,
+    signal: requestSignal,
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
@@ -249,6 +254,7 @@ async function postJson<TResponse>(path: string, body: Record<string, unknown>, 
       : `Coordinator returned HTTP ${response.status}.`;
     throw new CoordinatorRequestError(message, response.status);
   }
+  if (isActivityRequest && isRecord(payload) && (Array.isArray(payload.items) || typeof payload.status === "string")) pipelineHealth.activity();
   return payload as TResponse;
 }
 
@@ -1353,45 +1359,13 @@ async function workerLoop(workerIndex: number): Promise<void> {
   }
 }
 
-async function waitForCoordinator(): Promise<void> {
-  let lastError = "Coordinator is not ready.";
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      const response = await fetch(`${coordinatorUrl}/api/v1/health`);
-      const payload: unknown = await response.json().catch(() => null);
-      const health = payload && typeof payload === "object"
-        ? payload as { status?: unknown; apiVersion?: unknown }
-        : null;
-      if (
-        response.ok
-        && health?.status === "ok"
-        && health.apiVersion === "v1"
-      ) {
-        return;
-      }
-      if (response.ok && health?.status === "ok") {
-        throw new Error(
-          `Coordinator at ${coordinatorUrl} does not expose the required API v1 health contract.`,
-        );
-      }
-      lastError = `Coordinator health returned HTTP ${response.status}.`;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/protocol .* is running/i.test(message)) throw error;
-      lastError = message;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error(`Coordinator did not become ready at ${coordinatorUrl}: ${lastError}`);
-}
-
-async function stop(): Promise<void> {
-  reviewImageWorker?.abort();
-  gatewayServer?.close();
-  await seoPersistence?.close().catch((error: unknown) => {
-    console.warn(`[Shopify pipeline] Failed to close SEO PostgreSQL pool: ${error instanceof Error ? error.message : String(error)}`);
+async function stop(code = 0): Promise<void> {
+  await shutdownPipeline({ code,
+    abortUploads: () => { try { pipelineHealth.stop(); } finally { reviewImageWorker?.abort(); } },
+    closeGateway: () => { gatewayServer?.close(); },
+    closePersistence: async () => { await seoPersistence?.close(); },
+    exit: code => process.exit(code),
   });
-  process.exit(0);
 }
 
 process.on("SIGINT", () => { void stop(); });
@@ -1410,12 +1384,6 @@ async function main(): Promise<void> {
       port: gatewayPort,
       host: "127.0.0.1",
       authToken: env.GATEWAY_AUTH_TOKEN,
-    });
-  }
-  if (env.REVIEW_IMAGE_DURABLE_UPLOADS === "true") {
-    reviewImageWorker = startReviewImageUploadWorker({
-      coordinatorUrl, gatewayUrl, pipelineToken: pipelineToken || "", gatewayToken: env.GATEWAY_AUTH_TOKEN || "",
-      outputRoot: env.REVIEW_IMAGE_OUTPUT_DIR || ".runtime/review-image/outputs",
     });
   }
   if (!storeId || !baseStore) {
@@ -1438,7 +1406,13 @@ async function main(): Promise<void> {
       }
     }
   }
-  await waitForCoordinator();
+  await waitForCoordinator({ url: coordinatorUrl });
+  if (env.REVIEW_IMAGE_DURABLE_UPLOADS === "true") {
+    reviewImageWorker = startReviewImageUploadWorker({
+      coordinatorUrl, gatewayUrl, pipelineToken: pipelineToken || "", gatewayToken: env.GATEWAY_AUTH_TOKEN || "",
+      outputRoot: env.REVIEW_IMAGE_OUTPUT_DIR || ".runtime/review-image/outputs",
+    });
+  }
   console.log(
     proxyStores.length > 0
       ? `[Shopify pipeline] ${workerCount} workers, ${proxyStores.length} fail-closed proxy profiles, store ${storeId}.`
@@ -1448,10 +1422,10 @@ async function main(): Promise<void> {
   await Promise.all(workers);
 }
 
-void main().catch((error: unknown) => {
+const pipelineHealth = createPipelineHealth({ file: env.FFP_PIPELINE_HEALTH_FILE });
+
+void main().catch(async (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[Shopify pipeline] ${message}`);
-  gatewayServer?.close();
-  void seoPersistence?.close();
-  process.exitCode = 1;
+  await stop(1);
 });

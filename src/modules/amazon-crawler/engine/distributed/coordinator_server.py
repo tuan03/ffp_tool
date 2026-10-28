@@ -25,6 +25,7 @@ from ..image_processing import ImageProcessingService, normalize_profile, proces
 from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from .release_catalog import cached_release_version
+from .pipeline_health import attach_pipeline_health
 from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
 from .coordinator_store import ActiveJobExistsError, CoordinatorStore, ProductPipelineActiveError
 from .shopify_family_verification import verify_shopify_family, verify_operator_cleared_seo
@@ -608,21 +609,21 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.get("/api/v1/crawl-jobs")
     def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
-        return store.list_jobs(limit)
+        return [attach_pipeline_health(snapshot, file=os.environ.get("FFP_PIPELINE_HEALTH_FILE")) for snapshot in store.list_jobs(limit)]
 
     @app.get("/api/v1/crawl-jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
         snapshot = store.get_job(job_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        return snapshot
+        return attach_pipeline_health(snapshot, file=os.environ.get("FFP_PIPELINE_HEALTH_FILE"))
 
     @app.get("/api/v1/crawl-jobs/{job_id}/summary")
     def get_job_summary(job_id: str) -> dict[str, Any]:
         summary = store.job_summary(job_id)
         if summary is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        return summary
+        return attach_pipeline_health(summary, file=os.environ.get("FFP_PIPELINE_HEALTH_FILE"))
 
     @app.get("/api/v1/crawl-jobs/{job_id}/metadata")
     def get_job_metadata(job_id: str) -> dict[str, Any]:

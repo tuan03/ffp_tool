@@ -538,6 +538,7 @@ export interface AmazonCrawlerJobSnapshot {
 }
 
 export interface AmazonCrawlerSeoQueueHandoffSummary {
+  workerStatus?: "healthy" | "starting" | "unavailable";
   totalProducts: number;
   handedOver: number;
   pending: number;

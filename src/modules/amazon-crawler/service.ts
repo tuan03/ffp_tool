@@ -499,6 +499,7 @@ function readSeoQueueHandoff(value: unknown): AmazonCrawlerSeoQueueHandoffSummar
   const notHandedOver = typeof value.notHandedOver === "number" ? value.notHandedOver : 0;
   return {
     totalProducts, handedOver, pending, notHandedOver,
+    ...(["healthy", "starting", "unavailable"].includes(String(value.workerStatus)) ? { workerStatus: value.workerStatus as AmazonCrawlerSeoQueueHandoffSummary["workerStatus"] } : {}),
     ...(typeof value.skippedExistingShopify === "number" ? { skippedExistingShopify: value.skippedExistingShopify } : {}),
     ...(typeof value.skippedExistingPipeline === "number" ? { skippedExistingPipeline: value.skippedExistingPipeline } : {}),
     ...(typeof value.totalDetected === "number" ? { totalDetected: value.totalDetected } : {}),

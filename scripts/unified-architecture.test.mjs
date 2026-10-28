@@ -200,7 +200,8 @@ test("server and client deployment assets are properly configured", async () => 
   assert.match(supervisor, /\[program:pipeline-worker\]/);
   assert.match(pipelineWorker, /exec node --import tsx scripts\/shopify-pipeline-worker\.ts/);
   assert.doesNotMatch(pipelineWorker, /exec sleep infinity/);
-  assert.match(serverDocker, /pgrep -f '\[s\]hopify-pipeline-worker\.ts'/);
+  assert.match(serverDocker, /python .*pipeline_health\.py/);
+  assert.match(serverDocker, /ENV FFP_PIPELINE_HEALTH_FILE=\/tmp\/ffp-pipeline-worker-health\.json/);
 
   assert.match(dockerIgnore, /^\*\*\/\.env$/m);
   assert.match(dockerIgnore, /^\*\*\/\.pinterest_oauth_tokens\.json$/m);

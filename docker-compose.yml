@@ -95,7 +95,7 @@ services:
       - ffp_runtime:/app/.runtime
       - ./credentials:/app/credentials:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/ready >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
+      test: ["CMD-SHELL", "python /app/src/modules/amazon-crawler/engine/distributed/pipeline_health.py && curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/ready >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null"]
       interval: 2s
       timeout: 3s
       retries: 15

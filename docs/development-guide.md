@@ -131,6 +131,21 @@ deployment waits up to 300 seconds for services to become healthy. Readiness che
 and the client's healthy-server dependency remain enabled. These are maximum grace
 and wait windows, not fixed delays when startup succeeds sooner.
 
+The pipeline worker separately waits up to 120 seconds for `/api/v1/ready`, with a
+five-second timeout per readiness request. Review-image background uploads start
+only after readiness succeeds. Fatal startup failures stop background work and exit
+nonzero after at most five seconds of cleanup so Supervisor can restart the worker.
+
+The unified server image sets `FFP_PIPELINE_HEALTH_FILE` to
+`/tmp/ffp-pipeline-worker-health.json`. Only successful pipeline claim/lease-heartbeat
+responses refresh this atomic file (writes are throttled to five seconds). Docker
+and deployment require a live pipeline PID and activity no older than 45 seconds;
+an unrelated upload loop cannot satisfy the check. The Coordinator's own readiness
+does not depend on this file, avoiding a startup dependency cycle. Crawl job/list/
+summary responses add optional `seoQueueHandoff.workerStatus`; pending handoffs show
+a warning when the worker is unavailable. Standalone setups without this environment
+setting keep their existing behavior. The file contains no credentials or product data.
+
 ```text
 src/
 ├── app/                 # Main owner: app composition, providers, routes, runtime wiring

@@ -8,4 +8,6 @@ test('deployment allows cold startup without bypassing service readiness', () =>
   assert.match(compose, /start_period: 120s/);
   assert.match(compose, /condition: service_healthy/);
   assert.match(workflow, /--wait --wait-timeout 300/);
+  assert.match(compose, /python .*pipeline_health\.py/);
+  assert.match(workflow, /docker exec ffp-server python .*pipeline_health\.py/);
 });

@@ -36,6 +36,13 @@ export function resolveCrawlStatus(input: {
   if (input.cancelled) return { title: "Phiên đã hủy", detail: counts || "Dữ liệu server đã nhận được giữ nguyên.", tone: "warning" };
   if (input.cancelling) return { title: "Đang hủy phiên an toàn", detail: counts || "Đang chờ server xác nhận dừng; không đóng Agent lúc này.", tone: "warning" };
   if (input.executionState === "paused" || input.executionState === "pausing") return { title: input.executionState === "paused" ? "Tạm dừng nhận ASIN mới" : "Đang tạm dừng an toàn", detail: counts || "Task đang chạy được xử lý theo trạng thái server.", tone: "warning" };
+  if (summary.pending > 0 && summary.workerStatus === "unavailable") return {
+    title: "Tiến trình bàn giao SEO đang gián đoạn",
+    detail: `${counts}. Dữ liệu đã nhận được giữ nguyên, không cần cào lại. Cần kiểm tra worker bàn giao trên server.`, tone: "warning",
+  };
+  if (summary.pending > 0 && summary.workerStatus === "starting") return {
+    title: "Đang khởi động tiến trình bàn giao SEO", detail: `${counts}. Dữ liệu đã nhận được giữ nguyên.`, tone: "working",
+  };
   if (input.isRunning) {
     const progress = input.progress;
     if (progress?.phase === "captcha") return { title: "Cần xử lý CAPTCHA trên Agent", detail: counts || "Mở Agent để kiểm tra yêu cầu từ Amazon.", tone: "warning" };
