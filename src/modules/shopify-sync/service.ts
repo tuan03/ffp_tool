@@ -76,6 +76,9 @@ export function createDryRunGateway(): ShopifyGateway {
         metafieldId: "gid://shopify/Metafield/dry-run-id",
       };
     },
+    async deleteProductMetafield() {
+      return { success: true };
+    },
   };
 }
 
@@ -85,6 +88,15 @@ export function prepareShopifySyncProduct(product: ShopifySyncProductInput): Sho
   requireAmazonAsin(prepared.amazonAsin, "custom.amazon_asin");
   requireAmazonAsin(prepared.amazonParentAsin, "custom.amazon_parent_asin");
   validateAeoInput(prepared.aeo);
+  if (prepared.customizerAuditStatus === "verified_static" && prepared.customization) {
+    throw new Error("verified_static products must not retain customization JSON.");
+  }
+  if (prepared.customizerAuditStatus === "verified_custom" && !prepared.customization) {
+    throw new Error("verified_custom products require customization JSON.");
+  }
+  if (prepared.customizerAuditStatus === "error" && prepared.customization) {
+    throw new Error("error audit status must not expose unresolved customization JSON.");
+  }
   return prepared;
 }
 
@@ -298,6 +310,7 @@ export async function syncSingleProduct(
       seo: product.seo,
       vendor: product.vendor,
       productType: product.productType,
+      category: product.category,
       tags: [
         ...(product.tags ?? []),
         ...(product.sourceKey ? [`ffp-source:${product.sourceKey}`] : []),
@@ -531,6 +544,34 @@ export async function syncSingleProduct(
       }
       metafieldMs += Date.now() - customizationMetafieldStartedAt;
 
+    }
+
+    if (["verified_static", "error"].includes(product.customizerAuditStatus ?? "") && options.existingProductId) {
+      if (!gateway.deleteProductMetafield) {
+        throw new Error("ShopifyGateway must support deleting stale customizer metafields for verified_static products.");
+      }
+      const deleteStartedAt = Date.now();
+      const deleted = await gateway.deleteProductMetafield({
+        productId: writtenProduct.productId,
+        namespace: "custom",
+        key: "amazon_customizer",
+      });
+      if (!deleted.success) throw new Error("Failed to remove stale custom.amazon_customizer metafield.");
+      metafieldMs += Date.now() - deleteStartedAt;
+    }
+
+    if (product.customizerAuditStatus) {
+      const auditStatusStartedAt = Date.now();
+      const auditStatusResult = await gateway.setProductMetafield({
+        productId: writtenProduct.productId,
+        namespace: "custom",
+        key: "audit_status",
+        type: "single_line_text_field",
+        value: product.customizerAuditStatus,
+      });
+      if (!auditStatusResult.success) throw new Error("Failed to set required custom.audit_status metafield.");
+      metafieldSet = true;
+      metafieldMs += Date.now() - auditStatusStartedAt;
     }
 
     const amazonMetafields = [

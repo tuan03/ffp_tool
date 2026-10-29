@@ -133,7 +133,7 @@ function normalizePersisted(job: GptSeoJob): GptSeoJob {
 
 test("automatic crawler classification is store scoped, durable and never enables classification for Auto SEO", async () => {
   for (const source of ["amazon", "auto_seo"] as const) {
-    const original = { crawlerClassificationMode: "automatic", updatedAt: "v1", title: "UNTRUSTED_OLD_TITLE" };
+    const original = { crawlerClassificationMode: "automatic", crawlerConfiguredProductType: "Bedding", updatedAt: "v1", title: "UNTRUSTED_OLD_TITLE" };
     const job = normalizePersisted({ ...enqueue, execution: { ...enqueue.execution, source, originalSnapshot: original },
       id: "classification-job", storeId: "jeminise", source, sourceIdentity: "123", original,
       inputHash: "hash", settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "English", instructions: "" },
@@ -154,10 +154,16 @@ test("automatic crawler classification is store scoped, durable and never enable
     assert.equal(Boolean(context.classification), source === "amazon");
     const submission = { draft: { productTitle: "Dragon bedding" }, alts: {}, classification: {
       status: "ready", collectionId: "gid://shopify/Collection/1", productType: "bedding", reason: "Viewed bed covering with dragons",
+      seoTagProfile: { product: "Bedding", theme: "Dragon", audience: "Fantasy Fans", occasion: "Housewarming", isPersonalized: false },
       evidence: { imageIds: job.input.images.map(image => image.id), visualTheme: "Dragon", collectionTheme: "Dragons", alternatives: [] } } };
     await workflow.submit("token", lease, "submit", submission);
-    assert.deepEqual(saved, source === "amazon" ? { ...submission, classification: { ...submission.classification, productType: "Bedding" } } : submission);
+    assert.deepEqual(saved, source === "amazon" ? { ...submission, classification: { ...submission.classification, productType: "Bedding",
+      derivedSeoTags: ["seo:product:bedding", "seo:theme:dragon", "seo:audience:fantasy-fans", "seo:occasion:housewarming"] } } : submission);
     if (source === "auto_seo") assert.equal(catalogReads, 0);
+    if (source === "amazon") {
+      await assert.rejects(workflow.submit("token", lease, "wrong-fixed-type", { ...submission,
+        classification: { ...submission.classification, productType: "Blanket" } }), /CLASSIFICATION_PRODUCT_TYPE_FIXED/);
+    }
   }
 });
 
@@ -182,6 +188,7 @@ test("automatic submission requires classification and preserves checkpoints unt
   await assert.rejects(workflow.submit("token", lease, "missing", draft), /CLASSIFICATION_REQUIRED/);
   await assert.rejects(workflow.submit("token", lease, "invalid", { ...draft, classification: { status: "ready" } }), /CLASSIFICATION_INVALID/);
   const classification = { status: "ready", collectionId: "collection-1", productType: "Bedding", reason: "Viewed dragon bedding",
+    seoTagProfile: { product: "Bedding", theme: "Dragon", audience: "Fantasy Fans", occasion: "Housewarming", isPersonalized: false },
     evidence: { imageIds: job.input.images.map(image => image.id), visualTheme: "Dragon", collectionTheme: "Dragon", alternatives: [] } };
   await assert.rejects(workflow.submit("token", lease, "missing-evidence", { ...draft, classification: { ...classification, evidence: undefined } }), /CLASSIFICATION_EVIDENCE_REQUIRED/);
   await assert.rejects(workflow.submit("token", lease, "no-type", { ...draft, classification: { ...classification, productType: undefined } }), /CLASSIFICATION_PRODUCT_TYPE_REQUIRED/);
@@ -193,7 +200,37 @@ test("automatic submission requires classification and preserves checkpoints unt
   assert.equal(saved, undefined);
   offline = false;
   await workflow.submit("token", lease, "repaired", { ...draft, classification });
-  assert.deepEqual(saved, { ...draft, classification });
+  assert.deepEqual(saved, { ...draft, classification: { ...classification,
+    derivedSeoTags: ["seo:product:bedding", "seo:theme:dragon", "seo:audience:fantasy-fans", "seo:occasion:housewarming"] } });
+});
+
+test("non-Jeminise automatic classification searches and validates Shopify taxonomy", async () => {
+  const original = { crawlerClassificationMode: "automatic" };
+  const job = normalizePersisted({ ...enqueue, input: { ...enqueue.input, storeProfile: { ...enqueue.input.storeProfile, storeId: "capozen" } },
+    execution: { ...enqueue.execution, storeId: "capozen", source: "amazon", originalSnapshot: original },
+    id: "taxonomy-job", storeId: "capozen", source: "amazon", sourceIdentity: "123", original,
+    inputHash: "hash", settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "English", instructions: "" },
+    status: "IN_PROGRESS", checkpoints: {}, createdAt: 1, updatedAt: 1 } as GptSeoJob);
+  let saved: unknown;
+  const repository = { checkpointReceipt: async () => null, readJob: async () => job,
+    saveCheckpoint: async (_token: string, _lease: unknown, input: { payload: unknown }) => { saved = input.payload; return {}; },
+  } as unknown as SeoWorkerRepository;
+  const category = { id: "gid://shopify/TaxonomyCategory/hg-3-2", name: "Rugs", fullName: "Home & Garden > Decor > Rugs", isLeaf: true };
+  const workflow = createWorkerWorkflow(repository, { checkSource: async () => undefined,
+    classificationCatalog: async () => ({ collections: [{ id: "collection-1", title: "Ocean", description: "Ocean designs" }], productTypes: ["Rug"] }),
+    taxonomyCategorySearch: async (storeId, query) => { assert.equal(storeId, "capozen"); assert.equal(query, "area rug"); return [category]; },
+    taxonomyCategoryResolve: async (storeId, categoryId) => { assert.equal(storeId, "capozen"); return categoryId === category.id ? category : null; },
+  });
+  const lease = { jobId: job.id, runId: "run", sessionId: "session", leaseId: "lease", leaseVersion: 1, expiresAt: 10 };
+  assert.deepEqual(await workflow.taxonomyCategories("token", lease, "area rug"), { query: "area rug", categories: [category] });
+  const classification = { status: "ready", collectionId: "collection-1", productType: "Rug", taxonomyCategoryId: category.id,
+    reason: "Viewed ocean rug", seoTagProfile: { product: "Area Rug", theme: "Ocean", audience: "Coastal Decor Fans", occasion: "Housewarming", isPersonalized: false },
+    evidence: { imageIds: job.input.images.map(image => image.id), visualTheme: "Ocean", collectionTheme: "Ocean designs", alternatives: [] } };
+  await workflow.submit("token", lease, "submit-taxonomy", { draft: { productTitle: "Ocean rug" }, alts: {}, classification });
+  assert.deepEqual((saved as { classification: { derivedSeoTags: string[] } }).classification.derivedSeoTags,
+    ["seo:product:area-rug", "seo:theme:ocean", "seo:audience:coastal-decor-fans", "seo:occasion:housewarming"]);
+  await assert.rejects(workflow.submit("token", lease, "bad-taxonomy", { draft: {}, alts: {}, classification: { ...classification,
+    taxonomyCategoryId: "gid://shopify/TaxonomyCategory/invented" } }), /CLASSIFICATION_TAXONOMY_INVALID/);
 });
 
 test("default crawler size labels are a separate context, validated durable checkpoint and retryable repair", async () => {

@@ -91,6 +91,7 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
     title: "Personalized Handbag - C01",
     description: "A great bag",
     descriptionHtml: "<p>SEO description without re-escaping</p>",
+    categories: ["Fashion", "Handbags"],
     handle: "seo-handbag-c01",
     seo: {
       title: "SEO Handbag",
@@ -134,6 +135,7 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
         },
       ],
     },
+    customizerAuditStatus: "verified_custom",
   };
 
   const adapted = fromCustomizationNormalizerProduct(crawlProduct);
@@ -153,8 +155,9 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
     faq: [{ question: "What is shown?", answer: "A personalized handbag." }],
     jsonLd: SAMPLE_AEO_JSON_LD,
   });
-  assertStrict.ok(adapted.tags?.includes("has-customizer"));
+  assertStrict.equal(adapted.tags?.includes("has-customizer"), false);
   assertStrict.ok(adapted.tags?.includes("asin:B0GQ33XWW7"));
+  assertStrict.equal(adapted.tags?.includes("Handbags"), false);
   assertStrict.equal(adapted.media?.length, 1);
   assertStrict.equal(adapted.media?.[0].originalSource, "https://m.media-amazon.com/images/I/71xyz.jpg");
   assertStrict.equal(adapted.variants?.length, 1);
@@ -162,6 +165,7 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.ok(adapted.customization?.hasCustomization);
   assertStrict.equal(adapted.customization?.assets?.length, 1);
   assertStrict.equal(adapted.customization?.assets?.[0].friendlyFileName, "base-preview.jpg");
+  assertStrict.equal(adapted.customizerAuditStatus, "verified_custom");
   assertStrict.equal(adapted.vendor, "FFP Store");
 
   const adaptedChillgen = fromCustomizationNormalizerProduct(crawlProduct, { vendor: "CHILLGEN", productType: "Rug" });
@@ -196,6 +200,44 @@ test("fromCustomizationNormalizerProduct adapts normalized crawl product into Sh
   assertStrict.equal(adaptedMoney.productType, "Bedding");
   assertStrict.equal(adaptedMoney.variants?.[0].price, "59.99");
   assertStrict.equal(adaptedMoney.variants?.[0].compareAtPrice, "79.99");
+});
+
+test("sync writes custom.audit_status and removes a stale customizer for verified static products", async () => {
+  const operations: string[] = [];
+  const gateway: ShopifyGateway = {
+    async createProduct() {
+      return { productId: "gid://shopify/Product/static-1", productHandle: "static-product" };
+    },
+    async updateProduct() {
+      return { productId: "gid://shopify/Product/static-1", productHandle: "static-product" };
+    },
+    async createVariants() {
+      return { createdCount: 0 };
+    },
+    async uploadFile() {
+      return { fileId: "unused", shopifyCdnUrl: "https://cdn.shopify.com/unused" };
+    },
+    async setProductMetafield(input) {
+      operations.push(`set:${input.namespace}.${input.key}:${input.value}`);
+      return { success: true };
+    },
+    async deleteProductMetafield(input) {
+      operations.push(`delete:${input.namespace}.${input.key}`);
+      return { success: true };
+    },
+  };
+  const result = await syncSingleProduct({
+    title: "Static Design",
+    descriptionHtml: "<p>Static design</p>",
+    amazonAsin: "B0STATIC01",
+    amazonParentAsin: "B0STATIC01",
+    customization: null,
+    customizerAuditStatus: "verified_static",
+  }, { gateway, existingProductId: "gid://shopify/Product/static-1" });
+
+  assertStrict.equal(result.success, true);
+  assertStrict.ok(operations.includes("delete:custom.amazon_customizer"));
+  assertStrict.ok(operations.includes("set:custom.audit_status:verified_static"));
 });
 
 test("crawl sync rejects missing or invalid parent instead of substituting the child ASIN", () => {
@@ -386,11 +428,13 @@ test("syncSingleProduct coordinates required operations through an injected Shop
   const operationsCalled: string[] = [];
   const metafields = new Map<string, { type: string; value: string }>();
   let createdStatus: string | undefined;
+  let createdCategory: string | undefined;
 
   const fakeHiepGateway = {
-    async createProduct(input: { title: string; status?: string }) {
+    async createProduct(input: { title: string; status?: string; category?: string }) {
       operationsCalled.push(`createProduct:${input.title}`);
       createdStatus = input.status;
+      createdCategory = input.category;
       return { productId: "gid://shopify/Product/hiep-123", productHandle: "hiep-handle" };
     },
     async createVariants(productId: string, variants: readonly unknown[]) {
@@ -416,6 +460,7 @@ test("syncSingleProduct coordinates required operations through an injected Shop
 
   const customProd: ShopifySyncProductInput = {
     ...shopifySyncMockData.products[0],
+    category: "gid://shopify/TaxonomyCategory/hg-3-2",
     aeo: {
       quickSummary: "A grounded handbag summary.",
       faq: [{ question: "What is shown?", answer: "A personalized handbag." }],
@@ -429,6 +474,7 @@ test("syncSingleProduct coordinates required operations through an injected Shop
   assertStrict.equal(result.metafieldSet, true);
   assertStrict.equal(result.assetsUploadedCount, 2);
   assertStrict.equal(createdStatus, "ACTIVE");
+  assertStrict.equal(createdCategory, "gid://shopify/TaxonomyCategory/hg-3-2");
 
   assertStrict.ok(operationsCalled.some((op) => op.startsWith("createProduct")));
   assertStrict.ok(

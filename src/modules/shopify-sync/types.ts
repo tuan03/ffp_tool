@@ -125,6 +125,7 @@ export interface ShopifySyncProductInput {
   readonly options?: readonly string[];
   readonly variants?: readonly ShopifyVariantInput[];
   readonly customization?: ShopifyProductCustomizerInput | null;
+  readonly customizerAuditStatus?: "verified_static" | "verified_custom" | "error";
   readonly sourceUrl?: string;
 }
 
@@ -188,6 +189,7 @@ export interface CreateProductInput {
   readonly descriptionHtml: string;
   readonly vendor?: string;
   readonly productType?: string;
+  readonly category?: string;
   readonly tags?: readonly string[];
   readonly collectionsToJoin?: readonly string[];
   readonly media?: readonly ShopifyMediaInput[];
@@ -251,6 +253,16 @@ export interface SetMetafieldOutput {
   readonly metafieldId?: string;
 }
 
+export interface DeleteProductMetafieldInput {
+  readonly productId: string;
+  readonly namespace: string;
+  readonly key: string;
+}
+
+export interface DeleteProductMetafieldOutput {
+  readonly success: boolean;
+}
+
 export interface ShopifyGateway {
   readonly createProduct: (input: CreateProductInput) => Promise<CreateProductOutput>;
   readonly updateProduct?: (input: UpdateProductInput) => Promise<UpdateProductOutput>;
@@ -265,6 +277,7 @@ export interface ShopifyGateway {
   ) => Promise<readonly UploadFileOutput[]>;
   readonly deleteFiles?: (input: { fileIds: readonly string[] }) => Promise<{ deletedFileIds: readonly string[] }>;
   readonly setProductMetafield: (input: SetMetafieldInput) => Promise<SetMetafieldOutput>;
+  readonly deleteProductMetafield?: (input: DeleteProductMetafieldInput) => Promise<DeleteProductMetafieldOutput>;
 }
 
 export interface RollbackSyncInput {

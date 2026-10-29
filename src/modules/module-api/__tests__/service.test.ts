@@ -3307,7 +3307,7 @@ test("createShopifyGatewayAdapter uses deterministic requestId and respects opti
   assert.equal(capturedInputs[3]?.requestId, "batch-item-req-77");
 });
 
-test("Public contracts allow inventoryTracked on variants and categoryId on products", async () => {
+test("Public contracts allow inventoryTracked on variants and Shopify taxonomy category on products", async () => {
   let capturedInput: ShopifyApiInput | null = null;
   const spyRunner = (async (input: ShopifyApiInput) => {
     capturedInput = input;
@@ -3329,7 +3329,7 @@ test("Public contracts allow inventoryTracked on variants and categoryId on prod
         inventoryTracked: true,
       },
     ],
-    ...({ categoryId: "gid://shopify/TaxonomyCategory/123" } as unknown as Record<string, unknown>),
+    category: "gid://shopify/TaxonomyCategory/123",
   });
 
   const productPayload = capturedInput as unknown as {

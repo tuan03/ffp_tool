@@ -233,13 +233,6 @@ export function fromCustomizationNormalizerProduct(
 
   const tags = new Set<string>();
   if (product.parentAsin) tags.add(`asin:${product.parentAsin}`);
-  if (product.categories) {
-    for (const cat of product.categories) {
-      if (typeof cat === "string" && cat.trim().length > 0) {
-        tags.add(cat.trim());
-      }
-    }
-  }
 
   let customizerInput: ShopifyProductCustomizerInput | null = null;
   const rawCustomization = product.customization;
@@ -251,8 +244,6 @@ export function fromCustomizationNormalizerProduct(
   const amazonParentAsin = normalizeAsin(product.parentAsin);
 
   if (rawCustomization && typeof rawCustomization === "object") {
-    tags.add("has-customizer");
-
     const assets: ShopifyCustomizationAssetInput[] = (rawCustomization.assets || []).map(
       (asset: CustomizationAsset) => ({
         url: asset.url,
@@ -337,6 +328,7 @@ export function fromCustomizationNormalizerProduct(
     media,
     variants: variants.length > 0 ? variants : undefined,
     customization: customizerInput,
+    customizerAuditStatus: product.customizerAuditStatus,
     sourceUrl: product.canonicalUrl,
   });
 }

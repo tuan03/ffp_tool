@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { setDefaultResultOrder } from "node:dns";
 import { hostname } from "node:os";
 
-import { buildClassificationSyncFields, createClassificationCatalogLoader, validateLiveProductClassification, validateProductClassification } from "../gateway/seo-worker/product-classification";
+import { buildClassificationSyncFields, createClassificationCatalogLoader, createTaxonomyCategoryService, validateLiveProductClassification, validateProductClassification } from "../gateway/seo-worker/product-classification";
 import type { ProductClassification } from "../gateway/seo-worker/product-classification";
 import { applySizeOptionNormalization } from "../gateway/seo-worker/size-option-normalization";
 import { applyCustomizerAudit } from "../gateway/seo-worker/customizer-audit";
@@ -204,6 +204,7 @@ const duplicateCheckClient = new ShopifyGraphqlClient({
   throttleManager: new InMemoryThrottleManager(),
 });
 const loadClassificationCatalog = createClassificationCatalogLoader(duplicateCheckClient, id => getPipelineStoreProfile(id).storeConfig);
+const taxonomyCategories = createTaxonomyCategoryService(duplicateCheckClient, id => getPipelineStoreProfile(id).storeConfig);
 
 function getPipelineStoreProfile(targetStoreId: string): ReturnType<typeof resolvePipelineStoreProfile> {
   const resolved = resolvePipelineStoreProfile({
@@ -657,7 +658,11 @@ async function processClaim(
             input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
             original: { ...baseNormalizedProduct, crawlerPipelineItemId: claim.id,
               crawlerProfileSlug: claim.settings.profileSlug ?? "default",
-              crawlerCustomizerAuditVersion: 1,
+              ...(targetStore.toLowerCase().startsWith("jeminise") ? { crawlerConfiguredProductType:
+                String(baseNormalizedProduct.preset ?? "").startsWith("jeminise_bedding_") ? "Bedding"
+                  : String(baseNormalizedProduct.preset ?? "").startsWith("jeminise_blanket_") ? "Blanket"
+                  : baseNormalizedProduct.productType } : {}),
+              crawlerCustomizerAuditVersion: 2,
               ...((claim.settings.profileSlug ?? "default") === "default" ? { crawlerSizeOptionsVersion: 1 } : {}),
               crawlerClassificationMode: claim.settings.classificationMode ?? "manual" },
         });
@@ -775,8 +780,13 @@ async function processClaim(
       try {
         const catalog = await loadClassificationCatalog(claimStoreId);
         if (isSyncStage && !claimStoreConfig) throw new Error("CLASSIFICATION_STORE_REQUIRED");
+        const candidateCategoryId = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+          && typeof (candidate as Record<string, unknown>).taxonomyCategoryId === "string"
+          ? (candidate as Record<string, unknown>).taxonomyCategoryId as string : undefined;
+        const taxonomyCategory = isSyncStage && candidateCategoryId
+          ? await taxonomyCategories.resolve(claimStoreId, candidateCategoryId) : undefined;
         classification = isSyncStage && claimStoreConfig
-          ? await validateLiveProductClassification({ client: duplicateCheckClient, store: claimStoreConfig, candidate, catalog })
+          ? await validateLiveProductClassification({ client: duplicateCheckClient, store: claimStoreConfig, candidate, catalog, taxonomyCategory })
           : validateProductClassification(candidate, catalog);
       } catch {
         classification = { status: "needs_review", reason: "Không tải được danh mục store. Kiểm tra phân loại trước khi sync." };
@@ -980,6 +990,8 @@ async function processClaim(
       customProductType: customProductType ?? null,
       collectionIds: [...collectionIds].sort(),
       classificationTags: [...(classification?.collectionTags ?? [])].sort(),
+      classificationSeoTags: [...(classification?.derivedSeoTags ?? [])].sort(),
+      taxonomyCategoryId: classification?.taxonomyCategoryId ?? null,
       priceAddition,
       discountPercent,
       storeVendor,

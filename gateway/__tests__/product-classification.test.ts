@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildClassificationSyncFields, createClassificationCatalogLoader, requireProductClassification, validateLiveProductClassification, validateProductClassification } from "../seo-worker/product-classification";
+import { buildClassificationSyncFields, createClassificationCatalogLoader, createTaxonomyCategoryService, requireProductClassification, validateLiveProductClassification, validateProductClassification } from "../seo-worker/product-classification";
 import type { StoreConfig } from "../types";
 
 const catalog = { collections: [{ id: "gid://shopify/Collection/1", title: "Cats", description: "Cat designs" }], productTypes: ["Handbag"] };
@@ -99,19 +99,81 @@ test("complex rules are blocked instead of changing price or inventing membershi
 
 test("automatic classification requires image evidence and comparison, not just an available ID", () => {
   const twoCollections = { ...catalog, collections: [...catalog.collections, { id: "other", title: "Seasonal", description: "Seasonal theme" }] };
-  const candidate = { status: "ready", collectionId: catalog.collections[0].id, productType: "Handbag", reason: "Visible cat" };
-  assert.throws(() => requireProductClassification(candidate, twoCollections, ["image-1"]), /EVIDENCE_REQUIRED/);
+  const candidate = { status: "ready", collectionId: catalog.collections[0].id, productType: "Handbag", reason: "Visible cat",
+    seoTagProfile: { product: "Handbag", theme: "Cat", audience: "Cat Lovers", occasion: "Birthday", isPersonalized: false } };
+  const options = { imageIds: ["image-1"] };
+  assert.throws(() => requireProductClassification(candidate, twoCollections, options), /EVIDENCE_REQUIRED/);
   const evidence = { imageIds: ["image-1"], visualTheme: "Cat portrait", collectionTheme: "Cat designs", alternatives: [{ collectionId: "other", whyNotChosen: "No seasonal motifs visible" }] };
-  assert.equal(requireProductClassification({ ...candidate, evidence }, twoCollections, ["image-1"]).status, "ready");
-  assert.throws(() => requireProductClassification({ ...candidate, evidence: { ...evidence, imageIds: ["invented"] } }, twoCollections, ["image-1"]), /EVIDENCE_REQUIRED/);
-  assert.throws(() => requireProductClassification({ ...candidate, evidence: { ...evidence, alternatives: [] } }, twoCollections, ["image-1"]), /EVIDENCE_REQUIRED/);
+  assert.equal(requireProductClassification({ ...candidate, evidence }, twoCollections, options).status, "ready");
+  assert.throws(() => requireProductClassification({ ...candidate, evidence: { ...evidence, imageIds: ["invented"] } }, twoCollections, options), /EVIDENCE_REQUIRED/);
+  assert.throws(() => requireProductClassification({ ...candidate, evidence: { ...evidence, alternatives: [] } }, twoCollections, options), /EVIDENCE_REQUIRED/);
 });
 
 test("sync projection preserves base tags and never directly joins a tag-based collection", () => {
-  const classification = { status: "ready" as const, collectionId: "smart", productType: "Rug", reason: "Matched", collectionTags: ["aquatic", "floor"] };
+  const classification = { status: "ready" as const, collectionId: "smart", productType: "Rug", reason: "Matched", collectionTags: ["aquatic", "floor"],
+    derivedSeoTags: ["seo:product:rug", "seo:theme:ocean", "seo:audience:adults", "seo:occasion:housewarming", "personalized"] };
   assert.deepEqual(buildClassificationSyncFields({ classification, collectionIds: ["smart"], tags: ["customizer", "aquatic"] }),
-    { collectionsToJoin: [], tags: ["customizer", "aquatic", "floor"] });
+    { collectionsToJoin: [], tags: ["customizer", "aquatic", "floor", "seo:product:rug", "seo:theme:ocean", "seo:audience:adults", "seo:occasion:housewarming", "personalized"],
+      category: undefined });
   assert.deepEqual(buildClassificationSyncFields({ collectionIds: ["legacy"], tags: ["customizer"] }),
-    { collectionsToJoin: ["legacy"], tags: ["customizer"] });
+    { collectionsToJoin: ["legacy"], tags: ["customizer"], category: undefined });
   assert.throws(() => buildClassificationSyncFields({ classification: { status: "needs_review", reason: "No match" }, collectionIds: [], tags: [] }), /CLASSIFICATION_UNRESOLVED/);
+});
+
+test("non-Jeminise classification requires a live leaf taxonomy category and derives four SEO layers", () => {
+  const candidate = {
+    status: "ready", collectionId: catalog.collections[0].id, productType: "Rug",
+    taxonomyCategoryId: "gid://shopify/TaxonomyCategory/hg-3-2", reason: "Viewed cat rug",
+    seoTagProfile: { product: "Area Rug", theme: "Cat Portrait", audience: "Cat Lovers", occasion: "Housewarming", isPersonalized: true },
+    evidence: { imageIds: ["front"], visualTheme: "Cat portrait", collectionTheme: "Cat designs", alternatives: [] },
+  };
+  const resolved = requireProductClassification(candidate, catalog, {
+    imageIds: ["front"], requireProductType: true, requireTaxonomyCategory: true,
+    taxonomyCategory: { id: candidate.taxonomyCategoryId, name: "Rugs", fullName: "Home & Garden > Decor > Rugs", isLeaf: true },
+    customizerAuditStatus: "verified_custom",
+  });
+  assert.equal(resolved.taxonomyCategoryId, candidate.taxonomyCategoryId);
+  assert.deepEqual(resolved.derivedSeoTags, [
+    "seo:product:area-rug", "seo:theme:cat-portrait", "seo:audience:cat-lovers", "seo:occasion:housewarming", "personalized",
+  ]);
+  assert.throws(() => requireProductClassification({ ...candidate, taxonomyCategoryId: "invented" }, catalog, {
+    imageIds: ["front"], requireProductType: true, requireTaxonomyCategory: true,
+    taxonomyCategory: { id: candidate.taxonomyCategoryId, name: "Rugs", fullName: "Home & Garden > Decor > Rugs", isLeaf: true },
+    customizerAuditStatus: "verified_custom",
+  }), /CLASSIFICATION_TAXONOMY_INVALID/);
+  assert.throws(() => requireProductClassification(candidate, catalog, {
+    imageIds: ["front"], requireProductType: true, requireTaxonomyCategory: true,
+    taxonomyCategory: { id: candidate.taxonomyCategoryId, name: "Decor", fullName: "Home & Garden > Decor", isLeaf: false },
+    customizerAuditStatus: "verified_custom",
+  }), /CLASSIFICATION_TAXONOMY_INVALID/);
+});
+
+test("personalized SEO tag must agree with the customizer audit", () => {
+  const candidate = { status: "ready", collectionId: catalog.collections[0].id, productType: "Handbag", reason: "Viewed handbag",
+    seoTagProfile: { product: "Handbag", theme: "Floral", audience: "Women", occasion: "Birthday", isPersonalized: true } };
+  assert.throws(() => requireProductClassification(candidate, catalog), /CLASSIFICATION_PERSONALIZATION_CONFLICT/);
+  assert.throws(() => requireProductClassification(candidate, catalog, { customizerAuditStatus: "verified_static" }), /CLASSIFICATION_PERSONALIZATION_CONFLICT/);
+  assert.throws(() => requireProductClassification({ ...candidate, seoTagProfile: { ...candidate.seoTagProfile, isPersonalized: false } }, catalog,
+    { customizerAuditStatus: "verified_custom" }), /CLASSIFICATION_PERSONALIZATION_CONFLICT/);
+});
+
+test("taxonomy service searches leaf candidates and resolves an exact category ID", async () => {
+  const documents: string[] = [];
+  const service = createTaxonomyCategoryService({ query: async <T>(_store: StoreConfig, document: string, variables?: Record<string, unknown>): Promise<T> => {
+    documents.push(document);
+    if (document.includes("SearchTaxonomyCategories")) {
+      assert.deepEqual(variables, { search: "area rug", first: 20 });
+      return { taxonomy: { categories: { nodes: [
+        { id: "parent", name: "Decor", fullName: "Home & Garden > Decor", isLeaf: false },
+        { id: "leaf", name: "Rugs", fullName: "Home & Garden > Decor > Rugs", isLeaf: true },
+      ] } } } as T;
+    }
+    assert.deepEqual(variables, { id: "leaf" });
+    return { node: { id: "leaf", name: "Rugs", fullName: "Home & Garden > Decor > Rugs", isLeaf: true } } as T;
+  } }, id => ({ storeId: id, shopDomain: `${id}.myshopify.com` } as StoreConfig));
+  assert.deepEqual(await service.search("one", " area rug "), [
+    { id: "leaf", name: "Rugs", fullName: "Home & Garden > Decor > Rugs", isLeaf: true },
+  ]);
+  assert.equal((await service.resolve("one", "leaf"))?.id, "leaf");
+  assert.equal(documents.length, 2);
 });

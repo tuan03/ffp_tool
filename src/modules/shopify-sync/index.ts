@@ -39,6 +39,8 @@ export type {
   CreateProductOutput,
   CreateVariantItem,
   CreateVariantsOutput,
+  DeleteProductMetafieldInput,
+  DeleteProductMetafieldOutput,
   SetMetafieldInput,
   SetMetafieldOutput,
   ShopifyCredentials,

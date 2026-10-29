@@ -334,13 +334,8 @@ export function createShopifyGatewayAdapter(
   return {
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
       const requestId = resolveRequestId("product-create", input, canonicalJsonStringify(input));
-      const inputWithCat = input as unknown as { categoryId?: unknown; category?: unknown };
-      const categoryId =
-        typeof inputWithCat.categoryId === "string" && inputWithCat.categoryId.trim() !== ""
-          ? inputWithCat.categoryId.trim()
-          : typeof inputWithCat.category === "string" && inputWithCat.category.trim() !== ""
-          ? inputWithCat.category.trim()
-          : undefined;
+      const categoryId = typeof input.category === "string" && input.category.trim() !== ""
+        ? input.category.trim() : undefined;
       const response = (await runner({
         storeId: cleanStoreId,
         operation: "products.create",
@@ -474,6 +469,7 @@ export function createShopifyGatewayAdapter(
             descriptionHtml: input.descriptionHtml,
             vendor: input.vendor,
             productType: input.productType,
+            ...(input.category ? { categoryId: input.category } : {}),
             tags: nextTags,
             collectionsToJoin: input.collectionsToJoin,
             media: input.media?.map((media) => ({
@@ -641,6 +637,26 @@ export function createShopifyGatewayAdapter(
         success: response?.data?.success ?? false,
         metafieldId: response?.data?.metafieldId ?? response?.data?.metafields?.[0]?.id,
       };
+    },
+
+    async deleteProductMetafield(input) {
+      const requestId = resolveRequestId(
+        `metafields-delete-${input.namespace}-${input.key}`,
+        input,
+        canonicalJsonStringify(input),
+      );
+      const response = (await runner({
+        storeId: cleanStoreId,
+        operation: "metafields.delete",
+        mode,
+        requestId,
+        payload: {
+          ownerId: input.productId,
+          namespace: input.namespace,
+          key: input.key,
+        },
+      })) as ShopifyMetafieldsDeleteResponse;
+      return { success: response?.data?.success ?? true };
     },
   };
 }
