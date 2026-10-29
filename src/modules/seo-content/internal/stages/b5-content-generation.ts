@@ -23,6 +23,8 @@ import { buildBeddingSeoDescription } from "../content-generation/heuristic-cont
 import { extractVisionDesignConcept } from "../content-generation/heuristic-title-builder";
 import {
   ensureProductIdentityInTitle,
+  isJeminiseBeddingProduct,
+  JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML,
   sanitizeBeddingTitle,
 } from "../store-profiles";
 import { buildJsonLdSchema } from "../content-generation/json-ld-builder";
@@ -214,10 +216,16 @@ export async function executeB5ContentGeneration(
     );
   }
 
-  const productDescription = formatProductDescriptionHtml(draft, {
+  const generatedProductDescription = formatProductDescriptionHtml(draft, {
     includeStyleOptions: !isVisualDesignOnlyDescription,
     includeGuidance: !isVisualDesignOnlyDescription,
   });
+  const productDescription = isJeminiseBeddingProduct(
+    facts.storeProfile?.profileId,
+    Boolean(facts.storeProfile?.bedding),
+  )
+    ? `${JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML}\n\n${generatedProductDescription}`
+    : generatedProductDescription;
   const contentResult: ContentResult = {
     productTitle,
     productDescription,

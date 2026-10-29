@@ -1,5 +1,11 @@
 import type { SeoStoreProfile } from "../../types";
 
+export const JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML = "<p><strong>✨ Available in 3 Bedding Styles:</strong> Choose your favorite look as a lightweight <strong>Quilt</strong>, plush warm <strong>Comforter</strong>, or easy-care zippered <strong>Duvet Cover</strong> set with matching pillow shams.</p>";
+
+export function isJeminiseBeddingProduct(profileId: string | undefined, hasBeddingPolicy: boolean): boolean {
+  return profileId === "jeminise-bedding" && hasBeddingPolicy;
+}
+
 export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
   profileId: "jeminise-bedding",
   profileVersion: "2.2.0",
@@ -12,8 +18,9 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
   contentRules: Object.freeze([
     "Ground every product-specific statement in visible image evidence.",
     "Keep room props and scene context separate from product facts.",
-    "Write the Shopify product description only about the visible artwork, distinctive visual details, aesthetic appeal, and grounded reasons the design may interest a shopper.",
-    "Do not mention materials, dimensions, care, construction, product formats, or Comforter, Quilt, Duvet Cover, or Blanket in the Shopify product description.",
+    "The pipeline prepends the configured three-style paragraph for products whose type is Bedding; do not repeat or rewrite that paragraph.",
+    "After the configured paragraph, write the Shopify product description only about the visible artwork, distinctive visual details, aesthetic appeal, and grounded reasons the design may interest a shopper.",
+    "Outside the configured paragraph, do not mention materials, dimensions, care, construction, product formats, or Comforter, Quilt, Duvet Cover, or Blanket in the Shopify product description.",
   ]),
   prohibitedClaims: Object.freeze([
     "Do not infer size, materials, care, construction, or personalization from images alone.",
@@ -25,7 +32,7 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
       "materials and fabric",
       "sizes and dimensions",
       "care and construction",
-      "Comforter, Quilt, Duvet Cover, Blanket, and other product formats",
+      "repeated product-format claims outside the configured three-style paragraph",
     ]),
   }),
   productTitleIdentityPolicies: Object.freeze([
@@ -89,8 +96,9 @@ export const JEMINISE_BEDDING_PROFILE: SeoStoreProfile = Object.freeze({
       "Product title and SEO title must name the physical product as Bedding while describing the visible design.",
       "Artwork, Art, Design, Pattern, Image, or Illustration must never replace the physical product identity in a title.",
       "Do NOT force Comforter, Quilt, or Duvet Cover into the product title.",
-      "The Shopify product description must focus exclusively on the visible design and its distinctive aesthetic appeal.",
-      "Do not include materials, sizes, care, construction, or product-format comparisons in the Shopify product description.",
+      "The pipeline prepends the configured three-style paragraph for products whose type is Bedding; do not repeat or rewrite it.",
+      "After the configured paragraph, the Shopify product description must focus exclusively on the visible design and its distinctive aesthetic appeal.",
+      "Do not include additional materials, sizes, care, construction, or product-format comparisons in the Shopify product description.",
     ]),
   }]),
 });

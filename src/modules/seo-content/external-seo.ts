@@ -69,6 +69,17 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
   const customizationSampleTexts = typography.customizationSampleTexts === undefined
     ? []
     : strings(typography.customizationSampleTexts, "customizationSampleTexts");
+  const identityCandidates = analysis.identityCandidates === undefined
+    ? undefined
+    : strings(analysis.identityCandidates, "identityCandidates");
+  const excludedSceneEntities = analysis.excludedSceneEntities === undefined
+    ? undefined
+    : strings(analysis.excludedSceneEntities, "excludedSceneEntities");
+  const confidence = analysis.confidence;
+  const reviewRequired = analysis.reviewRequired;
+  if (reviewRequired !== undefined && typeof reviewRequired !== "boolean") {
+    throw new Error("Invalid reviewRequired");
+  }
   const shopping = object(analysis.shoppingContext);
   return {
     evidence,
@@ -76,6 +87,10 @@ export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unk
       physicalProductIdentity: text(analysis.physicalProductIdentity, "physicalProductIdentity"),
       visualEntities: text(analysis.visualEntities, "visualEntities"),
       sceneContext: text(analysis.sceneContext, "sceneContext"),
+      ...(identityCandidates ? { identityCandidates } : {}),
+      ...(excludedSceneEntities ? { excludedSceneEntities } : {}),
+      ...(typeof confidence === "number" ? { confidence } : {}),
+      ...(typeof reviewRequired === "boolean" ? { reviewRequired } : {}),
       typography: {
         visibleTexts: [],
         excludedLiteralTexts: visibleTexts,

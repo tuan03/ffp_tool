@@ -19,6 +19,10 @@ test("external analysis excludes every literal artwork text from SEO facts", () 
     physicalProductIdentity: "bedding",
     visualEntities: "dark baseball batter artwork",
     sceneContext: "bedroom mockup",
+    identityCandidates: ["bedding", "blanket"],
+    excludedSceneEntities: ["bed frame"],
+    confidence: 0.92,
+    reviewRequired: false,
     typography: {
       visibleTexts: ["WILLIAM", "33", "BASEBALL"],
       customizationSampleTexts: ["WILLIAM", "33"],
@@ -31,6 +35,10 @@ test("external analysis excludes every literal artwork text from SEO facts", () 
   assert.deepEqual(analysis.understanding.typography.visibleTexts, []);
   assert.deepEqual(analysis.understanding.typography.excludedLiteralTexts, ["WILLIAM", "33", "BASEBALL"]);
   assert.deepEqual(analysis.understanding.typography.customizationSampleTexts, ["WILLIAM", "33"]);
+  assert.deepEqual(analysis.understanding.identityCandidates, ["bedding", "blanket"]);
+  assert.deepEqual(analysis.understanding.excludedSceneEntities, ["bed frame"]);
+  assert.equal(analysis.understanding.confidence, 0.92);
+  assert.equal(analysis.understanding.reviewRequired, false);
 });
 
 test("external analysis combines vertical single-letter OCR into one excluded name", () => {

@@ -10,7 +10,14 @@ import {
 } from "../internal/content-generation/heuristic-content-generator";
 import { formatProductDescriptionHtml } from "../internal/content-generation/html-description-formatter";
 import { validateFinalContent } from "../internal/content-generation/content-result-validator";
-import { JEMINISE_BEDDING_PROFILE, sanitizeBeddingTitle } from "../internal/store-profiles";
+import { createInitialContext, evolveContext } from "../internal/pipeline-context";
+import { executeB5ContentGeneration } from "../internal/stages/b5-content-generation";
+import {
+  JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML,
+  JEMINISE_BEDDING_PROFILE,
+  isJeminiseBeddingProduct,
+  sanitizeBeddingTitle,
+} from "../internal/store-profiles";
 import { projectStoreContentProfile } from "../internal/store-profiles/types";
 
 const KEYWORDS = {
@@ -95,6 +102,64 @@ test("Jeminise heuristic description stays focused on visible design", async () 
   assert.match(html, /Why It Stands Out/i);
 });
 
+test("Jeminise Bedding prepends the configured three-style paragraph", async () => {
+  const context = evolveContext(createInitialContext({
+    niche: "Bedding",
+    storeProfile: JEMINISE_BEDDING_PROFILE,
+    images: [{ id: "front", url: "https://example.com/bedding.jpg" }],
+  }), {
+    productUnderstanding: {
+      physicalProductIdentity: "bedding set",
+      visualEntities: "Viking warrior and raven artwork",
+      sceneContext: "bedroom mockup",
+      confidence: 0.95,
+      reviewRequired: false,
+      identityCandidates: ["bedding set"],
+      excludedSceneEntities: ["bed frame"],
+      typography: { visibleTexts: [], styleSummary: "No visible text" },
+    },
+    shoppingContext: {
+      targetAudience: ["Viking art enthusiasts"],
+      suitableOccasions: [],
+      useCases: ["bedroom decor"],
+      buyerIntentKeywords: ["Viking bedding"],
+    },
+    conflictResult: {
+      approvedKeywords: ["Viking bedding"],
+      discardedKeywords: [],
+      conflictReasons: {},
+      corpusRevision: 1,
+    },
+  });
+  const generated = await executeB5ContentGeneration(context, {
+    generator: {
+      async generate() {
+        return {
+          productTitle: "Viking Warrior Bedding",
+          intro: "A Viking warrior and raven composition creates a dramatic visual focal point.",
+          bullets: [
+            { label: "Design", text: "A central warrior figure is framed by raven imagery." },
+            { label: "Visual Appeal", text: "Dark tones emphasize the detailed composition." },
+          ],
+          guidance: [],
+          closing: "A distinctive design for Viking-art enthusiasts.",
+          productSeoTitle: "Viking Warrior Bedding",
+          productSeoDescription: "Viking warrior bedding with dramatic raven artwork for a distinctive bedroom focal point.",
+        };
+      },
+    },
+  });
+
+  assert.ok(generated.contentResult?.productDescription.startsWith(JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML));
+  assert.equal(generated.contentResult?.productDescription.match(/Available in 3 Bedding Styles/g)?.length, 1);
+});
+
+test("the configured three-style paragraph applies only to Jeminise Bedding", () => {
+  assert.equal(isJeminiseBeddingProduct("jeminise-bedding", true), true);
+  assert.equal(isJeminiseBeddingProduct("jeminise-bedding", false), false);
+  assert.equal(isJeminiseBeddingProduct("capozen-rugs", true), false);
+});
+
 test("Gemini receives the Jeminise visual-design-only description policy", async () => {
   let capturedPrompt = "";
   const generator = new GeminiSeoContentGenerator({
@@ -157,7 +222,7 @@ test("Jeminise rejects material or product-format text in Shopify description", 
   assert.throws(
     () => validateFinalContent({
       productTitle: draft.productTitle,
-      productDescription: "<p>Viking artwork.</p><ul><li><strong>Materials:</strong> Brushed microfiber fabric.</li></ul>",
+      productDescription: `${JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML}\n\n<p>Viking artwork.</p><ul><li><strong>Materials:</strong> Brushed microfiber fabric.</li></ul>`,
       productSeoTitle: draft.productSeoTitle,
       productSeoDescription: draft.productSeoDescription,
     }, draft, facts, KEYWORDS, CONSTRAINTS),

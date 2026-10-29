@@ -3,7 +3,11 @@ import {
   findExcludedLiterals,
   formatExcludedLiteralViolations,
 } from "../literal-text-guard";
-import { hasProductIdentityInTitle } from "../store-profiles";
+import {
+  hasProductIdentityInTitle,
+  isJeminiseBeddingProduct,
+  JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML,
+} from "../store-profiles";
 import { checkClaimGrounding } from "./claim-guard";
 import {
   ContentGenerationSchemaError,
@@ -182,7 +186,20 @@ export function validateFinalContent(
   keywords: KeywordAllocation,
   constraints: ContentConstraints,
 ): void {
-  const descriptionText = extractDescriptionText(result.productDescription);
+  const requiresJeminiseBeddingPrefix = isJeminiseBeddingProduct(
+    facts.storeProfile?.profileId,
+    Boolean(facts.storeProfile?.bedding),
+  );
+  if (
+    requiresJeminiseBeddingPrefix
+    && !result.productDescription.startsWith(JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML)
+  ) {
+    throw new ContentGenerationSchemaError("Jeminise Bedding description is missing its configured three-style paragraph");
+  }
+  const descriptionBodyHtml = requiresJeminiseBeddingPrefix
+    ? result.productDescription.slice(JEMINISE_BEDDING_DESCRIPTION_PREFIX_HTML.length).trimStart()
+    : result.productDescription;
+  const descriptionText = extractDescriptionText(descriptionBodyHtml);
   const literalViolations = findExcludedLiterals(
     { result: { ...result, productDescription: descriptionText }, draft, keywords },
     facts.excludedLiteralTexts ?? [],
