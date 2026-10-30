@@ -775,7 +775,8 @@ async function processClaim(
       : undefined;
 
     let classification: ProductClassification | undefined;
-    if (claim.stage !== "publish" && (claim.settings.classificationMode === "automatic" || (isSyncStage && claim.review?.classification))) {
+    if (claim.stage !== "publish" && (claim.settings.classificationMode === "automatic"
+      || externalClassification != null || (isSyncStage && claim.review?.classification))) {
       const candidate = isSyncStage ? claim.review?.classification : externalClassification;
       try {
         const catalog = await loadClassificationCatalog(claimStoreId);

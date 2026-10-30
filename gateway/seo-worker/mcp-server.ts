@@ -45,7 +45,7 @@ const submission = z.object({
       collectionTheme: z.string().min(1).max(1000), alternatives: z.array(z.object({ collectionId: z.string().min(1),
         whyNotChosen: z.string().min(1).max(1000) }).strict()).max(3) }).strict().optional(),
   }).strict().optional()
-    .describe("Required when job context enables automatic classification. Submit status ready, one exact catalog collectionId, productType, reason and four-layer seoTagProfile based on viewed images. Outside Jeminise, search Shopify taxonomy and submit one exact leaf taxonomyCategoryId. isPersonalized must agree with the customizer audit. Never submit arbitrary tags."),
+    .describe("Required for every Amazon crawler job in manual and automatic modes. Submit status ready, one exact catalog collectionId, productType, reason and four-layer seoTagProfile based on viewed images. Outside Jeminise, search Shopify taxonomy and submit one exact leaf taxonomyCategoryId. isPersonalized must agree with the customizer audit. Never submit arbitrary tags."),
   draft: z.object({ productTitle: z.string().min(1), intro: z.string().min(1),
     bullets: z.array(z.object({ label: z.string().min(1), text: z.string().min(1) }).strict()).min(2).max(5),
     guidance: z.array(z.string().min(1)).optional(), closing: z.string().min(1),
@@ -129,7 +129,7 @@ export function createWorkerMcpServer(repository: SeoWorkerRepository, workflow:
     try { const image = await workflow.image(token, input.lease, input.imageId); return { content: [{ type: "image", data: image.bytes.toString("base64"), mimeType: image.contentType }] }; }
     catch (error) { return safe(() => Promise.reject(error)); }
   });
-  server.registerTool("job_search_taxonomy_categories", { description: "After viewing the product images, search Shopify's current standard taxonomy for leaf category candidates. Available only for automatic non-Jeminise crawler classification; returned IDs are categorization metadata, not product facts.",
+  server.registerTool("job_search_taxonomy_categories", { description: "After viewing the product images, search Shopify's current standard taxonomy for leaf category candidates. Available for every non-Jeminise crawler classification mode; returned IDs are categorization metadata, not product facts.",
     inputSchema: { lease, query: z.string().trim().min(2).max(120) }, annotations: read }, input => safe(() => workflow.taxonomyCategories(token, input.lease, input.query)));
   server.registerTool("job_save_analysis", { description: "Validate grounded visual evidence, explicit ambiguity state and evidence for every image before saving analysis.", inputSchema: { ...mutation, analysis }, annotations: write }, input => safe(() => workflow.analysis(token, input.lease, input.requestId, input.analysis)));
   server.registerTool("job_research_keywords", { description: "Run real Google Suggest research and checkpoint results.", inputSchema: { ...mutation, seeds: z.array(z.string().min(1).max(120)).min(1).max(5) }, annotations: write }, input => safe(() => workflow.research(token, input.lease, input.requestId, input.seeds)));

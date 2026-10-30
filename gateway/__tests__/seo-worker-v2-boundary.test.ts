@@ -131,9 +131,13 @@ function normalizePersisted(job: GptSeoJob): GptSeoJob {
     original: normalized.execution.originalSnapshot };
 }
 
-test("automatic crawler classification is store scoped, durable and never enables classification for Auto SEO", async () => {
-  for (const source of ["amazon", "auto_seo"] as const) {
-    const original = { crawlerClassificationMode: "automatic", crawlerConfiguredProductType: "Bedding", updatedAt: "v1", title: "UNTRUSTED_OLD_TITLE" };
+test("crawler classification is required in manual and automatic modes but never enabled for Auto SEO", async () => {
+  for (const { source, classificationMode } of [
+    { source: "amazon", classificationMode: "automatic" },
+    { source: "amazon", classificationMode: "manual" },
+    { source: "auto_seo", classificationMode: "automatic" },
+  ] as const) {
+    const original = { crawlerClassificationMode: classificationMode, crawlerConfiguredProductType: "Bedding", updatedAt: "v1", title: "UNTRUSTED_OLD_TITLE" };
     const job = normalizePersisted({ ...enqueue, execution: { ...enqueue.execution, source, originalSnapshot: original },
       id: "classification-job", storeId: "jeminise", source, sourceIdentity: "123", original,
       inputHash: "hash", settings: { provider: "codex_mcp", batchSize: 1, version: 1, language: "English", instructions: "" },
@@ -204,8 +208,8 @@ test("automatic submission requires classification and preserves checkpoints unt
     derivedSeoTags: ["seo:product:bedding", "seo:theme:dragon", "seo:audience:fantasy-fans", "seo:occasion:housewarming"] } });
 });
 
-test("non-Jeminise automatic classification searches and validates Shopify taxonomy", async () => {
-  const original = { crawlerClassificationMode: "automatic" };
+test("non-Jeminise manual classification searches and validates Shopify taxonomy", async () => {
+  const original = { crawlerClassificationMode: "manual" };
   const job = normalizePersisted({ ...enqueue, input: { ...enqueue.input, storeProfile: { ...enqueue.input.storeProfile, storeId: "capozen" } },
     execution: { ...enqueue.execution, storeId: "capozen", source: "amazon", originalSnapshot: original },
     id: "taxonomy-job", storeId: "capozen", source: "amazon", sourceIdentity: "123", original,
