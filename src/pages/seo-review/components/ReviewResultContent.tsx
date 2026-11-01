@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 
 import { sanitizeHtmlDescription } from "../sanitize-html";
+import { EtsyVariantPreview } from "./EtsyVariantPreview";
 import { buildProductZoomImages } from "../zoom-image-helper";
 import type { SeoProductUiViewModel, ZoomImageItem } from "../types";
 
@@ -88,6 +89,7 @@ function ResultReader({ product, onZoomImage }: ReviewResultContentProps): React
   }
 
   return <div className="min-w-0">
+    <EtsyVariantPreview product={product.sourceCrawlProduct} />
     <div ref={tabsRef} role="tablist" aria-label="Nội dung kết quả SEO" onKeyDown={handleTabKeyDown}
       className="sticky top-0 z-10 flex gap-5 border-b border-slate-200 bg-white px-5 dark:border-slate-700 dark:bg-slate-900">
       {SECTION_LABELS.map((label, index) => <button key={label} type="button" role="tab" id={`${tabId}-tab-${index}`}

@@ -7,7 +7,7 @@ import { createSeoPerformanceRoutes, getSeoPerformanceClient } from "../../modul
 import { createAdsIntelligenceRoutes, getAdsIntelligenceClient } from "../../modules/ads-intelligence";
 import { createCustomGptClient, createCustomGptSeoRoutes, getCustomGptClient } from "../../modules/custom-gpt-seo";
 import { AppLayout } from "../../layouts/AppLayout";
-import { amazonCrawlerRoutes, getShopifyAsinFilter } from "../../modules/amazon-crawler";
+import { amazonCrawlerRoutes, getShopifyAsinFilter, getEtsyCrawlerClient } from "../../modules/amazon-crawler";
 import { getReviewClient } from "../../modules/amazon-reviews";
 import type { ReviewShopifyAccess } from "../../modules/amazon-reviews";
 import type {
@@ -542,6 +542,7 @@ export function AppRoutes({
       loadAmazonCrawlerJob,
       environment === "mock" ? undefined : amazonCrawlerCoordinatorUrl,
       getShopifyAsinFilter(environment, amazonCrawlerCoordinatorUrl),
+      getEtsyCrawlerClient(environment, amazonCrawlerCoordinatorUrl),
     );
 
     return createBrowserRouter([

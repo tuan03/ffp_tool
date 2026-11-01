@@ -24,7 +24,12 @@ export {
 export { ShopifyApiError } from "./types";
 export type {
   AmazonAsinMatch,
+  EtsyListingMatch,
+  EtsyListingPreflightItem,
+  EtsyListingStatus,
   ModuleApiConfig,
+  ShopifyProductVariantLimitsInput,
+  ShopifyProductVariantLimitsResponse,
   ModuleApiDependencies,
   ModuleApiRunner,
   ShopifyApiErrorCode,
@@ -127,6 +132,10 @@ export type {
   ShopifyProductsPreflightAmazonAsinsInput,
   ShopifyProductsPreflightAmazonAsinsPayload,
   ShopifyProductsPreflightAmazonAsinsResponse,
+  ShopifyProductsPreflightEtsyListingsData,
+  ShopifyProductsPreflightEtsyListingsInput,
+  ShopifyProductsPreflightEtsyListingsPayload,
+  ShopifyProductsPreflightEtsyListingsResponse,
   ShopifyProductsGetData,
   ShopifyProductsGetInput,
   ShopifyProductsGetPayload,

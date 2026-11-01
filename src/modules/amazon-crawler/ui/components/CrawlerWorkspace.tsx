@@ -58,7 +58,7 @@ export function CrawlerWorkspace({
             </div>
             <div className="min-w-0">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Distributed Crawler</h1>
-              <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">Thu thập sản phẩm Amazon, theo dõi agent và tự động gửi sang SEO Queue.</p>
+              <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">Thu thập sản phẩm Amazon/Etsy, theo dõi agent và tự động gửi sang SEO Queue.</p>
             </div>
           </div>
           <button

@@ -8,7 +8,7 @@ import { SeoWorkerError } from "./protocol";
 /** No network request is made while holding a repository transaction. */
 export function createWorkerSourceGuard(dispatcher: Pick<GatewayDispatcher, "dispatch">): (job: GptSeoJob) => Promise<void> {
   return async job => {
-    if (!job.execution.productId && job.execution.source !== "auto_seo") return;
+    if (job.execution.source === "etsy" || (!job.execution.productId && job.execution.source !== "auto_seo")) return;
     const source = z.object({ updatedAt: z.string().min(1) }).safeParse(job.execution.originalSnapshot);
     if (!source.success) throw new SeoWorkerError("SOURCE_VERSION_REQUIRED");
     const id = job.execution.productId ?? job.execution.sourceIdentity;

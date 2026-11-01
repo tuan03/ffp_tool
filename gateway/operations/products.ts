@@ -1,4 +1,5 @@
 import { GatewayError } from "../errors";
+import { readAllProductVariants } from "./product-variant-pages";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type {
   ProductImageSummary,
@@ -422,6 +423,12 @@ export async function executeProductsGet(
   }
 
   const raw = await client.query<ProductsGetResponse>(store, PRODUCTS_GET_QUERY, { id });
+  if (p.includeAllVariants === true && raw.product?.variants?.pageInfo?.hasNextPage) {
+    const variants = await readAllProductVariants(store, client, id);
+    return { product: mapProductNode({ ...raw.product, variants: {
+      edges: variants.map(node => ({ node })), pageInfo: { hasNextPage: false },
+    } }) };
+  }
   return {
     product: raw.product ? mapProductNode(raw.product) : null,
   };

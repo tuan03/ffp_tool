@@ -2,6 +2,7 @@ export type ShopifyOperation =
   | "connection.test"
   | "products.list"
   | "products.get"
+  | "products.variantLimits"
   | "products.create"
   | "products.publishAll"
   | "products.update"
@@ -9,6 +10,7 @@ export type ShopifyOperation =
   | "products.delete"
   /** @deprecated products.preflightAmazonAsins is Amazon-specific domain logic. Scheduled for migration to business modules. */
   | "products.preflightAmazonAsins"
+  | "products.preflightEtsyListings"
   | "variants.update"
   | "variants.bulkUpdate"
   | "variants.bulkCreate"
@@ -181,6 +183,8 @@ export interface ShopifyProductOptionInput {
 }
 
 export interface ShopifyProductVariantInput {
+  readonly legacySku?: string;
+  readonly etsyProductId?: string;
   readonly title?: string;
   readonly price?: string;
   readonly compareAtPrice?: string;
@@ -204,6 +208,7 @@ export interface ShopifyProductMetafieldInput {
 }
 
 export interface ShopifyProductInput {
+  readonly variantIdentity?: "etsy-personalization-v1";
   readonly title: string;
   readonly handle?: string;
   readonly description?: string;
@@ -224,6 +229,7 @@ export interface ShopifyProductInput {
 }
 
 export interface ShopifyProductUpdateInput {
+  readonly variantIdentity?: "etsy-personalization-v1";
   readonly title?: string;
   readonly handle?: string;
   readonly description?: string;
@@ -339,6 +345,7 @@ export interface ShopifyProductsListResponse {
 // 3. products.get
 export interface ShopifyProductsGetPayload {
   readonly id: string;
+  readonly includeAllVariants?: boolean;
 }
 
 export interface ShopifyProductsGetData {
@@ -493,6 +500,72 @@ export interface ShopifyProductsPreflightAmazonAsinsResponse {
   readonly operation: "products.preflightAmazonAsins";
   readonly success: true;
   readonly data: ShopifyProductsPreflightAmazonAsinsData;
+}
+
+// 7c. products.preflightEtsyListings
+export interface EtsyListingMatch {
+  readonly listingId: string;
+  readonly productId: string;
+  readonly title: string;
+  readonly adminUrl: string;
+  readonly matchedBy?: "etsy_listing_id" | "etsy_listing_url" | "etsy_product_id" | "tag" | "sku";
+}
+
+export type EtsyListingStatus =
+  | "available"
+  | "existing"
+  | "processing"
+  | "queue_cleared"
+  | "crawled_pending_sync"
+  | "reconciliation_required";
+
+export interface EtsyListingPreflightItem {
+  readonly listingId: string;
+  readonly variantProductIds: readonly string[];
+  readonly databaseStatus: string | null;
+  readonly jobId: string | null;
+  readonly status: EtsyListingStatus;
+  readonly hasExistingProduct: boolean;
+  readonly recoveredStaleRegistry: boolean;
+  readonly activeSeoJobIds: readonly string[];
+}
+
+export interface ShopifyProductsPreflightEtsyListingsPayload {
+  readonly listingIds: readonly string[];
+  readonly listings?: readonly {
+    readonly listingId: string;
+    readonly variantProductIds?: readonly string[];
+    readonly status?: string | null;
+    readonly databaseStatus?: string | null;
+    readonly jobId?: string | null;
+    readonly isSyncedInDb?: boolean;
+    readonly isActiveInSeo?: boolean;
+    readonly recoveredStaleRegistry?: boolean;
+    readonly shopifyProductIds?: readonly string[];
+    readonly activeSeoJobIds?: readonly string[];
+  }[];
+}
+
+export interface ShopifyProductsPreflightEtsyListingsData {
+  readonly ready: boolean;
+  readonly matches: readonly EtsyListingMatch[];
+  readonly listings: readonly EtsyListingPreflightItem[];
+  readonly allowedListingIds: readonly string[];
+}
+
+export interface ShopifyProductsPreflightEtsyListingsInput {
+  readonly storeId: string;
+  readonly requestId?: string;
+  readonly mode?: ShopifyExecutionMode;
+  readonly operation: "products.preflightEtsyListings";
+  readonly payload: ShopifyProductsPreflightEtsyListingsPayload;
+}
+
+export interface ShopifyProductsPreflightEtsyListingsResponse {
+  readonly storeId: string;
+  readonly operation: "products.preflightEtsyListings";
+  readonly success: true;
+  readonly data: ShopifyProductsPreflightEtsyListingsData;
 }
 
 // 8. variants.update
@@ -1039,6 +1112,7 @@ export interface ShopifyStoresGetResponse {
 
 // Discriminated Unions
 export type ShopifyApiInput =
+  | ShopifyProductVariantLimitsInput
   | ShopifyProductsPublishAllInput
   | ShopifyConnectionTestInput
   | ShopifyProductsListInput
@@ -1048,6 +1122,7 @@ export type ShopifyApiInput =
   | ShopifyProductsBulkUpdateInput
   | ShopifyProductsDeleteInput
   | ShopifyProductsPreflightAmazonAsinsInput
+  | ShopifyProductsPreflightEtsyListingsInput
   | ShopifyVariantsUpdateInput
   | ShopifyVariantsBulkUpdateInput
   | ShopifyVariantsBulkCreateInput
@@ -1069,6 +1144,7 @@ export type ShopifyApiInput =
   | ShopifyStoresGetInput;
 
 export type ShopifyApiResponse =
+  | ShopifyProductVariantLimitsResponse
   | ShopifyProductsPublishAllResponse
   | ShopifyConnectionTestResponse
   | ShopifyProductsListResponse
@@ -1078,6 +1154,7 @@ export type ShopifyApiResponse =
   | ShopifyProductsBulkUpdateResponse
   | ShopifyProductsDeleteResponse
   | ShopifyProductsPreflightAmazonAsinsResponse
+  | ShopifyProductsPreflightEtsyListingsResponse
   | ShopifyVariantsUpdateResponse
   | ShopifyVariantsBulkUpdateResponse
   | ShopifyVariantsBulkCreateResponse
@@ -1104,6 +1181,7 @@ export type ShopifyApiResponseFor<TOperation extends ShopifyOperation> = Extract
 >;
 
 export interface ModuleApiRunner {
+  (input: ShopifyProductVariantLimitsInput): Promise<ShopifyProductVariantLimitsResponse>;
   (input: ShopifyProductsPublishAllInput): Promise<ShopifyProductsPublishAllResponse>;
   (input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
   (input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
@@ -1113,6 +1191,7 @@ export interface ModuleApiRunner {
   (input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
   (input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
   (input: ShopifyProductsPreflightAmazonAsinsInput): Promise<ShopifyProductsPreflightAmazonAsinsResponse>;
+  (input: ShopifyProductsPreflightEtsyListingsInput): Promise<ShopifyProductsPreflightEtsyListingsResponse>;
   (input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
   (input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
   (input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
@@ -1140,6 +1219,20 @@ export interface ShopifyProductsPublishAllInput {
   readonly requestId?: string;
   readonly mode?: ShopifyExecutionMode;
   readonly payload: { readonly productId: string };
+}
+
+export interface ShopifyProductVariantLimitsInput {
+  readonly requestId?: string;
+  readonly storeId: string;
+  readonly operation: "products.variantLimits";
+  readonly payload?: Record<string, never>;
+}
+
+export interface ShopifyProductVariantLimitsResponse {
+  readonly storeId: string;
+  readonly operation: "products.variantLimits";
+  readonly success: true;
+  readonly data: { readonly maxProductOptions: number; readonly maxProductVariants: number };
 }
 
 export interface ShopifyProductsPublishAllResponse {

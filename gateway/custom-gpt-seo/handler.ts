@@ -251,11 +251,11 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
         case "admin/job": result = (await queue.get(storeId, jobId)); break;
         case "admin/enqueue": {
           const source = body.source;
-          if (source !== "amazon" && source !== "auto_seo") throw new Error("Invalid source");
+          if (source !== "amazon" && source !== "etsy" && source !== "auto_seo") throw new Error("Invalid source");
           const storeSettings = await queue.settings(storeId);
           const requestedProvider = body.provider;
-          if (requestedProvider !== undefined && (source !== "amazon" || requestedProvider !== "codex_mcp")) {
-            throw new Error("Only Amazon crawler jobs may override the provider to codex_mcp");
+          if (requestedProvider !== undefined && ((source !== "amazon" && source !== "etsy") || requestedProvider !== "codex_mcp")) {
+            throw new Error("Only Amazon or Etsy crawler jobs may override the provider to codex_mcp");
           }
           const provider = requestedProvider === "codex_mcp" ? requestedProvider : storeSettings.provider;
           if (provider !== "custom_gpt" && provider !== "codex_mcp") throw new Error("Provider changed; retry the handoff using the current provider");
@@ -310,7 +310,8 @@ export function createCustomGptHandler(options: CustomGptHandlerOptions) {
           break;
         }
         case "admin/bind-product": {
-          await bindExternalSeoProduct({ storeId, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), productId: required(body.productId, "productId") });
+          const bindSource = body.source === "etsy" ? "etsy" : body.source === "amazon" ? "amazon" : undefined;
+          await bindExternalSeoProduct({ storeId, sourceIdentity: required(body.sourceIdentity, "sourceIdentity"), productId: required(body.productId, "productId"), ...(bindSource ? { source: bindSource } : {}) });
           result = { bound: true }; break;
         }
         case "admin/transfer": {

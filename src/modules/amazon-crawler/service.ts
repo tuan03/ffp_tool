@@ -1,4 +1,5 @@
 import { readSeoReviewListPage } from "../../shared/seo-review-list";
+export { createEtsyCrawlerClient } from "./etsy-service";
 
 import type {
   AmazonAsinChecker,
@@ -83,7 +84,7 @@ export function createCrawlerOperatorFetch(options: {
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : String(input), base);
     if (target.origin !== base.origin || target.username || target.password
-      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|store-vendors|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys|asin-families)(\/|$)/.test(target.pathname)) {
+      || !/^\/api\/v1\/(clients|crawl-jobs|crawl-tasks|crawler-metrics|review-jobs|product-reviews|image-profiles|store-vendors|admission-gate|fleet-circuit-breaker|dead-letter|pinterest-jobs|agent-keys|asin-families|etsy|etsy-listings)(\/|$)/.test(target.pathname)) {
       throw new Error("Operator credential destination rejected.");
     }
     options.sessionSignal?.throwIfAborted();
@@ -593,6 +594,7 @@ function readClients(value: unknown): AmazonCrawlerClientSummary[] {
     }
     return {
       id: client.id,
+      capabilities: isRecord(client.capabilities) ? { amazon: client.capabilities.amazon !== false, etsy: client.capabilities.etsy === true } : undefined,
       displayName: client.displayName,
       agentGroup: typeof client.agentGroup === "string" ? client.agentGroup : "default",
       agentVersion: typeof client.agentVersion === "string" ? client.agentVersion : "unknown",
@@ -972,6 +974,9 @@ export function createAmazonCrawlerRunner({
         throw new AmazonCrawlerServiceError("Không kết nối được coordinator. Hãy chạy npm run dev.", "COORDINATOR_OFFLINE");
       });
       const clients = readClients(await readJson(clientsResponse));
+      if (input.sourcePlatform === "etsy" && !clients.some(client => client.isConnected && AVAILABLE_CLIENT_STATUSES.has(client.status) && client.capabilities?.etsy)) {
+        throw new AmazonCrawlerServiceError("Chưa có Agent hỗ trợ Etsy đang kết nối. Cập nhật Agent rồi kết nối lại.", "NO_ETSY_AGENT_AVAILABLE");
+      }
       if (!clients.some((client) => client.isConnected && AVAILABLE_CLIENT_STATUSES.has(client.status))) {
         throw new AmazonCrawlerServiceError("Chưa có máy crawler nào đang online. Hãy mở FFP Amazon Crawler Agent.", "NO_CLIENT_AVAILABLE");
       }

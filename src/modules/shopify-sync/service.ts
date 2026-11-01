@@ -1,5 +1,6 @@
 import { buildAeoMetafields, validateAeoInput } from "./aeo-metafields";
 import { projectShopifyVariantOptions } from "./variant-options";
+import { projectEtsyPersonalizationVariants } from "./etsy-personalization-variants";
 import type {
   CreateProductInput,
   CreateProductOutput,
@@ -21,9 +22,19 @@ import type {
   ShopifyVersionConflictDetails,
   RollbackSyncInput,
   RollbackSyncResult,
+  SyncedShopifyVariantSummary,
 } from "./types";
 
 const AMAZON_ASIN_PATTERN = /^[A-Z0-9]{10}$/;
+const ETSY_LISTING_ID_PATTERN = /^\d{6,20}$/;
+
+function isEtsySyncProduct(product: ShopifySyncProductInput): boolean {
+  return (
+    product.sourcePlatform === "etsy" ||
+    Boolean(product.etsyListingId && ETSY_LISTING_ID_PATTERN.test(product.etsyListingId.trim())) ||
+    Boolean(product.sourceKey?.toLowerCase().startsWith("etsy:"))
+  );
+}
 
 function requireAmazonAsin(value: string | undefined, metafieldName: string): string {
   const normalized = value?.trim().toUpperCase() ?? "";
@@ -31,6 +42,24 @@ function requireAmazonAsin(value: string | undefined, metafieldName: string): st
     throw new Error(`Customized product requires a valid ${metafieldName} ASIN.`);
   }
   return normalized;
+}
+
+function requireEtsyListingId(product: ShopifySyncProductInput): string {
+  const direct = product.etsyListingId?.trim() ?? "";
+  if (ETSY_LISTING_ID_PATTERN.test(direct)) return direct;
+  const fromSourceKey = product.sourceKey?.toLowerCase().startsWith("etsy:")
+    ? product.sourceKey.slice("etsy:".length).trim()
+    : "";
+  if (ETSY_LISTING_ID_PATTERN.test(fromSourceKey)) return fromSourceKey;
+  throw new Error("Etsy product requires a valid numeric custom.etsy_listing_id.");
+}
+
+function resolveEtsyListingUrl(product: ShopifySyncProductInput, listingId: string): string {
+  const candidate = product.etsyListingUrl?.trim() || product.sourceUrl?.trim() || "";
+  if (candidate && /^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
+  return `https://www.etsy.com/listing/${listingId}`;
 }
 
 export function createDryRunGateway(): ShopifyGateway {
@@ -43,6 +72,11 @@ export function createDryRunGateway(): ShopifyGateway {
       return {
         productId: "gid://shopify/Product/dry-run-preview-id",
         productHandle: slug || "dry-run-preview-handle",
+        createdVariantsCount: input.variants?.length ?? 0,
+        variants: input.variants?.map((variant, index) => ({
+          id: `gid://shopify/ProductVariant/dry-run-${index + 1}`,
+          sku: variant.sku ?? null,
+        })),
       };
     },
 
@@ -51,6 +85,10 @@ export function createDryRunGateway(): ShopifyGateway {
         productId: input.productId,
         productHandle: "dry-run-preview-handle",
         createdVariantsCount: input.variants?.length ?? 0,
+        variants: input.variants?.map((variant, index) => ({
+          id: `gid://shopify/ProductVariant/dry-run-${index + 1}`,
+          sku: variant.sku ?? null,
+        })),
       };
     },
 
@@ -60,6 +98,10 @@ export function createDryRunGateway(): ShopifyGateway {
     ): Promise<CreateVariantsOutput> {
       return {
         createdCount: variants.length,
+        variants: variants.map((variant, index) => ({
+          id: `gid://shopify/ProductVariant/dry-run-${index + 1}`,
+          sku: variant.sku ?? null,
+        })),
       };
     },
 
@@ -83,8 +125,47 @@ export function createDryRunGateway(): ShopifyGateway {
 }
 
 /** Pure preflight shared by the service and workers, before uploads or write permits. */
+export function validateEtsyVariantLimits(product: ShopifySyncProductInput, limits: {
+  readonly maxProductOptions: number; readonly maxProductVariants: number;
+}): void {
+  if (!product.etsyVariantProjection) return;
+  const count = product.variants?.length ?? 0;
+  const axes = product.options?.length ?? 0;
+  if (!Number.isSafeInteger(limits.maxProductOptions) || limits.maxProductOptions < 1 ||
+      !Number.isSafeInteger(limits.maxProductVariants) || limits.maxProductVariants < 1) {
+    throw new Error("ETSY_PERSONALIZATION_LIMITS_REQUIRED: Không đọc được giới hạn biến thể của store.");
+  }
+  if (count > limits.maxProductVariants || axes > limits.maxProductOptions) {
+    throw new Error(`ETSY_PERSONALIZATION_LIMIT_EXCEEDED: Dự kiến ${count} biến thể / ${axes} nhóm; store cho phép ${limits.maxProductVariants} biến thể / ${limits.maxProductOptions} nhóm. Cần xử lý trong SEO Review.`);
+  }
+}
+
 export function prepareShopifySyncProduct(product: ShopifySyncProductInput): ShopifySyncProductInput {
-  const prepared = projectShopifyVariantOptions(product);
+  const prepared = isEtsySyncProduct(product) ? projectEtsyPersonalizationVariants(product) : projectShopifyVariantOptions(product);
+  if (prepared.syncBlockers && prepared.syncBlockers.length > 0) {
+    throw new Error(`Product sync blocked: ${prepared.syncBlockers.join("; ")}`);
+  }
+  const isEtsy = isEtsySyncProduct(prepared);
+  if (isEtsy) {
+    const etsyListingId = requireEtsyListingId(prepared);
+    const etsyListingUrl = resolveEtsyListingUrl(prepared, etsyListingId);
+    if (prepared.customizerAuditStatus === "error") {
+      throw new Error("Etsy personalization has unmapped required fields and cannot be synced until resolved.");
+    }
+    validateAeoInput(prepared.aeo);
+    if (prepared.customizerAuditStatus === "verified_static" && prepared.customization) {
+      throw new Error("verified_static products must not retain customization JSON.");
+    }
+    if (prepared.customizerAuditStatus === "verified_custom" && !prepared.customization) {
+      throw new Error("verified_custom products require customization JSON.");
+    }
+    return {
+      ...prepared,
+      sourcePlatform: "etsy",
+      etsyListingId,
+      etsyListingUrl,
+    };
+  }
   requireAmazonAsin(prepared.amazonAsin, "custom.amazon_asin");
   requireAmazonAsin(prepared.amazonParentAsin, "custom.amazon_parent_asin");
   validateAeoInput(prepared.aeo);
@@ -296,14 +377,21 @@ export async function syncSingleProduct(
   try {
     throwIfCancelled();
     product = prepareShopifySyncProduct(product);
-    const amazonAsin = requireAmazonAsin(product.amazonAsin, "custom.amazon_asin");
-    const amazonParentAsin = requireAmazonAsin(
-      product.amazonParentAsin,
-      "custom.amazon_parent_asin",
-    );
+    const isEtsy = isEtsySyncProduct(product);
+    if (isEtsy && product.etsyVariantProjection && !dryRun) {
+      if (!gateway.getVariantLimits) throw new Error("ETSY_PERSONALIZATION_LIMITS_REQUIRED: Cần đọc giới hạn Shopify trước khi sync.");
+      validateEtsyVariantLimits(product, await gateway.getVariantLimits());
+    }
+    const amazonAsin = isEtsy ? undefined : requireAmazonAsin(product.amazonAsin, "custom.amazon_asin");
+    const amazonParentAsin = isEtsy
+      ? undefined
+      : requireAmazonAsin(product.amazonParentAsin, "custom.amazon_parent_asin");
+    const etsyListingId = isEtsy ? requireEtsyListingId(product) : undefined;
+    const etsyListingUrl = isEtsy && etsyListingId ? resolveEtsyListingUrl(product, etsyListingId) : undefined;
 
     // 1. Create Product & Media Gallery & Options/Variants
     const productWriteInput = {
+      ...(product.etsyVariantProjection ? { variantIdentity: "etsy-personalization-v1" as const } : {}),
       title: product.title,
       descriptionHtml: product.descriptionHtml,
       handle: product.handle,
@@ -349,6 +437,7 @@ export async function syncSingleProduct(
     // 2. Create Variants (if not already bulk-created by createProduct)
     const variantsStartedAt = Date.now();
     let variantsCount = writtenProduct.createdVariantsCount ?? 0;
+    let syncedVariants: readonly SyncedShopifyVariantSummary[] = writtenProduct.variants ?? [];
     if (!options.existingProductId && variantsCount === 0 && product.variants && product.variants.length > 0) {
       throwIfCancelled();
       const variantResult = await gateway.createVariants(
@@ -356,6 +445,9 @@ export async function syncSingleProduct(
         product.variants,
       );
       variantsCount = variantResult.createdCount;
+      if (variantResult.variants && variantResult.variants.length > 0) {
+        syncedVariants = variantResult.variants;
+      }
     }
     const expectedVariantsCount = product.variants?.length ?? 0;
     if (expectedVariantsCount > 0 && variantsCount !== expectedVariantsCount) {
@@ -574,28 +666,99 @@ export async function syncSingleProduct(
       metafieldMs += Date.now() - auditStatusStartedAt;
     }
 
-    const amazonMetafields = [
-      { key: "amazon_asin", value: amazonAsin },
-      { key: "amazon_parent_asin", value: amazonParentAsin },
-    ] as const;
-    for (const amazonMetafield of amazonMetafields) {
-      const amazonMetafieldStartedAt = Date.now();
-      try {
-        throwIfCancelled();
-        const amazonMetafieldResult = await gateway.setProductMetafield({
-          productId: writtenProduct.productId,
-          namespace: "custom",
-          key: amazonMetafield.key,
-          type: "single_line_text_field",
-          value: amazonMetafield.value,
-        });
-        if (!amazonMetafieldResult.success) {
-          throw new Error(
-            `Failed to set required custom.${amazonMetafield.key} metafield.`,
-          );
+    if (isEtsy && etsyListingId && etsyListingUrl) {
+      const etsyProductMetafields = [
+        { key: "etsy_listing_id", value: etsyListingId },
+        { key: "etsy_listing_url", value: etsyListingUrl },
+      ] as const;
+      for (const etsyMetafield of etsyProductMetafields) {
+        const etsyMetaStartedAt = Date.now();
+        try {
+          throwIfCancelled();
+          const result = await gateway.setProductMetafield({
+            productId: writtenProduct.productId,
+            namespace: "custom",
+            key: etsyMetafield.key,
+            type: "single_line_text_field",
+            value: etsyMetafield.value,
+          });
+          if (!result.success) {
+            throw new Error(`Failed to set required custom.${etsyMetafield.key} metafield.`);
+          }
+          metafieldSet = true;
+        } finally {
+          metafieldMs += Date.now() - etsyMetaStartedAt;
         }
-      } finally {
-        metafieldMs += Date.now() - amazonMetafieldStartedAt;
+      }
+
+      const variantsWithEtsyProductId = (product.variants ?? []).filter(
+        (variant): variant is typeof variant & { readonly etsyProductId: string } =>
+          typeof variant.etsyProductId === "string" && ETSY_LISTING_ID_PATTERN.test(variant.etsyProductId.trim()),
+      );
+      if (variantsWithEtsyProductId.length > 0) {
+        const syncedVariantIdBySku = new Map<string, string>();
+        for (const syncedVariant of syncedVariants) {
+          if (syncedVariant.sku && syncedVariant.id) {
+            syncedVariantIdBySku.set(syncedVariant.sku.trim(), syncedVariant.id);
+          }
+        }
+        const singleFallbackVariantId =
+          (product.variants?.length ?? 0) === 1
+            ? (syncedVariants[0]?.id ?? writtenProduct.managedResources?.variantIds?.[0])
+            : undefined;
+
+        for (const variant of variantsWithEtsyProductId) {
+          const matchedVariantId =
+            (variant.sku ? syncedVariantIdBySku.get(variant.sku.trim()) : undefined) ??
+            singleFallbackVariantId;
+          if (!matchedVariantId) {
+            throw new Error(
+              `Cannot resolve Shopify variant GID for Etsy variant ${variant.etsyProductId} (SKU ${variant.sku ?? "unknown"}) to write custom.etsy_product_id.`,
+            );
+          }
+          const variantMetaStartedAt = Date.now();
+          try {
+            throwIfCancelled();
+            const variantMetaResult = await gateway.setProductMetafield({
+              productId: writtenProduct.productId,
+              ownerId: matchedVariantId,
+              namespace: "custom",
+              key: "etsy_product_id",
+              type: "single_line_text_field",
+              value: variant.etsyProductId.trim(),
+            });
+            if (!variantMetaResult.success) {
+              throw new Error("Failed to set required variant custom.etsy_product_id metafield.");
+            }
+          } finally {
+            metafieldMs += Date.now() - variantMetaStartedAt;
+          }
+        }
+      }
+    } else if (amazonAsin && amazonParentAsin) {
+      const amazonMetafields = [
+        { key: "amazon_asin", value: amazonAsin },
+        { key: "amazon_parent_asin", value: amazonParentAsin },
+      ] as const;
+      for (const amazonMetafield of amazonMetafields) {
+        const amazonMetafieldStartedAt = Date.now();
+        try {
+          throwIfCancelled();
+          const amazonMetafieldResult = await gateway.setProductMetafield({
+            productId: writtenProduct.productId,
+            namespace: "custom",
+            key: amazonMetafield.key,
+            type: "single_line_text_field",
+            value: amazonMetafield.value,
+          });
+          if (!amazonMetafieldResult.success) {
+            throw new Error(
+              `Failed to set required custom.${amazonMetafield.key} metafield.`,
+            );
+          }
+        } finally {
+          metafieldMs += Date.now() - amazonMetafieldStartedAt;
+        }
       }
     }
 

@@ -13,6 +13,7 @@ import { resolvePipelineStoreProfile } from "./pipeline-store-profile";
 import { resolvePipelineVendor } from "./pipeline-vendor";
 import { SeoGatewayRequestError, settleSeoEnqueueConflict, recoverUncertainSeoEnqueue } from "./pipeline-seo-handoff";
 import { findExistingAmazonProducts, verifyAmazonAsinSearchable } from "./pipeline-amazon-duplicates";
+import { findExistingEtsyProducts, verifyEtsyListingSearchable } from "./pipeline-etsy-duplicates";
 import type { GptSeoJob } from "../src/modules/custom-gpt-seo";
 import type { SeoContentDetailedOutput } from "../src/modules/seo-content";
 import { bindExternalSeoProduct } from "../src/modules/seo-content";
@@ -41,6 +42,7 @@ import {
 import {
   fromCustomizationNormalizerProduct,
   prepareShopifySyncProduct,
+  validateEtsyVariantLimits,
   syncSingleProduct,
   type ShopifyManagedResources,
   type ShopifySyncProductInput,
@@ -50,6 +52,7 @@ import {
   applySeoContentToCustomizationProduct,
   createSeoContentPipelineSummary,
   fromCustomizationProduct,
+  fromEtsyCustomizationProduct,
   resolveStoreProfile,
 } from "../src/modules/seo-content";
 
@@ -143,6 +146,7 @@ const coordinatorUrl = (env.SHOPIFY_PIPELINE_COORDINATOR_URL || "http://127.0.0.
 const pipelineToken = env.SHOPIFY_PIPELINE_TOKEN?.trim();
 const workerCount = Math.max(1, Math.min(16, Number(env.SHOPIFY_PIPELINE_WORKERS || 8)));
 const amazonAsinSearchabilityChecks = new Map<string, Promise<void>>();
+const etsyListingSearchabilityChecks = new Map<string, Promise<void>>();
 
 async function ensureAmazonAsinSearchable(targetStore: string): Promise<void> {
   const existingCheck = amazonAsinSearchabilityChecks.get(targetStore);
@@ -156,6 +160,22 @@ async function ensureAmazonAsinSearchable(targetStore: string): Promise<void> {
     await check;
   } catch (error: unknown) {
     amazonAsinSearchabilityChecks.delete(targetStore);
+    throw error;
+  }
+}
+
+async function ensureEtsyListingSearchable(targetStore: string): Promise<void> {
+  const existingCheck = etsyListingSearchabilityChecks.get(targetStore);
+  if (existingCheck) return existingCheck;
+  const { storeConfig } = getPipelineStoreProfile(targetStore);
+  if (!storeConfig) throw new Error(`STORE_REQUIRED:${targetStore}`);
+  const check = verifyEtsyListingSearchable(<T>(document: string, variables?: Record<string, unknown>) =>
+    duplicateCheckClient.query<T>(storeConfig, document, variables));
+  etsyListingSearchabilityChecks.set(targetStore, check);
+  try {
+    await check;
+  } catch (error: unknown) {
+    etsyListingSearchabilityChecks.delete(targetStore);
     throw error;
   }
 }
@@ -398,11 +418,22 @@ async function stageProcessedMedia(
     });
   }
   const firstImageByAsin = new Map<string, string>();
+  const firstImageByVariantId = new Map<string, string>();
+  const processedUrlByOriginalUrl = new Map<string, string>();
   for (const media of stagedMedia) {
     const sourceAsin = typeof media.sourceAsin === "string" ? media.sourceAsin : "";
+    const mediaRecord = media as unknown as Record<string, unknown>;
+    const sourceVariantId = typeof mediaRecord.sourceVariantId === "string" ? mediaRecord.sourceVariantId : "";
+    const originalUrl = typeof media.url === "string" ? media.url.trim() : "";
     const processedUrl = typeof media.processedUrl === "string" ? media.processedUrl : "";
+    if (originalUrl && processedUrl && !processedUrlByOriginalUrl.has(originalUrl)) {
+      processedUrlByOriginalUrl.set(originalUrl, processedUrl);
+    }
     if (sourceAsin && processedUrl && !firstImageByAsin.has(sourceAsin)) {
       firstImageByAsin.set(sourceAsin, processedUrl);
+    }
+    if (sourceVariantId && processedUrl && !firstImageByVariantId.has(sourceVariantId)) {
+      firstImageByVariantId.set(sourceVariantId, processedUrl);
     }
   }
   const variants = Array.isArray(product.variants)
@@ -410,9 +441,18 @@ async function stageProcessedMedia(
         if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
         const variant = rawVariant as Record<string, unknown>;
         const sourceAsin = typeof variant.sourceAsin === "string" ? variant.sourceAsin : "";
-        return firstImageByAsin.has(sourceAsin)
-          ? { ...variant, mediaUrl: firstImageByAsin.get(sourceAsin) }
-          : variant;
+        if (sourceAsin && firstImageByAsin.has(sourceAsin)) {
+          return { ...variant, mediaUrl: firstImageByAsin.get(sourceAsin) };
+        }
+        const mediaUrl = typeof variant.mediaUrl === "string" ? variant.mediaUrl.trim() : "";
+        if (mediaUrl && processedUrlByOriginalUrl.has(mediaUrl)) {
+          return { ...variant, mediaUrl: processedUrlByOriginalUrl.get(mediaUrl) };
+        }
+        const sourceVariantId = typeof variant.sourceVariantId === "string" ? variant.sourceVariantId : "";
+        if (sourceVariantId && firstImageByVariantId.has(sourceVariantId)) {
+          return { ...variant, mediaUrl: firstImageByVariantId.get(sourceVariantId) };
+        }
+        return variant;
       })
     : product.variants;
   return { ...product, media: stagedMedia, variants };
@@ -428,6 +468,43 @@ function stripProcessingTokens(product: CrawlProduct): CrawlProduct {
       return media as ProcessedImageMedia;
     }),
   };
+}
+
+function etsyCrawlEvidenceBlockers(product: CrawlProduct): string[] {
+  const blockers: string[] = [];
+  const matrix = product.variantMatrix && typeof product.variantMatrix === "object"
+    ? product.variantMatrix as Record<string, unknown>
+    : {};
+  if (matrix.complete !== true) {
+    blockers.push("Tổ hợp biến thể Etsy chưa xác minh đầy đủ; không tự sync dữ liệu phỏng đoán.");
+  }
+  const sourceVariants = Array.isArray(product.sourceVariants) ? product.sourceVariants : [];
+  const finalVariants = Array.isArray(product.variants) ? product.variants : [];
+  if (sourceVariants.length === 0 || finalVariants.length === 0) {
+    blockers.push("Listing Etsy không có biến thể còn hàng hợp lệ để sync.");
+  }
+  const hasMissingPrice = [...sourceVariants, ...finalVariants].some((variant) => {
+    if (!variant || typeof variant !== "object") return true;
+    return (variant as Record<string, unknown>).price == null;
+  });
+  if (hasMissingPrice) {
+    blockers.push("Thiếu giá bán USD/US đã xác minh cho ít nhất một biến thể Etsy.");
+  }
+  const etsyMeta = product.etsyMetadata && typeof product.etsyMetadata === "object"
+    ? product.etsyMetadata as Record<string, unknown>
+    : null;
+  if (etsyMeta && etsyMeta.priceVerified === false) {
+    blockers.push("Giá bán USD/US trên Etsy chưa xác minh được qua API/trình duyệt.");
+  }
+  if (Array.isArray(product.syncBlockers)) {
+    for (const rawBlocker of product.syncBlockers) {
+      if (typeof rawBlocker !== "string" || !rawBlocker.trim()) continue;
+      // Personalization blockers still receive SEO + classification before parking in Cần xử lý.
+      if (/personaliz|customiz|cá nhân hóa/i.test(rawBlocker)) continue;
+      blockers.push(rawBlocker.trim());
+    }
+  }
+  return [...new Set(blockers)];
 }
 
 function productBlockers(product: CrawlProduct): string[] {
@@ -510,6 +587,7 @@ async function processClaim(
     if (cancellationController.signal.aborted) throw new PipelineCancelledError();
   };
   const isSyncStage = claim.stage === "sync" || claim.stage === "publish";
+  const isEtsyClaim = claim.sourceKey.toLowerCase().startsWith("etsy:") || claim.product.sourcePlatform === "etsy";
   const targetStore = typeof claim.settings.storeId === "string" ? claim.settings.storeId : storeId;
   const gptBase = new URL("/api/v1/gpt-seo/admin/", gatewayUrl);
   async function gptRequest<T>(route: string, body?: unknown): Promise<T> {
@@ -611,15 +689,57 @@ async function processClaim(
       } finally {
         clearInterval(duplicateCheckHeartbeat);
       }
+    } else if (!claim.isRecovery && isEtsyClaim) {
+      const duplicateCheckHeartbeat = setInterval(() => {
+        void postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/heartbeat`, { workerId })
+          .then((response: unknown) => {
+            if (isRecord(response) && response.status === "cancelled") cancellationController.abort();
+          }).catch(() => cancellationController.abort());
+      }, 20_000);
+      try {
+        const { storeConfig } = getPipelineStoreProfile(targetStore);
+        if (!storeConfig) throw new Error(`STORE_REQUIRED:${targetStore}`);
+        await ensureEtsyListingSearchable(targetStore);
+        const matches = await findExistingEtsyProducts({
+          product: claim.product,
+          isSearchabilityVerified: true,
+          query: <T>(document: string, variables?: Record<string, unknown>) =>
+            duplicateCheckClient.query<T>(storeConfig, document, variables),
+        });
+        throwIfCancelled();
+        if (matches.length > 0) {
+          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/skip-existing-shopify`, {
+            workerId, matches,
+          });
+          return;
+        }
+      } catch (error: unknown) {
+        await failClaim(claim, workerId, error, { retryable: true, phase: "shopify_duplicate_check", timings });
+        return;
+      } finally {
+        clearInterval(duplicateCheckHeartbeat);
+      }
     }
     if (!claim.externalSeo) {
-      const blockers = productBlockers(claim.product);
-      if (blockers.length > 0) {
-        await failClaim(claim, workerId, new Error(blockers.join(" ")), {
-          phase: "normalization",
-          timings: { totalMs: Date.now() - pipelineStartedAt },
-        });
-        return;
+      if (isEtsyClaim) {
+        const evidenceBlockers = etsyCrawlEvidenceBlockers(claim.product);
+        if (evidenceBlockers.length > 0) {
+          await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/attention-review`, {
+            workerId,
+            blockers: evidenceBlockers,
+            normalizedProduct: claim.product,
+          });
+          return;
+        }
+      } else {
+        const blockers = productBlockers(claim.product);
+        if (blockers.length > 0) {
+          await failClaim(claim, workerId, new Error(blockers.join(" ")), {
+            phase: "normalization",
+            timings: { totalMs: Date.now() - pipelineStartedAt },
+          });
+          return;
+        }
       }
 
       let normalization: ReturnType<typeof normalizeCustomizationProduct>;
@@ -648,23 +768,40 @@ async function processClaim(
         if (!env.GATEWAY_AUTH_TOKEN) throw new Error("GATEWAY_AUTH_TOKEN_REQUIRED_FOR_CRAWLER_CODEX_QUEUE");
         const { storeProfile } = getPipelineStoreProfile(targetStore);
         if (!storeProfile) throw new Error(`STORE_PROFILE_REQUIRED:${targetStore}`);
-        if (claim.existingShopify?.productId) await gptRequest("bind-product", { sourceIdentity: claim.sourceKey, productId: claim.existingShopify.productId });
+        if (claim.existingShopify?.productId) {
+          await gptRequest("bind-product", {
+            source: isEtsyClaim ? "etsy" : "amazon",
+            sourceIdentity: claim.sourceKey,
+            productId: claim.existingShopify.productId,
+          });
+        }
         const externalJob = await gptRequest<GptSeoJob>("enqueue", {
             provider: "codex_mcp",
-            source: "amazon",
+            source: isEtsyClaim ? "etsy" : "amazon",
             sourceIdentity: claim.sourceKey,
             sourceRevision: claim.seoSourceRevision ?? claim.checksum,
             ...(claim.existingShopify?.productId ? { productId: claim.existingShopify.productId } : {}),
-            input: fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
-            original: { ...baseNormalizedProduct, crawlerPipelineItemId: claim.id,
+            input: isEtsyClaim
+              ? fromEtsyCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile)
+              : fromCustomizationProduct(baseNormalizedProduct, storeProfile.niche, storeProfile),
+            original: {
+              ...baseNormalizedProduct,
+              crawlerPipelineItemId: claim.id,
               crawlerProfileSlug: claim.settings.profileSlug ?? "default",
-              ...(targetStore.toLowerCase().startsWith("jeminise") ? { crawlerConfiguredProductType:
-                String(baseNormalizedProduct.preset ?? "").startsWith("jeminise_bedding_") ? "Bedding"
-                  : String(baseNormalizedProduct.preset ?? "").startsWith("jeminise_blanket_") ? "Blanket"
-                  : baseNormalizedProduct.productType } : {}),
-              crawlerCustomizerAuditVersion: 2,
+              ...(!isEtsyClaim && targetStore.toLowerCase().startsWith("jeminise")
+                ? {
+                    crawlerConfiguredProductType:
+                      String(baseNormalizedProduct.preset ?? "").startsWith("jeminise_bedding_")
+                        ? "Bedding"
+                        : String(baseNormalizedProduct.preset ?? "").startsWith("jeminise_blanket_")
+                        ? "Blanket"
+                        : baseNormalizedProduct.productType,
+                  }
+                : {}),
+              ...(!isEtsyClaim ? { crawlerCustomizerAuditVersion: 2 } : {}),
               ...((claim.settings.profileSlug ?? "default") === "default" ? { crawlerSizeOptionsVersion: 1 } : {}),
-              crawlerClassificationMode: claim.settings.classificationMode ?? "manual" },
+              crawlerClassificationMode: claim.settings.classificationMode ?? (isEtsyClaim ? "automatic" : "manual"),
+            },
         });
         if (externalJob.settings.provider !== "codex_mcp") {
           throw new Error("CRAWLER_CODEX_PROVIDER_MISMATCH");
@@ -889,11 +1026,15 @@ async function processClaim(
       const seoExecution = externalSeoExecution;
       let seoProduct: CrawlProduct;
       try {
+        const sizeNormalizedProduct = applySizeOptionNormalization(
+          baseNormalizedProduct,
+          (claim.settings.profileSlug ?? "default") === "default" ? externalSizeOptions : undefined,
+        );
+        const auditedProduct = isEtsyClaim
+          ? sizeNormalizedProduct
+          : applyCustomizerAudit(sizeNormalizedProduct, externalCustomizerAudit);
         seoProduct = applySeoContentToCustomizationProduct(
-          applyCustomizerAudit(
-            applySizeOptionNormalization(baseNormalizedProduct, (claim.settings.profileSlug ?? "default") === "default" ? externalSizeOptions : undefined),
-            externalCustomizerAudit,
-          ),
+          auditedProduct,
           seoExecution.output,
           { ensureUniqueHandle: true, existingShopifyHandle: existingProductHandle },
         );
@@ -981,10 +1122,14 @@ async function processClaim(
       return;
     }
 
-    // Validate the actual family identity before computing the no-op checkpoint.
+    // Validate the actual source identity before computing the no-op checkpoint.
     const preflightInput = prepareShopifySyncProduct(fromCustomizationNormalizerProduct(shopifyProduct, {
       vendor: storeVendor, productType: customProductType,
     }));
+    if (preflightInput.etsyVariantProjection) {
+      const limits = await runner({ storeId: effectiveProxyStoreId, operation: "products.variantLimits" });
+      validateEtsyVariantLimits(preflightInput, limits.data);
+    }
     finalChecksum = checksum({
       product: shopifyProduct,
       imageProfileRevision: imageProcessingSummary.profileRevision,
@@ -996,8 +1141,16 @@ async function processClaim(
       priceAddition,
       discountPercent,
       storeVendor,
-      amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
-      amazonParentAsin: preflightInput.amazonParentAsin,
+      ...(isEtsyClaim
+        ? {
+            etsyMetafieldSchemaVersion: 1,
+            etsyPersonalizationProjection: preflightInput.etsyVariantProjection ?? null,
+            etsyListingId: preflightInput.etsyListingId,
+          }
+        : {
+            amazonMetafieldSchemaVersion: AMAZON_METAFIELD_SCHEMA_VERSION,
+            amazonParentAsin: preflightInput.amazonParentAsin,
+          }),
     });
     // A SKU policy change must not be skipped merely because the crawl payload is unchanged.
     finalChecksum = checksum({
@@ -1217,7 +1370,12 @@ async function processClaim(
     existingProductId = syncResult.productId ?? existingProductId;
     if (claim.externalSeo && existingProductId && claimStoreId) {
       await bindExternalSeoProduct(
-        { storeId: claimStoreId, sourceIdentity: claim.sourceKey, productId: existingProductId },
+        {
+          storeId: claimStoreId,
+          source: isEtsyClaim ? "etsy" : "amazon",
+          sourceIdentity: claim.sourceKey,
+          productId: existingProductId,
+        },
         getSeoPersistence().conflictCorpus(claimStoreId),
       );
     }
@@ -1308,7 +1466,7 @@ async function processClaim(
         await postJson(`/api/v1/internal/product-pipeline/${encodeURIComponent(claim.id)}/shopify-checkpoint`, {
           workerId,
           storeId: claimStoreId,
-          normalizedChecksum: finalChecksum ?? checksum(claim.product),
+          normalizedChecksum: checksum({ state: "incomplete", finalChecksum: finalChecksum ?? checksum(claim.product) }),
           shopify: {
             productId: extractedProductId,
             productHandle: existingProductHandle,
@@ -1321,7 +1479,7 @@ async function processClaim(
     }
     timings.totalMs = Date.now() - pipelineStartedAt;
     await failClaim(claim, workerId, error, {
-      retryable: !reconciliationRequired,
+      retryable: !reconciliationRequired && !message.includes("ETSY_PERSONALIZATION"),
       reconciliationRequired,
       phase: "shopify",
       timings,

@@ -151,7 +151,7 @@ export interface GptSeoJob extends GptSeoEnqueue {
   readonly id: string;
   /** Persisted operational columns retained for queue/query compatibility. */
   readonly storeId: string;
-  readonly source: "amazon" | "auto_seo";
+  readonly source: "amazon" | "etsy" | "auto_seo";
   readonly sourceIdentity: string;
   readonly sourceRevision?: string;
   readonly original: unknown;

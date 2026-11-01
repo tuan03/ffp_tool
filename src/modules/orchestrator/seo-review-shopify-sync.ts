@@ -309,8 +309,14 @@ export async function pushSeoReviewProductToShopify(
       let existingProductId: string | undefined = candidateShopifyId;
       let existingManagedResources: ShopifyManagedResources | undefined;
 
+      const isEtsyCrawl =
+        crawl.sourcePlatform === "etsy" ||
+        (typeof crawl.sourceKey === "string" && crawl.sourceKey.trim().toLowerCase().startsWith("etsy:"));
       const candidateSourceKeys = [
         typeof crawl.sourceKey === "string" ? crawl.sourceKey.trim() : "",
+        isEtsyCrawl && typeof crawl.sourceProductId === "string" && crawl.sourceProductId.trim()
+          ? `etsy:${crawl.sourceProductId.trim()}`
+          : "",
         typeof crawl.asin === "string" ? crawl.asin.trim() : "",
         typeof crawl.parentAsin === "string" ? crawl.parentAsin.trim() : "",
         typeof product.asin === "string" ? product.asin.trim() : "",
@@ -338,7 +344,10 @@ export async function pushSeoReviewProductToShopify(
           } else if (resolved.match === "none") {
             existingProductId = undefined;
           }
-        } catch {
+        } catch (resolveErr: unknown) {
+          if (isEtsyCrawl) {
+            throw resolveErr;
+          }
           if (isCrossStore) {
             existingProductId = undefined;
           }

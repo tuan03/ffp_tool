@@ -4,6 +4,11 @@ export {
   fromCustomizationNormalizerProduct,
 } from "./adapter";
 export {
+  assignAmazonVariantSkus,
+  assignEtsyVariantSkus,
+} from "./variant-sku";
+export type { EtsyVariantSkuSource } from "./variant-sku";
+export {
   AEO_JSON_LD_METAFIELD,
   AEO_SUITE_HTML_METAFIELD,
   buildAeoMetafieldValues,
@@ -22,6 +27,7 @@ export {
   compactCustomizerConfigForMetafield,
   createDryRunGateway,
   prepareShopifySyncProduct,
+  validateEtsyVariantLimits,
   replaceUrlsInObject,
   rollbackProductSync,
   runShopifySync,
@@ -68,4 +74,5 @@ export type {
   ShopifyVersionConflictDetails,
   RollbackSyncInput,
   RollbackSyncResult,
+  SyncedShopifyVariantSummary,
 } from "./types";

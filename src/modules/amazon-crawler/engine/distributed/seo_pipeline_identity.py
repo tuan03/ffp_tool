@@ -120,3 +120,124 @@ def load_cancelled_seo_job_ids(session: Session, store_id: str, job_ids: set[str
     for offset in range(0, len(ordered), 200):
         cancelled.update(str(job_id) for job_id in session.scalars(query, {"store_id": store_id, "ids": ordered[offset:offset + 200]}))
     return cancelled
+
+
+@dataclass(frozen=True)
+class ActiveEtsySeoIdentity:
+    job_id: str
+    source_key: str
+    listing_id: str
+    owner_item_id: str
+
+
+def load_active_etsy_seo_identities(
+    session: Session,
+    store_id: str,
+    *,
+    listing_ids: set[str] | None = None,
+) -> list[ActiveEtsySeoIdentity]:
+    if not store_id or (listing_ids is not None and not listing_ids):
+        return []
+    connection = session.connection()
+    inspector = inspect(connection)
+    if not inspector.has_table("gpt_jobs") or not inspector.has_table("seo_worker_jobs"):
+        return []
+
+    target_source_keys = sorted(f"etsy:{lid}" for lid in listing_ids) if listing_ids is not None else None
+    if inspector.has_table("seo_pipeline_identities"):
+        query = text(
+            f"""
+            SELECT i.job_id, i.source_key, i.owner_item_id
+            FROM seo_pipeline_identities i
+            JOIN seo_worker_jobs w ON w.job_id = i.job_id
+            JOIN gpt_jobs j ON j.id = i.job_id
+            WHERE i.store_id = :store_id
+              AND w.pipeline_active = true
+              AND j.status != 'CANCELLED'
+              {"AND i.source_key IN :source_keys" if target_source_keys is not None else "AND i.source_key LIKE 'etsy:%'"}
+            """
+        )
+        parameters: dict[str, str | list[str]] = {"store_id": store_id}
+        if target_source_keys is not None:
+            query = query.bindparams(bindparam("source_keys", expanding=True))
+            parameters["source_keys"] = target_source_keys
+        results: list[ActiveEtsySeoIdentity] = []
+        for row in session.execute(query, parameters).mappings():
+            source_key = str(row["source_key"] or "")
+            if not source_key.startswith("etsy:"):
+                continue
+            lid = source_key.split(":", 1)[1].strip()
+            if lid:
+                results.append(
+                    ActiveEtsySeoIdentity(
+                        job_id=str(row["job_id"]),
+                        source_key=source_key,
+                        listing_id=lid,
+                        owner_item_id=str(row["owner_item_id"] or ""),
+                    )
+                )
+        return results
+
+    if connection.dialect.name == "postgresql":
+        projection = """
+            COALESCE(j.payload::jsonb#>>'{execution,sourceIdentity}', j.payload::jsonb->>'sourceIdentity') AS source_key,
+            COALESCE(
+                j.payload::jsonb#>>'{execution,originalSnapshot,crawlerPipelineItemId}',
+                j.payload::jsonb#>>'{original,crawlerPipelineItemId}'
+            ) AS owner_item_id
+        """
+    else:
+        projection = """
+            COALESCE(json_extract(j.payload,'$.execution.sourceIdentity'), json_extract(j.payload,'$.sourceIdentity')) AS source_key,
+            COALESCE(
+                json_extract(j.payload,'$.execution.originalSnapshot.crawlerPipelineItemId'),
+                json_extract(j.payload,'$.original.crawlerPipelineItemId')
+            ) AS owner_item_id
+        """
+    rows = session.execute(
+        text(
+            f"""
+            SELECT j.id AS job_id, {projection}
+            FROM gpt_jobs j
+            JOIN seo_worker_jobs w ON w.job_id = j.id
+            WHERE j.store_id = :store_id AND w.pipeline_active = true AND j.status != 'CANCELLED'
+            """
+        ),
+        {"store_id": store_id},
+    )
+    fallback_results: list[ActiveEtsySeoIdentity] = []
+    for row in rows.mappings():
+        source_key = str(row["source_key"] or "")
+        if not source_key.startswith("etsy:"):
+            continue
+        lid = source_key.split(":", 1)[1].strip()
+        if not lid or (listing_ids is not None and lid not in listing_ids):
+            continue
+        fallback_results.append(
+            ActiveEtsySeoIdentity(
+                job_id=str(row["job_id"]),
+                source_key=source_key,
+                listing_id=lid,
+                owner_item_id=str(row["owner_item_id"] or ""),
+            )
+        )
+    return fallback_results
+
+
+def match_active_etsy_seo_jobs(
+    identities: list[ActiveEtsySeoIdentity],
+    listing_id: str,
+    *,
+    owner_item_id: str = "",
+) -> list[str]:
+    clean_id = str(listing_id or "").strip()
+    if not clean_id:
+        return []
+    return sorted(
+        {
+            identity.job_id
+            for identity in identities
+            if identity.listing_id == clean_id
+            and (not owner_item_id or identity.owner_item_id != owner_item_id)
+        }
+    )

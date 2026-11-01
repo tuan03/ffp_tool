@@ -1,5 +1,7 @@
 export { amazonCrawlerRoutes } from "./routes";
 export { getShopifyAsinFilter } from "./runtime";
+export { getEtsyCrawlerClient } from "./runtime";
+export type { EtsyCrawlerClient, EtsyPreflightResult } from "./etsy-types";
 export type { ShopifyAsinFilter, ShopifyAsinFilterResult, ShopifyAsinFilterProgress, ShopifyAsinFilterMatch, AsinFilterActivity } from "./types";
 export { getAmazonCrawlerAgentReleaseLoader, getAmazonCrawlerCacheClearer, getAmazonCrawlerClientsLoader, getAmazonCrawlerJobController, getAmazonCrawlerJobLoader, getAmazonCrawlerReviewClient, getAmazonCrawlerRunner, getAmazonCrawlerSyncRetrier, getImageProcessingProfileManager } from "./runtime";
 export { AmazonCrawlerServiceError, createAmazonCrawlerAdmissionGateController, createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerCommandController, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, serializeAmazonCrawlerInput } from "./service";

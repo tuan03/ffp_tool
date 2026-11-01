@@ -66,7 +66,7 @@ export interface SeoContentGenerationInput {
 export interface SeoExecutionEnvelope {
   readonly storeId: string;
   readonly productId?: string;
-  readonly source: "amazon" | "auto_seo";
+  readonly source: "amazon" | "etsy" | "auto_seo";
   readonly sourceIdentity: string;
   readonly sourceRevision?: string;
   readonly shopifyUpdatedAt?: string;

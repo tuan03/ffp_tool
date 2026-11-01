@@ -68,7 +68,14 @@ function buildCatalog(product: CrawlProduct): SizeCatalog {
       choices: [...values].map(value => ({ choiceId: idFor("size", name, value), label: value })) }));
   const optionNames = [...valuesByName.keys()];
   const sourceHash = createHash("sha256").update(JSON.stringify({
-    identity: { id: product.id, sourceKey: product.sourceKey, asin: product.asin },
+    identity: {
+      id: product.id,
+      sourceKey: product.sourceKey,
+      asin: product.asin,
+      ...(typeof product.sourceProductId === "string" && product.sourceProductId.trim()
+        ? { sourceProductId: product.sourceProductId.trim() }
+        : {}),
+    },
     groups: groups.map(group => ({ ...group, choices: [...group.choices].sort((a, b) => a.choiceId.localeCompare(b.choiceId)) }))
       .sort((a, b) => a.groupId.localeCompare(b.groupId)), optionNames: [...optionNames].sort(),
   })).digest("hex");
@@ -77,7 +84,7 @@ function buildCatalog(product: CrawlProduct): SizeCatalog {
 
 function catalogFor(job: GptSeoJob): SizeCatalog | undefined {
   const original = job.execution.originalSnapshot;
-  if (job.execution.source !== "amazon" || !isRecord(original)
+  if ((job.execution.source !== "amazon" && job.execution.source !== "etsy") || !isRecord(original)
     || original.crawlerProfileSlug !== "default" || original.crawlerSizeOptionsVersion !== 1) return undefined;
   const catalog = buildCatalog(original);
   return catalog.groups.length > 0 && catalog.groups.length <= 100 ? catalog : undefined;

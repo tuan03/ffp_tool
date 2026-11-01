@@ -22,6 +22,7 @@ export interface Money {
 }
 
 export interface AmazonCrawlerSettings {
+  sourcePlatform?: "amazon" | "etsy";
   sequentialBatch?: boolean;
   profileSlug: AmazonCrawlerProfile;
   imageProfileSlug: string;
@@ -60,6 +61,7 @@ export interface AmazonCrawlerSettings {
 }
 
 export interface AmazonCrawlerInput extends AmazonCrawlerSettings {
+  existingShopifyListingIds?: readonly string[];
   urls: readonly string[];
   existingShopifyAsins?: readonly string[];
   refreshFamilyAsins?: readonly string[];
@@ -442,6 +444,8 @@ export interface ProductDiagnostics {
 }
 
 export interface AmazonCrawlerProduct {
+  sourcePlatform?: "amazon" | "etsy";
+  sourceProductId?: string;
   id: string;
   sourceKey?: string;
   asin: string;
@@ -883,6 +887,7 @@ export interface AmazonCrawlerWorkerHealth {
 }
 
 export interface AmazonCrawlerClientSummary {
+  capabilities?: { readonly amazon?: boolean; readonly etsy?: boolean };
   id: string;
   displayName: string;
   agentGroup?: string;

@@ -3156,6 +3156,7 @@ test("Real service client dispatches files.bulkCreate successfully to Gateway wi
 
 test("Test invariant: every ShopifyOperation union member is present in SUPPORTED_SHOPIFY_OPERATIONS", () => {
   const operationsCoverage: Record<ShopifyOperation, true> = {
+    "products.variantLimits": true,
     "products.publishAll": true,
     "connection.test": true,
     "products.list": true,
@@ -3165,6 +3166,7 @@ test("Test invariant: every ShopifyOperation union member is present in SUPPORTE
     "products.bulkUpdate": true,
     "products.delete": true,
     "products.preflightAmazonAsins": true,
+    "products.preflightEtsyListings": true,
     "variants.update": true,
     "variants.bulkUpdate": true,
     "variants.bulkCreate": true,

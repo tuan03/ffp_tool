@@ -1,4 +1,6 @@
 import type {
+  ShopifyProductVariantLimitsInput,
+  ShopifyProductVariantLimitsResponse,
   ShopifyProductsPublishAllInput,
   ShopifyProductsPublishAllResponse,
   ModuleApiConfig,
@@ -48,6 +50,8 @@ import type {
   ShopifyProductsListResponse,
   ShopifyProductsPreflightAmazonAsinsInput,
   ShopifyProductsPreflightAmazonAsinsResponse,
+  ShopifyProductsPreflightEtsyListingsInput,
+  ShopifyProductsPreflightEtsyListingsResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
   ShopifyStoresGetInput,
@@ -66,6 +70,7 @@ import { ShopifyApiError } from "./types";
 export const DEFAULT_GATEWAY_URL = "/api/shopify";
 
 const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
+  "products.variantLimits",
   "connection.test",
   "products.list",
   "products.get",
@@ -78,6 +83,7 @@ const READ_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
 ]);
 
 const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
+  "products.variantLimits",
   "products.publishAll",
   "connection.test",
   "products.list",
@@ -87,6 +93,7 @@ const ALL_OPERATIONS: ReadonlySet<ShopifyOperation> = new Set([
   "products.bulkUpdate",
   "products.delete",
   "products.preflightAmazonAsins",
+  "products.preflightEtsyListings",
   "variants.update",
   "variants.bulkUpdate",
   "variants.bulkCreate",
@@ -395,7 +402,7 @@ export function createModuleApiRunner(
     const effectivePayload =
       input.payload !== undefined && input.payload !== null
         ? input.payload
-        : input.operation === "stores.list"
+        : input.operation === "stores.list" || input.operation === "products.variantLimits"
         ? {}
         : undefined;
 
@@ -662,6 +669,7 @@ const defaultRunner = createModuleApiRunner();
  * Executes real Shopify API operations via backend HTTP Gateway.
  */
 export async function runModuleApi(input: ShopifyProductsPublishAllInput): Promise<ShopifyProductsPublishAllResponse>;
+export async function runModuleApi(input: ShopifyProductVariantLimitsInput): Promise<ShopifyProductVariantLimitsResponse>;
 export async function runModuleApi(input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
 export async function runModuleApi(input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
 export async function runModuleApi(input: ShopifyProductsGetInput): Promise<ShopifyProductsGetResponse>;
@@ -670,6 +678,7 @@ export async function runModuleApi(input: ShopifyProductsUpdateInput): Promise<S
 export async function runModuleApi(input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
 export async function runModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
 export async function runModuleApi(input: ShopifyProductsPreflightAmazonAsinsInput): Promise<ShopifyProductsPreflightAmazonAsinsResponse>;
+export async function runModuleApi(input: ShopifyProductsPreflightEtsyListingsInput): Promise<ShopifyProductsPreflightEtsyListingsResponse>;
 export async function runModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
 export async function runModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
 export async function runModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;

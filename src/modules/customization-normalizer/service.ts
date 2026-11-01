@@ -29,10 +29,11 @@ export function hasCustomization(product: CrawlProduct): boolean {
       customization.pricing.paidOptionGroups.length > 0,
   );
   const hasTextInputs = Boolean(customization.textInputs && customization.textInputs.length > 0);
+  const hasImageInputs = Boolean(customization.imageInputs && customization.imageInputs.length > 0);
   const hasAssets = Boolean(customization.assets && customization.assets.length > 0);
   const hasFormUrl = typeof customization.formUrl === "string" && customization.formUrl.trim().length > 0;
 
-  return hasOptionGroups || hasPaidGroups || hasTextInputs || hasAssets || hasFormUrl;
+  return hasOptionGroups || hasPaidGroups || hasTextInputs || hasImageInputs || hasAssets || hasFormUrl;
 }
 
 export function slugify(text: string, maxLength = 48): string {
@@ -506,6 +507,7 @@ export function computeNormalizedProductChecksum(
     description: product.description ?? "",
     asin: product.asin ?? "",
     parentAsin: product.parentAsin ?? "",
+    sourceProductId: product.sourceProductId ?? "",
     sourcePlatform: product.sourcePlatform ?? "amazon",
     media: (product.media ?? []).map((m) => ({ url: m.url, alt: m.alt })),
     customization: product.customization
@@ -514,6 +516,7 @@ export function computeNormalizedProductChecksum(
           pricing: product.customization.pricing,
           assets: product.customization.assets,
           textInputs: product.customization.textInputs,
+          imageInputs: product.customization.imageInputs,
         }
       : null,
     ...(options ?? {}),

@@ -16,6 +16,7 @@ import type {
   ShopifyProductsCreateResponse,
   ShopifyProductsGetResponse,
   ShopifyProductsListResponse,
+  ShopifyProductsPreflightEtsyListingsResponse,
   ShopifyProductsUpdateResponse,
   ShopifyProduct,
   ShopifyVariantsBulkCreateResponse,
@@ -56,7 +57,7 @@ export interface ResolveShopifyProductForSyncInput {
 
 export interface ResolvedShopifyProductForSync {
   readonly product?: ShopifyProduct;
-  readonly match: "mapping" | "source_tag" | "handle" | "none";
+  readonly match: "mapping" | "source_tag" | "etsy_metafield" | "handle" | "none";
   readonly staleMappedProductId?: string;
 }
 
@@ -141,7 +142,7 @@ export async function resolveShopifyProductForSync(
         const mappedResponse = await input.runner({
           storeId,
           operation: "products.get",
-          payload: { id: validMappedId },
+          payload: { id: validMappedId, ...(sourceKey.startsWith("etsy:") ? { includeAllVariants: true } : {}) },
         }) as ShopifyProductsGetResponse;
         if (mappedResponse.data.product) {
           return { product: mappedResponse.data.product, match: "mapping" };
@@ -174,7 +175,7 @@ export async function resolveShopifyProductForSync(
           const detail = (await input.runner({
             storeId,
             operation: "products.get",
-            payload: { id: candidateByHandle.id },
+            payload: { id: candidateByHandle.id, ...(sourceKey.startsWith("etsy:") ? { includeAllVariants: true } : {}) },
           })) as ShopifyProductsGetResponse;
           return {
             product: detail.data?.product ?? candidateByHandle,
@@ -222,7 +223,7 @@ export async function resolveShopifyProductForSync(
           const detail = await input.runner({
             storeId,
             operation: "products.get",
-            payload: { id: candidate.id },
+            payload: { id: candidate.id, ...(sourceKey.startsWith("etsy:") ? { includeAllVariants: true } : {}) },
           }) as ShopifyProductsGetResponse;
           return {
             product: detail.data?.product ?? candidate,
@@ -243,6 +244,42 @@ export async function resolveShopifyProductForSync(
     } catch (error) {
       if (isInfrastructureError(error)) {
         throw error;
+      }
+    }
+
+    if (sourceKey.toLowerCase().startsWith("etsy:")) {
+      const listingId = sourceKey.slice("etsy:".length).trim();
+      if (/^\d{6,20}$/.test(listingId)) {
+        try {
+          const preflight = (await input.runner({
+            storeId,
+            operation: "products.preflightEtsyListings",
+            requestId: `etsy-sync-preflight-${crypto.randomUUID()}`,
+            mode: "apply",
+            payload: { listingIds: [listingId] },
+          })) as ShopifyProductsPreflightEtsyListingsResponse;
+          if (!preflight.data?.ready) throw new Error("ETSY_PREFLIGHT_NOT_READY: Cannot determine whether this Etsy listing already exists.");
+          const matchedProductId = preflight.data?.matches?.find(
+            (match) => match.listingId === listingId,
+          )?.productId;
+          if (matchedProductId) {
+            const detail = (await input.runner({
+              storeId,
+              operation: "products.get",
+              payload: { id: matchedProductId, includeAllVariants: true },
+            })) as ShopifyProductsGetResponse;
+            if (detail.data?.product) {
+              return {
+                product: detail.data.product,
+                match: "etsy_metafield",
+                ...(mappedProductId ? { staleMappedProductId: mappedProductId } : {}),
+              };
+            }
+          }
+        } catch (error) {
+          // A failed or incomplete Etsy lookup cannot authorize a new product.
+          throw error;
+        }
       }
     }
   }
@@ -332,6 +369,10 @@ export function createShopifyGatewayAdapter(
   };
 
   return {
+    async getVariantLimits() {
+      const response = await runner({ storeId: cleanStoreId, operation: "products.variantLimits" });
+      return response.data;
+    },
     async createProduct(input: CreateProductInput): Promise<CreateProductOutput> {
       const requestId = resolveRequestId("product-create", input, canonicalJsonStringify(input));
       const categoryId = typeof input.category === "string" && input.category.trim() !== ""
@@ -344,6 +385,7 @@ export function createShopifyGatewayAdapter(
         payload: {
           product: {
             title: input.title,
+            variantIdentity: input.variantIdentity,
             handle: input.handle,
             seo: input.seo,
             status: input.status,
@@ -383,6 +425,11 @@ export function createShopifyGatewayAdapter(
         productId: response.data.product.id,
         productHandle: response.data.product.handle,
         createdVariantsCount: response.data.product.variants?.length,
+        variants: response.data.product.variants?.map((variant) => ({
+          id: variant.id,
+          sku: variant.sku,
+          title: variant.title,
+        })),
         managedResources: {
           tags: input.tags,
           mediaIds: response.data.product.images?.flatMap((image) => image.id ? [image.id] : []) ?? [],
@@ -395,7 +442,7 @@ export function createShopifyGatewayAdapter(
       const current = (await runner({
         storeId: cleanStoreId,
         operation: "products.get",
-        payload: { id: input.productId },
+        payload: { id: input.productId, ...(input.variantIdentity ? { includeAllVariants: true } : {}) },
       })) as ShopifyProductsGetResponse;
       if (!current.data.product) {
         throw new Error(`Shopify product ${input.productId} was not found before update.`);
@@ -479,7 +526,10 @@ export function createShopifyGatewayAdapter(
             })),
             mediaIdsToDelete: previousManagedMediaIds,
             variantIdsToManage: input.previousManagedResources?.variantIds,
+            variantIdentity: input.variantIdentity,
             variants: input.variants?.map((variant) => ({
+              legacySku: variant.legacySku,
+              etsyProductId: variant.etsyProductId,
               price: variant.price,
               compareAtPrice: variant.compareAtPrice,
               sku: variant.sku,
@@ -497,14 +547,22 @@ export function createShopifyGatewayAdapter(
       const refreshed = (await runner({
         storeId: cleanStoreId,
         operation: "products.get",
-        payload: { id: input.productId },
+        payload: { id: input.productId, ...(input.variantIdentity ? { includeAllVariants: true } : {}) },
       })) as ShopifyProductsGetResponse;
       const refreshedProduct = refreshed.data.product ?? response.data.product;
-      const synchronizedVariants = response.data.product.variants ?? [];
+      const synchronizedVariants =
+        (response.data.product.variants && response.data.product.variants.length > 0
+          ? response.data.product.variants
+          : refreshedProduct.variants) ?? [];
       return {
         productId: refreshedProduct.id,
         productHandle: refreshedProduct.handle,
         createdVariantsCount: synchronizedVariants.length,
+        variants: synchronizedVariants.map((variant) => ({
+          id: variant.id,
+          sku: variant.sku,
+          title: variant.title,
+        })),
         managedResources: {
           tags: input.tags,
           mediaIds: refreshedProduct.images?.flatMap((image) =>
@@ -551,6 +609,11 @@ export function createShopifyGatewayAdapter(
 
       return {
         createdCount: response?.data?.createdCount ?? 0,
+        variants: response?.data?.variants?.map((variant) => ({
+          id: variant.id,
+          sku: variant.sku,
+          title: variant.title,
+        })),
       };
     },
 
@@ -614,9 +677,14 @@ export function createShopifyGatewayAdapter(
     },
 
     async setProductMetafield(input: SetMetafieldInput): Promise<SetMetafieldOutput> {
-      const opKey = input.key
+      const fieldKey = input.key
         ? `metafields-set-${input.namespace ? `${input.namespace}-` : ""}${input.key}`
         : "metafields-set";
+      // A sync prefix is shared by all variants. Scope writes to the owner while
+      // preserving existing product-level IDs and deterministic retries.
+      const opKey = input.ownerId && input.ownerId !== input.productId
+        ? `${fieldKey}-owner-${encodeURIComponent(input.ownerId)}`
+        : fieldKey;
       const requestId = resolveRequestId(opKey, input, canonicalJsonStringify(input));
       const response = (await runner({
         storeId: cleanStoreId,
@@ -624,7 +692,7 @@ export function createShopifyGatewayAdapter(
         mode,
         requestId,
         payload: {
-          ownerId: input.productId,
+          ownerId: input.ownerId ?? input.productId,
           productId: input.productId,
           namespace: input.namespace,
           key: input.key,
@@ -640,8 +708,12 @@ export function createShopifyGatewayAdapter(
     },
 
     async deleteProductMetafield(input) {
+      const fieldKey = `metafields-delete-${input.namespace}-${input.key}`;
+      const opKey = input.ownerId && input.ownerId !== input.productId
+        ? `${fieldKey}-owner-${encodeURIComponent(input.ownerId)}`
+        : fieldKey;
       const requestId = resolveRequestId(
-        `metafields-delete-${input.namespace}-${input.key}`,
+        opKey,
         input,
         canonicalJsonStringify(input),
       );
@@ -651,7 +723,7 @@ export function createShopifyGatewayAdapter(
         mode,
         requestId,
         payload: {
-          ownerId: input.productId,
+          ownerId: input.ownerId ?? input.productId,
           namespace: input.namespace,
           key: input.key,
         },

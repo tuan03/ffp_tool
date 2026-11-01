@@ -12,6 +12,7 @@ import {
   executeCollectionsUpdateMembership,
 } from "./operations/collections-write";
 import { executeConnectionTest } from "./operations/connection-test";
+import { executeProductVariantLimits } from "./operations/variant-limits";
 import { executeProductsGet, executeProductsList } from "./operations/products";
 import { executeProductMediaPage } from "./operations/product-media";
 import { executeProductMetafieldPage } from "./operations/product-metafield-page";
@@ -40,6 +41,7 @@ import {
   executeMetafieldsSet,
 } from "./operations/metafields-write";
 import { executeAmazonAsinPreflight } from "./operations/amazon-asin-preflight";
+import { executeEtsyListingPreflight } from "./operations/etsy-listing-preflight";
 import {
   executeStoresGet,
   executeStoresList,
@@ -64,6 +66,7 @@ const WRITE_OPERATIONS: ReadonlySet<string> = new Set([
   "metafields.set",
   "metafields.delete",
   "products.preflightAmazonAsins",
+  "products.preflightEtsyListings",
   "collections.create",
   "collections.update",
   "collections.delete",
@@ -417,6 +420,8 @@ export class GatewayDispatcher {
         return executeProductsList(store, this.graphqlClient, payload);
       case "products.get":
         return executeProductsGet(store, this.graphqlClient, payload);
+      case "products.variantLimits":
+        return executeProductVariantLimits(store, this.graphqlClient);
       case "products.mediaPage":
         return executeProductMediaPage(store, this.graphqlClient, payload);
       case "products.metafieldPage":
@@ -473,6 +478,8 @@ export class GatewayDispatcher {
         return executeMetafieldsDelete(this.graphqlClient, store, payload, mode, requestId);
       case "products.preflightAmazonAsins":
         return executeAmazonAsinPreflight(store, this.graphqlClient, payload, mode, requestId);
+      case "products.preflightEtsyListings":
+        return executeEtsyListingPreflight(store, this.graphqlClient, payload, mode, requestId);
       case "collections.create":
         return executeCollectionsCreate(store, this.graphqlClient, payload, mode, requestId);
       case "collections.update":

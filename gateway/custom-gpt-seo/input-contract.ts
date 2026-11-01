@@ -70,7 +70,7 @@ export const seoGenerationInputSchema = z.object({
 const executionSchema = z.object({
   storeId: z.string().min(1).max(100),
   productId: z.string().min(1).optional(),
-  source: z.enum(["amazon", "auto_seo"]),
+  source: z.enum(["amazon", "etsy", "auto_seo"]),
   sourceIdentity: z.string().min(1),
   sourceRevision: z.string().min(1).optional(),
   shopifyUpdatedAt: z.string().min(1).optional(),

@@ -5,6 +5,7 @@ import { Button } from "../../../shared/components/Button";
 import {
   createAmazonCrawlerRunner,
   createAmazonAsinChecker,
+  createEtsyCrawlerClient,
   createShopifyAsinFilter,
   createAmazonCrawlerClientsLoader,
   createAmazonCrawlerCommandController,
@@ -33,6 +34,7 @@ type AmazonCrawlerOperatorPageProps = Required<Pick<AmazonCrawlerPageProps,
   | "imageProcessingProfiles"
   | "checkAmazonAsins"
   | "filterShopifyAsins"
+  | "etsyClient"
 >>;
 
 export function createAmazonCrawlerOperatorPageProps(
@@ -41,6 +43,7 @@ export function createAmazonCrawlerOperatorPageProps(
 ): AmazonCrawlerOperatorPageProps {
   const options = { engineUrl, fetchImplementation };
   return {
+    etsyClient: createEtsyCrawlerClient(options),
     runAmazonCrawler: createAmazonCrawlerRunner(options),
     loadAmazonCrawlerClients: createAmazonCrawlerClientsLoader(options),
     amazonCrawlerCommands: createAmazonCrawlerCommandController(options),

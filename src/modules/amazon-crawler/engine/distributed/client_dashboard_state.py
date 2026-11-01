@@ -180,13 +180,16 @@ class DashboardState:
             key = (_clean(assignment.get("taskId")), _clean(assignment.get("leaseId")))
             if not all(key) or key in self._tasks:
                 return
-            channel = "pinterest" if assignment.get("channel") == "pinterest" else "amazon"
+            raw_channel = str(assignment.get("channel") or "amazon").lower()
+            channel = raw_channel if raw_channel in {"pinterest", "etsy"} else "amazon"
             asin = _clean(assignment.get("asin"), limit=10) if channel == "amazon" else ""
+            listing_id = _clean(assignment.get("listingId") or assignment.get("sourceProductId"), limit=20) if channel == "etsy" else ""
             settings = assignment.get("settings")
             settings = settings if isinstance(settings, dict) else {}
+            default_label = f"Etsy #{listing_id}" if listing_id else (asin or _clean(assignment.get("source")) or "Pinterest POD")
             task = DashboardTask(*key, job_id=_clean(assignment.get("jobId")), channel=channel,
-                label=asin or _clean(assignment.get("source")) or "Pinterest POD", asin=asin,
-                received_at=self._timestamp(), amazon_zip=_clean(settings.get("amazonZip")),
+                label=default_label, asin=asin or listing_id,
+                received_at=self._timestamp(), amazon_zip=_clean(settings.get("amazonZip")) if channel == "amazon" else "",
                 action=_clean(assignment.get("action")))
             self._tasks[key] = task
             self._save(task, "received")
@@ -218,19 +221,23 @@ class DashboardState:
                 task = self._tasks.get((str(assignment.get("taskId")), str(assignment.get("leaseId"))))
                 if task is None or task.state in TERMINAL_STATES:
                     continue
-                identities = {assignment.get(key) for key in ("source", "asin", "url") if isinstance(assignment.get(key), str)}
+                identities = {
+                    assignment.get(key)
+                    for key in ("source", "asin", "sourceProductId", "listingId", "url")
+                    if isinstance(assignment.get(key), str) and assignment.get(key)
+                }
                 matched = next((item for item in items if isinstance(item, dict) and
                     (item.get("source") in identities or item.get("asin") in identities)), None)
                 if matched is None and source and source not in identities:
                     continue
-                if matched is None and not source and task.channel != "pinterest":
+                if matched is None and not source and task.channel not in {"pinterest", "etsy"}:
                     continue  # A batch-wide update cannot identify a specific ASIN or CAPTCHA.
                 fields = matched if matched is not None else progress
                 old_phase = task.phase
                 task.phase = _clean(fields.get("phase")) or task.phase
                 task.message = _clean(fields.get("message")) or task.message
                 task.state = "captcha" if task.phase == "captcha" else "running"
-                task.current_asin = _clean(fields.get("currentAsin"), limit=10) or task.current_asin
+                task.current_asin = _clean(fields.get("currentAsin"), limit=20) or task.current_asin
                 task.variant_completed = _count(fields.get("variantCompleted")) if "variantCompleted" in fields else task.variant_completed
                 task.variant_total = _count(fields.get("variantTotal")) if "variantTotal" in fields else task.variant_total
                 variants = fields.get("activeVariants")

@@ -272,6 +272,7 @@ export function toggleCrawlerBatchJsonOpen(): void {
 }
 
 export interface StartCrawlerJobOptions {
+  existingShopifyListingIds?: readonly string[];
   runAmazonCrawler: AmazonCrawlerRunner;
   urls: readonly string[];
   settings?: AmazonCrawlerSettings;
@@ -282,6 +283,7 @@ export interface StartCrawlerJobOptions {
 }
 
 export async function startCrawlerJob({
+  existingShopifyListingIds,
   runAmazonCrawler,
   urls,
   settings,
@@ -329,7 +331,7 @@ export async function startCrawlerJob({
 
   try {
     const crawlerOutput = await runAmazonCrawler({
-      input: { ...jobSettings, urls, existingShopifyAsins, refreshFamilyAsins, batchSkippedInputs },
+      input: { ...jobSettings, urls, existingShopifyAsins, existingShopifyListingIds, refreshFamilyAsins, batchSkippedInputs },
       onProgress: (nextProgress) => {
         sessionState = { ...sessionState, progress: nextProgress };
         if (nextProgress.phase === "captcha" && !didAlertCaptcha) {

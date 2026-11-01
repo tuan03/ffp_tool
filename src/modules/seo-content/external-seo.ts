@@ -46,12 +46,16 @@ function validateExternalAeo(draft: ReturnType<typeof validateDraft>): void {
  * @deprecated Legacy Custom GPT Actions compatibility only. New providers must
  * use the server-side provider contract and the common B1-B6 pipeline.
  */
-export async function bindExternalSeoProduct(binding: { readonly storeId: string; readonly sourceIdentity: string; readonly productId: string }, providedCorpus?: SeoConflictCorpus): Promise<void> {
+export async function bindExternalSeoProduct(binding: { readonly storeId: string; readonly sourceIdentity: string; readonly productId: string; readonly source?: "amazon" | "etsy" }, providedCorpus?: SeoConflictCorpus): Promise<void> {
   const productId = binding.productId.replace(/^gid:\/\/shopify\/Product\//, "");
   if (!/^[a-zA-Z0-9_-]+$/.test(binding.storeId) || !binding.sourceIdentity || !/^\d+$/.test(productId)) throw new Error("Invalid product identity binding");
   const corpus = providedCorpus ?? new FileSeoConflictCorpus({ storeId: binding.storeId, maxRegisteredKeywordsPerProduct: 1024 });
   if (!corpus.reassignProduct) throw new Error("SEO conflict corpus does not support identity reassignment");
-  await corpus.reassignProduct({ storeId: binding.storeId, productId: `amazon:${binding.sourceIdentity}` }, { storeId: binding.storeId, productId });
+  const loweredIdentity = binding.sourceIdentity.toLowerCase();
+  const sourceCorpusId = loweredIdentity.startsWith("etsy:") || loweredIdentity.startsWith("amazon:")
+    ? binding.sourceIdentity
+    : `${binding.source === "etsy" ? "etsy" : "amazon"}:${binding.sourceIdentity}`;
+  await corpus.reassignProduct({ storeId: binding.storeId, productId: sourceCorpusId }, { storeId: binding.storeId, productId });
 }
 /** @deprecated Legacy Custom GPT Actions compatibility only. */
 export function validateExternalSeoAnalysis(input: SeoContentInput, payload: unknown): { understanding: ProductUnderstanding; shopping: ShoppingContext; evidence: readonly { imageId: string; observation: string }[] } {

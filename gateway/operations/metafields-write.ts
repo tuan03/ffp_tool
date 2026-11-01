@@ -31,6 +31,12 @@ const METAFIELD_DEFINITION_QUERY = `
       type {
         name
       }
+      capabilities {
+        adminFilterable {
+          enabled
+          status
+        }
+      }
     }
   }
 `;
@@ -55,28 +61,81 @@ const METAFIELD_DEFINITION_CREATE_MUTATION = `
   }
 `;
 
+const METAFIELD_DEFINITION_UPDATE_MUTATION = `
+  mutation MetafieldDefinitionUpdate($definition: MetafieldDefinitionUpdateInput!) {
+    metafieldDefinitionUpdate(definition: $definition) {
+      updatedDefinition {
+        id
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+type ManagedMetafieldOwnerType = "PRODUCT" | "PRODUCTVARIANT";
+
 interface ManagedMetafieldDefinition {
+  readonly ownerType: ManagedMetafieldOwnerType;
   readonly namespace: "custom";
   readonly key: string;
   readonly name: string;
   readonly description: string;
   readonly type: string;
+  readonly compatibleTypes?: readonly string[];
+  readonly adminFilterable?: boolean;
+  readonly pin?: boolean;
 }
 
 const MANAGED_PRODUCT_METAFIELD_DEFINITIONS: readonly ManagedMetafieldDefinition[] = [
   {
+    ownerType: "PRODUCT",
     namespace: "custom",
     key: "aeo_suite_html",
     name: "AEO Suite (AI Search & Overview Optimization)",
     description: "HTML summary and FAQ content generated and approved by FFP SEO Review.",
     type: "multi_line_text_field",
+    pin: true,
   },
   {
+    ownerType: "PRODUCT",
     namespace: "custom",
     key: "aeo_json_ld",
     name: "Schema.org JSON-LD (@graph: Product & FAQPage)",
     description: "Validated Schema.org JSON-LD containing Product and FAQPage nodes.",
     type: "json",
+    pin: true,
+  },
+  {
+    ownerType: "PRODUCT",
+    namespace: "custom",
+    key: "etsy_listing_id",
+    name: "Etsy Listing ID",
+    description: "Source Etsy listing identifier synced by FFP.",
+    type: "single_line_text_field",
+    adminFilterable: true,
+    pin: true,
+  },
+  {
+    ownerType: "PRODUCT",
+    namespace: "custom",
+    key: "etsy_listing_url",
+    name: "Etsy Listing URL",
+    description: "Canonical Etsy listing URL synced by FFP.",
+    type: "single_line_text_field",
+    compatibleTypes: ["url"],
+    pin: true,
+  },
+  {
+    ownerType: "PRODUCTVARIANT",
+    namespace: "custom",
+    key: "etsy_product_id",
+    name: "Etsy Variant Product ID",
+    description: "Source Etsy inventory offering/product identifier synced by FFP.",
+    type: "single_line_text_field",
   },
 ] as const;
 
@@ -85,6 +144,12 @@ interface MetafieldDefinitionNode {
   readonly namespace: string;
   readonly key: string;
   readonly type: { readonly name: string };
+  readonly capabilities?: {
+    readonly adminFilterable?: {
+      readonly enabled: boolean;
+      readonly status?: string;
+    };
+  };
 }
 
 interface MetafieldDefinitionQueryResponse {
@@ -98,19 +163,29 @@ interface MetafieldDefinitionCreateResponse {
   };
 }
 
-const definitionEnsurePromises = new Map<string, Promise<void>>();
+interface MetafieldDefinitionUpdateResponse {
+  readonly metafieldDefinitionUpdate: {
+    readonly updatedDefinition: { readonly id: string } | null;
+    readonly userErrors: readonly (MutationUserErrorItem & { readonly code?: string })[];
+  };
+}
+
+const definitionEnsurePromises = new Map<string, Promise<string>>();
 
 function assertDefinitionType(
   definition: MetafieldDefinitionNode,
   expected: ManagedMetafieldDefinition,
-): void {
-  if (definition.type.name !== expected.type) {
+): string {
+  const actualType = definition.type.name;
+  const allowed = [expected.type, ...(expected.compatibleTypes ?? [])];
+  if (!allowed.includes(actualType)) {
     throw new GatewayError(
-      `Metafield definition ${expected.namespace}.${expected.key} uses type ${definition.type.name}; expected ${expected.type}`,
+      `Metafield definition ${expected.namespace}.${expected.key} uses type ${actualType}; expected ${expected.type}`,
       "SHOPIFY_USER_ERROR",
       400,
     );
   }
+  return actualType;
 }
 
 async function loadMetafieldDefinition(
@@ -123,7 +198,7 @@ async function loadMetafieldDefinition(
     METAFIELD_DEFINITION_QUERY,
     {
       identifier: {
-        ownerType: "PRODUCT",
+        ownerType: definition.ownerType,
         namespace: definition.namespace,
         key: definition.key,
       },
@@ -132,58 +207,91 @@ async function loadMetafieldDefinition(
   return response.metafieldDefinition;
 }
 
+async function ensureAdminFilterableCapability(
+  store: StoreConfig,
+  client: ShopifyGraphqlClient,
+  definition: ManagedMetafieldDefinition,
+  existing: MetafieldDefinitionNode,
+  requestId?: string,
+): Promise<void> {
+  if (!definition.adminFilterable) return;
+  if (existing.capabilities?.adminFilterable?.enabled === true) return;
+  const response = await client.query<MetafieldDefinitionUpdateResponse>(
+    store,
+    METAFIELD_DEFINITION_UPDATE_MUTATION,
+    {
+      definition: {
+        ownerType: definition.ownerType,
+        namespace: definition.namespace,
+        key: definition.key,
+        capabilities: {
+          adminFilterable: { enabled: true },
+        },
+      },
+    },
+    { isWrite: true, requestId: requestId ? `${requestId}:definition-filter:${definition.key}` : undefined },
+  );
+  if (response.metafieldDefinitionUpdate.userErrors.length > 0) {
+    throw mapUserErrorsToGatewayError(response.metafieldDefinitionUpdate.userErrors);
+  }
+}
+
 async function ensureMetafieldDefinition(
   store: StoreConfig,
   client: ShopifyGraphqlClient,
   definition: ManagedMetafieldDefinition,
   requestId?: string,
-): Promise<void> {
-  const ensureKey = `${store.shopDomain}:${definition.namespace}:${definition.key}:${definition.type}`;
+): Promise<string> {
+  const ensureKey = `${store.shopDomain}:${definition.ownerType}:${definition.namespace}:${definition.key}:${definition.type}`;
   const existingPromise = definitionEnsurePromises.get(ensureKey);
   if (existingPromise) return existingPromise;
 
-  const ensurePromise = (async () => {
+  const ensurePromise = (async (): Promise<string> => {
     const existing = await loadMetafieldDefinition(store, client, definition);
     if (existing) {
-      assertDefinitionType(existing, definition);
-      return;
+      const resolvedType = assertDefinitionType(existing, definition);
+      await ensureAdminFilterableCapability(store, client, definition, existing, requestId);
+      return resolvedType;
     }
+
+    const createDefinitionInput: Record<string, unknown> = {
+      ownerType: definition.ownerType,
+      namespace: definition.namespace,
+      key: definition.key,
+      name: definition.name,
+      description: definition.description,
+      type: definition.type,
+      ...(definition.pin ? { pin: true } : {}),
+      ...(definition.adminFilterable ? { capabilities: { adminFilterable: { enabled: true } } } : {}),
+    };
 
     const response = await client.query<MetafieldDefinitionCreateResponse>(
       store,
       METAFIELD_DEFINITION_CREATE_MUTATION,
       {
-        definition: {
-          ownerType: "PRODUCT",
-          namespace: definition.namespace,
-          key: definition.key,
-          name: definition.name,
-          description: definition.description,
-          type: definition.type,
-          pin: true,
-        },
+        definition: createDefinitionInput,
       },
       { isWrite: true, requestId: requestId ? `${requestId}:definition:${definition.key}` : undefined },
     );
     const created = response.metafieldDefinitionCreate.createdDefinition;
     if (created) {
-      assertDefinitionType(created, definition);
-      return;
+      return assertDefinitionType(created, definition);
     }
 
     // Another concurrent worker can create the same store definition between
     // our read and write. Re-read before treating the mutation error as fatal.
     const racedDefinition = await loadMetafieldDefinition(store, client, definition);
     if (racedDefinition) {
-      assertDefinitionType(racedDefinition, definition);
-      return;
+      const resolvedType = assertDefinitionType(racedDefinition, definition);
+      await ensureAdminFilterableCapability(store, client, definition, racedDefinition, requestId);
+      return resolvedType;
     }
     throw mapUserErrorsToGatewayError(response.metafieldDefinitionCreate.userErrors);
   })();
 
   definitionEnsurePromises.set(ensureKey, ensurePromise);
   try {
-    await ensurePromise;
+    return await ensurePromise;
   } catch (error: unknown) {
     definitionEnsurePromises.delete(ensureKey);
     throw error;
@@ -199,19 +307,33 @@ export interface MetafieldSummary {
   readonly ownerType?: string;
 }
 
+function resolveOwnerTypeFromGid(ownerId: string): ManagedMetafieldOwnerType | null {
+  if (ownerId.startsWith("gid://shopify/Product/")) return "PRODUCT";
+  if (ownerId.startsWith("gid://shopify/ProductVariant/")) return "PRODUCTVARIANT";
+  return null;
+}
+
 /** Shared by metafields.set and productUpdate; definitions remain scoped to the target store. */
 export async function ensureManagedProductMetafieldDefinitions(input: {
   readonly store: StoreConfig;
   readonly client: ShopifyGraphqlClient;
   readonly metafields: readonly { readonly ownerId: string; readonly namespace?: string; readonly key?: string }[];
   readonly requestId?: string;
-}): Promise<void> {
-  const requiredDefinitions = MANAGED_PRODUCT_METAFIELD_DEFINITIONS.filter(definition =>
-    input.metafields.some(field => field.ownerId.startsWith("gid://shopify/Product/") &&
-      field.namespace === definition.namespace && field.key === definition.key));
+}): Promise<ReadonlyMap<string, string>> {
+  const resolvedTypes = new Map<string, string>();
+  const requiredDefinitions = MANAGED_PRODUCT_METAFIELD_DEFINITIONS.filter((definition) =>
+    input.metafields.some(
+      (field) =>
+        resolveOwnerTypeFromGid(field.ownerId) === definition.ownerType &&
+        field.namespace === definition.namespace &&
+        field.key === definition.key,
+    ),
+  );
   for (const definition of requiredDefinitions) {
-    await ensureMetafieldDefinition(input.store, input.client, definition, input.requestId);
+    const resolvedType = await ensureMetafieldDefinition(input.store, input.client, definition, input.requestId);
+    resolvedTypes.set(`${definition.ownerType}:${definition.namespace}.${definition.key}`, resolvedType);
   }
+  return resolvedTypes;
 }
 
 export interface MetafieldsSetResult {
@@ -358,10 +480,22 @@ export async function executeMetafieldsSet(
     };
   }
 
-  await ensureManagedProductMetafieldDefinitions({ store, client, metafields: normalized, requestId });
+  const resolvedDefinitionTypes = await ensureManagedProductMetafieldDefinitions({
+    store,
+    client,
+    metafields: normalized,
+    requestId,
+  });
+  const coercedItems: NormalizedMetafieldItem[] = normalized.map((item) => {
+    const ownerType = resolveOwnerTypeFromGid(item.ownerId);
+    const resolvedType = ownerType
+      ? resolvedDefinitionTypes.get(`${ownerType}:${item.namespace}.${item.key}`)
+      : undefined;
+    return resolvedType && resolvedType !== item.type ? { ...item, type: resolvedType } : item;
+  });
 
   const chunkedResult = await executeChunkedWrite<NormalizedMetafieldItem, MetafieldSummary[]>({
-    items: normalized,
+    items: coercedItems,
     chunkSize: 25,
     operationName: "metafields.set",
     executeChunk: async (chunk, chunkIndex) => {

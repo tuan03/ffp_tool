@@ -1,4 +1,5 @@
 import { amazonCrawlerMockOutput } from "./data";
+import { normalizeEtsyListingId } from "../etsy-input";
 
 import type {
   AmazonCrawlerCacheClearResult,
@@ -44,6 +45,25 @@ export async function runMockAmazonCrawler({
   signal,
 }: AmazonCrawlerRunOptions): Promise<AmazonCrawlerOutput> {
   if (signal?.aborted) throw new DOMException("The crawler job was cancelled.", "AbortError");
+  if (input.sourcePlatform === "etsy") {
+    const output = structuredClone(amazonCrawlerMockOutput);
+    const template = output.products[0];
+    const ids = [...new Set(input.urls.map(normalizeEtsyListingId))];
+    const skipped = new Set((input.batchSkippedInputs ?? []).map(entry => entry.asin));
+    output.jobId = "mock-etsy-batch";
+    output.settings = { ...input, profileSlug: "default", applyJeminisePreset: false };
+    output.products = template ? ids.filter(id => !skipped.has(id)).map(id => ({ ...structuredClone(template),
+      id: `etsy-${id}`, sourcePlatform: "etsy", sourceProductId: id, sourceKey: `etsy:${id}`, asin: "", parentAsin: "",
+      title: "Sample Etsy product", sourceTitle: "Sample Etsy product", canonicalUrl: `https://www.etsy.com/listing/${id}`, preset: null,
+      sourceVariants: template.sourceVariants.map(variant => ({ ...variant, asin: "" })),
+      variants: template.variants.map(variant => ({ ...variant, sku: "", sourceAsin: null })),
+    })) : [];
+    output.completedAsins = [];
+    output.seoQueueHandoff = { totalProducts: output.products.length, handedOver: output.products.length, pending: 0, notHandedOver: 0 };
+    output.statistics = { ...output.statistics, requestedInputs: ids.length, acceptedInputs: ids.length, products: output.products.length };
+    onProgress?.({ phase: "export", completed: ids.length, total: ids.length, message: "Đã hoàn tất lô Etsy mẫu." });
+    return output;
+  }
   if (input.sequentialBatch) {
     const output = structuredClone(amazonCrawlerMockOutput);
     output.jobId = "mock-sequential-batch";

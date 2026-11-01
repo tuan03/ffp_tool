@@ -22,8 +22,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select, text
 
 from ..image_processing import ImageProcessingService, normalize_profile, process_image_bytes
+from ..etsy_crawler import EtsyCrawlError, EtsyExcludedListingError, EtsyListingNotFoundError, fetch_etsy_api_baseline
 from ..review_export import build_review_workbook
 from . import AGENT_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
+from .etsy_auth_store import EtsyAuthError, EtsyRateLimitError
 from .release_catalog import cached_release_version
 from .pipeline_health import attach_pipeline_health
 from .coordinator_models import Base, CrawlTask, create_database_engine, create_session_factory
@@ -152,7 +154,7 @@ class ConnectionManager:
         return {
             key: bool(source.get(key))
                 for key in (
-                    "amazon", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1",
+                    "amazon", "etsy", "pinterest", "pinterestBrowserLoggedIn", "durablePendingPurgeV1",
                     "durableRestartV1", "pauseReleaseV1",
                 )
             if key in source
@@ -345,6 +347,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     async def lifespan(_app: FastAPI):
         if create_schema:
             migrate_coordinator(engine)
+        await asyncio.to_thread(store.etsy_auth.bootstrap_from_env_if_empty)
         await asyncio.to_thread(store.backfill_asin_registry)
         await asyncio.to_thread(image_service.profiles.seed_shared, project_root / "config" / "image-processing-profiles")
         stop = asyncio.Event()
@@ -493,6 +496,84 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.post("/api/v1/etsy-listings/resolve")
+    def resolve_etsy_listings(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw_listings = payload.get("listingIds") if "listingIds" in payload else payload.get("listings")
+            if not isinstance(raw_listings, list):
+                raise ValueError("listingIds must be an array.")
+            return store.resolve_etsy_listings(
+                str(payload.get("storeId") or ""),
+                [str(item) for item in raw_listings],
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post("/api/v1/etsy-listings/activity")
+    def filter_etsy_activity(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            listings = payload.get("listingIds") if "listingIds" in payload else payload.get("listings")
+            if not isinstance(listings, list) or any(not isinstance(item, str) for item in listings):
+                raise ValueError("listingIds must be a string array.")
+            return store.filter_etsy_activity(str(payload.get("storeId") or ""), listings)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/v1/etsy/auth/status")
+    async def get_etsy_auth_status(request: Request) -> JSONResponse:
+        require_operator_actor(request)
+        status = await asyncio.to_thread(store.etsy_auth.get_status)
+        return JSONResponse(status, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/v1/etsy/auth/test")
+    async def test_etsy_auth_connection(request: Request, payload: dict[str, Any] | None = None) -> JSONResponse:
+        require_operator_actor(request)
+        refresh_oauth = bool((payload or {}).get("refreshOauth", False))
+        try:
+            outcome = await asyncio.to_thread(store.etsy_auth.test_connection, refresh_oauth=refresh_oauth)
+            return JSONResponse(outcome, headers={"Cache-Control": "no-store"})
+        except EtsyRateLimitError as error:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": error.code,
+                    "detail": str(error),
+                    "retryAfterSeconds": error.retry_after_seconds,
+                    "quotaExhausted": error.quota_exhausted,
+                    "status": await asyncio.to_thread(store.etsy_auth.get_status),
+                },
+                status_code=429,
+                headers={
+                    "Cache-Control": "no-store",
+                    "Retry-After": str(max(1, int(round(error.retry_after_seconds)))),
+                },
+            )
+        except EtsyAuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+    @app.put("/api/v1/etsy/auth/credentials")
+    async def update_etsy_auth_credentials(request: Request, payload: dict[str, Any]) -> JSONResponse:
+        require_operator_actor(request)
+        try:
+            refresh_enabled = payload.get("refreshEnabled")
+            if refresh_enabled is not None and not isinstance(refresh_enabled, bool):
+                raise ValueError("refreshEnabled must be a boolean.")
+            status = await asyncio.to_thread(
+                store.etsy_auth.update_credentials,
+                keystring=str(payload["keystring"]) if isinstance(payload.get("keystring"), str) else None,
+                shared_secret=str(payload["sharedSecret"]) if isinstance(payload.get("sharedSecret"), str) else None,
+                access_token=str(payload["accessToken"]) if isinstance(payload.get("accessToken"), str) else None,
+                refresh_token=str(payload["refreshToken"]) if isinstance(payload.get("refreshToken"), str) else None,
+                token_expires_at=payload.get("tokenExpiresAt"),
+                refresh_enabled=refresh_enabled,
+                environment_owner=str(payload["environmentOwner"]) if isinstance(payload.get("environmentOwner"), str) else None,
+            )
+            return JSONResponse(status, headers={"Cache-Control": "no-store"})
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except EtsyAuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
     @app.get("/api/v1/store-vendors/{store_id}")
     async def get_store_vendor(store_id: str, request: Request) -> dict[str, Any]:
         require_operator_actor(request)
@@ -533,6 +614,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     def prepare_job_settings(payload: dict[str, Any]) -> dict[str, Any]:
         enriched = dict(payload)
+        requested_source = str(payload.get("sourcePlatform") or payload.get("channel") or "amazon").strip().lower()
         config = store.get_store_crawl_settings(str(payload.get("storeId") or ""))
         expected_revision = payload.get("storeCrawlSettingsUpdatedAt")
         if expected_revision is not None and (expected_revision != config["updatedAt"] or not config["defaults"]):
@@ -540,6 +622,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if config["defaults"]:
             enriched.update(config["defaults"])
             enriched["storeCrawlSettingsUpdatedAt"] = config["updatedAt"]
+        if requested_source == "etsy":
+            # Etsy reuses store vendor, image profile, and pricing config, never Amazon variant presets.
+            enriched["sourcePlatform"] = "etsy"
+            enriched["profileSlug"] = "default"
+            enriched["applyJeminisePreset"] = False
         image_profile = image_service.profiles.load(str(enriched.get("imageProfileSlug") or "default"))
         enriched["imageProfileSlug"] = image_profile["slug"]
         enriched["imageProfileRevision"] = image_profile["revision"]
@@ -1067,7 +1154,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 raise HTTPException(status_code=404, detail="No active agents are assigned to the selected job.")
         else:
             job_client_ids = None
-        crawler_capability = {"amazon": "amazon", "pinterest": "pinterest"}.get(payload.crawler or "")
+        crawler_capability = {"amazon": "amazon", "etsy": "etsy", "pinterest": "pinterest"}.get(payload.crawler or "")
         selected = [client for client in clients
             if (payload.allAgents or client.get("agentGroup") == payload.agentGroup)
             and (payload.agentVersion is None or client.get("agentVersion") == payload.agentVersion)
@@ -1514,6 +1601,90 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=400, detail="Product envelope is invalid.")
         return response
 
+    @app.post("/api/v1/worker/tasks/{task_id}/etsy-baseline")
+    async def fetch_worker_etsy_baseline(
+        task_id: str,
+        request: Request,
+        payload: dict[str, Any] | None = None,
+        x_client_id: str | None = Header(default=None, alias="X-Client-Id"),
+        x_lease_id: str | None = Header(default=None, alias="X-Lease-Id"),
+    ) -> JSONResponse:
+        client_id = str(x_client_id or (payload or {}).get("clientId") or "").strip()
+        lease_id = str(x_lease_id or (payload or {}).get("leaseId") or "").strip()
+        if not client_id or not lease_id:
+            raise HTTPException(status_code=400, detail="clientId and leaseId are required.")
+        if security is not None:
+            principal = security.authenticate(request.headers.get("authorization", ""))
+            if principal.agent_id != client_id:
+                raise HTTPException(status_code=403, detail="AGENT_IDENTITY_MISMATCH")
+        lease_check = await asyncio.to_thread(
+            store.verify_worker_task_lease,
+            task_id,
+            client_id=client_id,
+            lease_id=lease_id,
+        )
+        lease_status = lease_check.get("status")
+        if lease_status == "missing":
+            raise HTTPException(status_code=404, detail="Crawler task was not found.")
+        if lease_status == "cancelled":
+            raise HTTPException(status_code=409, detail={"code": "TASK_CANCELLED", "message": "Crawler task was cancelled."})
+        if lease_status == "stale":
+            raise HTTPException(status_code=409, detail={"code": "LEASE_STALE", "message": "Crawler task lease is stale."})
+        listing_id = str(lease_check.get("sourceProductId") or "").strip()
+        if str(lease_check.get("sourcePlatform") or "") != "etsy" or not listing_id:
+            raise HTTPException(status_code=400, detail="Task is not an Etsy listing crawl task.")
+        try:
+            baseline = await asyncio.to_thread(
+                fetch_etsy_api_baseline,
+                listing_id,
+                store.etsy_auth,
+                log=debug_event,
+            )
+            return JSONResponse(baseline, headers={"Cache-Control": "no-store"})
+        except EtsyRateLimitError as error:
+            retry_seconds = max(1, int(round(error.retry_after_seconds)))
+            return JSONResponse(
+                {
+                    "detail": {
+                        "code": error.code,
+                        "message": str(error),
+                        "retryable": True,
+                        "retryAfterSeconds": error.retry_after_seconds,
+                        "quotaExhausted": error.quota_exhausted,
+                    }
+                },
+                status_code=429,
+                headers={"Cache-Control": "no-store", "Retry-After": str(retry_seconds)},
+            )
+        except EtsyListingNotFoundError as error:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": error.code, "message": str(error), "retryable": False},
+            ) from error
+        except EtsyExcludedListingError as error:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": error.code, "message": str(error), "retryable": False},
+            ) from error
+        except EtsyAuthError as error:
+            raise HTTPException(
+                status_code=error.status_code,
+                detail={
+                    "code": error.code,
+                    "message": str(error),
+                    "retryable": error.status_code >= 500,
+                },
+            ) from error
+        except EtsyCrawlError as error:
+            raise HTTPException(
+                status_code=error.http_status or 502,
+                detail={
+                    "code": error.code,
+                    "message": str(error),
+                    "retryable": error.retryable,
+                },
+            ) from error
+
     def require_pipeline_key(value: str | None) -> None:
         expected = os.environ.get("SHOPIFY_PIPELINE_TOKEN", "").strip()
         if expected and value != expected:
@@ -1854,6 +2025,31 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
         return {"status": "waiting_review"}
 
+    @app.post("/api/v1/internal/product-pipeline/{item_id}/attention-review")
+    def park_product_attention_review(
+        item_id: str,
+        payload: dict[str, Any],
+        x_pipeline_key: str | None = Header(default=None, alias="X-Pipeline-Key"),
+    ) -> dict[str, Any]:
+        require_pipeline_key(x_pipeline_key)
+        raw_blockers = payload.get("blockers")
+        blockers = [str(item).strip() for item in raw_blockers if str(item).strip()] if isinstance(raw_blockers, list) else []
+        if not blockers:
+            raise HTTPException(status_code=422, detail="At least one actionable blocker message is required.")
+        normalized = payload.get("normalizedProduct") if isinstance(payload.get("normalizedProduct"), dict) else None
+        seo_summary = payload.get("seo") if isinstance(payload.get("seo"), dict) else None
+        image_summary = payload.get("imageProcessing") if isinstance(payload.get("imageProcessing"), dict) else None
+        if not store.park_product_attention_review(
+            item_id,
+            worker_id=str(payload.get("workerId") or ""),
+            blockers=blockers,
+            normalized_payload=normalized,
+            seo_summary=seo_summary,
+            image_summary=image_summary,
+        ):
+            raise HTTPException(status_code=409, detail="Pipeline item claim is stale.")
+        return {"status": "waiting_review"}
+
     @app.post("/api/v1/internal/product-pipeline/claim")
     def claim_product_pipeline(
         payload: dict[str, Any],
@@ -2094,6 +2290,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                 capabilities = dict(message.get("capabilities") or {})
                 for capability, crawler in (("amazon", "amazon"), ("amazonReviews", "amazon"), ("pinterest", "pinterest")):
                     capabilities[capability] = bool(capabilities.get(capability, False)) and crawler in principal.crawlers
+                capabilities["etsy"] = bool(capabilities.get("etsy", False)) and (
+                    "etsy" in principal.crawlers or "amazon" in principal.crawlers
+                )
                 message["capabilities"] = capabilities
                 message["maxConcurrentInputs"] = min(16, principal.max_workers, max(1, int(message.get("maxConcurrentInputs") or 1)))
                 message["availableSlots"] = min(16, principal.max_workers, max(0, int(message.get("availableSlots") or 0)))

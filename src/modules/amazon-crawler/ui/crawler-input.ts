@@ -1,4 +1,5 @@
 import { normalizeAmazonAsins } from "./amazon-asin-preflight";
+import { normalizeEtsyListingId } from "../etsy-input";
 
 interface CrawlerInputAnalysis {
   readonly lineCount: number;
@@ -8,7 +9,7 @@ interface CrawlerInputAnalysis {
   readonly deduplicatedText: string;
 }
 
-export function analyzeCrawlerInput(text: string): CrawlerInputAnalysis {
+export function analyzeCrawlerInput(text: string, sourcePlatform: "amazon" | "etsy" = "amazon"): CrawlerInputAnalysis {
   const asins = new Set<string>();
   const retainedSources: string[] = [];
   const invalidEntries: { line: number; value: string }[] = [];
@@ -19,7 +20,7 @@ export function analyzeCrawlerInput(text: string): CrawlerInputAnalysis {
     if (!value) return;
     lineCount++;
     try {
-      const asin = normalizeAmazonAsins([value])[0];
+      const asin = sourcePlatform === "etsy" ? normalizeEtsyListingId(value) : normalizeAmazonAsins([value])[0];
       if (!asin) throw new Error("Missing ASIN");
       if (asins.has(asin)) { duplicateCount++; return; }
       asins.add(asin);

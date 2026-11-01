@@ -1,4 +1,6 @@
 import type {
+  ShopifyProductVariantLimitsInput,
+  ShopifyProductVariantLimitsResponse,
   ShopifyProductsPublishAllInput,
   ShopifyProductsPublishAllResponse,
   ShopifyApiInput,
@@ -34,6 +36,8 @@ import type {
   ShopifyProductsListResponse,
   ShopifyProductsPreflightAmazonAsinsInput,
   ShopifyProductsPreflightAmazonAsinsResponse,
+  ShopifyProductsPreflightEtsyListingsInput,
+  ShopifyProductsPreflightEtsyListingsResponse,
   ShopifyProductsUpdateInput,
   ShopifyProductsUpdateResponse,
   ShopifyStoreSummary,
@@ -160,6 +164,7 @@ function paginateItems<T>(
 }
 
 export async function runMockModuleApi(input: ShopifyProductsPublishAllInput): Promise<ShopifyProductsPublishAllResponse>;
+export async function runMockModuleApi(input: ShopifyProductVariantLimitsInput): Promise<ShopifyProductVariantLimitsResponse>;
 export async function runMockModuleApi(input: ShopifyConnectionTestInput): Promise<ShopifyConnectionTestResponse>;
 export async function runMockModuleApi(input: ShopifyProductsListInput): Promise<ShopifyProductsListResponse>;
 export async function runMockModuleApi(input: ShopifyProductsGetInput): Promise<ShopifyProductsGetResponse>;
@@ -168,6 +173,7 @@ export async function runMockModuleApi(input: ShopifyProductsUpdateInput): Promi
 export async function runMockModuleApi(input: ShopifyProductsBulkUpdateInput): Promise<ShopifyProductsBulkUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyProductsDeleteInput): Promise<ShopifyProductsDeleteResponse>;
 export async function runMockModuleApi(input: ShopifyProductsPreflightAmazonAsinsInput): Promise<ShopifyProductsPreflightAmazonAsinsResponse>;
+export async function runMockModuleApi(input: ShopifyProductsPreflightEtsyListingsInput): Promise<ShopifyProductsPreflightEtsyListingsResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsUpdateInput): Promise<ShopifyVariantsUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsBulkUpdateInput): Promise<ShopifyVariantsBulkUpdateResponse>;
 export async function runMockModuleApi(input: ShopifyVariantsBulkCreateInput): Promise<ShopifyVariantsBulkCreateResponse>;
@@ -195,7 +201,7 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
   const effectivePayload =
     input.payload !== undefined && input.payload !== null
       ? input.payload
-      : input.operation === "stores.list"
+      : input.operation === "stores.list" || input.operation === "products.variantLimits"
       ? {}
       : undefined;
 
@@ -262,6 +268,9 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
   }
 
   switch (input.operation) {
+    case "products.variantLimits":
+      return { storeId: effectiveStoreId, operation: input.operation, success: true,
+        data: { maxProductOptions: 3, maxProductVariants: 2048 } };
     case "connection.test": {
       return {
         storeId: effectiveStoreId,
@@ -532,7 +541,29 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         onlineStoreUrl,
         featuredImage,
         images,
-        variants: existing ? existing.variants.map(cloneVariant) : [],
+        variants:
+          Array.isArray(input.payload.product.variants) && input.payload.product.variants.length > 0
+            ? input.payload.product.variants.map((v, idx) => ({
+                id:
+                  existing?.variants[idx]?.id ??
+                  `gid://shopify/ProductVariant/mock-updated-${idx + 1}`,
+                productId: input.payload.id,
+                title:
+                  v.title ??
+                  (Array.isArray(v.optionValues)
+                    ? v.optionValues
+                        .map((ov: { readonly name?: string; readonly value?: string }) => ov.name ?? ov.value)
+                        .filter(Boolean)
+                        .join(" / ") || "Default Title"
+                    : existing?.variants[idx]?.title ?? "Default Title"),
+                price: v.price ?? existing?.variants[idx]?.price ?? "19.99",
+                compareAtPrice: v.compareAtPrice,
+                sku: v.sku,
+                barcode: v.barcode,
+              }))
+            : existing
+            ? existing.variants.map(cloneVariant)
+            : [],
         seo: input.payload.product.seo ? { ...input.payload.product.seo } : existing?.seo,
         hasMoreVariants: false,
         hasMoreImages: false,
@@ -604,6 +635,70 @@ export async function runMockModuleApi(input: ShopifyApiInput): Promise<ShopifyA
         data: {
           ready: true,
           matches,
+        },
+      };
+    }
+
+    case "products.preflightEtsyListings": {
+      const listingIds = input.payload.listingIds || [];
+      const listingMetaById = new Map(
+        (input.payload.listings ?? []).map((item) => [item.listingId, item] as const),
+      );
+      const matches = listingIds
+        .filter((listingId) => typeof listingId === "string" && listingId.trim() !== "")
+        .flatMap((listingId) => {
+          const existingMock = shopifyMockProducts.find((product) =>
+            product.tags.some((tag) => tag.toLowerCase() === `ffp-source:etsy:${listingId}`) ||
+            product.variants.some((variant) => variant.sku?.startsWith(`ETSY-${listingId}`)),
+          );
+          if (!existingMock) return [];
+          return [{
+            listingId,
+            productId: existingMock.id,
+            title: existingMock.title,
+            adminUrl: `https://${effectiveStoreId}.myshopify.com/admin/products/${existingMock.id.split("/").pop()}`,
+            matchedBy: "tag" as const,
+          }];
+        });
+      const matchedIds = new Set(matches.map((item) => item.listingId));
+      const listings = listingIds.map((listingId) => {
+        const meta = listingMetaById.get(listingId);
+        const hasExistingProduct = matchedIds.has(listingId);
+        const isProcessing =
+          meta?.isActiveInSeo === true ||
+          meta?.status === "processing" ||
+          ["queued", "leased", "running", "cancelling"].includes(meta?.databaseStatus ?? "");
+        const status = hasExistingProduct
+          ? ("existing" as const)
+          : isProcessing
+          ? ("processing" as const)
+          : meta?.status === "crawled_pending_sync" || meta?.databaseStatus === "crawled"
+          ? ("crawled_pending_sync" as const)
+          : meta?.status === "queue_cleared" || meta?.databaseStatus === "queue_cleared"
+          ? ("queue_cleared" as const)
+          : ("available" as const);
+        return {
+          listingId,
+          variantProductIds: meta?.variantProductIds ?? [],
+          databaseStatus: meta?.databaseStatus ?? null,
+          jobId: meta?.jobId ?? null,
+          status,
+          hasExistingProduct,
+          recoveredStaleRegistry: meta?.recoveredStaleRegistry === true,
+          activeSeoJobIds: meta?.activeSeoJobIds ?? [],
+        };
+      });
+      return {
+        storeId: effectiveStoreId,
+        operation: "products.preflightEtsyListings",
+        success: true,
+        data: {
+          ready: true,
+          matches,
+          listings,
+          allowedListingIds: listings
+            .filter((item) => item.status === "available" || item.status === "queue_cleared")
+            .map((item) => item.listingId),
         },
       };
     }

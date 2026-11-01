@@ -42,7 +42,7 @@ class CreateAgentKey(BaseModel):
     requestId: uuid.UUID
     name: str = Field(min_length=1, max_length=120)
     maxWorkers: int = Field(strict=True, ge=1, le=2147483647)
-    crawlers: list[Literal["amazon", "pinterest"]] = Field(min_length=1, max_length=2)
+    crawlers: list[Literal["amazon", "etsy", "pinterest"]] = Field(min_length=1, max_length=3)
     environment: Literal["test", "production"]
     agentGroup: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
     expiresAt: datetime

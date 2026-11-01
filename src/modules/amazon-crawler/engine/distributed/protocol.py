@@ -33,6 +33,12 @@ def utc_iso(value: datetime | None = None) -> str:
     return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def iso_utc(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return utc_iso(value)
+
+
 def canonical_json(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -45,6 +51,9 @@ def product_source_key(product: dict[str, Any]) -> str:
     explicit = str(product.get("sourceKey") or "").strip()
     if explicit:
         return explicit
+    if str(product.get("sourcePlatform") or "").strip().lower() == "etsy":
+        listing_id = str(product.get("sourceProductId") or product.get("listingId") or "unknown").strip()
+        return f"etsy:{listing_id}"
     split = product.get("splitContext") if isinstance(product.get("splitContext"), dict) else {}
     parent_asin = str(product.get("parentAsin") or "unknown").strip().upper()
     attribute = str(split.get("attribute") or "none").strip().casefold()
@@ -126,6 +135,7 @@ def hello_message(
     product_invalidation_generation: int = 0,
     temporary_cleanup_generation: int = 0,
     pinterest_browser_logged_in: bool = False,
+    etsy_enabled: bool = True,
     last_processed_command_sequence: int = 0,
     desired_execution_state: str = "RUNNING",
     applied_execution_state: str = "RUNNING",
@@ -145,6 +155,7 @@ def hello_message(
         "maxConcurrentInputs": max(1, max_concurrent_inputs),
         "capabilities": {
             "amazon": True,
+            "etsy": bool(etsy_enabled),
             "amazonReviews": True,
             "pinterest": True,
             "pinterestBrowserLoggedIn": pinterest_browser_logged_in,

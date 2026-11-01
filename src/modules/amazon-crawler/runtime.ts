@@ -1,4 +1,7 @@
 import { amazonCrawlerMockAgentRelease } from "./mocks/data";
+import { mockEtsyClient } from "./mocks/etsy";
+import { createEtsyCrawlerClient } from "./service";
+import type { EtsyCrawlerClient } from "./etsy-types";
 import { clearMockAmazonCrawlerCache, createMockAmazonCrawlerJobLoader, filterMockShopifyAsins, runMockAmazonCrawler } from "./mocks/runner";
 import { crawlerMockMetrics } from "./mocks/observability";
 import { createAmazonCrawlerAgentReleaseLoader, createAmazonCrawlerCacheClearer, createAmazonCrawlerClientsLoader, createAmazonCrawlerJobController, createAmazonCrawlerJobLoader, createAmazonCrawlerReviewClient, createAmazonCrawlerRunner, createAmazonCrawlerSyncRetrier, createImageProcessingProfileManager, createShopifyAsinFilter } from "./service";
@@ -11,13 +14,17 @@ export function getShopifyAsinFilter(environment: AppEnvironment, engineUrl = ""
   return environment === "mock" ? filterMockShopifyAsins : createShopifyAsinFilter(fetch, { engineUrl });
 }
 
+export function getEtsyCrawlerClient(environment: AppEnvironment, engineUrl = ""): EtsyCrawlerClient {
+  return environment === "mock" ? mockEtsyClient : createEtsyCrawlerClient({ engineUrl });
+}
+
 export function getAmazonCrawlerRunner(environment: AppEnvironment, engineUrl: string): AmazonCrawlerRunner {
   return environment === "mock" ? runMockAmazonCrawler : createAmazonCrawlerRunner({ engineUrl });
 }
 
 export function getAmazonCrawlerClientsLoader(environment: AppEnvironment, engineUrl: string): AmazonCrawlerClientsLoader {
   return environment === "mock"
-    ? async () => [{ id: "mock-client", displayName: "Mock crawler", agentVersion: "5.0.0", status: "online", isConnected: true, maxConcurrentInputs: 4, activeTasks: 0, leasedTasks: 0, availableSlots: 4, lastSeenAt: new Date(0).toISOString() }]
+    ? async () => [{ id: "mock-client", capabilities: { amazon: true, etsy: true }, displayName: "Mock crawler", agentVersion: "5.0.0", status: "online", isConnected: true, maxConcurrentInputs: 4, activeTasks: 0, leasedTasks: 0, availableSlots: 4, lastSeenAt: new Date(0).toISOString() }]
     : createAmazonCrawlerClientsLoader({ engineUrl });
 }
 

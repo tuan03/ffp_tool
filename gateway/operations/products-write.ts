@@ -1,4 +1,7 @@
 import { executeChunkedWrite } from "../chunked-write";
+import { readAllProductVariants, type ProductVariantState } from "./product-variant-pages";
+import { matchEtsySyncVariants } from "./etsy-variant-matching";
+import { executeProductVariantLimits } from "./variant-limits";
 import { GatewayError, mapUserErrorsToGatewayError, type MutationUserErrorItem } from "../errors";
 import type { ShopifyGraphqlClient } from "../shopify-graphql-client";
 import type { GatewayErrorCode, ProductImageSummary, ProductSummary, ProductVariantSummary, StoreConfig } from "../types";
@@ -217,7 +220,7 @@ const PIPELINE_PRODUCT_STATE_QUERY = `
           }
           nodes { id }
         }
-        variants(first: 250) { nodes { id } }
+        variants(first: 250) { nodes { id } pageInfo { hasNextPage } }
       }
     }
   }
@@ -458,6 +461,14 @@ export async function executeProductsCreate(
     throw new GatewayError("Product title is required", "SHOPIFY_USER_ERROR", 400);
   }
   requireSupportedOptionCount(collectRequestedOptionNames(productInput));
+  if (mode === "apply" && productInput.variantIdentity === "etsy-personalization-v1") {
+    const limits = await executeProductVariantLimits(store, client);
+    if (collectRequestedOptionNames(productInput).size > limits.maxProductOptions ||
+        (Array.isArray(productInput.variants) ? productInput.variants.length : 0) > limits.maxProductVariants) {
+      throw new GatewayError("ETSY_PERSONALIZATION_LIMIT_EXCEEDED: Biến thể vượt giới hạn store; chưa gửi thay đổi.", "SHOPIFY_INVALID_INPUT", 400,
+        undefined, undefined, undefined, false, { productWriteNotStarted: true });
+    }
+  }
 
   if (Array.isArray(productInput.variants)) {
     for (const v of productInput.variants as readonly Record<string, unknown>[]) {
@@ -982,6 +993,13 @@ export async function executeProductsUpdate(
     throw new GatewayError("Product patch object is required", "SHOPIFY_USER_ERROR", 400);
   }
   requireSupportedOptionCount(collectRequestedOptionNames(productPatch));
+  if (mode === "apply" && productPatch.variantIdentity === "etsy-personalization-v1") {
+    const limits = await executeProductVariantLimits(store, client);
+    if (collectRequestedOptionNames(productPatch).size > limits.maxProductOptions ||
+        (Array.isArray(productPatch.variants) ? productPatch.variants.length : 0) > limits.maxProductVariants) {
+      throw new GatewayError("Etsy personalization vượt giới hạn biến thể của store.", "SHOPIFY_INVALID_INPUT", 400);
+    }
+  }
 
   const force = p.force === true || productPatch.force === true;
   const expectedUpdatedAt =
@@ -1137,6 +1155,8 @@ export async function executeProductsUpdate(
     : [];
   const shouldReplaceMedia = productPatch.replaceMedia === true || requestedMediaIdsToDelete.length > 0;
   let existingVariantIds: string[] = [];
+  let existingVariantStates: ProductVariantState[] = [];
+  let etsyVariantMatch: ReturnType<typeof matchEtsySyncVariants> | undefined;
   let existingMediaIds: string[] = [];
   let existingOptionNames = new Set<string>();
   if (desiredVariants !== undefined || shouldReplaceMedia) {
@@ -1147,7 +1167,7 @@ export async function executeProductsUpdate(
           readonly pageInfo?: { readonly hasNextPage: boolean; readonly endCursor?: string | null };
           readonly nodes?: readonly { readonly id: string }[];
         };
-        readonly variants?: { readonly nodes?: readonly { readonly id: string }[] };
+        readonly variants?: { readonly nodes?: readonly { readonly id: string }[]; readonly pageInfo?: { readonly hasNextPage: boolean } };
       } | null;
     }
     const state = await client.query<PipelineProductStateResponse>(
@@ -1165,6 +1185,17 @@ export async function executeProductsUpdate(
       ? [] : [...existingOptionNames];
     requireSupportedOptionCount(new Set([...retainedOptionNames, ...desiredOptionNames]));
     existingVariantIds = state.node?.variants?.nodes?.map((variant) => variant.id) ?? [];
+    if (state.node?.variants?.pageInfo?.hasNextPage || productPatch.variantIdentity === "etsy-personalization-v1") {
+      existingVariantStates = await readAllProductVariants(store, client, id);
+      existingVariantIds = existingVariantStates.map(variant => variant.id);
+    }
+    if (desiredVariants && productPatch.variantIdentity === "etsy-personalization-v1") {
+      etsyVariantMatch = matchEtsySyncVariants(desiredVariants, existingVariantStates, requestedVariantIdsToManage ?? []);
+      const limits = await executeProductVariantLimits(store, client);
+      if (existingVariantIds.length - etsyVariantMatch.deletes.length + etsyVariantMatch.creates.length > limits.maxProductVariants) {
+        throw new GatewayError("Etsy personalization vượt giới hạn khi giữ các biến thể ngoài FFP.", "SHOPIFY_INVALID_INPUT", 400);
+      }
+    }
     if (requestedMediaIdsToDelete.length > 0) {
       existingMediaIds = requestedMediaIdsToDelete;
     } else {
@@ -1541,7 +1572,10 @@ export async function executeProductsUpdate(
     const managedExistingVariantIds = requestedVariantIdsToManage === undefined
       ? existingVariantIds
       : requestedVariantIdsToManage.filter((variantId) => existingVariantIds.includes(variantId));
-    const overlap = Math.min(managedExistingVariantIds.length, desiredVariants.length);
+    const updates = etsyVariantMatch?.updates ?? desiredVariants.slice(0, managedExistingVariantIds.length).map((variant, index) => ({ variant, id: managedExistingVariantIds[index] }));
+    const creates = etsyVariantMatch?.creates ?? desiredVariants.slice(managedExistingVariantIds.length);
+    const deletes = etsyVariantMatch?.deletes ?? managedExistingVariantIds.slice(desiredVariants.length);
+    const overlap = updates.length;
     const synchronized: ProductVariantSummary[] = [];
     if (overlap > 0) {
       interface VariantUpdateResponse {
@@ -1557,8 +1591,7 @@ export async function executeProductsUpdate(
           readonly userErrors: readonly MutationUserErrorItem[];
         };
       }
-      const allVariantsToUpdate = desiredVariants.slice(0, overlap).map((variant, index) =>
-        toVariantInput(variant, managedExistingVariantIds[index]));
+      const allVariantsToUpdate = updates.map(({variant, id: variantId}) => toVariantInput(variant, variantId));
       for (let i = 0; i < allVariantsToUpdate.length; i += 250) {
         const chunk = allVariantsToUpdate.slice(i, i + 250);
         const chunkReqId = requestId ? `${requestId}:variants-update:${Math.floor(i / 250)}` : undefined;
@@ -1587,7 +1620,7 @@ export async function executeProductsUpdate(
         }
       }
     }
-    if (desiredVariants.length > overlap) {
+    if (creates.length > 0) {
       interface VariantCreateResponse {
         readonly productVariantsBulkCreate: {
           readonly productVariants: readonly {
@@ -1601,7 +1634,7 @@ export async function executeProductsUpdate(
           readonly userErrors: readonly MutationUserErrorItem[];
         };
       }
-      const allVariantsToCreate = desiredVariants.slice(overlap).map((variant) => toVariantInput(variant));
+      const allVariantsToCreate = creates.map((variant) => toVariantInput(variant));
       for (let i = 0; i < allVariantsToCreate.length; i += 250) {
         const chunk = allVariantsToCreate.slice(i, i + 250);
         const chunkReqId = requestId ? `${requestId}:variants-create:${Math.floor(i / 250)}` : undefined;
@@ -1630,14 +1663,14 @@ export async function executeProductsUpdate(
         }
       }
     }
-    if (managedExistingVariantIds.length > desiredVariants.length) {
+    if (deletes.length > 0) {
       interface VariantDeleteResponse {
         readonly productVariantsBulkDelete: {
           readonly product?: { readonly id: string } | null;
           readonly userErrors: readonly MutationUserErrorItem[];
         };
       }
-      const allVariantsIdsToDelete = managedExistingVariantIds.slice(desiredVariants.length);
+      const allVariantsIdsToDelete = deletes;
       for (let i = 0; i < allVariantsIdsToDelete.length; i += 250) {
         const chunk = allVariantsIdsToDelete.slice(i, i + 250);
         const chunkReqId = requestId ? `${requestId}:variants-delete:${Math.floor(i / 250)}` : undefined;

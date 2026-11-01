@@ -8,6 +8,26 @@ from engine.tests.test_distributed import client_hello
 
 
 class AutoSyncTests(unittest.TestCase):
+    def test_etsy_codex_completion_automatically_queues_sync_once_when_enabled(self):
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as directory:
+                store, claim, product = self.prepare(directory, enabled, source_platform="etsy")
+                store.mark_product_image_processing(claim["id"], worker_id="worker", normalized_payload=product,
+                    image_summary={"status": "completed"})
+                completion = dict(worker_id="worker", normalized_payload=product,
+                    seo_summary={"status": "completed", "engine": "codex_mcp"},
+                    image_summary={"status": "completed"}, review_summary={"storeId": "sample"})
+                self.assertTrue(store.mark_product_review_ready(claim["id"], **completion))
+                self.assertFalse(store.mark_product_review_ready(claim["id"], **completion))
+                review = store.get_product_review(claim["id"], "sample")
+                self.assertEqual(review["syncStatus"], "queued" if enabled else "idle")
+                claims = store.claim_product_items(worker_id="publisher", store_id="sample", limit=5)
+                self.assertEqual(len(claims), 1 if enabled else 0)
+                if enabled:
+                    self.assertEqual(claims[0]["stage"], "sync")
+                    self.assertEqual(claims[0]["sourcePlatform"], "etsy")
+                    self.assertEqual(claims[0]["sourceKey"], "etsy:1234567890")
+
     def test_automatic_classification_blocks_sync_until_operator_repairs_without_rerunning_seo(self):
         with tempfile.TemporaryDirectory() as directory:
             store, claim, product = self.prepare(directory, True, "automatic")
@@ -102,21 +122,29 @@ class AutoSyncTests(unittest.TestCase):
                     "publication": {"status": "completed", "channels": []}})
             self.assertEqual(store.get_product_review(claim["id"], "sample")["syncStatus"], "synced")
 
-    def prepare(self, directory, enabled, classification_mode=None):
+    def prepare(self, directory, enabled, classification_mode=None, source_platform="amazon"):
         app = create_coordinator_app(database_url=f"sqlite:///{(Path(directory) / 'queue.sqlite3').as_posix()}")
         store = app.state.store
         with store.sessions() as session:
             create_coordinator_test_schema(session.get_bind())
-        settings = {"urls": ["B012345678"], "storeId": "sample"}
+        is_etsy = source_platform == "etsy"
+        settings = {"urls": ["https://www.etsy.com/listing/1234567890" if is_etsy else "B012345678"],
+            "storeId": "sample", "sourcePlatform": source_platform}
         if classification_mode:
             settings["classificationMode"] = classification_mode
         if enabled is not None:
             settings["autoSyncAfterSeo"] = enabled
         job = store.create_job(settings)
-        store.register_client(client_hello(slots=1))
+        hello = client_hello(slots=1)
+        if is_etsy:
+            hello["capabilities"]["etsy"] = True
+        store.register_client(hello)
         lease = store.lease_tasks("client-a", 1)[0]
         product = {"id": "product", "sourceKey": "amazon:test", "title": "Sample", "asin": "B012345678", "media": [], "variants": []}
-        store.accept_product(lease["taskId"], "client-a", lease["leaseId"], "amazon:test", "checksum", {"jobId": job["id"], "product": product, "productChecksum": "checksum"})
+        if is_etsy:
+            product.update({"sourcePlatform": "etsy", "sourceProductId": "1234567890",
+                "sourceKey": "etsy:1234567890", "asin": "", "evidenceComplete": True})
+        store.accept_product(lease["taskId"], "client-a", lease["leaseId"], product["sourceKey"], "checksum", {"jobId": job["id"], "product": product, "productChecksum": "checksum"})
         claim = store.claim_product_items(worker_id="worker", store_id="sample", limit=1)[0]
         store.mark_product_seo(claim["id"], worker_id="worker", normalized_payload=product, seo_summary={"status": "completed"})
         return store, claim, product

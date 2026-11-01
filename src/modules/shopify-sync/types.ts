@@ -72,6 +72,7 @@ export interface ShopifyVariantOptionValue {
 }
 
 export interface ShopifyVariantInput {
+  readonly legacySku?: string;
   readonly title?: string;
   readonly price: string;
   readonly compareAtPrice?: string;
@@ -80,6 +81,7 @@ export interface ShopifyVariantInput {
   readonly inventoryTracked?: boolean;
   readonly optionValues?: readonly ShopifyVariantOptionValue[];
   readonly mediaUrl?: string;
+  readonly etsyProductId?: string;
 }
 
 export interface ShopifyCustomizationAssetInput {
@@ -107,10 +109,21 @@ export interface ShopifyProductCustomizerInput {
 }
 
 export interface ShopifySyncProductInput {
+  readonly etsyPersonalizationQuestions?: readonly Record<string, unknown>[];
+  readonly etsyVariantProjection?: {
+    readonly version: 1;
+    readonly baseVariantCount: number;
+    readonly variantCount: number;
+    readonly optionNames: readonly string[];
+  };
   readonly id?: string;
   readonly sourceKey?: string;
+  readonly sourcePlatform?: "amazon" | "etsy";
   readonly amazonAsin?: string;
   readonly amazonParentAsin?: string;
+  readonly etsyListingId?: string;
+  readonly etsyListingUrl?: string;
+  readonly syncBlockers?: readonly string[];
   readonly title: string;
   readonly descriptionHtml: string;
   readonly handle?: string;
@@ -182,6 +195,7 @@ export interface ShopifyMetafieldInput {
 }
 
 export interface CreateProductInput {
+  readonly variantIdentity?: "etsy-personalization-v1";
   readonly title: string;
   readonly handle?: string;
   readonly seo?: ShopifySeoInput;
@@ -197,10 +211,17 @@ export interface CreateProductInput {
   readonly metafields?: readonly ShopifyMetafieldInput[];
 }
 
+export interface SyncedShopifyVariantSummary {
+  readonly id: string;
+  readonly sku?: string | null;
+  readonly title?: string;
+}
+
 export interface CreateProductOutput {
   readonly productId: string;
   readonly productHandle: string;
   readonly createdVariantsCount?: number;
+  readonly variants?: readonly SyncedShopifyVariantSummary[];
   readonly managedResources?: ShopifyManagedResources;
 }
 
@@ -214,6 +235,8 @@ export interface UpdateProductInput extends CreateProductInput {
 export interface UpdateProductOutput extends CreateProductOutput {}
 
 export interface CreateVariantItem {
+  readonly legacySku?: string;
+  readonly etsyProductId?: string;
   readonly price: string;
   readonly compareAtPrice?: string;
   readonly sku?: string;
@@ -225,6 +248,7 @@ export interface CreateVariantItem {
 
 export interface CreateVariantsOutput {
   readonly createdCount: number;
+  readonly variants?: readonly SyncedShopifyVariantSummary[];
 }
 
 export interface UploadFileInput {
@@ -242,9 +266,10 @@ export interface UploadFileOutput {
 
 export interface SetMetafieldInput {
   readonly productId: string;
+  readonly ownerId?: string;
   readonly namespace: string;
   readonly key: string;
-  readonly type: "json" | "multi_line_text_field" | "single_line_text_field";
+  readonly type: "json" | "multi_line_text_field" | "single_line_text_field" | "url";
   readonly value: string;
 }
 
@@ -255,6 +280,7 @@ export interface SetMetafieldOutput {
 
 export interface DeleteProductMetafieldInput {
   readonly productId: string;
+  readonly ownerId?: string;
   readonly namespace: string;
   readonly key: string;
 }
@@ -264,6 +290,7 @@ export interface DeleteProductMetafieldOutput {
 }
 
 export interface ShopifyGateway {
+  getVariantLimits?(): Promise<{ readonly maxProductOptions: number; readonly maxProductVariants: number }>;
   readonly createProduct: (input: CreateProductInput) => Promise<CreateProductOutput>;
   readonly updateProduct?: (input: UpdateProductInput) => Promise<UpdateProductOutput>;
   readonly deleteProduct?: (productId: string) => Promise<{ success: boolean }>;

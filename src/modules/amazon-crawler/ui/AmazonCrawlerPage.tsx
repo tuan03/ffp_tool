@@ -47,6 +47,10 @@ import { CrawlerDialog } from "./components/CrawlerDialog";
 import { CrawlerCollectionPicker } from "./components/CrawlerCollectionPicker";
 import { CrawlerStoreSettings } from "./components/CrawlerStoreSettings";
 import { ShopifyAsinFilterPanel } from "./components/ShopifyAsinFilterPanel";
+import { EtsyListingPanel } from "./components/EtsyListingPanel";
+import type { EtsyCrawlerClient } from "../etsy-types";
+import { normalizeEtsyListingId } from "../etsy-input";
+import { createEtsyCrawlerClient } from "../service";
 import { replaceCrawlerInputWithAsin } from "./asin-filter-input";
 import { analyzeCrawlerInput } from "./crawler-input";
 import { CrawlerWorkspace } from "./components/CrawlerWorkspace";
@@ -90,6 +94,7 @@ import { AddStoreModal } from "./components/AddStoreModal";
 import { DeleteStoreModal } from "./components/DeleteStoreModal";
 
 export interface AmazonCrawlerPageProps {
+  etsyClient?: EtsyCrawlerClient;
   checkAmazonAsins?: AmazonAsinChecker;
   filterShopifyAsins?: ShopifyAsinFilter;
   amazonCrawlerJobs?: AmazonCrawlerJobController;
@@ -124,6 +129,7 @@ const AGENT_RELEASE_FALLBACK_URL = "https://github.com/tuan03/ffp_tool/releases/
 const CLIENTS_PER_PAGE = 25;
 const JOBS_PER_PAGE = 10;
 const defaultShopifyAsinFilter = createShopifyAsinFilter();
+const defaultEtsyClient = createEtsyCrawlerClient({ engineUrl: "" });
 
 function formatDownloadSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
@@ -217,6 +223,7 @@ function isNotFoundError(value: unknown): boolean {
 }
 
 export function AmazonCrawlerPage({
+  etsyClient = defaultEtsyClient,
   checkAmazonAsins = createAmazonAsinChecker(),
   filterShopifyAsins = defaultShopifyAsinFilter,
   amazonCrawlerJobs,
@@ -257,6 +264,10 @@ export function AmazonCrawlerPage({
     selectedMediaUrl,
     isBatchJsonOpen,
   } = session;
+  const sourcePlatform = settings.sourcePlatform ?? "amazon";
+  const isEtsy = sourcePlatform === "etsy";
+  const sourceIdLabel = isEtsy ? "listing" : "ASIN";
+  const inputDrafts = useRef<Partial<Record<"amazon" | "etsy", string>>>({});
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const preflightInFlight = useRef(false);
   const [isCheckingAsins, setIsCheckingAsins] = useState(false);
@@ -397,7 +408,7 @@ export function AmazonCrawlerPage({
     () => urlText.split(/\r?\n/).map((url) => url.trim()).filter(Boolean),
     [urlText],
   );
-  const inputAnalysis = useMemo(() => analyzeCrawlerInput(urlText), [urlText]);
+  const inputAnalysis = useMemo(() => analyzeCrawlerInput(urlText, sourcePlatform), [urlText, sourcePlatform]);
   const resultProducts = output?.products ?? liveProducts;
   const summaryJobId = activeJobId ?? (isRunning ? null : lastJobId);
   const durableSeoHandoffSummary = summaryJobId
@@ -1330,6 +1341,23 @@ export function AmazonCrawlerPage({
     setAsinPreflightStoreId(storeId);
     const checkedUrlText = urlText;
     try {
+      if (isEtsy) {
+        const listingIds = [...new Set(sources.map(normalizeEtsyListingId))];
+        const checked = await etsyClient.check(storeId, listingIds);
+        const current = getCrawlerSessionState();
+        if (current.urlText !== checkedUrlText || (current.settings.storeId || "capozen") !== storeId || current.settings.sourcePlatform !== "etsy") {
+          throw new Error("Nguồn, link hoặc store đã thay đổi. Vui lòng kiểm tra lại.");
+        }
+        if (!checked.ready) throw new Error("Shopify đang lập chỉ mục listing Etsy. Vui lòng thử lại sau.");
+        const skips: AmazonCrawlerBatchSkippedInput[] = checked.listings.flatMap(listing => {
+          if (listing.status === "available" || listing.status === "queue_cleared") return [];
+          return [{ asin: listing.listingId, reason: listing.status === "existing" ? "existing_shopify" as const
+            : listing.status === "processing" || listing.status === "crawled_pending_sync" ? "existing_pipeline" as const : "attention" as const }];
+        });
+        setIsCheckingAsins(false);
+        await startJob(listingIds.map(id => `https://www.etsy.com/listing/${id}`), [], [], skips);
+        return;
+      }
       if (sequentialBatch) {
         const batch = await prepareSequentialBatch(sources, storeId, filterShopifyAsins);
         const current = getCrawlerSessionState();
@@ -1384,6 +1412,7 @@ export function AmazonCrawlerPage({
     }
     const sources = [...urls];
     const jobSettings = { ...settings, ...storeConfig.defaults, sequentialBatch: true, vendor: storeConfig.vendor ?? undefined,
+      ...(isEtsy ? { sourcePlatform: "etsy" as const, profileSlug: "default" as const, applyJeminisePreset: false } : {}),
       storeCrawlSettingsUpdatedAt: storeConfig.updatedAt ?? undefined, autoSyncAfterSeo: settings.autoSyncAfterSeo ?? true,
       ...(settings.classificationMode !== "manual" ? { classificationMode: "automatic" as const, collectionIds: [], collectionId: "", productType: "" } : {}) };
     await checkBeforeCrawl(sources, jobSettings.storeId || "capozen", async (
@@ -1402,6 +1431,7 @@ export function AmazonCrawlerPage({
         existingShopifyAsins,
         refreshFamilyAsins,
         batchSkippedInputs,
+        existingShopifyListingIds: isEtsy ? batchSkippedInputs?.filter(entry => entry.reason === "existing_shopify").map(entry => entry.asin) : undefined,
       });
     }, true);
   }
@@ -1584,6 +1614,12 @@ export function AmazonCrawlerPage({
 
   async function handleRunAgain(job: AmazonCrawlerJobSnapshot): Promise<void> {
     if (!amazonCrawlerJobs || controlledJobId || isCheckingAsins) return;
+    if (isEtsy || job.settings.sourcePlatform === "etsy") {
+      updateCrawlerSession({ urlText: job.inputs.join("\n"), settings: { ...settings, sourcePlatform: job.settings.sourcePlatform ?? "amazon" } });
+      setWorkspaceSection("crawl");
+      setJobControlMessage("Đã đưa link về ô cào. Kiểm tra cấu hình rồi bấm Bắt đầu cào để kiểm tra trùng lại.");
+      return;
+    }
     if (!hasSavedStoreConfig || !storeConfig?.defaults) {
       setJobControlTone("error");
       setJobControlMessage("Tải và lưu cấu hình store trước khi chạy lại.");
@@ -2407,6 +2443,7 @@ export function AmazonCrawlerPage({
   );
 
   const isStartDisabled = !hasSavedStoreConfig || urls.length === 0 || inputAnalysis.invalidEntries.length > 0 || isRunning || isCheckingAsins || isJobSnapshotStale
+    || inputAnalysis.validCount > 200 || (isEtsy && !connectedClients.some(client => client.capabilities?.etsy))
     || coordinatorActiveJob !== undefined || admissionGate?.state === "STOPPED"
     || (amazonCrawlerJobs !== undefined && (isClientSnapshotStale || isLoadingClients || connectedClients.length === 0));
   const inlineHandoff = resolveInlineCrawlerHandoff({
@@ -2418,10 +2455,12 @@ export function AmazonCrawlerPage({
     summary: seoHandoffSummary,
   });
   const startBlockers = [
+    inputAnalysis.validCount > 200 ? "Mỗi phiên tối đa 200 link." : null,
+    isEtsy && !connectedClients.some(client => client.capabilities?.etsy) ? "Cần Agent đã cập nhật hỗ trợ Etsy và đang kết nối." : null,
     !hasSavedStoreConfig ? "Tải và lưu cấu hình cào cho store này." : null,
-    urls.length === 0 ? "Nhập ít nhất một URL Amazon hoặc ASIN." : null,
+    urls.length === 0 ? `Nhập ít nhất một URL ${isEtsy ? "Etsy hoặc listing ID" : "Amazon hoặc ASIN"}.` : null,
     inputAnalysis.invalidEntries.length > 0 ? `Sửa ${inputAnalysis.invalidEntries.length} dòng chưa hợp lệ.` : null,
-    isCheckingAsins ? "Đang kiểm tra ASIN trước khi tạo phiên." : null,
+    isCheckingAsins ? `Đang kiểm tra ${sourceIdLabel} trước khi tạo phiên.` : null,
     isRunning || coordinatorActiveJob !== undefined ? "Đang có phiên cào. Xem tiến độ tại Phiên & kết quả." : null,
     isJobSnapshotStale ? "Chưa xác minh được trạng thái phiên; đang kết nối lại." : null,
     admissionGate?.state === "STOPPED" ? "Hệ thống đã ngừng nhận task mới. Mở Agent để kiểm tra." : null,
@@ -2439,6 +2478,7 @@ export function AmazonCrawlerPage({
     ...(statusJob?.progress.items ?? []).filter(item => item.status === "failed").map(item => `${item.asin}: ${item.message}`),
   ].filter((message): message is string => Boolean(message)))];
   const crawlStatus = resolveCrawlStatus({
+    sourcePlatform,
     isChecking: isCheckingAsins, isRunning: isRunning || statusJob !== undefined,
     isStale: isJobSnapshotStale, progress: statusJob?.progress ?? progress,
     executionState: statusJob?.executionState,
@@ -2449,7 +2489,7 @@ export function AmazonCrawlerPage({
     completion: inlineHandoff,
   });
   const startCrawlButton = <button className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-    aria-describedby="crawler-start-readiness" disabled={isStartDisabled} type="button" onClick={() => void handleStart()}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><polygon points="6 3 20 12 6 21 6 3" /></svg>{isCheckingAsins ? "Đang kiểm tra ASIN..." : `Bắt đầu cào (${urls.length} link)`}</button>;
+    aria-describedby="crawler-start-readiness" disabled={isStartDisabled} type="button" onClick={() => void handleStart()}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><polygon points="6 3 20 12 6 21 6 3" /></svg>{isCheckingAsins ? `Đang kiểm tra ${sourceIdLabel}...` : `Bắt đầu cào (${urls.length} link)`}</button>;
 
   async function handleImportUrlsFile(file: File | undefined): Promise<void> {
     if (!file || isRunning || isCheckingAsins) return;
@@ -2541,8 +2581,16 @@ export function AmazonCrawlerPage({
             <div className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xs">
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-base font-bold text-slate-900 dark:text-slate-100">1. Amazon URLs hoặc ASIN</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <label className="text-sm font-medium">Nguồn cào <select aria-label="Nguồn cào" className="rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900"
+                      value={sourcePlatform} disabled={isRunning || isCheckingAsins || coordinatorActiveJob !== undefined}
+                      onChange={event => {
+                        const next = event.target.value === "etsy" ? "etsy" : "amazon";
+                        inputDrafts.current[sourcePlatform] = urlText;
+                        updateCrawlerSession({ urlText: inputDrafts.current[next] ?? "", settings: { ...settings, sourcePlatform: next } });
+                        setAsinPreflightError(null); setAsinPreflightMatches([]); setAsinPreflightFamilies([]);
+                      }}><option value="amazon">Amazon</option><option value="etsy">Etsy</option></select></label>
+                    <span className="text-base font-bold text-slate-900 dark:text-slate-100">{isEtsy ? "URL Etsy hoặc listing ID" : "1. Amazon URLs hoặc ASIN"}</span>
                     <span aria-hidden="true" title="Nhập danh sách ASIN hoặc URL Amazon, mỗi dòng một giá trị" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">i</span>
                   </div>
                   <input
@@ -2565,13 +2613,13 @@ export function AmazonCrawlerPage({
                   </button>
                 </div>
                 <label className="grid gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100">
-                  <span className="sr-only">Amazon URLs hoặc ASIN, mỗi dòng một giá trị</span>
+                  <span className="sr-only">{isEtsy ? "URL Etsy hoặc listing ID, mỗi dòng một giá trị" : "Amazon URLs hoặc ASIN, mỗi dòng một giá trị"}</span>
                   <textarea
                     ref={crawlerInputRef}
                     aria-describedby="crawler-input-summary"
                     aria-invalid={inputAnalysis.invalidEntries.length > 0}
                     className="min-h-32 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900 p-3 font-mono text-sm text-slate-900 dark:text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600/30 focus:border-blue-300 dark:focus:border-blue-800"
-                    placeholder={"https://www.amazon.com/dp/B0...\nB0..."}
+                    placeholder={isEtsy ? "https://www.etsy.com/listing/1876543210\n1876543210" : "https://www.amazon.com/dp/B0...\nB0..."}
                     value={urlText}
                     onChange={(event) => {
                       setCrawlerUrlText(event.target.value);
@@ -2582,9 +2630,9 @@ export function AmazonCrawlerPage({
                 </label>
               </div>
               <div className="space-y-1.5">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Dán tối đa 200 ASIN/link rồi bắt đầu một lần. Tự lọc Shopify, cào lần lượt và bỏ qua ASIN đã lấy qua link trước.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{isEtsy ? "Tối đa 200 listing. Tự lọc Shopify và Queue/Review; giữ biến thể gốc Etsy, không áp preset Amazon." : "Dán tối đa 200 ASIN/link rồi bắt đầu một lần. Tự lọc Shopify, cào lần lượt và bỏ qua ASIN đã lấy qua link trước."}</p>
                 <div id="crawler-input-summary" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-400">
-                  <span>{inputAnalysis.lineCount} dòng · <strong className="font-semibold text-slate-900 dark:text-slate-100">{inputAnalysis.validCount} ASIN hợp lệ, không trùng</strong></span>
+                  <span>{inputAnalysis.lineCount} dòng · <strong className="font-semibold text-slate-900 dark:text-slate-100">{inputAnalysis.validCount} {sourceIdLabel} hợp lệ, không trùng</strong></span>
                   {inputAnalysis.duplicateCount > 0 ? <button type="button" disabled={isRunning || isCheckingAsins} className="min-h-8 text-blue-700 dark:text-blue-300 underline underline-offset-4 disabled:opacity-50" onClick={() => setCrawlerUrlText(inputAnalysis.deduplicatedText)}>Bỏ {inputAnalysis.duplicateCount} dòng trùng</button> : null}
                 </div>
                 {inputAnalysis.invalidEntries.length > 0 ? <details className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 p-3 text-sm text-amber-800 dark:text-amber-300">
@@ -3138,9 +3186,11 @@ export function AmazonCrawlerPage({
             </div>
           </div>
           </div>
-          <aside aria-label="Kiểm tra ASIN trên Shopify" className="min-w-0 xl:sticky xl:top-20 xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto">
-            <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
-              onSelectAsin={handleSelectFilterAsin} isSelectionDisabled={isRunning || isCheckingAsins} />
+          <aside aria-label={isEtsy ? "Kiểm tra listing Etsy" : "Kiểm tra ASIN trên Shopify"} className="min-w-0 xl:sticky xl:top-20 xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto">
+            {isEtsy ? <EtsyListingPanel key={`etsy:${activeStoreId}`} storeId={activeStoreId} client={etsyClient} isBusy={isRunning || isCheckingAsins}
+              onUseListing={listingId => { setCrawlerUrlText(listingId); setAsinPreflightError(null); crawlerInputRef.current?.focus(); }} />
+              : <ShopifyAsinFilterPanel key={activeStoreId} storeId={activeStoreId} filterShopifyAsins={filterShopifyAsins}
+                onSelectAsin={handleSelectFilterAsin} isSelectionDisabled={isRunning || isCheckingAsins} />}
           </aside>
           </div>
         </>}

@@ -1,5 +1,6 @@
 import { projectShopifyVariantOptions } from "./variant-options";
-import { assignAmazonVariantSkus } from "./variant-sku";
+import { projectEtsyPersonalizationVariants } from "./etsy-personalization-variants";
+import { assignAmazonVariantSkus, assignEtsyVariantSkus } from "./variant-sku";
 import type {
   CrawlProduct,
   CustomizationAsset,
@@ -140,6 +141,20 @@ function normalizeAsin(value: unknown): string | undefined {
   return /^[A-Z0-9]{10}$/.test(normalized) ? normalized : undefined;
 }
 
+function normalizeEtsyId(value: unknown): string | undefined {
+  const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+  return /^\d{6,20}$/.test(text) ? text : undefined;
+}
+
+function resolveEtsyListingId(product: CrawlProduct): string | undefined {
+  const direct = normalizeEtsyId(product.sourceProductId);
+  if (direct) return direct;
+  if (typeof product.sourceKey === "string" && product.sourceKey.toLowerCase().startsWith("etsy:")) {
+    return normalizeEtsyId(product.sourceKey.slice("etsy:".length));
+  }
+  return undefined;
+}
+
 function firstSourceVariantAsin(product: CrawlProduct): string | undefined {
   for (const sourceVariant of product.sourceVariants ?? []) {
     if (isRecord(sourceVariant)) {
@@ -231,17 +246,34 @@ export function fromCustomizationNormalizerProduct(
       friendlyFileName: item.friendlyFileName,
     }));
 
+  const isEtsy =
+    product.sourcePlatform === "etsy" ||
+    (typeof product.sourceKey === "string" && product.sourceKey.toLowerCase().startsWith("etsy:"));
+  const etsyListingId = isEtsy ? resolveEtsyListingId(product) : undefined;
+  const etsyListingUrl = isEtsy
+    ? (typeof product.canonicalUrl === "string" && product.canonicalUrl.trim()
+        ? product.canonicalUrl.trim()
+        : etsyListingId
+        ? `https://www.etsy.com/listing/${etsyListingId}`
+        : undefined)
+    : undefined;
+  const syncBlockers = Array.isArray(product.syncBlockers)
+    ? product.syncBlockers.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    : undefined;
+
   const tags = new Set<string>();
-  if (product.parentAsin) tags.add(`asin:${product.parentAsin}`);
+  if (!isEtsy && product.parentAsin) tags.add(`asin:${product.parentAsin}`);
 
   let customizerInput: ShopifyProductCustomizerInput | null = null;
   const rawCustomization = product.customization;
-  const amazonAsin = normalizeAsin(product.asin)
-    ?? normalizeAsin(rawCustomization?.source?.asin)
-    ?? firstSourceVariantAsin(product);
+  const amazonAsin = isEtsy
+    ? undefined
+    : normalizeAsin(product.asin)
+      ?? normalizeAsin(rawCustomization?.source?.asin)
+      ?? firstSourceVariantAsin(product);
   // An input/child ASIN is not evidence of family identity. Missing parent
   // metadata must fail preflight, not silently write a different identifier.
-  const amazonParentAsin = normalizeAsin(product.parentAsin);
+  const amazonParentAsin = isEtsy ? undefined : normalizeAsin(product.parentAsin);
 
   if (rawCustomization && typeof rawCustomization === "object") {
     const assets: ShopifyCustomizationAssetInput[] = (rawCustomization.assets || []).map(
@@ -270,38 +302,79 @@ export function fromCustomizationNormalizerProduct(
     };
   }
 
-  const variantSources = (product.variants || [])
-    .filter(isRecord)
-    .flatMap((v) => {
-      const priceStr = formatPrice(v.price, "");
-      if (!priceStr) return [];
-      const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
-      // The family ID is not a SKU source. Options distinguish generated variants sharing an ASIN.
-      const variantAsin = normalizeAsin(v.sourceAsin) ?? normalizeAsin(v.asin) ?? amazonAsin;
-      const optionValues: Array<{ name: string; optionName: string }> = [];
+  const variants: ShopifyVariantInput[] = isEtsy
+    ? assignEtsyVariantSkus(
+        (product.variants || [])
+          .filter(isRecord)
+          .flatMap((v) => {
+            const priceStr = formatPrice(v.price, "");
+            if (!priceStr) return [];
+            const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
+            const optionValues: Array<{ name: string; optionName: string }> = [];
+            if (isRecord(v.options)) {
+              for (const [optName, optVal] of Object.entries(v.options)) {
+                optionValues.push({
+                  optionName: optName,
+                  name: String(optVal),
+                });
+              }
+            }
+            const etsyProductId =
+              normalizeEtsyId(v.sourceVariantId) ??
+              normalizeEtsyId(v.etsyProductId) ??
+              normalizeEtsyId(v.productId);
+            const variant: ShopifyVariantInput = {
+              title: typeof v.title === "string" ? v.title : undefined,
+              price: priceStr,
+              compareAtPrice: compareAtPriceStr,
+              sku: typeof v.sku === "string" ? v.sku : undefined,
+              barcode: typeof v.barcode === "string" ? v.barcode : undefined,
+              inventoryTracked: false,
+              optionValues: optionValues.length > 0 ? optionValues : undefined,
+              mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
+              ...(etsyProductId ? { etsyProductId } : {}),
+            };
+            return [{
+              listingId: etsyListingId ?? "",
+              etsyProductId,
+              variant,
+              identityOptionValues: originalSkuOptions(product, variant),
+            }];
+          }),
+      )
+    : assignAmazonVariantSkus(
+        (product.variants || [])
+          .filter(isRecord)
+          .flatMap((v) => {
+            const priceStr = formatPrice(v.price, "");
+            if (!priceStr) return [];
+            const compareAtPriceStr = formatOptionalPrice(v.compareAtPrice);
+            // The family ID is not a SKU source. Options distinguish generated variants sharing an ASIN.
+            const variantAsin = normalizeAsin(v.sourceAsin) ?? normalizeAsin(v.asin) ?? amazonAsin;
+            const optionValues: Array<{ name: string; optionName: string }> = [];
 
-      if (isRecord(v.options)) {
-        for (const [optName, optVal] of orderedVariantOptions(product, v.options)) {
-          optionValues.push({
-            optionName: optName,
-            name: normalizeJeminiseBeddingOptionValue(product, v.options, optName, optVal),
-          });
-        }
-      }
+            if (isRecord(v.options)) {
+              for (const [optName, optVal] of orderedVariantOptions(product, v.options)) {
+                optionValues.push({
+                  optionName: optName,
+                  name: normalizeJeminiseBeddingOptionValue(product, v.options, optName, optVal),
+                });
+              }
+            }
 
-      const variant: ShopifyVariantInput = {
-        title: typeof v.title === "string" ? v.title : undefined,
-        price: priceStr,
-        compareAtPrice: compareAtPriceStr,
-        sku: typeof v.sku === "string" ? v.sku : undefined,
-        barcode: typeof v.barcode === "string" ? v.barcode : undefined,
-        inventoryTracked: false, // Default to Inventory not tracked
-        optionValues: optionValues.length > 0 ? optionValues : undefined,
-        mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
-      };
-      return [{ asin: variantAsin, variant, identityOptionValues: originalSkuOptions(product, variant) }];
-    });
-  const variants = assignAmazonVariantSkus(variantSources);
+            const variant: ShopifyVariantInput = {
+              title: typeof v.title === "string" ? v.title : undefined,
+              price: priceStr,
+              compareAtPrice: compareAtPriceStr,
+              sku: typeof v.sku === "string" ? v.sku : undefined,
+              barcode: typeof v.barcode === "string" ? v.barcode : undefined,
+              inventoryTracked: false, // Default to Inventory not tracked
+              optionValues: optionValues.length > 0 ? optionValues : undefined,
+              mediaUrl: typeof v.mediaUrl === "string" ? v.mediaUrl : undefined,
+            };
+            return [{ asin: variantAsin, variant, identityOptionValues: originalSkuOptions(product, variant) }];
+          }),
+      );
 
   const productType =
     typeof options?.productType === "string" && options.productType.trim() !== ""
@@ -310,11 +383,23 @@ export function fromCustomizationNormalizerProduct(
       ? String(product.categories[product.categories.length - 1])
       : "Custom Product";
 
-  return projectShopifyVariantOptions({
+  const project = isEtsy ? projectEtsyPersonalizationVariants : projectShopifyVariantOptions;
+  const etsyContext = isRecord(product.etsyContext) ? product.etsyContext : undefined;
+  const personalization = isRecord(etsyContext?.personalization) ? etsyContext.personalization : undefined;
+  return project({
+    ...(Array.isArray(personalization?.questions) ? { etsyPersonalizationQuestions: personalization.questions.filter(isRecord) } : {}),
     id: product.id,
-    sourceKey: typeof product.sourceKey === "string" ? product.sourceKey : product.id,
+    sourceKey: typeof product.sourceKey === "string"
+      ? product.sourceKey
+      : isEtsy && etsyListingId
+      ? `etsy:${etsyListingId}`
+      : product.id,
+    sourcePlatform: isEtsy ? "etsy" : "amazon",
     amazonAsin,
     amazonParentAsin,
+    etsyListingId,
+    etsyListingUrl,
+    ...(syncBlockers && syncBlockers.length > 0 ? { syncBlockers } : {}),
     title,
     descriptionHtml,
     handle: typeof product.handle === "string" ? product.handle : undefined,

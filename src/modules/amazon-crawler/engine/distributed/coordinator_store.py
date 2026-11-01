@@ -18,6 +18,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 
 from ..crawler_core import CrawlSettings, normalize_amazon_input
+from ..etsy_sources import normalize_etsy_input
 from ..review_engine import normalize_review_source
 from ..timeouts import CrawlTimeout, TIMEOUT_FIELDS
 from ..retry_policy import RETRY_FIELDS, retry_delay
@@ -32,6 +33,7 @@ from .coordinator_models import (
     CrawlTask,
     ArchivedTaskAttempt,
     CrawlerDlqAction,
+    EtsyListingRegistry,
     InvalidJobInput,
     JobStopClientCleanup,
     JobEvent,
@@ -42,13 +44,20 @@ from .coordinator_models import (
     UploadReceipt,
     CrawlTelemetryEvent,
 )
+from .etsy_auth_store import EtsyAuthStore
 from .protocol import payload_checksum, settings_fingerprint, utc_iso, utc_now
 from .agent_runtime_config import AgentRuntimeConfig
 from .protocol import product_source_key as _source_key
 from .global_admission_gate import GlobalAdmissionGate, GlobalAdmissionGateEvent, GLOBAL_ADMISSION_GATE_ID
 from .coordinator_observability import CoordinatorObservability, bounded_agent_telemetry
 from .retry_taxonomy import classify_task_error, parse_retry_after
-from .seo_pipeline_identity import load_active_seo_identities, load_cancelled_seo_job_ids, match_active_seo_jobs
+from .seo_pipeline_identity import (
+    load_active_etsy_seo_identities,
+    load_active_seo_identities,
+    load_cancelled_seo_job_ids,
+    match_active_etsy_seo_jobs,
+    match_active_seo_jobs,
+)
 from .fleet_circuit_breaker import acquire_capacity as acquire_fleet_capacity, record_failure as record_fleet_failure, record_success as record_fleet_success, snapshot as fleet_breaker_snapshot
 from ..observability import ERROR_LOG_FIELDS, redact, safe_fields
 
@@ -207,6 +216,11 @@ class CoordinatorStore(CoordinatorObservability):
         self._job_creation_lock = Lock()
         self._review_mutation_lock = Lock()
         self._external_seo_wake_after = 0.0
+        self.etsy_auth = EtsyAuthStore(session_factory)
+        try:
+            self.etsy_auth.bootstrap_from_env_if_empty()
+        except Exception:
+            pass
 
     @staticmethod
     def _store_vendor_key(store_id: str) -> str:
@@ -278,7 +292,88 @@ class CoordinatorStore(CoordinatorObservability):
         return parent_asin, sorted(member_asins)
 
     @staticmethod
+    def _is_etsy_product(product: dict[str, Any]) -> bool:
+        if str(product.get("sourcePlatform") or "").strip().lower() == "etsy":
+            return True
+        return _source_key(product).startswith("etsy:")
+
+    @staticmethod
+    def _product_etsy_listing_id(product: dict[str, Any]) -> str | None:
+        raw_id = str(
+            product.get("sourceProductId") or product.get("listingId") or ""
+        ).strip()
+        if not raw_id and _source_key(product).startswith("etsy:"):
+            raw_id = _source_key(product).split(":", 1)[1].strip()
+        return raw_id if re.fullmatch(r"\d{6,20}", raw_id) else None
+
+    @staticmethod
+    def _upsert_etsy_registry(
+        session,
+        *,
+        store_id: str,
+        job_id: str | None,
+        product: dict[str, Any] | None = None,
+        listing_id: str | None = None,
+        status: str,
+        shopify_product_id: str | None = None,
+    ) -> None:
+        normalized_store_id = store_id.strip()
+        resolved_listing_id = (
+            str(listing_id or "").strip()
+            or (CoordinatorStore._product_etsy_listing_id(product or {}) or "")
+        )
+        if not normalized_store_id or not re.fullmatch(r"\d{6,20}", resolved_listing_id):
+            return
+        now = utc_now()
+        existing_row = session.scalar(
+            select(EtsyListingRegistry).where(
+                EtsyListingRegistry.store_id == normalized_store_id,
+                EtsyListingRegistry.listing_id == resolved_listing_id,
+            )
+        )
+        preserves_synced = status == "crawled" and existing_row is not None and existing_row.status == "synced"
+        insert_factory = postgres_insert if session.get_bind().dialect.name == "postgresql" else sqlite_insert
+        statement = insert_factory(EtsyListingRegistry).values(
+            id=_id(),
+            store_id=normalized_store_id,
+            listing_id=resolved_listing_id,
+            status=status,
+            last_job_id=job_id,
+            shopify_product_ids=[shopify_product_id] if shopify_product_id else [],
+            synced_at=now if status == "synced" else None,
+            created_at=now,
+            updated_at=now,
+        )
+        update_values: dict[str, Any] = {
+            "status": "synced" if preserves_synced else status,
+            "updated_at": now,
+        }
+        if job_id and not preserves_synced:
+            update_values["last_job_id"] = job_id
+        if status == "synced":
+            update_values["synced_at"] = now
+        session.execute(
+            statement.on_conflict_do_update(
+                index_elements=["store_id", "listing_id"],
+                set_=update_values,
+            )
+        )
+        if shopify_product_id:
+            row = session.scalar(
+                select(EtsyListingRegistry).where(
+                    EtsyListingRegistry.store_id == normalized_store_id,
+                    EtsyListingRegistry.listing_id == resolved_listing_id,
+                )
+            )
+            if row is not None:
+                merged_ids = set(row.shopify_product_ids or [])
+                merged_ids.add(shopify_product_id)
+                row.shopify_product_ids = sorted(merged_ids)
+
+    @staticmethod
     def _product_exact_asins(product: dict[str, Any]) -> set[str]:
+        if CoordinatorStore._is_etsy_product(product):
+            return set()
         primary_asin = str(product.get("asin") or "").strip().upper()
         parent_asin = str(product.get("parentAsin") or "").strip().upper()
         exact_asins: set[str] = set()
@@ -300,6 +395,32 @@ class CoordinatorStore(CoordinatorObservability):
         product: dict[str, Any],
     ) -> tuple[set[str], list[str]] | None:
         store_id = str((job.settings if job else {}).get("storeId") or "").strip()
+        if cls._is_etsy_product(product):
+            listing_id = cls._product_etsy_listing_id(product)
+            if not listing_id:
+                return None
+            preflight_ids = {
+                str(lid).strip()
+                for lid in ((job.settings if job else {}).get("existingShopifyListingIds") or [])
+                if re.fullmatch(r"\d{6,20}", str(lid).strip())
+            }
+            existing_etsy_rows = []
+            if store_id:
+                existing_etsy_rows = session.scalars(
+                    select(EtsyListingRegistry).where(
+                        EtsyListingRegistry.store_id == store_id,
+                        EtsyListingRegistry.listing_id == listing_id,
+                        EtsyListingRegistry.status == "synced",
+                    )
+                ).all()
+                existing_etsy_rows = [row for row in existing_etsy_rows if row.shopify_product_ids]
+            if not existing_etsy_rows and listing_id not in preflight_ids:
+                return None
+            shopify_ids = sorted(
+                {pid for row in existing_etsy_rows for pid in (row.shopify_product_ids or [])}
+            )
+            return {listing_id}, shopify_ids
+
         exact_asins = cls._product_exact_asins(product)
         preflight_shopify_asins = {
             str(asin).strip().upper()
@@ -389,8 +510,39 @@ class CoordinatorStore(CoordinatorObservability):
         if job is None:
             return None
         store_id = str((job.settings or {}).get("storeId") or "").strip()
+        if not store_id:
+            return None
+        if cls._is_etsy_product(product):
+            listing_id = cls._product_etsy_listing_id(product)
+            if not listing_id:
+                return None
+            source_key = f"etsy:{listing_id}"
+            candidates = session.scalars(
+                select(CrawlProductItem)
+                .join(CrawlJob)
+                .where(
+                    CrawlJob.settings["storeId"].as_string() == store_id,
+                    CrawlProductItem.job_id != job.id,
+                    CrawlProductItem.status.not_in(["deleted", "cancelled"]),
+                    CrawlProductItem.source_key == source_key,
+                )
+            ).all()
+            cleared_ids = cls._cleared_seo_product_ids(session, store_id, candidates)
+            for retained in candidates:
+                if retained.id in cleared_ids:
+                    continue
+                res = retained.shopify_result or {}
+                if res.get("skippedExistingPipeline") or res.get("skippedExistingShopify"):
+                    continue
+                if retained.status == "completed":
+                    continue  # Live Shopify preflight + EtsyListingRegistry governs synced state.
+                if (res.get("review") or {}).get("archivedAt"):
+                    continue
+                return retained.id
+            return None
+
         identity = cls._product_family_identity(product)
-        if not store_id or identity is None:
+        if identity is None:
             return None
         aliases = cls._product_exact_asins(product)
         candidates = session.scalars(select(CrawlProductItem).join(CrawlJob).where(
@@ -435,6 +587,249 @@ class CoordinatorStore(CoordinatorObservability):
         return {item.id for item in candidates
                 if external_jobs.get(item.id) in cancelled_jobs
                 or (item.id not in external_jobs and cls._is_operator_cleared_seo_item(item))}
+
+    def resolve_etsy_listings(self, store_id: str, listing_ids: list[str]) -> dict[str, Any]:
+        """Inspect real Etsy pipeline + SEO Queue + registry state for duplicate preflight.
+
+        Cancelled or cleared Crawl/SEO Queue jobs never continue blocking a recrawl.
+        """
+        clean_store_id = store_id.strip()
+        normalized_ids = list(
+            dict.fromkeys(
+                normalize_etsy_input(raw_id).listing_id
+                for raw_id in listing_ids
+                if isinstance(raw_id, str) and raw_id.strip()
+            )
+        )
+        if not clean_store_id or not normalized_ids or len(normalized_ids) > 200:
+            raise ValueError("storeId and 1..200 valid Etsy listing IDs are required.")
+
+        with self.sessions.begin() as session:
+            registry_rows = {
+                row.listing_id: row
+                for row in session.scalars(
+                    select(EtsyListingRegistry).where(
+                        EtsyListingRegistry.store_id == clean_store_id,
+                        EtsyListingRegistry.listing_id.in_(normalized_ids),
+                    )
+                ).all()
+            }
+            active_tasks_by_listing: dict[str, CrawlTask] = {}
+            for task_row in session.scalars(
+                select(CrawlTask)
+                .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
+                .where(
+                    CrawlJob.settings["storeId"].as_string() == clean_store_id,
+                    CrawlJob.status.in_(list(ACTIVE_JOB_STATUSES)),
+                    CrawlTask.source_platform == "etsy",
+                    CrawlTask.source_product_id.in_(normalized_ids),
+                    CrawlTask.status.not_in(list(TERMINAL_TASK_STATUSES)),
+                )
+            ).all():
+                if task_row.source_product_id:
+                    active_tasks_by_listing[task_row.source_product_id] = task_row
+
+            source_keys = [f"etsy:{lid}" for lid in normalized_ids]
+            product_items = session.scalars(
+                select(CrawlProductItem)
+                .join(CrawlJob, CrawlProductItem.job_id == CrawlJob.id)
+                .where(
+                    CrawlJob.settings["storeId"].as_string() == clean_store_id,
+                    CrawlProductItem.source_key.in_(source_keys),
+                    CrawlProductItem.status.not_in(["deleted", "cancelled"]),
+                )
+                .order_by(CrawlProductItem.updated_at.desc())
+            ).all()
+            cleared_ids = self._cleared_seo_product_ids(session, clean_store_id, product_items)
+            active_seo = load_active_etsy_seo_identities(
+                session,
+                clean_store_id,
+                listing_ids=set(normalized_ids),
+            )
+            seo_jobs_by_listing: dict[str, list[str]] = {}
+            for seo_id in active_seo:
+                seo_jobs_by_listing.setdefault(seo_id.listing_id, []).append(seo_id.job_id)
+
+            listings_out: list[dict[str, Any]] = []
+            for lid in normalized_ids:
+                reg = registry_rows.get(lid)
+                active_task = active_tasks_by_listing.get(lid)
+                active_seo_jobs = sorted(set(seo_jobs_by_listing.get(lid, [])))
+                lid_items = [item for item in product_items if item.source_key == f"etsy:{lid}"]
+                live_items = []
+                had_cleared_item = False
+                for item in lid_items:
+                    if item.id in cleared_ids:
+                        had_cleared_item = True
+                        continue
+                    res = item.shopify_result or {}
+                    if res.get("skippedExistingPipeline") or res.get("skippedExistingShopify"):
+                        continue
+                    if (res.get("review") or {}).get("archivedAt"):
+                        continue
+                    if item.status == "completed":
+                        continue
+                    live_items.append(item)
+
+                status = "available"
+                job_id: str | None = None
+                recovered_stale = False
+                if active_task is not None:
+                    status = "processing"
+                    job_id = active_task.job_id
+                elif active_seo_jobs:
+                    status = "processing"
+                    job_id = live_items[0].job_id if live_items else (reg.last_job_id if reg else None)
+                elif live_items:
+                    top_item = live_items[0]
+                    job_id = top_item.job_id
+                    if top_item.status in ACTIVE_PRODUCT_STATUSES:
+                        status = "processing"
+                    elif top_item.status == "reconciliation_required":
+                        status = "reconciliation_required"
+                    else:
+                        status = "crawled_pending_sync"
+                elif reg is not None and reg.status == "crawled":
+                    reg.status = "released"
+                    reg.updated_at = utc_now()
+                    recovered_stale = True
+                    status = "queue_cleared" if had_cleared_item else "available"
+                elif had_cleared_item:
+                    status = "queue_cleared"
+
+                listings_out.append(
+                    {
+                        "listingId": lid,
+                        "status": status,
+                        "databaseStatus": reg.status if reg is not None else None,
+                        "jobId": job_id,
+                        "shopifyProductIds": list(reg.shopify_product_ids or []) if reg is not None else [],
+                        "activeSeoJobIds": active_seo_jobs,
+                        "recoveredStaleRegistry": recovered_stale,
+                    }
+                )
+            return {"listings": listings_out}
+
+    def filter_etsy_activity(self, store_id: str, listing_ids: list[str]) -> dict[str, Any]:
+        """Return live crawl/SEO/attention activity for the Etsy Listing Filter panel."""
+        clean_store_id = store_id.strip()
+        requested = list(
+            dict.fromkeys(
+                normalize_etsy_input(raw_id).listing_id
+                for raw_id in listing_ids
+                if isinstance(raw_id, str) and raw_id.strip()
+            )
+        )
+        if not clean_store_id or not requested or len(requested) > 200:
+            raise ValueError("storeId and 1..200 valid Etsy listing IDs are required.")
+
+        with self.sessions() as session:
+            entries: dict[str, dict[str, Any]] = {
+                lid: {"listingId": lid, "status": "available"}
+                for lid in requested
+            }
+            for reg in session.scalars(
+                select(EtsyListingRegistry).where(
+                    EtsyListingRegistry.store_id == clean_store_id,
+                    EtsyListingRegistry.listing_id.in_(requested),
+                )
+            ).all():
+                if reg.synced_at:
+                    entries[reg.listing_id]["shopifyRevision"] = utc_iso(reg.synced_at)
+
+            for task in session.scalars(
+                select(CrawlTask)
+                .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
+                .where(
+                    CrawlJob.settings["storeId"].as_string() == clean_store_id,
+                    CrawlJob.status.in_(list(ACTIVE_JOB_STATUSES)),
+                    CrawlTask.source_platform == "etsy",
+                    CrawlTask.source_product_id.in_(requested),
+                    CrawlTask.status.not_in(list(TERMINAL_TASK_STATUSES)),
+                )
+            ).all():
+                if task.source_product_id in entries:
+                    entries[task.source_product_id].update(status="crawling", jobId=task.job_id)
+
+            source_keys = [f"etsy:{lid}" for lid in requested]
+            items = session.scalars(
+                select(CrawlProductItem)
+                .join(CrawlJob, CrawlProductItem.job_id == CrawlJob.id)
+                .where(
+                    CrawlJob.settings["storeId"].as_string() == clean_store_id,
+                    CrawlProductItem.source_key.in_(source_keys),
+                    CrawlProductItem.status.not_in(["deleted", "cancelled"]),
+                )
+            ).all()
+            cleared_ids = self._cleared_seo_product_ids(session, clean_store_id, items)
+            active_seo = load_active_etsy_seo_identities(
+                session, clean_store_id, listing_ids=set(requested)
+            )
+            for seo_id in active_seo:
+                entry = entries.get(seo_id.listing_id)
+                if entry and entry["status"] == "available":
+                    entry.update(status="processing", jobId=seo_id.job_id)
+
+            for item in items:
+                if item.id in cleared_ids:
+                    continue
+                res = item.shopify_result or {}
+                if res.get("skippedExistingPipeline") or res.get("skippedExistingShopify"):
+                    continue
+                if (res.get("review") or {}).get("archivedAt"):
+                    continue
+                if item.status == "completed":
+                    continue
+                lid = item.source_key.split(":", 1)[1] if item.source_key.startswith("etsy:") else ""
+                entry = entries.get(lid)
+                if not entry or entry["status"] == "crawling":
+                    continue
+                review = res.get("review") or {}
+                if (
+                    item.status in {"failed", "rejected", "reconciliation_required"}
+                    or review.get("syncStatus") == "failed"
+                    or bool(review.get("syncBlockers"))
+                ):
+                    entry.update(status="attention", jobId=item.job_id)
+                elif item.status in ACTIVE_PRODUCT_STATUSES or item.status == "waiting_review":
+                    entry.update(status="processing", jobId=item.job_id)
+
+            return {"activity": [entries[lid] for lid in requested]}
+
+    def verify_worker_task_lease(self, task_id: str, client_id: str, lease_id: str) -> dict[str, Any]:
+        """Validate & renew an active worker lease before serving Etsy API baseline."""
+        with self.sessions.begin() as session:
+            task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id).with_for_update())
+            if task is None:
+                return {"valid": False, "status": "missing"}
+            if task.status in {"cancelling", "cancelled"}:
+                return {"valid": False, "status": "cancelled"}
+            now = utc_now()
+            if (
+                task.status not in {"leased", "running"}
+                or task.assigned_client_id != client_id
+                or task.lease_id != lease_id
+                or task.lease_expires_at is None
+                or _as_utc(task.lease_expires_at) <= now
+            ):
+                return {"valid": False, "status": "stale"}
+            job = session.get(CrawlJob, task.job_id)
+            settings = dict(job.settings or {}) if job is not None else {}
+            if task.source_platform != "etsy" and str(settings.get("channel") or "").lower() != "etsy":
+                return {"valid": False, "status": "invalid_channel"}
+            task.status = "running"
+            task.lease_expires_at = self._renew_lease(session, task, now)
+            return {
+                "valid": True,
+                "status": "ok",
+                "taskId": task.id,
+                "jobId": task.job_id,
+                "sourcePlatform": "etsy",
+                "sourceProductId": task.source_product_id or "",
+                "listingId": task.source_product_id or "",
+                "canonicalUrl": task.canonical_url,
+                "settings": settings,
+            }
 
     def filter_asin_activity(self, store_id: str, asins: list[str]) -> dict[str, Any]:
         """Read current ownership, never treat a historical registry row as ownership."""
@@ -1127,6 +1522,16 @@ class CoordinatorStore(CoordinatorObservability):
         if len(raw_urls) > 200:
             raise ValueError("A job may contain at most 200 inputs.")
         settings = CrawlSettings.from_api(payload).api_dict()
+        source_platform = str(payload.get("sourcePlatform") or payload.get("channel") or "amazon").strip().lower()
+        if source_platform not in {"amazon", "etsy"}:
+            raise ValueError("sourcePlatform must be amazon or etsy.")
+        is_etsy_job = source_platform == "etsy"
+        settings["sourcePlatform"] = source_platform
+        if is_etsy_job:
+            settings["channel"] = "etsy"
+            settings["profileSlug"] = "default"
+            settings["applyJeminisePreset"] = False
+
         if "sequentialBatch" in payload:
             if not isinstance(payload["sequentialBatch"], bool):
                 raise ValueError("sequentialBatch must be boolean.")
@@ -1134,16 +1539,28 @@ class CoordinatorStore(CoordinatorObservability):
         batch_skips = payload.get("batchSkippedInputs") or []
         if not isinstance(batch_skips, list) or len(batch_skips) > 200:
             raise ValueError("batchSkippedInputs must be an array of at most 200 entries.")
-        source_asins = {normalize_amazon_input(source).asin for source in raw_urls} if batch_skips else set()
+        if is_etsy_job:
+            source_ids = set()
+            if batch_skips:
+                for raw_src in raw_urls:
+                    try:
+                        source_ids.add(normalize_etsy_input(raw_src).listing_id)
+                    except ValueError:
+                        continue
+        else:
+            source_ids = {normalize_amazon_input(source).asin for source in raw_urls} if batch_skips else set()
         if batch_skips and not settings.get("sequentialBatch"):
             raise ValueError("batchSkippedInputs requires sequentialBatch.")
         skipped_inputs = {}
         for skipped in batch_skips:
-            if (not isinstance(skipped, dict) or skipped.get("asin") not in source_asins
+            skip_key = str(skipped.get("listingId") or skipped.get("asin") or "").strip() if isinstance(skipped, dict) else ""
+            if not is_etsy_job:
+                skip_key = skip_key.upper()
+            if (not isinstance(skipped, dict) or skip_key not in source_ids
                     or skipped.get("reason") not in {"existing_shopify", "existing_pipeline", "attention"}
-                    or skipped["asin"] in skipped_inputs):
+                    or skip_key in skipped_inputs):
                 raise ValueError("Invalid or duplicate batchSkippedInputs entry.")
-            skipped_inputs[skipped["asin"]] = skipped["reason"]
+            skipped_inputs[skip_key] = skipped["reason"]
         if "classificationMode" in payload:
             if payload["classificationMode"] not in {"automatic", "manual"}:
                 raise ValueError("classificationMode must be automatic or manual.")
@@ -1162,6 +1579,16 @@ class CoordinatorStore(CoordinatorObservability):
             raise ValueError("existingShopifyAsins must contain normalized Amazon ASINs.")
         if existing_shopify_asins:
             settings["existingShopifyAsins"] = existing_shopify_asins
+
+        raw_existing_etsy_ids = payload.get("existingShopifyListingIds") or []
+        if not isinstance(raw_existing_etsy_ids, list) or len(raw_existing_etsy_ids) > 200:
+            raise ValueError("existingShopifyListingIds must be an array of at most 200 listing IDs.")
+        existing_etsy_ids = list(dict.fromkeys(str(lid).strip() for lid in raw_existing_etsy_ids if str(lid).strip()))
+        if any(re.fullmatch(r"\d{6,20}", lid) is None for lid in existing_etsy_ids):
+            raise ValueError("existingShopifyListingIds must contain numeric Etsy listing IDs.")
+        if existing_etsy_ids:
+            settings["existingShopifyListingIds"] = existing_etsy_ids
+
         raw_refresh_family_asins = payload.get("refreshFamilyAsins") or []
         if not isinstance(raw_refresh_family_asins, list) or len(raw_refresh_family_asins) > 200:
             raise ValueError("refreshFamilyAsins must be an array of at most 200 ASINs.")
@@ -1197,24 +1624,54 @@ class CoordinatorStore(CoordinatorObservability):
                         raise ValueError("STORE_CRAWL_SETTINGS_CHANGED: Cấu hình store đã thay đổi. Tải lại cấu hình trước khi cào.")
                     settings.update(saved_config["defaults"])
                     settings["storeCrawlSettingsUpdatedAt"] = expected_revision
+                if is_etsy_job:
+                    # Etsy keeps store vendor + imageProfileSlug + pricing, never Amazon variant presets.
+                    settings["profileSlug"] = "default"
+                    settings["applyJeminisePreset"] = False
                 settings["vendor"] = saved_config["vendor"]
                 settings["vendorPolicyVersion"] = 1
-            input_asins = []
-            for source in raw_urls:
-                try:
-                    input_asins.append(normalize_amazon_input(source).asin)
-                except ValueError:
-                    continue
-            # Serialize creation with audited family recovery across Coordinator
-            # processes, not only the in-process creation lock.
-            family_parents = select(AmazonAsinRegistry.parent_asin).where(
-                AmazonAsinRegistry.store_id == str(settings.get("storeId") or "").strip(),
-                AmazonAsinRegistry.asin.in_(input_asins),
-            )
-            session.scalars(select(AmazonAsinRegistry).where(
-                AmazonAsinRegistry.store_id == str(settings.get("storeId") or "").strip(),
-                AmazonAsinRegistry.parent_asin.in_(family_parents),
-            ).order_by(AmazonAsinRegistry.asin).with_for_update()).all()
+
+            effective_store_id = str(settings.get("storeId") or "").strip()
+            if is_etsy_job:
+                input_listing_ids: list[str] = []
+                for source in raw_urls:
+                    try:
+                        input_listing_ids.append(normalize_etsy_input(source).listing_id)
+                    except ValueError:
+                        continue
+                if effective_store_id and input_listing_ids:
+                    if session.get_bind().dialect.name == "postgresql":
+                        for lid in sorted(set(input_listing_ids)):
+                            session.execute(
+                                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                                {"lock_key": _shopify_sync_lock_key(effective_store_id, f"etsy-job:{lid}")},
+                            )
+                    session.scalars(
+                        select(EtsyListingRegistry)
+                        .where(
+                            EtsyListingRegistry.store_id == effective_store_id,
+                            EtsyListingRegistry.listing_id.in_(input_listing_ids),
+                        )
+                        .order_by(EtsyListingRegistry.listing_id)
+                        .with_for_update()
+                    ).all()
+            else:
+                input_asins = []
+                for source in raw_urls:
+                    try:
+                        input_asins.append(normalize_amazon_input(source).asin)
+                    except ValueError:
+                        continue
+                # Serialize creation with audited family recovery across Coordinator
+                # processes, not only the in-process creation lock.
+                family_parents = select(AmazonAsinRegistry.parent_asin).where(
+                    AmazonAsinRegistry.store_id == effective_store_id,
+                    AmazonAsinRegistry.asin.in_(input_asins),
+                )
+                session.scalars(select(AmazonAsinRegistry).where(
+                    AmazonAsinRegistry.store_id == effective_store_id,
+                    AmazonAsinRegistry.parent_asin.in_(family_parents),
+                ).order_by(AmazonAsinRegistry.asin).with_for_update()).all()
             active_job_id = session.scalar(
                 select(CrawlJob.id)
                 .where(CrawlJob.status.in_(ACTIVE_JOB_STATUSES))
@@ -1238,30 +1695,52 @@ class CoordinatorStore(CoordinatorObservability):
                 priority=max(0, min(100, int(payload.get("schedulerPriority") or 0))),
                 replacement_of_job_id=str(payload.get("replacementOfJobId") or "").strip() or None,
             ))
-            seen_asins: set[str] = set()
+            seen_ids: set[str] = set()
             accepted = 0
             rejected = 0
             for ordinal, source in enumerate(raw_urls):
                 try:
-                    normalized = normalize_amazon_input(source)
-                    if normalized.asin in seen_asins:
-                        continue
-                    seen_asins.add(normalized.asin)
-                    negative = self._active_negative(
-                        session, self._negative_key(normalized.asin, str(settings["amazonZip"])), utc_now()
-                    )
-                    is_terminal = negative is not None and negative.get("retryable") is False
-                    task = CrawlTask(
-                        id=_id(), job_id=job.id, ordinal=ordinal, source=source,
-                        asin=normalized.asin, canonical_url=normalized.canonical_url,
-                        status="dead_letter" if is_terminal else "queued",
-                        last_error=classify_task_error(negative) if negative is not None else None,
-                        completed_at=utc_now() if is_terminal else None,
-                    )
-                    session.add(task)
-                    if normalized.asin in skipped_inputs:
-                        self._skip_batch_input(session, task, skipped_inputs[normalized.asin])
-                    accepted += 1
+                    if is_etsy_job:
+                        normalized_etsy = normalize_etsy_input(source)
+                        if normalized_etsy.listing_id in seen_ids:
+                            continue
+                        seen_ids.add(normalized_etsy.listing_id)
+                        task = CrawlTask(
+                            id=_id(),
+                            job_id=job.id,
+                            ordinal=ordinal,
+                            source=source,
+                            source_platform="etsy",
+                            source_product_id=normalized_etsy.listing_id,
+                            asin=None,
+                            canonical_url=normalized_etsy.canonical_url,
+                            status="queued",
+                        )
+                        session.add(task)
+                        if normalized_etsy.listing_id in skipped_inputs:
+                            self._skip_batch_input(session, task, skipped_inputs[normalized_etsy.listing_id])
+                        accepted += 1
+                    else:
+                        normalized = normalize_amazon_input(source)
+                        if normalized.asin in seen_ids:
+                            continue
+                        seen_ids.add(normalized.asin)
+                        negative = self._active_negative(
+                            session, self._negative_key(normalized.asin, str(settings["amazonZip"])), utc_now()
+                        )
+                        is_terminal = negative is not None and negative.get("retryable") is False
+                        task = CrawlTask(
+                            id=_id(), job_id=job.id, ordinal=ordinal, source=source,
+                            source_platform="amazon", source_product_id=normalized.asin,
+                            asin=normalized.asin, canonical_url=normalized.canonical_url,
+                            status="dead_letter" if is_terminal else "queued",
+                            last_error=classify_task_error(negative) if negative is not None else None,
+                            completed_at=utc_now() if is_terminal else None,
+                        )
+                        session.add(task)
+                        if normalized.asin in skipped_inputs:
+                            self._skip_batch_input(session, task, skipped_inputs[normalized.asin])
+                        accepted += 1
                 except ValueError as error:
                     session.add(InvalidJobInput(
                         id=_id(), job_id=job.id, ordinal=ordinal, source=source, message=str(error),
@@ -1774,12 +2253,62 @@ class CoordinatorStore(CoordinatorObservability):
         task.completed_at = utc_now()
         task.last_error = None
         CoordinatorStore._event(session, task.job_id, "batch_input_skipped", {
-            "taskId": task.id, "asin": task.asin, "reason": reason, "relatedAsin": related_asin,
+            "taskId": task.id,
+            "asin": task.asin or task.source_product_id or "",
+            "sourcePlatform": task.source_platform,
+            "sourceProductId": task.source_product_id,
+            "reason": reason,
+            "relatedAsin": related_asin,
         })
 
     def _batch_input_coverage(self, session, job: CrawlJob, task: CrawlTask) -> tuple[str, str | None] | None:
-        asin = task.asin
         store_id = str(job.settings.get("storeId") or "").strip()
+        if task.source_platform == "etsy" or str(job.settings.get("channel") or "").lower() == "etsy":
+            lid = str(task.source_product_id or "").strip()
+            if not lid or not store_id:
+                return None
+            source_key = f"etsy:{lid}"
+            candidates = session.scalars(
+                select(CrawlProductItem)
+                .join(CrawlJob)
+                .where(
+                    CrawlJob.settings["storeId"].as_string() == store_id,
+                    CrawlProductItem.status.not_in(["deleted", "cancelled"]),
+                    CrawlProductItem.source_key == source_key,
+                )
+            ).all()
+            external_jobs = {
+                item.id: str(external["jobId"])
+                for item in candidates
+                if isinstance(external := (item.shopify_result or {}).get("externalSeo"), dict) and external.get("jobId")
+            }
+            cancelled = load_cancelled_seo_job_ids(session, store_id, set(external_jobs.values()))
+            own_items = {item.id for item in candidates if item.task_id == task.id}
+            for item in candidates:
+                if item.task_id == task.id:
+                    continue
+                if self._is_operator_cleared_seo_item(item) or external_jobs.get(item.id) in cancelled:
+                    continue
+                res = item.shopify_result or {}
+                if res.get("skippedExistingPipeline") or res.get("skippedExistingShopify"):
+                    continue
+                if (res.get("review") or {}).get("archivedAt"):
+                    continue
+                if item.status == "completed" and item.job_id != job.id:
+                    continue
+                if item.status in {"failed", "rejected", "reconciliation_required"} or (res.get("review") or {}).get("syncBlockers"):
+                    return "attention", None
+                return ("received" if item.job_id == job.id else "existing_pipeline", lid)
+            if any(
+                identity.owner_item_id not in own_items
+                for identity in load_active_etsy_seo_identities(session, store_id, listing_ids={lid})
+            ):
+                return "existing_pipeline", None
+            return None
+
+        asin = task.asin
+        if not asin:
+            return None
         parents = set(session.scalars(select(AmazonAsinRegistry.parent_asin).where(
             AmazonAsinRegistry.store_id == store_id, AmazonAsinRegistry.asin == asin,
         )))
@@ -1880,7 +2409,9 @@ class CoordinatorStore(CoordinatorObservability):
             client_caps = client.capabilities if isinstance(client.capabilities, dict) else {}
             can_pinterest = bool(client_caps.get("pinterest", False))
             can_amazon = bool(client_caps.get("amazon", True))
+            can_etsy = bool(client_caps.get("etsy", False))
             can_reviews = bool(client_caps.get("amazonReviews", False))
+            etsy_blocked = self.etsy_auth.is_rate_limited(session, now=now)
             task_ids = session.scalars(
                 select(CrawlTask.id)
                 .join(CrawlJob, CrawlTask.job_id == CrawlJob.id)
@@ -1911,12 +2442,13 @@ class CoordinatorStore(CoordinatorObservability):
                     continue
                 pending_channel = str(pending_settings.get("channel", "amazon")).lower()
                 if (pending_channel == "amazon" and can_amazon and not amazon_blocked
+                        or pending_channel == "etsy" and can_etsy and not etsy_blocked
                         or pending_channel == "amazon_reviews" and can_reviews and not amazon_blocked
                         or pending_channel == "pinterest" and can_pinterest):
                     pending_channels.add(pending_channel)
             if pending_channels:
                 capability_signature = tuple(bool(client_caps.get(key, default)) for key, default in (
-                    ("amazon", True), ("amazonReviews", False), ("pinterest", False),
+                    ("amazon", True), ("etsy", False), ("amazonReviews", False), ("pinterest", False),
                 ))
                 peers = session.scalars(select(ClientRecord).where(
                     ClientRecord.agent_group == client.agent_group,
@@ -1929,7 +2461,7 @@ class CoordinatorStore(CoordinatorObservability):
                 for peer in peers:
                     peer_capabilities = peer.capabilities if isinstance(peer.capabilities, dict) else {}
                     peer_signature = tuple(bool(peer_capabilities.get(key, default)) for key, default in (
-                        ("amazon", True), ("amazonReviews", False), ("pinterest", False),
+                        ("amazon", True), ("etsy", False), ("amazonReviews", False), ("pinterest", False),
                     ))
                     if peer_signature != capability_signature:
                         continue
@@ -1991,12 +2523,14 @@ class CoordinatorStore(CoordinatorObservability):
                 channel = str(job_settings.get("channel", "amazon")).lower()
                 if channel == "pinterest" and not can_pinterest:
                     continue
+                if channel == "etsy" and (not can_etsy or etsy_blocked):
+                    continue
                 if channel == "amazon" and (not can_amazon or amazon_blocked):
                     continue
                 if channel == "amazon_reviews" and (not can_reviews or amazon_blocked):
                     continue
                 amazon_zip = str(job_settings.get("amazonZip") or "90001")
-                negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now) if channel == "amazon" else None
+                negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now) if (channel == "amazon" and task.asin) else None
                 if negative is not None:
                     task.last_error = classify_task_error(negative)
                     if negative.get("retryable") is False:
@@ -2052,7 +2586,10 @@ class CoordinatorStore(CoordinatorObservability):
                     "jobId": task.job_id,
                     "leaseId": lease_id,
                     "source": task.source,
-                    "asin": task.asin,
+                    "sourcePlatform": task.source_platform,
+                    "sourceProductId": task.source_product_id,
+                    "listingId": task.source_product_id if task.source_platform == "etsy" else None,
+                    "asin": task.asin or "",
                     "requestId": task.id,
                     "taskAttempt": ordinal,
                     "url": task.canonical_url,
@@ -2137,7 +2674,7 @@ class CoordinatorStore(CoordinatorObservability):
             record_fleet_failure(session, error)
             job = session.get(CrawlJob, task.job_id)
             job_settings = job.settings if job else {}
-            if str(job_settings.get("channel", "amazon")).lower() == "amazon":
+            if str(job_settings.get("channel", "amazon")).lower() == "amazon" and task.asin:
                 amazon_zip = str(job_settings.get("amazonZip") or "90001")
                 self._store_negative(session, self._negative_key(task.asin, amazon_zip), error)
                 if error.get("reason") == "captcha":
@@ -2295,12 +2832,27 @@ class CoordinatorStore(CoordinatorObservability):
             products = payload.get("products") if isinstance(payload.get("products"), list) else []
             retained_products: list[Any] = []
             job = session.get(CrawlJob, task.job_id)
+            effective_store_id = str((job.settings if job else {}).get("storeId") or "").strip()
             active_seo_identities = load_active_seo_identities(
-                session, str((job.settings if job else {}).get("storeId") or "").strip(),
+                session, effective_store_id,
                 asins=set().union(*(self._product_exact_asins(product) for product in products if isinstance(product, dict))),
             )
+            etsy_product_ids = {
+                lid
+                for product in products
+                if isinstance(product, dict) and self._is_etsy_product(product)
+                and (lid := self._product_etsy_listing_id(product))
+            }
+            active_etsy_seo_identities = load_active_etsy_seo_identities(
+                session, effective_store_id, listing_ids=etsy_product_ids,
+            ) if etsy_product_ids else []
             for product in products:
                 if isinstance(product, dict) and product.get("id"):
+                    if effective_store_id and session.get_bind().dialect.name == "postgresql":
+                        session.execute(
+                            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                            {"lock_key": _shopify_sync_lock_key(effective_store_id, f"accept:{_source_key(product)}")},
+                        )
                     existing_shopify_product = self._existing_shopify_product(session, job, product)
                     if existing_shopify_product is not None:
                         exact_asins, shopify_product_ids = existing_shopify_product
@@ -2321,8 +2873,18 @@ class CoordinatorStore(CoordinatorObservability):
                     current_item_id = session.scalar(select(CrawlProductItem.id).where(
                         CrawlProductItem.job_id == task.job_id, CrawlProductItem.source_key == _source_key(product),
                     ))
-                    seo_job_ids = match_active_seo_jobs(active_seo_identities, self._product_exact_asins(product),
-                                                       owner_item_id=current_item_id or "")
+                    if self._is_etsy_product(product):
+                        seo_job_ids = match_active_etsy_seo_jobs(
+                            active_etsy_seo_identities,
+                            self._product_etsy_listing_id(product) or "",
+                            owner_item_id=current_item_id or "",
+                        )
+                    else:
+                        seo_job_ids = match_active_seo_jobs(
+                            active_seo_identities,
+                            self._product_exact_asins(product),
+                            owner_item_id=current_item_id or "",
+                        )
                     if seo_job_ids and current_item_id is None:
                         self._event(session, task.job_id, "product_skipped_existing_pipeline", {
                             "sourceKey": _source_key(product), "externalSeoJobIds": seo_job_ids,
@@ -2336,6 +2898,14 @@ class CoordinatorStore(CoordinatorObservability):
                         product=product,
                         checksum=str(product.get("productChecksum") or ""),
                     )
+                    if self._is_etsy_product(product):
+                        self._upsert_etsy_registry(
+                            session,
+                            store_id=effective_store_id,
+                            job_id=task.job_id,
+                            product=product,
+                            status="crawled",
+                        )
                     if item.status != "completed":
                         retained_products.append(product)
                 else:
@@ -2349,7 +2919,7 @@ class CoordinatorStore(CoordinatorObservability):
             task.status = "completed"
             task.next_retry_at = None
             amazon_zip = str((job.settings if job else {}).get("amazonZip") or "90001")
-            negative = session.get(CoordinatorState, self._negative_key(task.asin, amazon_zip))
+            negative = session.get(CoordinatorState, self._negative_key(task.asin, amazon_zip)) if task.asin else None
             if negative is not None:
                 session.delete(negative)
             task.completed_at = utc_now()
@@ -2404,13 +2974,30 @@ class CoordinatorStore(CoordinatorObservability):
             status="received",
         )
         job = session.get(CrawlJob, task.job_id)
-        released_alias = session.scalar(select(AmazonAsinRegistry.id).where(
-            AmazonAsinRegistry.store_id == str((job.settings if job else {}).get("storeId") or "").strip(),
-            AmazonAsinRegistry.asin.in_(CoordinatorStore._product_exact_asins(product)),
-            AmazonAsinRegistry.status == "released",
-        ).limit(1))
-        if released_alias is not None:
-            item.shopify_result = {"recoverySyncGeneration": 1}
+        store_id = str((job.settings if job else {}).get("storeId") or "").strip()
+        if CoordinatorStore._is_etsy_product(product):
+            lid = CoordinatorStore._product_etsy_listing_id(product)
+            released_etsy = (
+                session.scalar(
+                    select(EtsyListingRegistry.id).where(
+                        EtsyListingRegistry.store_id == store_id,
+                        EtsyListingRegistry.listing_id == lid,
+                        EtsyListingRegistry.status == "released",
+                    ).limit(1)
+                )
+                if lid and store_id
+                else None
+            )
+            if released_etsy is not None:
+                item.shopify_result = {"recoverySyncGeneration": 1}
+        else:
+            released_alias = session.scalar(select(AmazonAsinRegistry.id).where(
+                AmazonAsinRegistry.store_id == store_id,
+                AmazonAsinRegistry.asin.in_(CoordinatorStore._product_exact_asins(product)),
+                AmazonAsinRegistry.status == "released",
+            ).limit(1))
+            if released_alias is not None:
+                item.shopify_result = {"recoverySyncGeneration": 1}
         session.add(item)
         session.flush()
         return item, True
@@ -2460,6 +3047,12 @@ class CoordinatorStore(CoordinatorObservability):
             if attempt is None:
                 return {"status": "stale"}
             job = session.get(CrawlJob, task.job_id)
+            effective_store_id = str((job.settings if job else {}).get("storeId") or "").strip()
+            if effective_store_id and session.get_bind().dialect.name == "postgresql":
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                    {"lock_key": _shopify_sync_lock_key(effective_store_id, f"accept:{source_key}")},
+                )
             existing_shopify_product = self._existing_shopify_product(session, job, product)
             if existing_shopify_product is not None:
                 exact_asins, shopify_product_ids = existing_shopify_product
@@ -2488,20 +3081,30 @@ class CoordinatorStore(CoordinatorObservability):
                     "sourceKey": source_key, "productItemId": retained_id,
                 })
             if existing is not None:
-                # sourceKey is the stable product identity within a crawl job.
-                # Retries may legitimately change volatile diagnostics and
-                # timestamps, so preserve the first accepted payload and ACK
-                # the later lease without enqueueing duplicate pipeline work.
                 return self._save_receipt(session, receipt_id, task_id, payload, {
                     "status": "duplicate",
                     "productItemId": existing.id,
                     "sourceKey": existing.source_key,
                 })
-            seo_job_ids = match_active_seo_jobs(
-                load_active_seo_identities(session, str((job.settings if job else {}).get("storeId") or "").strip(),
-                                           asins=self._product_exact_asins(product)),
-                self._product_exact_asins(product),
-            )
+            if self._is_etsy_product(product):
+                lid = self._product_etsy_listing_id(product) or ""
+                seo_job_ids = match_active_etsy_seo_jobs(
+                    load_active_etsy_seo_identities(
+                        session,
+                        effective_store_id,
+                        listing_ids={lid} if lid else None,
+                    ),
+                    lid,
+                )
+            else:
+                seo_job_ids = match_active_seo_jobs(
+                    load_active_seo_identities(
+                        session,
+                        effective_store_id,
+                        asins=self._product_exact_asins(product),
+                    ),
+                    self._product_exact_asins(product),
+                )
             if seo_job_ids:
                 self._event(session, task.job_id, "product_skipped_existing_pipeline", {
                     "sourceKey": source_key, "externalSeoJobIds": seo_job_ids,
@@ -2518,13 +3121,22 @@ class CoordinatorStore(CoordinatorObservability):
                 product=product,
                 checksum=str(payload.get("productChecksum") or checksum),
             )
-            self._upsert_asin_registry(
-                session,
-                store_id=str((job.settings if job else {}).get("storeId") or ""),
-                job_id=task.job_id,
-                product=product,
-                status="crawled",
-            )
+            if self._is_etsy_product(product):
+                self._upsert_etsy_registry(
+                    session,
+                    store_id=effective_store_id,
+                    job_id=task.job_id,
+                    product=product,
+                    status="crawled",
+                )
+            else:
+                self._upsert_asin_registry(
+                    session,
+                    store_id=effective_store_id,
+                    job_id=task.job_id,
+                    product=product,
+                    status="crawled",
+                )
             if created:
                 self._event(session, task.job_id, "product_received", {
                     "taskId": task.id,
@@ -2672,6 +3284,8 @@ class CoordinatorStore(CoordinatorObservability):
                     "shopifyResult": pipeline_result if is_sync_claim else None,
                     "externalSeo": pipeline_result.get("externalSeo"),
                     "inputAsin": task.asin,
+                    "sourcePlatform": task.source_platform,
+                    "sourceProductId": task.source_product_id,
                     "product": (item.normalized_payload or item.raw_payload) if (is_sync_claim or external_seo) else item.raw_payload,
                     "assetsNormalized": int((pipeline_result.get("seo") or {}).get("assetsNormalized") or 0),
                     "settings": job_settings,
@@ -2727,16 +3341,60 @@ class CoordinatorStore(CoordinatorObservability):
             pipeline_result = dict(item.shopify_result or {})
             if pipeline_result.get("externalSeo") or pipeline_result.get("recoverySyncGeneration"):
                 return False
+            job = session.get(CrawlJob, item.job_id)
+            store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
+            if not store_id:
+                return False
+
+            if self._is_etsy_product(item.raw_payload or {}) or item.source_key.startswith("etsy:"):
+                lid = self._product_etsy_listing_id(item.raw_payload or {}) or (
+                    item.source_key.split(":", 1)[1].strip() if item.source_key.startswith("etsy:") else ""
+                )
+                matched_lids = {str(match.get("listingId") or "").strip() for match in matches}
+                if (
+                    not lid
+                    or lid not in matched_lids
+                    or any(
+                        re.fullmatch(r"gid://shopify/Product/[0-9]+", str(match.get("productId") or "")) is None
+                        for match in matches
+                    )
+                ):
+                    return False
+                for match in matches:
+                    if str(match.get("listingId") or "").strip() == lid:
+                        self._upsert_etsy_registry(
+                            session,
+                            store_id=store_id,
+                            job_id=item.job_id,
+                            listing_id=lid,
+                            status="synced",
+                            shopify_product_id=str(match["productId"]),
+                        )
+                pipeline_result.update({"skippedExistingShopify": True, "existingShopifyMatches": matches})
+                item.shopify_result = pipeline_result
+                item.status = "completed"
+                item.claimed_by = None
+                item.claim_expires_at = None
+                item.next_attempt_at = None
+                item.last_error = None
+                item.completed_at = utc_now()
+                self._event(session, item.job_id, "product_skipped_existing_shopify", {
+                    "sourceKey": item.source_key,
+                    "productItemId": item.id,
+                    "listingIds": [lid],
+                    "shopifyProductIds": sorted({str(match["productId"]) for match in matches}),
+                    "reason": "live_exact_etsy_check",
+                })
+                session.flush()
+                self._refresh_job(session, item.job_id)
+                return True
+
             exact_asins = self._product_exact_asins(item.raw_payload)
             matched_asins = {str(match.get("asin") or "") for match in matches}
             if not exact_asins or matched_asins != exact_asins or any(
                 re.fullmatch(r"gid://shopify/Product/[0-9]+", str(match.get("productId") or "")) is None
                 for match in matches
             ):
-                return False
-            job = session.get(CrawlJob, item.job_id)
-            store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
-            if not store_id:
                 return False
             for match in matches:
                 self._upsert_asin_registry(
@@ -2772,10 +3430,21 @@ class CoordinatorStore(CoordinatorObservability):
                 return False
             job = session.get(CrawlJob, item.job_id)
             store_id = str((job.settings or {}).get("storeId") or "").strip() if job else ""
-            seo_job_ids = match_active_seo_jobs(
-                load_active_seo_identities(session, store_id, asins=self._product_exact_asins(item.raw_payload or {})),
-                self._product_exact_asins(item.raw_payload or {}), owner_item_id=item.id,
-            )
+            raw_prod = item.raw_payload or {}
+            if self._is_etsy_product(raw_prod) or item.source_key.startswith("etsy:"):
+                lid = self._product_etsy_listing_id(raw_prod) or (
+                    item.source_key.split(":", 1)[1].strip() if item.source_key.startswith("etsy:") else ""
+                )
+                seo_job_ids = match_active_etsy_seo_jobs(
+                    load_active_etsy_seo_identities(session, store_id, listing_ids={lid} if lid else None),
+                    lid,
+                    owner_item_id=item.id,
+                )
+            else:
+                seo_job_ids = match_active_seo_jobs(
+                    load_active_seo_identities(session, store_id, asins=self._product_exact_asins(raw_prod)),
+                    self._product_exact_asins(raw_prod), owner_item_id=item.id,
+                )
             if not seo_job_ids:
                 return False
             item.shopify_result = {**pipeline_result, "skippedExistingPipeline": True,
@@ -2861,6 +3530,66 @@ class CoordinatorStore(CoordinatorObservability):
             self._refresh_job(session, item.job_id)
             return True
 
+    def park_product_attention_review(
+        self,
+        item_id: str,
+        *,
+        worker_id: str,
+        blockers: list[str],
+        normalized_payload: dict[str, Any] | None = None,
+        seo_summary: dict[str, Any] | None = None,
+        image_summary: dict[str, Any] | None = None,
+    ) -> bool:
+        """Route a crawled product with incomplete variant/price/personalization evidence to SEO Review -> Cần xử lý."""
+        clean_blockers = [str(b).strip() for b in blockers if str(b or "").strip()]
+        if not clean_blockers:
+            clean_blockers = ["Dữ liệu sản phẩm chưa đủ bằng chứng xác thực; đã chặn tự động sync."]
+        with self.sessions.begin() as session:
+            item = session.scalar(select(CrawlProductItem).where(CrawlProductItem.id == item_id).with_for_update())
+            if item is None or item.claimed_by != worker_id or item.status not in {
+                "normalizing", "seo", "image_processing",
+            }:
+                return False
+            job = session.get(CrawlJob, item.job_id)
+            settings = dict(job.settings or {}) if job is not None else {}
+            store_id = str(settings.get("storeId") or "").strip()
+            current = dict(item.shopify_result or {})
+            if isinstance(seo_summary, dict):
+                current["seo"] = seo_summary
+            if isinstance(image_summary, dict):
+                current["imageProcessing"] = image_summary
+            payload = dict(normalized_payload or item.normalized_payload or item.raw_payload or {})
+            payload["syncBlockers"] = clean_blockers
+            now_iso = utc_iso(utc_now())
+            current["review"] = {
+                "storeId": store_id,
+                "syncGeneration": int(current.get("recoverySyncGeneration") or 0),
+                "decision": "pending",
+                "approvalSource": None,
+                "syncStatus": "failed",
+                "syncBlockers": clean_blockers,
+                "version": 1,
+                "rejectionReason": None,
+                "syncError": " ".join(clean_blockers),
+                "readyAt": now_iso,
+                "updatedAt": now_iso,
+            }
+            item.normalized_payload = payload
+            item.shopify_result = current
+            item.status = "waiting_review"
+            item.last_error = {"message": " ".join(clean_blockers), "code": "EVIDENCE_INCOMPLETE"}
+            item.claimed_by = None
+            item.claim_expires_at = None
+            item.next_attempt_at = None
+            item.completed_at = None
+            self._event(session, item.job_id, "product_attention_review", {
+                "productItemId": item.id,
+                "sourceKey": item.source_key,
+                "blockers": clean_blockers,
+            })
+            self._refresh_job(session, item.job_id)
+            return True
+
     def mark_product_review_ready(
         self,
         item_id: str,
@@ -2887,21 +3616,46 @@ class CoordinatorStore(CoordinatorObservability):
             current["imageProcessing"] = image_summary
             job = session.get(CrawlJob, item.job_id)
             settings = dict(job.settings or {}) if job is not None else {}
+            sync_blockers = [
+                str(b).strip()
+                for b in (
+                    *(review_summary.get("syncBlockers") or []),
+                    *(normalized_payload.get("syncBlockers") or []),
+                    *(normalized_payload.get("customizationBlockers") or []),
+                )
+                if str(b or "").strip()
+            ]
+            sync_blockers = list(dict.fromkeys(sync_blockers))
+            if normalized_payload.get("customizerAuditStatus") == "error" and not sync_blockers:
+                sync_blockers.append("Trường cá nhân hóa bắt buộc chưa ánh xạ được sang Customizer; đã chặn tự động sync.")
+
             auto_sync = (
-                settings.get("autoSyncAfterSeo") is True
+                not sync_blockers
+                and settings.get("autoSyncAfterSeo") is True
                 and (settings.get("classificationMode") != "automatic" or (review_summary.get("classification") or {}).get("status") == "ready")
                 and seo_summary.get("engine") == "codex_mcp"
                 and seo_summary.get("status") == "completed"
             )
+            classification_error = (
+                (review_summary.get("classification") or {}).get("reason")
+                if (review_summary.get("classification") or {}).get("status") == "needs_review"
+                else None
+            )
+            effective_sync_error = (
+                " ".join(sync_blockers)
+                if sync_blockers
+                else classification_error
+            )
             current["review"] = {
                 **review_summary,
+                **({"syncBlockers": sync_blockers} if sync_blockers else {}),
                 "syncGeneration": int(current.get("recoverySyncGeneration") or 0),
                 "decision": "approved" if auto_sync else "pending",
                 "approvalSource": "automatic_policy" if auto_sync else None,
-                "syncStatus": "queued" if auto_sync else "idle",
+                "syncStatus": "queued" if auto_sync else ("failed" if sync_blockers else "idle"),
                 "version": 1,
                 "rejectionReason": None,
-                "syncError": (review_summary.get("classification") or {}).get("reason") if (review_summary.get("classification") or {}).get("status") == "needs_review" else None,
+                "syncError": effective_sync_error,
                 "readyAt": utc_iso(utc_now()),
                 "updatedAt": utc_iso(utc_now()),
             }
@@ -2932,10 +3686,12 @@ class CoordinatorStore(CoordinatorObservability):
         is_archived = bool(review.get("archivedAt"))
         can_change = not is_busy and not is_archived and sync_status != "synced"
         has_classification = (review.get("classification") or {}).get("status") != "needs_review"
-        return {"canEdit": can_change and not review.get("publicationOnly"), "canDecide": can_change and has_classification and not review.get("publicationOnly"),
-                "canSync": can_change and has_classification and review.get("decision") == "approved" and sync_status == "idle",
+        has_sync_blockers = bool(review.get("syncBlockers"))
+        return {"canEdit": can_change and not review.get("publicationOnly"),
+                "canDecide": can_change and has_classification and not has_sync_blockers and not review.get("publicationOnly"),
+                "canSync": can_change and has_classification and not has_sync_blockers and review.get("decision") == "approved" and sync_status == "idle",
                 "canArchive": not is_busy and not is_archived,
-                "canRetry": can_change and has_classification and review.get("decision") == "approved" and sync_status == "failed",
+                "canRetry": can_change and has_classification and not has_sync_blockers and review.get("decision") == "approved" and sync_status == "failed",
                 "canReconcile": not is_archived and (sync_status == "synced" or item.status == "reconciliation_required"),
                 "canRevise": False}
 
@@ -2987,6 +3743,8 @@ class CoordinatorStore(CoordinatorObservability):
         title = func.coalesce(product["title"].as_string(), raw["title"].as_string(), "")
         handle = func.coalesce(product["handle"].as_string(), raw["handle"].as_string(), "")
         asin = func.coalesce(product["parentAsin"].as_string(), raw["parentAsin"].as_string(), "")
+        source_platform = func.coalesce(product["sourcePlatform"].as_string(), raw["sourcePlatform"].as_string(), "amazon")
+        source_product_id = func.coalesce(product["sourceProductId"].as_string(), raw["sourceProductId"].as_string(), asin)
         selected_decision = func.coalesce(review["decision"].as_string(), "pending")
         sync_status = func.coalesce(review["syncStatus"].as_string(), "idle")
         archived_at = func.coalesce(review["archivedAt"].as_float(), 0)
@@ -3007,7 +3765,7 @@ class CoordinatorStore(CoordinatorObservability):
             conditions.append(review_stage == stage)
         if search:
             pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-            conditions.append(or_(title.ilike(pattern, escape="\\"), handle.ilike(pattern, escape="\\"), asin.ilike(pattern, escape="\\")))
+            conditions.append(or_(title.ilike(pattern, escape="\\"), handle.ilike(pattern, escape="\\"), asin.ilike(pattern, escape="\\"), source_product_id.ilike(pattern, escape="\\")))
         if decision:
             conditions.append(sync_status == "failed" if decision == "sync_failed" else selected_decision == decision)
         with self.sessions() as session:
@@ -3021,19 +3779,23 @@ class CoordinatorStore(CoordinatorObservability):
                                           func.coalesce(product["media"][0]["processedUrl"].as_string(),
                                                         product["media"][0]["url"].as_string(), raw["media"][0]["url"].as_string(), ""),
                                           product["media"][0]["processedFileToken"].as_string(), archived_at, review_stage, is_busy,
-                                          review["publicationOnly"].as_boolean(), review["classification"]["status"].as_string())
+                                          review["publicationOnly"].as_boolean(), review["classification"]["status"].as_string(),
+                                          source_platform, source_product_id, review["syncBlockers"][0].as_string())
                                    .join(CrawlJob).where(*conditions)
                                    .order_by(CrawlProductItem.updated_at.desc(), CrawlProductItem.id.desc())
                                    .offset(offset).limit(limit)).all()
+            # Review source selects its catalog/detail/action backend, not the marketplace.
+            # Keep Etsy identity separate so the shared Review contract routes to Coordinator.
             items = [{"id": row[0], "recordId": row[0], "source": "crawler", "storeId": row[2],
-                      "title": row[3], "handle": row[4], "asin": row[5], "decision": row[6], "syncStatus": row[7],
+                      "title": row[3], "handle": row[4], "asin": row[5], "sourcePlatform": row[16], "sourceProductId": row[17],
+                      "decision": row[6], "syncStatus": row[7],
                       "syncError": row[8], "thumbnailUrl": row[9], "thumbnailToken": row[10],
                       "archivedAt": row[11] or None, "stage": row[12],
                       "actions": {"canEdit": not row[13] and not row[11] and row[7] != "synced" and not row[14],
-                                  "canDecide": not row[13] and not row[11] and row[7] != "synced" and not row[14] and row[15] != "needs_review",
-                                  "canSync": not row[13] and not row[11] and row[6] == "approved" and row[7] == "idle" and row[15] != "needs_review",
+                                  "canDecide": not row[13] and not row[11] and row[7] != "synced" and not row[14] and row[15] != "needs_review" and not row[18],
+                                  "canSync": not row[13] and not row[11] and row[6] == "approved" and row[7] == "idle" and row[15] != "needs_review" and not row[18],
                                   "canArchive": not row[13] and not row[11],
-                                  "canRetry": not row[13] and not row[11] and row[6] == "approved" and row[7] == "failed" and row[15] != "needs_review",
+                                  "canRetry": not row[13] and not row[11] and row[6] == "approved" and row[7] == "failed" and row[15] != "needs_review" and not row[18],
                                   "canReconcile": not row[11] and (row[7] == "synced" or row[13] and row[7] == "failed"), "canRevise": False},
                       "updatedAt": row[1].replace(tzinfo=utc_now().tzinfo).timestamp() * 1000} for row in rows]
             return {"items": items, "total": total, "counts": counts, "nextOffset": offset + len(items) if offset + len(items) < total else None}
@@ -3269,6 +4031,8 @@ class CoordinatorStore(CoordinatorObservability):
                 return {"conflict": True}
             if review.get("publicationOnly") or review.get("archivedAt") or str(review.get("syncStatus") or "idle") in {"queued", "syncing", "synced"}:
                 return {"locked": True}
+            if decision == "approved" and review.get("syncBlockers"):
+                return {"syncBlocked": True, "reason": " ".join(str(b) for b in review.get("syncBlockers", []))}
             review.update({
                 "decision": decision,
                 "rejectionReason": reason.strip() if decision == "rejected" and reason else None,
@@ -3297,6 +4061,8 @@ class CoordinatorStore(CoordinatorObservability):
             pipeline_result = dict(item.shopify_result or {})
             review = dict(pipeline_result.get("review") or {})
             job = session.get(CrawlJob, item.job_id)
+            if review.get("syncBlockers"):
+                return {"syncBlocked": True, "reason": " ".join(str(b) for b in review.get("syncBlockers", []))}
             if job and (job.settings or {}).get("classificationMode") == "automatic" and (review.get("classification") or {}).get("status") != "ready":
                 return {"classificationRequired": True}
             if review.get("archivedAt"):
@@ -3327,14 +4093,26 @@ class CoordinatorStore(CoordinatorObservability):
                         normalized_checksum=item.checksum,
                         shopify_result=pipeline_result,
                     )
-                    self._upsert_asin_registry(
-                        session,
-                        store_id=effective_store_id,
-                        job_id=item.job_id,
-                        product=dict(item.normalized_payload or item.raw_payload or {}),
-                        status="synced",
-                        shopify_product_id=legacy_product_id,
-                    )
+                    sync_prod = dict(item.normalized_payload or item.raw_payload or {})
+                    if self._is_etsy_product(sync_prod) or item.source_key.startswith("etsy:"):
+                        self._upsert_etsy_registry(
+                            session,
+                            store_id=effective_store_id,
+                            job_id=item.job_id,
+                            product=sync_prod,
+                            listing_id=item.source_key.split(":", 1)[1].strip() if item.source_key.startswith("etsy:") else None,
+                            status="synced",
+                            shopify_product_id=legacy_product_id,
+                        )
+                    else:
+                        self._upsert_asin_registry(
+                            session,
+                            store_id=effective_store_id,
+                            job_id=item.job_id,
+                            product=sync_prod,
+                            status="synced",
+                            shopify_product_id=legacy_product_id,
+                        )
                 review["syncGeneration"] = int(review.get("syncGeneration") or 0) + 1
                 review["reconciliationRequestedAt"] = utc_iso(utc_now())
             review.update({
@@ -3364,6 +4142,8 @@ class CoordinatorStore(CoordinatorObservability):
                 review = dict(pipeline_result.get("review") or {})
                 job = session.get(CrawlJob, item.job_id)
                 if job and (job.settings or {}).get("classificationMode") == "automatic" and (review.get("classification") or {}).get("status") != "ready":
+                    continue
+                if review.get("syncBlockers"):
                     continue
                 if review.get("archivedAt") or str(review.get("decision") or "pending") != "approved":
                     continue
@@ -3425,14 +4205,26 @@ class CoordinatorStore(CoordinatorObservability):
                     normalized_checksum=item.checksum,
                     shopify_result=pipeline_result,
                 )
-                self._upsert_asin_registry(
-                    session,
-                    store_id=effective_store_id,
-                    job_id=item.job_id,
-                    product=dict(item.normalized_payload or item.raw_payload or {}),
-                    status="synced",
-                    shopify_product_id=product_id,
-                )
+                sync_prod = dict(item.normalized_payload or item.raw_payload or {})
+                if self._is_etsy_product(sync_prod) or item.source_key.startswith("etsy:"):
+                    self._upsert_etsy_registry(
+                        session,
+                        store_id=effective_store_id,
+                        job_id=item.job_id,
+                        product=sync_prod,
+                        listing_id=item.source_key.split(":", 1)[1].strip() if item.source_key.startswith("etsy:") else None,
+                        status="synced",
+                        shopify_product_id=product_id,
+                    )
+                else:
+                    self._upsert_asin_registry(
+                        session,
+                        store_id=effective_store_id,
+                        job_id=item.job_id,
+                        product=sync_prod,
+                        status="synced",
+                        shopify_product_id=product_id,
+                    )
             item.shopify_result = pipeline_result
             item.status = "completed"
             item.last_error = None
@@ -3612,14 +4404,25 @@ class CoordinatorStore(CoordinatorObservability):
                 normalized_checksum=normalized_checksum,
                 shopify_result=shopify_result,
             )
-            self._upsert_asin_registry(
-                session,
-                store_id=store_id,
-                job_id=item.job_id,
-                product=item.raw_payload,
-                status="synced",
-                shopify_product_id=str(shopify_result.get("productId") or "").strip() or None,
-            )
+            if self._is_etsy_product(item.raw_payload or {}) or item.source_key.startswith("etsy:"):
+                self._upsert_etsy_registry(
+                    session,
+                    store_id=store_id,
+                    job_id=item.job_id,
+                    product=item.raw_payload or {},
+                    listing_id=item.source_key.split(":", 1)[1].strip() if item.source_key.startswith("etsy:") else None,
+                    status="synced",
+                    shopify_product_id=str(shopify_result.get("productId") or "").strip() or None,
+                )
+            else:
+                self._upsert_asin_registry(
+                    session,
+                    store_id=store_id,
+                    job_id=item.job_id,
+                    product=item.raw_payload,
+                    status="synced",
+                    shopify_product_id=str(shopify_result.get("productId") or "").strip() or None,
+                )
             pipeline_result = dict(item.shopify_result or {})
             pipeline_result.update(shopify_result)
             item.shopify_result = pipeline_result
@@ -3679,14 +4482,25 @@ class CoordinatorStore(CoordinatorObservability):
                 normalized_checksum=normalized_checksum,
                 shopify_result=shopify_result,
             )
-            self._upsert_asin_registry(
-                session,
-                store_id=store_id,
-                job_id=item.job_id,
-                product=item.raw_payload,
-                status="synced",
-                shopify_product_id=product_id or None,
-            )
+            if self._is_etsy_product(item.raw_payload or normalized_payload or {}) or item.source_key.startswith("etsy:"):
+                self._upsert_etsy_registry(
+                    session,
+                    store_id=store_id,
+                    job_id=item.job_id,
+                    product=item.raw_payload or normalized_payload or {},
+                    listing_id=item.source_key.split(":", 1)[1].strip() if item.source_key.startswith("etsy:") else None,
+                    status="synced",
+                    shopify_product_id=product_id or None,
+                )
+            else:
+                self._upsert_asin_registry(
+                    session,
+                    store_id=store_id,
+                    job_id=item.job_id,
+                    product=item.raw_payload,
+                    status="synced",
+                    shopify_product_id=product_id or None,
+                )
             # The normalized payload is the temporary public result. The raw
             # crawler copy is no longer needed after Shopify confirms the write.
             item.raw_payload = {}
@@ -4074,7 +4888,7 @@ class CoordinatorStore(CoordinatorObservability):
                 error["retryAfter"] = utc_iso(task.next_retry_at)
                 if task.status != "cancelling":
                     job = session.get(CrawlJob, task.job_id)
-                    if deadline is not None and job is not None:
+                    if deadline is not None and job is not None and task.asin and str((job.settings or {}).get("channel", "amazon")).lower() == "amazon":
                         self._store_negative(session, self._negative_key(task.asin, str(job.settings.get("amazonZip", "90001"))), error)
                     self._event(session, task.job_id, "task_timed_out" if deadline is not None else "task_lease_expired",
                                 {"taskId": task.id, "error": error})
@@ -4737,7 +5551,11 @@ class CoordinatorStore(CoordinatorObservability):
             for task in tasks:
                 attempt_count = int(session.scalar(select(func.count(TaskAttempt.id)).where(TaskAttempt.task_id == task.id)) or 0)
                 items.append({
-                    "taskId": task.id, "jobId": task.job_id, "asin": task.asin, "status": task.status,
+                    "taskId": task.id, "jobId": task.job_id,
+                    "asin": task.asin or task.source_product_id or "",
+                    "sourcePlatform": task.source_platform,
+                    "sourceProductId": task.source_product_id,
+                    "status": task.status,
                     "failureCount": task.failure_count, "maxRetry": task.max_retry,
                     "requeueCount": task.requeue_count, "attemptCount": attempt_count,
                     "errorCode": str((task.last_error or {}).get("errorCode") or "UNKNOWN"),
@@ -4950,16 +5768,17 @@ class CoordinatorStore(CoordinatorObservability):
         latest = latest if isinstance(latest, dict) else {}
         current_asin = None
         active = session.execute(
-            select(CrawlTask.id, CrawlTask.asin).where(
+            select(CrawlTask.id, CrawlTask.asin, CrawlTask.source_product_id).where(
                 CrawlTask.job_id == job.id, CrawlTask.status.in_(["leased", "running"]),
             ).order_by(CrawlTask.ordinal).limit(1)
         ).first()
         if active:
-            current_asin = active.asin
+            active_identifier = active.asin or active.source_product_id
+            current_asin = active_identifier
             if isinstance(event_payload, dict) and event_payload.get("taskId") == active.id:
                 items = latest.get("items")
                 if isinstance(items, list) and items and isinstance(items[0], dict):
-                    current_asin = str(items[0].get("currentAsin") or active.asin)
+                    current_asin = str(items[0].get("currentAsin") or active_identifier or "") or None
         retry_error = None
         if product_counts.get("retry_wait"):
             retry_error = session.scalar(
@@ -5020,11 +5839,16 @@ class CoordinatorStore(CoordinatorObservability):
                     input_message = ("Đang chờ lượt trong lô." if status == "queued" else "Đang cào / chờ server nhận kết quả." if status == "running"
                                else "Đã nhận kết quả." if status == "completed" else str((task.last_error or {}).get("message") or "Cần kiểm tra trạng thái task."))
                     if skip:
-                        input_message = {"existing_shopify": "Bỏ qua: ASIN đã có chính xác trên Shopify.",
-                                   "existing_pipeline": "Bỏ qua: ASIN đang trong SEO Queue/Review.",
+                        subject_label = "Listing Etsy" if task.source_platform == "etsy" else "ASIN"
+                        input_message = {"existing_shopify": f"Bỏ qua: {subject_label} đã có chính xác trên Shopify.",
+                                   "existing_pipeline": f"Bỏ qua: {subject_label} đang trong SEO Queue/Review.",
                                    "attention": "Cần kiểm tra bản xử lý hiện có; không tự tạo bản trùng.",
-                                   "received": f"Đã lấy qua ASIN {skip.get('relatedAsin') or 'trước đó'}; không cào lại."}[skip["reason"]]
-                    batch_progress["items"].append({"taskId": task.id, "source": task.source, "asin": task.asin,
+                                   "received": f"Đã lấy qua {subject_label} {skip.get('relatedAsin') or 'trước đó'}; không cào lại."}[skip["reason"]]
+                    batch_progress["items"].append({
+                        "taskId": task.id, "source": task.source,
+                        "asin": task.asin or task.source_product_id or "",
+                        "sourcePlatform": task.source_platform,
+                        "sourceProductId": task.source_product_id,
                         "status": status, "phase": "queued" if status == "queued" else "product", "message": input_message,
                         "variantCompleted": 0, "variantTotal": 0, **({"skipReason": skip["reason"]} if skip else {})})
         return {
@@ -5423,7 +6247,9 @@ class CoordinatorStore(CoordinatorObservability):
             item.update({
                 "taskId": task.id,
                 "source": task.source,
-                "asin": task.asin,
+                "asin": task.asin or task.source_product_id or "",
+                "sourcePlatform": task.source_platform,
+                "sourceProductId": task.source_product_id,
                 "status": public_status,
                 "phase": str(item.get("phase") or task_progress.get("phase") or ("queued" if public_status == "queued" else "product")),
                 "message": str(item.get("message") or task_progress.get("message") or ("Đang chờ client xử lý." if public_status == "queued" else "Đang xử lý trên client.")),

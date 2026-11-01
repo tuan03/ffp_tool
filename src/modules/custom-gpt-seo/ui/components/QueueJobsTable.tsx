@@ -37,7 +37,7 @@ export function QueueJobsTable({ jobs, isBusy, retryingJobIds, selectedJobIds, o
               <div className="min-w-0 flex-1">
                 <button type="button" onClick={() => onOpenJob(job.id)} title={title} className="line-clamp-2 text-left font-medium leading-5 text-slate-900 hover:text-blue-700 dark:text-slate-100 dark:hover:text-blue-300">{title}</button>
                 <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400" title={getJobIdentityLabel(job)}>{getJobIdentityLabel(job)}</p>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400"><span>{job.source === "auto_seo" ? "Auto SEO" : "Amazon"}</span><span aria-hidden="true">·</span><span>{getProviderPresentation(job.settings.provider).label}</span><CopyJobIdButton key={job.id} jobId={job.id} /></div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400"><span>{job.source === "auto_seo" ? "Auto SEO" : job.source === "etsy" ? "Etsy" : "Amazon"}</span><span aria-hidden="true">·</span><span>{getProviderPresentation(job.settings.provider).label}</span><CopyJobIdButton key={job.id} jobId={job.id} /></div>
               </div>
             </div></td>
             <td className="px-4 py-4"><p className="text-xs font-medium leading-5 text-slate-700 dark:text-slate-300">{progress.label}</p>

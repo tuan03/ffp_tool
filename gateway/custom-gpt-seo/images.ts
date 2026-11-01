@@ -14,7 +14,7 @@ export async function downloadProductImage(source: string): Promise<{ bytes: Buf
   const signal = AbortSignal.timeout(10_000);
   for (let redirect = 0; redirect <= 3; redirect++) {
     const hostname = url.hostname.toLowerCase();
-    if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !(hostname === "cdn.shopify.com" || hostname.endsWith(".media-amazon.com") || hostname.endsWith(".ssl-images-amazon.com"))) throw new Error("Image host is not an approved product CDN; use manual attachment");
+    if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !(hostname === "cdn.shopify.com" || hostname === "i.etsystatic.com" || hostname.endsWith(".etsystatic.com") || hostname.endsWith(".media-amazon.com") || hostname.endsWith(".ssl-images-amazon.com"))) throw new Error("Image host is not an approved product CDN; use manual attachment");
     const response = await fetch(url, { redirect: "manual", signal });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");

@@ -752,7 +752,7 @@ export class PostgresCustomGptQueue implements SeoQueue {
       // Amazon crawler products are published as a complete product by the
       // Coordinator pipeline. The SEO publisher only updates an existing
       // Shopify product, so its store-wide gate does not apply to this source.
-      const isCrawlerProductSync = job.source === "amazon";
+      const isCrawlerProductSync = job.source === "amazon" || job.source === "etsy";
       if (!isCrawlerProductSync && (await this.versioning.getStoreFlags(storeId)).writeEnabled) {
         throw new Error("BACKEND_PUBLISH_REQUIRED: versioning-enabled stores cannot use the browser publisher");
       }

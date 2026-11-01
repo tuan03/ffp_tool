@@ -134,6 +134,7 @@ class CrawlTask(Base):
     __tablename__ = "crawl_tasks"
     __table_args__ = (
         UniqueConstraint("job_id", "asin", name="uq_crawl_task_job_asin"),
+        UniqueConstraint("job_id", "source_platform", "source_product_id", name="uq_crawl_task_job_source_product"),
         Index("ix_crawl_tasks_schedulable", "status", "ordinal", "created_at"),
     )
 
@@ -141,7 +142,9 @@ class CrawlTask(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
     ordinal: Mapped[int] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(Text)
-    asin: Mapped[str] = mapped_column(String(10), index=True)
+    source_platform: Mapped[str] = mapped_column(String(24), default="amazon", index=True)
+    source_product_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    asin: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     canonical_url: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -296,6 +299,49 @@ class AmazonAsinRegistry(Base):
     last_job_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     shopify_product_ids: Mapped[list[str]] = mapped_column(JSON_VALUE, default=list)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class EtsyListingRegistry(Base):
+    """Durable store-scoped ledger for Etsy listings crawled or synced through FFP."""
+
+    __tablename__ = "etsy_listing_registry"
+    __table_args__ = (
+        UniqueConstraint("store_id", "listing_id", name="uq_etsy_listing_registry_store_listing"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    store_id: Mapped[str] = mapped_column(String(100), index=True)
+    listing_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="crawled", index=True)
+    last_job_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    shopify_product_ids: Mapped[list[str]] = mapped_column(JSON_VALUE, default=list)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class EtsyOAuthCredential(Base):
+    """Encrypted centralized Etsy Open API v3 credential & rate-limit state."""
+
+    __tablename__ = "etsy_oauth_credentials"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    keystring_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shared_secret_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_token_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    keystring_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    etsy_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refresh_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    environment_owner: Mapped[str] = mapped_column(String(64), default="local")
+    token_generation: Mapped[int] = mapped_column(Integer, default=0)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rate_limit_state: Mapped[dict[str, Any]] = mapped_column(JSON_VALUE, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

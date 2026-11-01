@@ -73,6 +73,7 @@ class PlaywrightPool:
         selector_timeout: float = 15,
         customization_timeout: float = 120,
         zip_code: str,
+        source_platform: str = "amazon",
         proxy_assignments: list[ProxyAssignment] | None = None,
         on_captcha: Callable[[str], None] | None = None,
         on_activity: Callable[[dict[str, Any]], None] | None = None,
@@ -86,6 +87,7 @@ class PlaywrightPool:
         self.selector_timeout = selector_timeout
         self.customization_timeout = customization_timeout
         self.zip_code = zip_code
+        self.source_platform = source_platform
         configured_proxies = [assignment for assignment in proxy_assignments or [] if assignment.is_enabled][:self.profiles]
         direct_assignments = [
             ProxyAssignment(index=index, name=f"direct-{index + 1}")
@@ -265,6 +267,8 @@ class PlaywrightPool:
         if proxy:
             options["proxy"] = proxy
         context = await self._runtime.chromium.launch_persistent_context(str(profile), **options)
+        if self.source_platform == "etsy":
+            return context
         try:
             await context.add_cookies(playwright_us_cookies())
             self._us_profile_applied[index] = await self._set_amazon_zip(
@@ -1063,6 +1067,230 @@ class PlaywrightPool:
         if self._is_closed:
             raise RuntimeError("Playwright pool is closed.")
         return self._submit(self._sweep_variant_matrix_async(url, cap, cancel_event))
+
+    async def _extract_etsy_listing_async(
+        self,
+        url: str,
+        *,
+        wait_ms: int = 650,
+        cancel_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        target_url = url if "currency=" in url else (f"{url}&currency=USD" if "?" in url else f"{url}?currency=USD")
+
+        async def extract_from_context(index: int, context: Any) -> dict[str, Any]:
+            page = await context.new_page()
+            self._emit_activity(target_url, index)
+            video_resources: list[str] = []
+
+            def on_response(response: Any) -> None:
+                try:
+                    resp_url = str(response.url or "")
+                    lowered = resp_url.lower()
+                    if (
+                        any(ext in lowered for ext in (".mp4", ".m3u8", ".webm"))
+                        and resp_url not in video_resources
+                    ):
+                        video_resources.append(resp_url)
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+            try:
+                await page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+                response = await page.goto(
+                    target_url,
+                    wait_until="domcontentloaded",
+                    timeout=int(max(30, self.navigation_timeout) * 1000),
+                )
+                await page.wait_for_timeout(max(500, min(wait_ms * 2, 8_000)))
+                source = await page.content()
+                lower = source.lower()
+                is_challenge = (
+                    "captcha-delivery.com" in lower
+                    or "datadome" in lower
+                    or (response is not None and response.status == 403 and "etsy" in lower and "verify" in lower)
+                )
+                if is_challenge:
+                    mark_captcha()
+                    if self.headless:
+                        raise CaptchaTimeout(
+                            "Trang Etsy yêu cầu thao tác xác minh thủ công (DataDome/CAPTCHA). "
+                            "Hãy tắt chế độ headless trên Agent để mở trình duyệt xử lý."
+                        )
+                    await page.bring_to_front()
+                    if self.on_captcha:
+                        self.on_captcha(url)
+                    deadline = time.monotonic() + self.captcha_timeout
+                    while "captcha-delivery.com" in lower or "datadome" in lower:
+                        if cancel_event and cancel_event.is_set():
+                            raise InterruptedError("Đã hủy tác vụ Etsy khi đang chờ xử lý CAPTCHA.")
+                        if time.monotonic() >= deadline:
+                            raise CaptchaTimeout(
+                                f"Chưa hoàn tất xác minh thủ công trên trang Etsy sau {self.captcha_timeout}s."
+                            )
+                        await page.wait_for_timeout(1500)
+                        source = await page.content()
+                        lower = source.lower()
+                    await page.wait_for_timeout(max(500, min(wait_ms * 2, 6_000)))
+
+                records = await page.evaluate(
+                    r"""async ({ waitMs }) => {
+                        const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+                        const selectQuery = [
+                            'select[id*="variation"]',
+                            'select[name*="variation"]',
+                            '[data-selector*="variation"] select',
+                            'select[data-variation-number]'
+                        ].join(',');
+                        const selects = () => Array.from(document.querySelectorAll(selectQuery));
+                        const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+                        const labelFor = (node, index) => {
+                            const id = node.id;
+                            const explicit = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+                            return clean(
+                                explicit?.textContent
+                                || node.getAttribute('aria-label')
+                                || node.closest('label')?.textContent?.split('\n')[0]
+                                || `Option ${index + 1}`
+                            );
+                        };
+                        const optionList = node => Array.from(node.options || []).filter(option => {
+                            const text = clean(option.textContent);
+                            return !option.disabled && option.value && !/^select\b|^choose\b|^please\b/i.test(text);
+                        });
+                        const priceDetails = () => {
+                            const region = document.querySelector('[data-buy-box-region="price"]') || document;
+                            const isOriginal = node => !!node?.closest?.('[class*="strikethrough"], [class*="original"], s, del, .wt-text-strikethrough');
+                            const values = Array.from(region.querySelectorAll('[class*="currency-value"], [data-selector="price-only"]'))
+                                .map(node => ({ node, text: clean(node.textContent) }))
+                                .filter(item => /\d/.test(item.text));
+                            const symbolNode = region.querySelector('[class*="currency-symbol"]');
+                            const symbol = clean(symbolNode?.textContent || '$');
+                            const withCurrency = raw => {
+                                if (!raw) return '';
+                                if (/^(?:US\$|\$|USD)/i.test(raw)) return raw;
+                                if (symbol === '$' || symbol.toUpperCase() === 'US$' || symbol.toUpperCase() === 'USD') {
+                                    return `$${raw}`;
+                                }
+                                return `${symbol}${raw}`;
+                            };
+                            const current = withCurrency(values.find(item => !isOriginal(item.node))?.text || '');
+                            const original = withCurrency(values.find(item => isOriginal(item.node))?.text || '');
+                            const regionText = clean(region.textContent);
+                            const discount = regionText.match(/(\d+(?:\.\d+)?)\s*%\s*off/i)?.[1] || '';
+                            if (current) return { priceText: current, originalPriceText: original, discountPercentage: discount };
+                            const candidates = regionText.match(/(?:US\$|\$|USD\s*)\s*\d[\d,]*(?:\.\d{1,2})?/gi) || [];
+                            return { priceText: candidates[0] || '', originalPriceText: candidates[1] || '', discountPercentage: discount };
+                        };
+                        const image = () => {
+                            const selectors = [
+                                '[data-carousel-pane="image-main"] img',
+                                '[data-carousel-pane] img',
+                                'img[data-src-zoom-image]',
+                                '[data-listing-page-image] img'
+                            ];
+                            for (const selector of selectors) {
+                                const node = document.querySelector(selector);
+                                const value = node?.getAttribute('data-src-zoom-image') || node?.currentSrc || node?.src;
+                                if (value && !value.startsWith('data:')) return value;
+                            }
+                            return '';
+                        };
+                        const records = [];
+                        const seen = new Set();
+                        const walk = async (depth, selected) => {
+                            if (records.length >= 2500) return;
+                            const current = selects();
+                            if (!current.length) {
+                                records.push({ optionValues: {}, ...priceDetails(), imageUrl: image() });
+                                return;
+                            }
+                            if (depth >= current.length) {
+                                const key = JSON.stringify(selected);
+                                if (!seen.has(key)) {
+                                    seen.add(key);
+                                    records.push({ optionValues: { ...selected }, ...priceDetails(), imageUrl: image() });
+                                }
+                                return;
+                            }
+                            const node = current[depth];
+                            const label = labelFor(node, depth);
+                            const options = optionList(node);
+                            if (!options.length) {
+                                await walk(depth + 1, selected);
+                                return;
+                            }
+                            for (const option of options) {
+                                const latest = selects()[depth];
+                                if (!latest) continue;
+                                latest.value = option.value;
+                                latest.dispatchEvent(new Event('input', { bubbles: true }));
+                                latest.dispatchEvent(new Event('change', { bubbles: true }));
+                                await sleep(waitMs);
+                                await walk(depth + 1, { ...selected, [label]: clean(option.textContent) });
+                            }
+                        };
+                        await walk(0, {});
+                        return { records: records.slice(0, 2500), variationCount: selects().length,
+                            inventoryComplete: records.length < 2500 };
+                    }""",
+                    {"waitMs": max(300, min(wait_ms, 2_500))},
+                )
+                assignment = self.proxy_assignments[index]
+                return {
+                    "url": page.url or url,
+                    "status": response.status if response else "playwright",
+                    "html": await page.content(),
+                    "etsyVariants": (records or {}).get("records") or [],
+                    "etsyVariationCount": (records or {}).get("variationCount") or 0,
+                    "etsyInventoryComplete": bool((records or {}).get("inventoryComplete")),
+                    "videoResources": video_resources,
+                    "playwrightProfile": assignment.name,
+                    "networkRoute": self._route_kind(index),
+                }
+            finally:
+                if hasattr(page, "remove_listener"):
+                    try:
+                        page.remove_listener("response", on_response)
+                    except Exception:
+                        pass
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+
+        routes = ["direct"] + (["proxy"] if self.proxy_profile_indices else [])
+        last_error: Exception | None = None
+        for route_idx, route in enumerate(routes):
+            try:
+                return await self._run_with_profile_slot(
+                    extract_from_context,
+                    route=route,
+                    url=target_url,
+                    cancel_event=cancel_event,
+                    allow_manual_captcha=not self.headless,
+                )
+            except CaptchaTimeout:
+                raise
+            except InterruptedError:
+                raise
+            except Exception as error:
+                last_error = error
+                if route_idx == len(routes) - 1:
+                    raise
+        assert last_error is not None
+        raise last_error
+
+    def extract_etsy_listing(
+        self,
+        url: str,
+        *,
+        wait_ms: int = 650,
+        cancel_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        if self._is_closed:
+            raise RuntimeError("Playwright pool is closed.")
+        return self._submit(self._extract_etsy_listing_async(url, wait_ms=wait_ms, cancel_event=cancel_event))
 
     async def _close_async(self) -> None:
         contexts = [context for context in self._contexts if context is not None]

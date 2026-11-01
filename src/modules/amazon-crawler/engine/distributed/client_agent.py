@@ -24,6 +24,9 @@ from typing import Any, Callable
 import websockets
 
 from ..crawler_core import AmazonCrawler, CrawlSettings
+from ..etsy_crawler import build_ffp_etsy_crawled_product, merge_etsy_browser_verification
+from ..playwright_pool import CaptchaTimeout, PlaywrightPool
+from ..proxy_profiles import resolve_proxy_assignments
 from ..cache import RawFamilyCache
 from ..process_crawler import ProcessCrawler
 from ..review_engine import crawl_reviews_with_agent
@@ -70,6 +73,8 @@ def progress_for_assignment(progress_payload: dict[str, Any], assignment: dict[s
     identities = {
         str(assignment.get("source") or ""),
         str(assignment.get("asin") or ""),
+        str(assignment.get("sourceProductId") or ""),
+        str(assignment.get("listingId") or ""),
         str(assignment.get("url") or ""),
     }
     matched_items = [
@@ -117,6 +122,7 @@ class DistributedCrawlerAgent:
         config: AgentConfig,
         on_status: StatusCallback | None = None,
         crawler_factory: Callable[..., Any] = AmazonCrawler,
+        etsy_browser_extractor: Callable[[str, CrawlSettings, threading.Event], dict[str, Any]] | None = None,
         restart_command_id: str | None = None,
         restart_launcher: Callable[[str, Path], bool] = launch_replacement_agent,
         update_launcher: Callable[[str, str, Path, Path | None, int, str, str, str], bool] = launch_agent_update,
@@ -128,6 +134,7 @@ class DistributedCrawlerAgent:
         self.config = config
         self.on_status = on_status or (lambda _status: None)
         self.crawler_factory = crawler_factory
+        self.etsy_browser_extractor = etsy_browser_extractor
         self.restart_command_id = restart_command_id
         self.restart_launcher = restart_launcher
         self.update_launcher = update_launcher
@@ -1124,6 +1131,7 @@ class DistributedCrawlerAgent:
                         product_invalidation_generation=self.store.product_invalidation_generation(),
                         temporary_cleanup_generation=self.store.temporary_cleanup_generation(),
                         pinterest_browser_logged_in=self.pinterest_browser_logged_in(),
+                        etsy_enabled=True,
                         last_processed_command_sequence=self.store.last_processed_command_sequence(),
                         desired_execution_state=self.store.remote_execution_state(),
                         applied_execution_state=self._remote_execution_state,
@@ -1633,6 +1641,8 @@ class DistributedCrawlerAgent:
                     await asyncio.to_thread(self._run_pinterest_batch, batch, cancel_event, loop)
                 elif channel == "amazon_reviews":
                     await asyncio.to_thread(self._run_review_batch, batch, cancel_event, loop)
+                elif channel == "etsy":
+                    await asyncio.to_thread(self._run_etsy_batch, batch, cancel_event, loop)
                 else:
                     await asyncio.to_thread(self._run_batch, batch, cancel_event, loop)
             except Exception as error:
@@ -1951,12 +1961,363 @@ class DistributedCrawlerAgent:
     def _agent_capabilities(self) -> dict[str, Any]:
         return {
             "amazon": True,
+            "etsy": True,
             "pinterest": True,
             "pinterestBrowserLoggedIn": self.pinterest_browser_logged_in(),
             "durablePendingPurgeV1": True,
             "durableRestartV1": True,
             "pauseReleaseV1": True,
         }
+
+    def _fetch_etsy_baseline(self, assignment: dict[str, Any]) -> dict[str, Any]:
+        task_id = urllib.parse.quote(str(assignment["taskId"]), safe="")
+        lease_id = str(assignment["leaseId"])
+        body_bytes = json.dumps(
+            {"clientId": self.client_id, "leaseId": lease_id},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.config.server_url.rstrip('/')}/api/v1/worker/tasks/{task_id}/etsy-baseline",
+            data=body_bytes,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Client-Id": self.client_id,
+                "X-Lease-Id": lease_id,
+            },
+        )
+        try:
+            with self._open_agent_request(request) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+                parsed = json.loads(raw) if raw else {}
+                if not isinstance(parsed, dict) or not isinstance(parsed.get("apiProduct"), dict):
+                    raise RuntimeError("Server trả về dữ liệu Etsy baseline không hợp lệ.")
+                return parsed
+        except urllib.error.HTTPError as exc:
+            raw_err = ""
+            try:
+                raw_err = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                raw_err = ""
+            detail: Any = None
+            try:
+                parsed_err = json.loads(raw_err) if raw_err else {}
+                if isinstance(parsed_err, dict):
+                    detail = parsed_err.get("detail", parsed_err)
+            except Exception:
+                detail = raw_err[:500]
+            retry_after_header = exc.headers.get("Retry-After") if exc.headers else None
+            error_code = "ETSY_BASELINE_FAILED"
+            message = f"Không đọc được Etsy API từ Server (HTTP {exc.code})."
+            retryable = exc.code in {429, 500, 502, 503, 504}
+            retry_after_seconds: float | None = None
+            if isinstance(detail, dict):
+                error_code = str(detail.get("code") or error_code)
+                message = str(detail.get("message") or detail.get("detail") or message)
+                if "retryable" in detail:
+                    retryable = bool(detail.get("retryable"))
+                if detail.get("retryAfterSeconds") is not None:
+                    try:
+                        retry_after_seconds = max(1.0, float(detail["retryAfterSeconds"]))
+                    except (TypeError, ValueError):
+                        retry_after_seconds = None
+            elif isinstance(detail, str) and detail.strip():
+                message = detail.strip()
+            if retry_after_seconds is None and retry_after_header:
+                try:
+                    retry_after_seconds = max(1.0, float(retry_after_header))
+                except (TypeError, ValueError):
+                    retry_after_seconds = None
+            error_obj = RuntimeError(message)
+            setattr(
+                error_obj,
+                "task_error",
+                {
+                    "errorCode": error_code,
+                    "status": "http_429" if exc.code == 429 else f"http_{exc.code}",
+                    "reason": error_code.lower(),
+                    "message": message,
+                    "retryable": retryable,
+                    **({"retryAfter": retry_after_seconds} if retry_after_seconds is not None else {}),
+                },
+            )
+            raise error_obj from exc
+
+    def _extract_etsy_with_browser(
+        self,
+        canonical_url: str,
+        settings: CrawlSettings,
+        cancel_event: threading.Event,
+        on_captcha: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        if self.etsy_browser_extractor is not None:
+            return self.etsy_browser_extractor(canonical_url, settings, cancel_event)
+        proxy_assignments, _ = resolve_proxy_assignments(
+            self.project_root,
+            max(1, settings.browser_profiles),
+            config_path=self.config.proxy_config_path,
+        )
+        pool = PlaywrightPool(
+            profile_root=self.project_root / ".runtime" / "etsy_browser_profiles",
+            source_platform="etsy",
+            profiles=max(1, min(2, settings.browser_profiles)),
+            tabs_per_profile=1,
+            headless=settings.headless,
+            captcha_timeout=settings.captcha_timeout_seconds,
+            navigation_timeout=settings.navigation_timeout_seconds,
+            selector_timeout=settings.selector_timeout_seconds,
+            customization_timeout=settings.customization_timeout_seconds,
+            zip_code=settings.amazon_zip,
+            proxy_assignments=proxy_assignments,
+            on_captcha=on_captcha,
+        )
+        try:
+            return pool.extract_etsy_listing(canonical_url, cancel_event=cancel_event)
+        finally:
+            pool.close()
+
+    def _run_etsy_batch(
+        self,
+        batch: list[dict[str, Any]],
+        cancel_event: threading.Event,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        for assignment in batch:
+            started_monotonic = time.monotonic()
+            task_id = str(assignment["taskId"])
+            lease_id = str(assignment["leaseId"])
+            listing_id = str(assignment.get("listingId") or assignment.get("sourceProductId") or "").strip()
+            source_url = str(assignment.get("url") or assignment.get("source") or f"https://www.etsy.com/listing/{listing_id}")
+            task_cancel_event = self.task_cancel_events.get(task_id, cancel_event)
+            effective_settings = self._agent_limits().apply(dict(assignment.get("settings") or {}))
+            effective_settings["profileSlug"] = "default"
+            effective_settings["applyJeminisePreset"] = False
+            settings = CrawlSettings.from_api(effective_settings)
+            actual_settings = settings.api_dict()
+
+            def emit_progress(phase: str, message: str, percent: int, *, variant_completed: int = 0, variant_total: int = 0) -> None:
+                if task_cancel_event.is_set():
+                    return
+                self._captcha_waiting = phase == "captcha"
+                self._update_task_activity(task_id, message, percent)
+                progress_payload = {
+                    "phase": phase,
+                    "source": assignment.get("source") or source_url,
+                    "message": message,
+                    "percent": percent,
+                    "items": [
+                        {
+                            "source": assignment.get("source") or source_url,
+                            "asin": listing_id,
+                            "currentAsin": listing_id,
+                            "phase": phase,
+                            "message": message,
+                            "variantCompleted": variant_completed,
+                            "variantTotal": variant_total,
+                        }
+                    ],
+                }
+                asyncio.run_coroutine_threadsafe(
+                    self.outbound_queue.put(
+                        {
+                            "type": "progress",
+                            "taskId": task_id,
+                            "leaseId": lease_id,
+                            "progress": progress_payload,
+                        }
+                    ),
+                    loop,
+                )
+                loop.call_soon_threadsafe(self._dashboard_progress, [assignment], progress_payload)
+
+            if task_cancel_event.is_set():
+                asyncio.run_coroutine_threadsafe(
+                    self.completion_queue.put({"type": "cancelled", "taskId": task_id, "leaseId": lease_id}),
+                    loop,
+                )
+                continue
+
+            try:
+                emit_progress("product", f"Đang tải thông tin listing Etsy #{listing_id} từ API tập trung...", 20)
+                baseline = self._fetch_etsy_baseline(assignment)
+                if task_cancel_event.is_set():
+                    asyncio.run_coroutine_threadsafe(
+                        self.completion_queue.put({"type": "cancelled", "taskId": task_id, "leaseId": lease_id}),
+                        loop,
+                    )
+                    continue
+
+                canonical_url = str(baseline.get("canonicalUrl") or source_url)
+                needs_browser = bool(baseline.get("needsBrowserVariants") or baseline.get("needsPriceVerification"))
+                browser_payload: dict[str, Any] | None = None
+                browser_error: str | None = None
+                manual_intervention = False
+
+                api_variants = ((baseline.get("apiProduct") or {}).get("variants") or {}).get("variants") or []
+                initial_variant_count = len(api_variants) if isinstance(api_variants, list) else 0
+
+                if needs_browser:
+                    emit_progress(
+                        "variant_matrix",
+                        f"Đang xác minh biến thể & giá hiển thị US trên trình duyệt cho listing #{listing_id}...",
+                        55,
+                        variant_completed=0,
+                        variant_total=initial_variant_count,
+                    )
+
+                    def handle_captcha(_url: str) -> None:
+                        emit_progress(
+                            "captcha",
+                            f"Trang Etsy #{listing_id} yêu cầu thao tác xác minh thủ công trên trình duyệt Agent.",
+                            60,
+                            variant_completed=0,
+                            variant_total=initial_variant_count,
+                        )
+
+                    try:
+                        browser_payload = self._extract_etsy_with_browser(
+                            canonical_url,
+                            settings,
+                            task_cancel_event,
+                            on_captcha=handle_captcha,
+                        )
+                    except CaptchaTimeout as exc:
+                        manual_intervention = True
+                        browser_error = redact(exc)
+                    except InterruptedError:
+                        asyncio.run_coroutine_threadsafe(
+                            self.completion_queue.put({"type": "cancelled", "taskId": task_id, "leaseId": lease_id}),
+                            loop,
+                        )
+                        continue
+                    except Exception as exc:
+                        browser_error = redact(exc)
+
+                if task_cancel_event.is_set():
+                    asyncio.run_coroutine_threadsafe(
+                        self.completion_queue.put({"type": "cancelled", "taskId": task_id, "leaseId": lease_id}),
+                        loop,
+                    )
+                    continue
+
+                merged_etsy = merge_etsy_browser_verification(
+                    baseline,
+                    browser_payload,
+                    browser_error=browser_error,
+                    requires_manual_intervention=manual_intervention,
+                )
+                product = build_ffp_etsy_crawled_product(merged_etsy)
+                final_variant_count = len(product.get("variants") or [])
+                product_key = str(product.get("sourceKey") or f"etsy:{listing_id}")
+                completed_at = utc_iso()
+
+                emit_progress(
+                    "seo",
+                    (
+                        f"Đã thu thập listing #{listing_id} ({final_variant_count} biến thể); có cảnh báo cần xử lý tại Review."
+                        if product.get("syncBlockers")
+                        else f"Đã hoàn tất cào listing Etsy #{listing_id} ({final_variant_count} biến thể); đang bàn giao SEO Queue..."
+                    ),
+                    90,
+                    variant_completed=final_variant_count,
+                    variant_total=final_variant_count,
+                )
+
+                product_envelope = {
+                    "version": "distributed-2",
+                    "agentVersion": AGENT_VERSION,
+                    "taskId": task_id,
+                    "jobId": assignment["jobId"],
+                    "leaseId": lease_id,
+                    "clientId": self.client_id,
+                    "source": assignment["source"],
+                    "asin": "",
+                    "sourcePlatform": "etsy",
+                    "sourceProductId": listing_id,
+                    "completedAt": completed_at,
+                    "productChecksum": payload_checksum(product),
+                    "sourceKey": product_key,
+                    "productId": str(product.get("id") or product_key),
+                    "product": product,
+                }
+                self.store.spool_product(
+                    task_id=task_id,
+                    product_key=product_key,
+                    lease_id=lease_id,
+                    checksum=payload_checksum(product_envelope),
+                    payload=product_envelope,
+                )
+
+                duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1000))
+                core_result = {
+                    "status": "completed",
+                    "products": [product],
+                    "errors": [],
+                    "warnings": list(product.get("warnings") or []),
+                    "durationMs": duration_ms,
+                    "completedAsins": [],
+                    "failedAsins": [],
+                    "retryableAsins": [],
+                    "nonRetryableAsins": [],
+                }
+                result_envelope = {
+                    "version": "distributed-1",
+                    "agentVersion": AGENT_VERSION,
+                    "taskId": task_id,
+                    "jobId": assignment["jobId"],
+                    "requestId": assignment.get("requestId", task_id),
+                    "leaseId": lease_id,
+                    "clientId": self.client_id,
+                    "source": assignment["source"],
+                    "asin": "",
+                    "sourcePlatform": "etsy",
+                    "sourceProductId": listing_id,
+                    "requestedSettingsFingerprint": assignment["settingsFingerprint"],
+                    "settingsFingerprint": settings_fingerprint(actual_settings),
+                    "settings": actual_settings,
+                    "completedAt": completed_at,
+                    "resultChecksum": payload_checksum(core_result),
+                    **core_result,
+                }
+                self.store.spool_result(
+                    task_id=task_id,
+                    lease_id=lease_id,
+                    checksum=payload_checksum(result_envelope),
+                    payload=result_envelope,
+                )
+                asyncio.run_coroutine_threadsafe(
+                    self.completion_queue.put({"type": "completed", "taskId": task_id}),
+                    loop,
+                )
+            except Exception as error:
+                task_error = getattr(error, "task_error", None)
+                if isinstance(task_error, dict) and task_error.get("errorCode") in {"TASK_CANCELLED", "LEASE_STALE"}:
+                    asyncio.run_coroutine_threadsafe(
+                        self.completion_queue.put({"type": "cancelled", "taskId": task_id, "leaseId": lease_id}),
+                        loop,
+                    )
+                    continue
+                if not isinstance(task_error, dict):
+                    task_error = {
+                        "errorCode": "ETSY_CRAWL_FAILED",
+                        "message": f"Lỗi cào listing Etsy #{listing_id}: {redact(error)}",
+                        "retryable": True,
+                    }
+                asyncio.run_coroutine_threadsafe(
+                    self.completion_queue.put(
+                        {
+                            "type": "failed",
+                            "taskId": task_id,
+                            "leaseId": lease_id,
+                            "error": task_error,
+                        }
+                    ),
+                    loop,
+                )
+            finally:
+                self._captcha_waiting = False
+                loop.call_soon_threadsafe(self._publish_status)
 
     def _current_tasks_snapshot(self) -> list[dict[str, Any]]:
         active_task_ids = set(self.active)

@@ -153,7 +153,7 @@ export function requireProductClassification(value: unknown, catalog: Classifica
 }
 
 export function requiresProductClassification(job: GptSeoJob): boolean {
-  return job.execution.source === "amazon" && z.object({
+  return (job.execution.source === "amazon" || job.execution.source === "etsy") && z.object({
     crawlerClassificationMode: z.enum(["automatic", "manual"]),
   }).passthrough().safeParse(job.execution.originalSnapshot).success;
 }

@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router-dom";
+import type { EtsyCrawlerClient } from "./etsy-types";
 
 import { AuthenticatedCrawlerPage } from "./ui/AuthenticatedCrawlerPage";
 import { AgentKeysPage } from "./ui/AgentKeysPage";
@@ -27,6 +28,7 @@ export function amazonCrawlerRoutes(
   loadAmazonCrawlerJob?: AmazonCrawlerJobLoader,
   operatorEngineUrl?: string,
   filterShopifyAsins?: ShopifyAsinFilter,
+  etsyClient?: EtsyCrawlerClient,
 ): RouteObject[] {
   return [
     {
@@ -35,6 +37,7 @@ export function amazonCrawlerRoutes(
         <AuthenticatedCrawlerPage
           engineUrl={operatorEngineUrl}
           filterShopifyAsins={filterShopifyAsins}
+          etsyClient={etsyClient}
           amazonCrawlerJobs={amazonCrawlerJobs}
           clearAmazonCrawlerCache={clearAmazonCrawlerCache}
           imageProcessingProfiles={imageProcessingProfiles}

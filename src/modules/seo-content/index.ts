@@ -35,6 +35,16 @@ export {
   fromCustomizationProduct,
   runCustomizationSeoPipeline,
 } from "./customization-adapter";
+export {
+  extractEtsySeoContext,
+  fromEtsyCustomizationProduct,
+} from "./etsy-adapter";
+export type {
+  EtsySeoContext,
+  EtsySeoImageSummary,
+  EtsySeoPersonalizationSummary,
+  EtsySeoVariantSummary,
+} from "./etsy-adapter";
 export type {
   CustomizationSeoBatchResult,
   CustomizationSeoItemResult,
