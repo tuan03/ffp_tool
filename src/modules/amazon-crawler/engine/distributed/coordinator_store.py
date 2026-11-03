@@ -45,6 +45,7 @@ from .coordinator_models import (
     CrawlTelemetryEvent,
 )
 from .etsy_auth_store import EtsyAuthStore
+from .operator_authorization import OperatorAudit
 from .protocol import payload_checksum, settings_fingerprint, utc_iso, utc_now
 from .agent_runtime_config import AgentRuntimeConfig
 from .protocol import product_source_key as _source_key
@@ -3300,11 +3301,24 @@ class CoordinatorStore(CoordinatorObservability):
                 claim_event = "product_sync_claimed" if is_sync_claim else (
                     "product_seo_resumed" if external_seo else "product_normalizing"
                 )
-                self._event(session, item.job_id, claim_event, {
-                    "productItemId": item.id,
-                    "sourceKey": item.source_key,
-                    "attempt": item.attempt_count,
-                })
+                should_record_event = True
+                if claim_event == "product_seo_resumed":
+                    already_resumed = session.scalar(
+                        select(JobEvent.id)
+                        .where(
+                            JobEvent.job_id == item.job_id,
+                            JobEvent.event_type == "product_seo_resumed",
+                            JobEvent.payload["productItemId"].as_string() == item.id,
+                        )
+                        .limit(1)
+                    )
+                    should_record_event = already_resumed is None
+                if should_record_event:
+                    self._event(session, item.job_id, claim_event, {
+                        "productItemId": item.id,
+                        "sourceKey": item.source_key,
+                        "attempt": item.attempt_count,
+                    })
                 self._refresh_job(session, item.job_id)
         return claimed
 
@@ -4690,6 +4704,9 @@ class CoordinatorStore(CoordinatorObservability):
             ))
             archived_attempts = session.execute(delete(ArchivedTaskAttempt).where(
                 ArchivedTaskAttempt.archived_at < cutoff,
+            ))
+            session.execute(delete(OperatorAudit).where(
+                OperatorAudit.created_at < cutoff,
             ))
             return {
                 "attempts": int(live_attempts.rowcount or 0),

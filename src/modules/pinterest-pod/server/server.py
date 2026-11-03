@@ -235,10 +235,7 @@ class PinterestPodHandler(BaseHTTPRequestHandler):
             try:
                 runtime_root = Path(os.getenv("PINTEREST_RUNTIME_ROOT") or SERVER_ROOT / "temp" / "pinterest_pod")
                 runtime_root.mkdir(parents=True, exist_ok=True)
-                probe = runtime_root / ".readiness-probe"
-                probe.write_text("ready", encoding="utf-8")
-                probe.unlink()
-                is_runtime_ready = True
+                is_runtime_ready = os.access(runtime_root, os.W_OK)
             except OSError:
                 is_runtime_ready = False
             is_ready = is_database_ready and is_runtime_ready and is_coordinator_ready

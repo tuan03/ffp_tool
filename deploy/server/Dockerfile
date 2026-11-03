@@ -62,7 +62,7 @@ EXPOSE 3001 8766 8768
 
 ENV FFP_PIPELINE_HEALTH_FILE=/tmp/ffp-pipeline-worker-health.json
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 \
-    CMD python /app/src/modules/amazon-crawler/engine/distributed/pipeline_health.py && curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/ready >/dev/null && curl -fsS http://127.0.0.1:8768/ready >/dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python /app/src/modules/amazon-crawler/engine/distributed/pipeline_health.py && curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:8766/api/v1/ready >/dev/null && curl -fsS http://127.0.0.1:8768/health >/dev/null || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
