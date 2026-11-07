@@ -25,13 +25,14 @@ from typing import Any, Callable
 
 from bs4 import BeautifulSoup
 
+from .amazon_availability import product_is_unavailable, unavailable_product_error
 from .amazon_locale import AMAZON_ORIGIN, DEFAULT_HEADERS, force_us_profile_url, html_is_location_blocked
 from .cache import RawFamilyCache
 from .bounded_http import BoundedHTTPHandler, BoundedHTTPSHandler
 from .customization_converter import apply_preaurem_size_profile, expand_paid_variants, normalize_customization, remove_option_choosers
 from .playwright_pool import CaptchaTimeout, PlaywrightPool, html_is_captcha
 from .proxy_profiles import ProxyAssignment, resolve_proxy_assignments
-from .retry_policy import FetchFailure, RETRY_FIELDS, response_failure, retry_delay
+from .retry_policy import FetchFailure, RETRY_FIELDS, captcha_skip_failure, response_failure, retry_delay
 from .size_option_labels import clean_customization_size_options, clean_source_size_options
 from .variant_presets import (
     BEDDING_PRESET_ID,
@@ -598,6 +599,9 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
         ".reinventPricePriceToPayMargin .a-offscreen", "#priceblock_dealprice",
         "#priceblock_ourprice", "#price_inside_buybox", "#newBuyBoxPrice", "#tp_price_block_total_price_ww .a-offscreen",
     ))
+    product_unavailable = product_is_unavailable(soup, html)
+    if product_unavailable:
+        price = None  # Ignore any price extracted from unrelated recommendation cards.
     images = _extract_high_resolution_images(html, canonical_asin)
     if not images:
         seen_ids: set[str] = set()
@@ -638,7 +642,7 @@ def parse_product_html(html: str, requested_asin: str, url: str) -> dict[str, An
         "url": f"https://www.amazon.com/dp/{canonical_asin}", "requestedUrl": url,
         "title": title, "description": description, "bulletPoints": bullets,
         "categories": categories, "productDetails": product_details,
-        "price": price,
+        "price": price, "productUnavailable": product_unavailable,
         "media": images, "dimensions": dimensions, "asinOptions": asin_options,
         "customizationRaw": customization_raw, "customizationWarnings": customization_warnings,
         "customizationFormUrl": customization_form_url,
@@ -903,7 +907,10 @@ class HttpFetcher:
                     trace["httpStatus"] = response_status
                     if html_is_captcha(body):
                         mark_captcha()
-                        raise RuntimeError("Amazon CAPTCHA/bot-check page detected.")
+                        raise captcha_skip_failure(response_status)
+                    page_failure = response_failure(response_status, body)
+                    if page_failure is not None:
+                        raise page_failure
                     if html_is_location_blocked(body):
                         raise RuntimeError(f"Amazon offer is blocked outside US ZIP {self.zip_code}.")
                     has_product_document = bool(re.search(r'id=["\'](?:productTitle|ppd|dp-container)["\']', body, re.I))
@@ -916,12 +923,14 @@ class HttpFetcher:
                     return body, attempt
                 except (urllib.error.URLError, TimeoutError, RuntimeError) as caught:
                     check_deadline()
+                    if isinstance(caught, FetchFailure) and caught.reason == "captcha":
+                        caught = captcha_skip_failure(caught.http_status)
                     error = caught
                     message = _exception_message(caught)
                     outcome = "captcha" if "captcha" in message.casefold() else (
                         "location" if "zip" in message.casefold() or "location" in message.casefold() else "error"
                     )
-                    if outcome in {"captcha", "location"}:
+                    if outcome in {"captcha", "location"} and not (isinstance(caught, FetchFailure) and caught.reason == "captcha_skipped"):
                         self._block_assignment(assignment)
                     if isinstance(caught, FetchFailure):
                         trace["httpStatus"] = caught.http_status
@@ -936,6 +945,8 @@ class HttpFetcher:
                     trace.update(trace_fields())
             diagnostics.append(trace)
             self._thread_diagnostics.attempts = diagnostics
+            if isinstance(error, FetchFailure) and (not error.retryable or error.reason == "not_found_unverified"):
+                break  # Confirm once in the browser instead of rotating HTTP routes.
             if attempt < len(route_assignments) and any(candidate in self._available_assignments() for candidate in route_assignments[attempt:]):
                 self._wait_before_retry(retry_delay(attempt, retry_after=error.delay if isinstance(error, FetchFailure) and error.reason in {"http_429", "http_503"} else 0))
         if isinstance(error, (CrawlTimeout, FetchFailure)):
@@ -963,7 +974,9 @@ class CrawlFetchError(RuntimeError):
 
 class CachedCrawlFailure(RuntimeError):
     def __init__(self, failure: dict[str, Any]) -> None:
-        super().__init__(f"Amazon crawl is cooling down: {failure['reason']} until {failure['retryAfter']}.")
+        super().__init__("Bỏ qua: Amazon hiện không bán sản phẩm này (Currently unavailable)." if failure.get("reason") == "product_unavailable"
+                         else "Bỏ qua: trang sản phẩm Amazon không tồn tại ở lần kiểm tra gần nhất; có thể kiểm tra lại sau." if failure.get("reason") == "not_found"
+                         else f"Amazon crawl is cooling down: {failure['reason']} until {failure['retryAfter']}.")
         self.failure = failure
 
 
@@ -973,8 +986,10 @@ class PartialCrawlError(RuntimeError):
         *, retryable: bool, reason: str, code: str, asin_status: dict[str, list[str]], timeout_details: dict[str, Any] | None = None,
     ) -> None:
         message = {
+            "CAPTCHA_SKIPPED": "Đã bỏ qua ASIN cần xác minh CAPTCHA trong lượt này; các sản phẩm đủ dữ liệu vẫn được giữ lại.",
+            "PRODUCT_UNAVAILABLE": "Đã bỏ qua ASIN Amazon hiện không bán; các sản phẩm đủ dữ liệu vẫn được giữ lại.",
             "PARSER_ERROR": "Amazon HTML parser could not read a child product; check for HTML changes.",
-            "NOT_FOUND": "An Amazon child product was not found.",
+            "NOT_FOUND": "Đã bỏ qua ASIN không tồn tại trên Amazon; các sản phẩm đủ dữ liệu vẫn được giữ lại.",
         }.get(code, "Amazon family has missing variant or media data.")
         super().__init__(message)
         self.products = products
@@ -1228,6 +1243,8 @@ class AmazonCrawler:
             if not http_trace:
                 http_trace = [{"attempt": attempts, "outcome": "success"}]
             http_trace[-1].update(self._page_signals(parsed))
+            if require_price and parsed.get("productUnavailable") and parsed["asin"] == normalized.asin:
+                raise unavailable_product_error(normalized.asin)
             if require_price and parsed.get("price") is None:
                 http_trace[-1].update({"outcome": "incomplete", "reason": "selling_price_missing"})
                 raise ValueError(f"Amazon returned no selling price for {normalized.asin} at US ZIP {self.settings.amazon_zip}.")
@@ -1239,6 +1256,8 @@ class AmazonCrawler:
             }
         except Exception as http_error:
             check_deadline()
+            if isinstance(http_error, FetchFailure) and not http_error.retryable:
+                raise
             if isinstance(http_error, FetchFailure) and http_error.reason in {"http_429", "http_503"}:
                 raise  # Browser navigation through the same IP must not bypass Retry-After.
             if not http_trace:
@@ -1268,6 +1287,8 @@ class AmazonCrawler:
                         trace["profiles"] = read_browser_trace()
                     parsed = parse_product_html(html, normalized.asin, normalized.canonical_url)
                     trace.update(self._page_signals(parsed))
+                    if require_price and parsed.get("productUnavailable") and parsed["asin"] == normalized.asin:
+                        raise unavailable_product_error(normalized.asin)
                     if require_price and parsed.get("price") is None:
                         raise ValueError(f"Amazon returned no selling price for {normalized.asin} at US ZIP {self.settings.amazon_zip} after browser rendering.")
                     trace.update({"outcome": "success", "htmlBytes": len(html)})
@@ -1289,6 +1310,8 @@ class AmazonCrawler:
                     break
                 except Exception as caught:
                     check_deadline()
+                    if isinstance(caught, FetchFailure) and caught.reason == "product_unavailable":
+                        raise
                     browser_error = caught
                     read_browser_trace = getattr(self.browser_pool, "last_diagnostics", None)
                     if callable(read_browser_trace):
@@ -1522,13 +1545,14 @@ class AmazonCrawler:
         partial = self.cache.load_partial(cache_key)
         previous_family = partial.get("family") if isinstance(partial, dict) else None
         previous_parent = partial.get("parent") if isinstance(partial, dict) else None
-        if not isinstance(previous_family, dict) or not isinstance(previous_parent, dict):
+        if not isinstance(previous_family, dict) or not isinstance(previous_parent, dict) or previous_parent.get("productUnavailable"):
             previous_family = None
             previous_parent = None
         checkpoint_parent = checkpoint.get("parent") if isinstance(checkpoint, dict) else None
         if not (
             isinstance(checkpoint_parent, dict)
             and self.cache.valid_parent(checkpoint_parent.get("parent"))
+            and not checkpoint_parent["parent"].get("productUnavailable")
             and isinstance(checkpoint_parent.get("diagnostics"), dict)
         ):
             checkpoint_parent = None
@@ -1581,7 +1605,7 @@ class AmazonCrawler:
         expected_count = max(expected_count, len(asin_options))
         sweep = getattr(self.browser_pool, "sweep_variant_matrix", None)
         if (
-            len(asin_options) < expected_count and callable(sweep)
+            len(asin_options) < expected_count and callable(sweep) and not parent.get("productUnavailable")
             and (checkpoint_matrix is None or checkpoint_matrix.get("complete") is not True)
         ):
             diagnostics.pop("matrixWarning", None)
@@ -1704,6 +1728,8 @@ class AmazonCrawler:
                 child = deepcopy(saved_page["child"])
                 child_diagnostics = deepcopy(saved_page["diagnostics"])
             else:
+                if asin == parent["asin"] and parent.get("productUnavailable"):
+                    raise unavailable_product_error(asin)
                 if asin == parent["asin"] and parent.get("price") is not None:
                     child = deepcopy(parent)
                     child_diagnostics = deepcopy(diagnostics)
@@ -1912,8 +1938,8 @@ class AmazonCrawler:
                 except InterruptedError:
                     raise
                 except Exception as error:
+                    policy = classify_crawl_failure(error)
                     if not isinstance(error, CachedCrawlFailure):
-                        policy = classify_crawl_failure(error)
                         with asin_scope(asin):
                             emit_event("child_failed", stage="child", result=policy["status"], reason=policy["reason"], error=_exception_message(error))
                             if policy["status"] == "parser_error":
@@ -1936,6 +1962,9 @@ class AmazonCrawler:
                         "description": None, "bulletPoints": [], "categories": [], "productDetails": {},
                         "customizationRaw": None, "customization": None, "customizationFingerprint": None,
                         "priceInference": {"isInferred": False, "sourceAsins": []}, "warnings": [_exception_message(error)],
+                        "productUnavailable": policy.get("reason") == "product_unavailable",
+                        "productNotFound": policy.get("reason") == "not_found" and policy.get("notFoundConfirmed") is True,
+                        "productAccessBlocked": policy.get("reason") == "captcha_skipped",
                         "diagnostics": failed_diagnostics,
                     })
                 emit_completed_group(asin)
@@ -2018,7 +2047,7 @@ class AmazonCrawler:
                 continue
             failed_asins.append(asin)
             failure = self.cache.load_failure(f"{asin}:{self.settings.amazon_zip}:us-v1")
-            if failure is not None and failure.get("status") in {"not_found", "parser_error", "invalid_asin"}:
+            if variant.get("productUnavailable") or variant.get("productNotFound") or variant.get("productAccessBlocked") or (failure is not None and failure.get("status") in {"not_found", "parser_error", "invalid_asin", "product_unavailable"}):
                 non_retryable_asins.append(asin)
             else:
                 retryable_asins.append(asin)
@@ -2055,6 +2084,8 @@ class AmazonCrawler:
     @staticmethod
     def _infer_consensus_prices(variants: list[dict[str, Any]]) -> None:
         for variant in variants:
+            if variant.get("productUnavailable") or variant.get("productNotFound") or variant.get("productAccessBlocked"):
+                continue
             if variant.get("price") is not None:
                 continue
             peers = [candidate for candidate in variants if candidate.get("price") is not None and candidate.get("options") == variant.get("options")]
@@ -2115,7 +2146,9 @@ class AmazonCrawler:
         *,
         split_attribute_override: str | None = None,
     ) -> list[dict[str, Any]]:
-        rebuilt_source_variants = deepcopy(family["sourceVariants"])
+        # Keep split identities stable even when one design is unavailable.
+        family_dimensions = self._source_variant_dimensions(family["sourceVariants"])
+        rebuilt_source_variants = deepcopy([variant for variant in family["sourceVariants"] if not variant.get("productUnavailable") and not variant.get("productNotFound") and not variant.get("productAccessBlocked")])
         for variant in rebuilt_source_variants:
             customization_raw = variant.get("customizationRaw")
             if customization_raw is None:
@@ -2125,8 +2158,7 @@ class AmazonCrawler:
             variant["customizationFingerprint"] = customization.get("fingerprint") if customization else None
             variant["warnings"] = sorted(set(variant.get("warnings", []) + customization_warnings))
         raw_source_variants = rebuilt_source_variants
-        actual_dimensions = self._source_variant_dimensions(raw_source_variants)
-        split_attribute = split_attribute_override or self._choose_split_attribute(actual_dimensions)
+        split_attribute = split_attribute_override or self._choose_split_attribute(family_dimensions)
         size_warnings: list[str] = []
         mapped_names: dict[str, str] = {}
         if self.settings.profile_slug == "default":
@@ -2353,7 +2385,12 @@ class AmazonCrawler:
                 ]
                 matrix = family.get("variantMatrix", {})
                 is_capped = matrix.get("complete") is False and matrix.get("discoveredCount", 0) >= matrix.get("safetyCap", 500)
-                retryable = not is_capped and bool(
+                only_skipped_products = bool(asin_status["failedAsins"]) and all(
+                    variant.get("productUnavailable") or variant.get("productNotFound") or variant.get("productAccessBlocked") for variant in family.get("sourceVariants", [])
+                    if variant.get("asin") in asin_status["failedAsins"]
+                )
+                has_missing_product = any(variant.get("productNotFound") for variant in family.get("sourceVariants", []))
+                retryable = not is_capped and not only_skipped_products and bool(
                     asin_status["retryableAsins"] or matrix.get("complete") is False
                 )
                 terminal_failure = terminal_failures[0] if terminal_failures else None
@@ -2363,7 +2400,12 @@ class AmazonCrawler:
                         terminal_failure["retryAfter"] if terminal_failure else None
                     ),
                 )
-                if any(failure.get("reason") == "captcha" for failure in failures):
+                if only_skipped_products and any(variant.get("productAccessBlocked") for variant in family.get("sourceVariants", [])):
+                    reason, code = "captcha_skipped", "CAPTCHA_SKIPPED"
+                    retry_after = datetime.now(timezone.utc).isoformat()
+                elif only_skipped_products:
+                    reason, code = ("not_found", "NOT_FOUND") if has_missing_product else ("product_unavailable", "PRODUCT_UNAVAILABLE")
+                elif any(failure.get("reason") == "captcha" for failure in failures):
                     reason, code = "captcha", "PARTIAL_CRAWL"
                 elif any(failure.get("reason") in {"http_429", "http_503"} for failure in failures):
                     reason, code = next(failure["reason"] for failure in failures if failure.get("reason") in {"http_429", "http_503"}), "PARTIAL_CRAWL"
@@ -2379,7 +2421,10 @@ class AmazonCrawler:
                     family_products, retry_after,
                     retryable=retryable, reason=reason, code=code,
                     asin_status=asin_status,
-                    timeout_details=next(({key: failure[key] for key in TIMEOUT_FIELDS if key in failure} for failure in failures + terminal_failures if failure.get("stage")), {}),
+                    timeout_details={
+                        **next(({key: failure[key] for key in TIMEOUT_FIELDS if key in failure} for failure in failures + terminal_failures if failure.get("stage")), {}),
+                        **({"notFoundConfirmed": True} if only_skipped_products and has_missing_product else {}),
+                    },
                 )
             return normalized, family_products, self._family_asin_status(family)
 
@@ -2465,7 +2510,9 @@ class AmazonCrawler:
                     errors.append(input_error)
                     input_errors.append(input_error)
                     item_status = "failed"
-                    item_message = "Cào chưa đủ dữ liệu; sẽ thử lại phần thiếu."
+                    item_message = str(error) if error.reason in {"product_unavailable", "not_found", "captcha_skipped"} else (
+                        "Cào chưa đủ dữ liệu; sẽ thử lại phần thiếu." if error.retryable else "Cào chưa đủ dữ liệu; cần kiểm tra, không tự thử lại."
+                    )
                 except Exception as error:
                     policy = classify_crawl_failure(error)
                     asin_status = {

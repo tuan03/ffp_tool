@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 
 from .amazon_locale import USER_AGENT, force_us_profile_url, html_is_location_blocked, playwright_us_cookies
 from .proxy_profiles import ProxyAssignment
-from .retry_policy import FetchFailure, html_is_captcha, parser_failure, response_failure, retry_delay
+from .retry_policy import FetchFailure, captcha_skip_failure, html_is_captcha, parser_failure, response_failure, retry_delay
 from .timeouts import CrawlTimeout, async_bounded_method, await_stage, check_deadline, remaining_seconds, timeout_scope, transport_context
 
 
@@ -684,6 +684,8 @@ class PlaywrightPool:
     async def _solve_captcha(self, page: Any, url: str, cancel_event: threading.Event | None,
                              *, html: str, allow_manual: bool) -> str:
         mark_captcha()
+        if self.source_platform == "amazon":
+            raise captcha_skip_failure()
         if _has_button_only_continue_challenge(html):
             if cancel_event and cancel_event.is_set():
                 raise InterruptedError("Crawler job cancelled while waiting for CAPTCHA.")
@@ -820,9 +822,7 @@ class PlaywrightPool:
             if route == "direct" and skip_remaining_direct:
                 continue
             is_last_route = attempt == len(routes)
-            # Let the first direct session solve a CAPTCHA before rotating
-            # routes; this also lets Amazon apply the requested delivery ZIP.
-            allow_manual_captcha = not self.headless and (
+            allow_manual_captcha = self.source_platform != "amazon" and not self.headless and (
                 is_last_route or (route == "direct" and attempt == 1)
             )
             try:
@@ -848,6 +848,8 @@ class PlaywrightPool:
                 })
                 return html, diagnostics
             except CaptchaTimeout as error:
+                if self.source_platform == "amazon":
+                    raise captcha_skip_failure() from error
                 last_error = error
                 profile_index = getattr(error, "browser_profile_index", None)
                 if isinstance(profile_index, int):
@@ -864,6 +866,8 @@ class PlaywrightPool:
                 if route == "direct" and "all direct browser profiles are temporarily cooling down" in message:
                     skip_remaining_direct = True
                 should_cooldown_profile = (
+                    not (isinstance(error, FetchFailure) and error.reason == "captcha_skipped")
+                    and
                     "closed" not in message
                     and "target page" not in message
                     and "customize markers" not in message

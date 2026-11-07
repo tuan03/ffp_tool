@@ -163,7 +163,7 @@ export interface AmazonCrawlerActiveVariant {
 }
 
 export interface AmazonCrawlerProgressItem {
-  skipReason?: AmazonCrawlerBatchSkippedInput["reason"] | "received";
+  skipReason?: AmazonCrawlerBatchSkippedInput["reason"] | "received" | "product_unavailable" | "product_not_found" | "captcha_unverified";
   taskId?: string;
   source: string;
   asin: string;
@@ -190,7 +190,7 @@ export interface AmazonCrawlerBrowserPoolProgress {
 }
 
 export interface AmazonCrawlerProgress {
-  batch?: { readonly skippedShopify: number; readonly skippedPipeline: number; readonly covered: number; readonly attention: number };
+  batch?: { readonly skippedShopify: number; readonly skippedPipeline: number; readonly covered: number; readonly attention: number; readonly unavailable?: number; readonly notFound?: number; readonly captchaSkipped?: number };
   phase: "queued" | "product" | "variant_matrix" | "customization" | "normalization" | "seo" | "image_processing" | "review" | "shopify" | "export" | "captcha";
   completed: number;
   total: number;

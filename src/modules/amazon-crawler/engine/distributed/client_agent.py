@@ -109,6 +109,16 @@ def refresh_requested_family_caches(
             continue
         refreshed.add(asin)
         result = cache.invalidate(f"{asin}:{amazon_zip}:us-v1")
+        # Explicit operator rechecks must also refresh unavailable children,
+        # while keeping cached successful siblings intact.
+        children = assignment.get("refreshUnavailableAsins") or []
+        if isinstance(children, list):
+            for child in children:
+                if isinstance(child, str) and re.fullmatch(r"[A-Z0-9]{10}", child):
+                    child_key = f"{child}:{amazon_zip}:us-v1"
+                    failure = cache.load_failure(child_key)
+                    if failure and failure.get("reason") in {"product_unavailable", "not_found", "captcha_skipped"}:
+                        cache.clear_failure(child_key)
         removed_files += int(result.get("removedFiles") or 0)
         removed_bytes += int(result.get("removedBytes") or 0)
     return {"removedFiles": removed_files, "removedBytes": removed_bytes}

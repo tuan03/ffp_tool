@@ -8,7 +8,7 @@ from datetime import timedelta
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 
-from engine.distributed.coordinator_models import ArchivedTaskAttempt, CrawlProductItem, TaskAttempt, create_database_engine, create_session_factory
+from engine.distributed.coordinator_models import ArchivedTaskAttempt, CrawlProductItem, CrawlTask, TaskAttempt, create_database_engine, create_session_factory
 from engine.distributed.coordinator_store import CoordinatorStore
 from engine.distributed.coordinator_migrations import migrate_coordinator
 from engine.distributed.protocol import utc_now
@@ -20,6 +20,37 @@ POSTGRES_TEST_URL = os.environ.get("TEST_AMAZON_COORDINATOR_DATABASE_URL", "").s
 
 @unittest.skipUnless(POSTGRES_TEST_URL, "TEST_AMAZON_COORDINATOR_DATABASE_URL is not configured")
 class PostgreSqlCoordinatorIntegrationTests(unittest.TestCase):
+    def test_job_summary_counts_terminal_product_skips_on_postgres(self) -> None:
+        schema = f"crawler_skip_test_{uuid.uuid4().hex}"
+        admin_engine = create_engine(POSTGRES_TEST_URL, pool_pre_ping=True)
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        test_url = make_url(POSTGRES_TEST_URL).update_query_dict({"options": f"-csearch_path={schema}"})
+        engine = create_database_engine(test_url.render_as_string(hide_password=False))
+        try:
+            create_coordinator_test_schema(engine)
+            store = CoordinatorStore(create_session_factory(engine))
+            job = store.create_job({"urls": ["B012345678", "B012345679", "B012345680", "B012345681"], "sequentialBatch": True})
+            with store.sessions.begin() as session:
+                tasks = session.scalars(select(CrawlTask).where(CrawlTask.job_id == job["id"]).order_by(CrawlTask.asin)).all()
+                for task, code in zip(tasks, ["NOT_FOUND", "PRODUCT_UNAVAILABLE", "NETWORK_TIMEOUT", "CAPTCHA_SKIPPED"]):
+                    task.status = "dead_letter"
+                    task.last_error = {"errorCode": code, "notFoundConfirmed": code == "NOT_FOUND"}
+            summary = store.job_summary(job["id"])
+            self.assertEqual(summary["errors"], 1)
+            self.assertEqual(summary["progress"]["batch"]["captchaSkipped"], 1)
+            self.assertEqual(summary["progress"]["batch"]["notFound"], 1)
+            self.assertEqual(summary["progress"]["batch"]["unavailable"], 1)
+            self.assertEqual(summary["progress"]["batch"]["attention"], 1)
+            listed = store.list_jobs(10)
+            self.assertEqual(len(listed), 1)
+            self.assertEqual(listed[0]["progress"]["batch"], summary["progress"]["batch"])
+        finally:
+            engine.dispose()
+            with admin_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            admin_engine.dispose()
+
     def test_finished_external_seo_wakes_parked_pipeline_item(self) -> None:
         schema = f"crawler_seo_wake_test_{uuid.uuid4().hex}"
         admin_engine = create_engine(POSTGRES_TEST_URL, pool_pre_ping=True)

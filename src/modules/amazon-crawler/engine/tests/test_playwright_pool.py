@@ -118,63 +118,37 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             on_captcha=on_captcha,
         )
 
-    async def test_detects_captcha_and_headless_fails_fast(self) -> None:
-        self.assertTrue(html_is_captcha('<form action="/errors/validateCaptcha">'))
-        pool = self.make_pool(headless=True)
-        with self.assertRaises(CaptchaTimeout):
-            await pool._wait_for_captcha(
-                FakeCaptchaPage(["Enter the characters you see below"]),
-                "https://amazon.com",
-                None,
-            )
+    async def test_amazon_captcha_skips_for_headed_and_headless_without_manual_prompt(self) -> None:
+        from engine.retry_policy import FetchFailure
+        for headless in (True, False):
+            notifications = []
+            pool = self.make_pool(headless=headless, on_captcha=notifications.append)
+            page = FakeCaptchaPage(["Enter the characters you see below"])
+            with self.assertRaises(FetchFailure) as caught:
+                await pool._wait_for_captcha(page, "https://amazon.com/dp/B012345678", None)
+            self.assertEqual(caught.exception.reason, "captcha_skipped")
+            self.assertFalse(page.was_brought_forward)
+            self.assertEqual(notifications, [])
 
-    async def test_headless_clicks_button_only_continue_challenge(self) -> None:
-        challenge = """<form method="get" action="/errors_page/validateCaptcha">
-        <input type="hidden" name="amzn" value="token"><input type="hidden" name="field-keywords" value="PEUBXF">
-        <button type="submit" alt="Continue shopping">Continue shopping</button></form>"""
-        page = FakeContinuePage([challenge, "<h1 id='productTitle'>Ready</h1>"])
-        pool = self.make_pool(headless=True)
-
-        html = await pool._wait_for_captcha(page, "https://www.amazon.com/dp/B012345678", None)
-
-        self.assertIn("productTitle", html)
-        self.assertEqual(page.clicks, ['form[action="/errors_page/validateCaptcha"] button[type="submit"]'])
-
-    async def test_headless_does_not_click_challenge_with_captcha_input(self) -> None:
-        challenge = """<form method="get" action="/errors_page/validateCaptcha">
-        <input name="captchacharacters"><button type="submit">Continue shopping</button></form>"""
-        page = FakeContinuePage([challenge])
-        pool = self.make_pool(headless=True)
-
-        with self.assertRaises(CaptchaTimeout):
-            await pool._wait_for_captcha(page, "https://www.amazon.com/dp/B012345678", None)
-
-        self.assertEqual(page.clicks, [])
-
-    async def test_headed_mode_waits_for_manual_captcha_then_continues(self) -> None:
-        notifications: list[str] = []
-        page = FakeCaptchaPage(["Enter the characters you see below", "<h1 id='productTitle'>Ready</h1>"])
-        pool = self.make_pool(headless=False, on_captcha=notifications.append)
-        html = await pool._wait_for_captcha(page, "https://amazon.com/dp/B012345678", None)
-        self.assertIn("productTitle", html)
-        self.assertTrue(page.was_brought_forward)
-        self.assertEqual(notifications, ["https://amazon.com/dp/B012345678"])
-
-    async def test_zip_setup_handles_homepage_captcha_before_location_request(self) -> None:
-        notifications: list[str] = []
-        page = FakeZipCaptchaPage([
-            "Enter the characters you see below",
-            "<html><body>Amazon home</body></html>",
-        ])
-        pool = self.make_pool(headless=False, on_captcha=notifications.append)
-
-        was_applied = await pool._set_amazon_zip(FakeContext(page))
-
-        self.assertTrue(was_applied)
-        self.assertTrue(page.was_brought_forward)
+    async def test_amazon_zip_challenge_skips_before_location_request(self) -> None:
+        from engine.retry_policy import FetchFailure
+        page = FakeZipCaptchaPage(["Enter the characters you see below"])
+        pool = self.make_pool(headless=False)
+        with self.assertRaises(FetchFailure) as caught:
+            await pool._set_amazon_zip(FakeContext(page))
+        self.assertEqual(caught.exception.reason, "captcha_skipped")
         self.assertTrue(page.was_closed)
-        self.assertEqual(page.requested_zip, "90001")
-        self.assertEqual(notifications, ["https://www.amazon.com/?language=en_US&currency=USD"])
+        self.assertFalse(page.was_brought_forward)
+
+    async def test_non_amazon_manual_challenge_behavior_is_preserved(self) -> None:
+        notifications = []
+        page = FakeCaptchaPage(["Enter the characters you see below", "<h1>Ready</h1>"])
+        pool = self.make_pool(headless=False, on_captcha=notifications.append)
+        pool.source_platform = "etsy"
+        html = await pool._wait_for_captcha(page, "https://www.etsy.com/listing/123", None)
+        self.assertIn("Ready", html)
+        self.assertTrue(page.was_brought_forward)
+        self.assertEqual(len(notifications), 1)
 
     async def test_profile_tab_capacity_runs_browser_work_in_parallel(self) -> None:
         activity: list[dict] = []
@@ -353,7 +327,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics[0]["profile"], "direct-1")
         self.assertFalse(diagnostics[0]["proxyEnabled"])
 
-    async def test_headed_captcha_waits_on_first_direct_profile_then_falls_back(self) -> None:
+    async def test_amazon_captcha_stops_after_first_route(self) -> None:
         pool = PlaywrightPool(
             profile_root=Path(tempfile.gettempdir()) / "ffp-playwright-test",
             profiles=2,
@@ -372,10 +346,11 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             raise error
 
         pool._fetch_once = fetch_once
-        with self.assertRaises(CaptchaTimeout):
+        from engine.retry_policy import FetchFailure
+        with self.assertRaises(FetchFailure) as caught:
             await pool._fetch_with_retries("https://amazon.com/dp/B012345678", None)
-
-        self.assertEqual(attempts, [("direct", True), ("direct", False), ("proxy", True)])
+        self.assertEqual(caught.exception.reason, "captcha_skipped")
+        self.assertEqual(attempts, [("direct", False)])
 
     async def test_headed_customize_can_solve_captcha_on_direct_profile(self) -> None:
         pool = PlaywrightPool(
@@ -383,6 +358,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             profiles=1, tabs_per_profile=1, headless=False, captcha_timeout=30, zip_code="10001",
             proxy_assignments=[ProxyAssignment(index=0, name="proxy-1", server="http://proxy.test:80")],
         )
+        pool.source_platform = "etsy"
         attempts: list[tuple[str, bool]] = []
 
         async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool, customization_markers: tuple[str, ...]):
@@ -405,6 +381,7 @@ class PlaywrightPoolTests(unittest.IsolatedAsyncioTestCase):
             profiles=1, tabs_per_profile=1, headless=False, captcha_timeout=30, zip_code="10001",
             proxy_assignments=[ProxyAssignment(index=0, name="proxy-1", server="http://proxy.test:80")],
         )
+        pool.source_platform = "etsy"
         attempts: list[tuple[str, bool]] = []
 
         async def fetch_once(_url: str, _cancel_event, *, route: str, allow_manual_captcha: bool, customization_markers: tuple[str, ...]):

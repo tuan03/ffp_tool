@@ -617,26 +617,14 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(diagnostics["fetchMode"], "playwright")
         self.assertTrue(diagnostics["captchaEncountered"])
 
-    def test_http_fetch_rotates_proxy_after_captcha_and_records_trace(self) -> None:
+    def test_http_proxy_captcha_skips_without_rotating_and_records_trace(self) -> None:
+        from engine.retry_policy import FetchFailure
         fetcher = RotatingHttpFetcher()
-
-        html, attempts = fetcher.fetch("https://www.amazon.com/dp/B012345678")
-
-        self.assertIn("productTitle", html)
-        self.assertEqual(attempts, 2)
-        self.assertEqual(
-            [(trace["profile"], trace["outcome"]) for trace in fetcher.last_diagnostics()],
-            [("proxy-1", "captcha"), ("proxy-2", "success")],
-        )
-        self.assertTrue(all(trace["amazonZip"] == "90001" for trace in fetcher.last_diagnostics()))
-        self.assertTrue(all(trace["usProfileApplied"] for trace in fetcher.last_diagnostics()))
-
-        fetcher.fetch("https://www.amazon.com/dp/B012345678")
-
-        self.assertEqual(
-            [(trace["profile"], trace["outcome"]) for trace in fetcher.last_diagnostics()],
-            [("proxy-2", "success")],
-        )
+        with self.assertRaises(FetchFailure) as caught:
+            fetcher.fetch("https://www.amazon.com/dp/B012345678")
+        self.assertEqual(caught.exception.reason, "captcha_skipped")
+        self.assertEqual([(trace["profile"], trace["outcome"]) for trace in fetcher.last_diagnostics()],
+                         [("proxy-1", "captcha")])
 
     def test_http_fetch_uses_direct_connection_without_touching_proxy_when_it_succeeds(self) -> None:
         fetcher = DirectFirstHttpFetcher(direct_html=PRODUCT_HTML + (" " * 5_000))
@@ -652,18 +640,18 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(fetcher.opened_profiles, ["direct", "direct"])
 
-    def test_http_fetch_falls_back_to_proxy_only_after_direct_captcha(self) -> None:
+    def test_http_captcha_skips_without_proxy_and_next_link_can_use_direct(self) -> None:
+        from engine.retry_policy import FetchFailure
         fetcher = DirectFirstHttpFetcher(direct_html="<form action='/errors/validateCaptcha'>")
-
-        html, attempts = fetcher.fetch("https://www.amazon.com/dp/B012345678")
-
+        with self.assertRaises(FetchFailure) as caught:
+            fetcher.fetch("https://www.amazon.com/dp/B012345678")
+        self.assertEqual(caught.exception.reason, "captcha_skipped")
+        self.assertEqual(fetcher.opened_profiles, ["direct"])
+        fetcher.direct_html = PRODUCT_HTML + " " * 5000
+        html, attempts = fetcher.fetch("https://www.amazon.com/dp/B012345679")
         self.assertIn("productTitle", html)
-        self.assertEqual(attempts, 2)
-        self.assertEqual(fetcher.opened_profiles, ["direct", "proxy-1"])
-        self.assertEqual(
-            [(trace["profile"], trace["outcome"]) for trace in fetcher.last_diagnostics()],
-            [("direct", "captcha"), ("proxy-1", "success")],
-        )
+        self.assertEqual(attempts, 1)
+        self.assertEqual(fetcher.opened_profiles, ["direct", "direct"])
 
     def test_family_parent_asin_is_not_injected_as_a_child_variant(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

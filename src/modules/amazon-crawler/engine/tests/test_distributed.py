@@ -1715,6 +1715,93 @@ class ClientAgentTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CoordinatorStoreTests(unittest.TestCase):
+    def test_captcha_skip_continues_batch_without_retry_and_remains_recheckable(self) -> None:
+        job = self.store.create_job({"urls": ["B012345678", "B012345679"], "sequentialBatch": True})
+        self.store.register_client(client_hello("client-a", slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        response = self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "captcha_skipped", "reason": "captcha_skipped", "retryable": False},
+        })
+        self.assertEqual(response["status"], "dead_letter")
+        for snapshot in [self.store.job_summary(job["id"]), self.store.get_job(job["id"])]:
+            self.assertEqual(snapshot["progress"]["batch"]["captchaSkipped"], 1)
+            self.assertEqual(snapshot["progress"]["batch"]["attention"], 0)
+            self.assertEqual(snapshot["progress"]["items"][0]["skipReason"], "captcha_unverified")
+        next_lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertNotEqual(next_lease["taskId"], lease["taskId"])
+        self.store.fail_task("client-a", {"taskId": next_lease["taskId"], "leaseId": next_lease["leaseId"],
+            "error": {"reason": "product_unavailable", "retryable": False}})
+        self.store.requeue_dead_letter_tasks([lease["taskId"]], expected_count=1,
+            request_id="recheck-captcha", actor="operator", reason="Check again")
+        self.assertEqual(self.store.lease_tasks("client-a", 1)[0]["taskId"], lease["taskId"])
+
+    def test_verified_missing_product_skips_to_next_link_and_allows_manual_recheck(self) -> None:
+        job = self.store.create_job({"urls": ["B012345678", "B012345679"], "sequentialBatch": True})
+        self.store.register_client(client_hello("client-a", slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        response = self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "not_found", "reason": "not_found", "retryable": False,
+                      "notFoundConfirmed": True, "retryAfter": (utc_now() + timedelta(hours=24)).isoformat()},
+        })
+        self.assertEqual(response["status"], "dead_letter")
+        summary = self.store.job_summary(job["id"])
+        self.assertEqual(summary["errors"], 0)
+        for snapshot in [summary, self.store.get_job(job["id"])]:
+            self.assertEqual(snapshot["progress"]["batch"]["notFound"], 1)
+            self.assertEqual(snapshot["progress"]["batch"]["attention"], 0)
+            self.assertEqual(snapshot["progress"]["items"][0]["skipReason"], "product_not_found")
+        next_lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertNotEqual(next_lease["taskId"], lease["taskId"])
+        self.store.fail_task("client-a", {
+            "taskId": next_lease["taskId"], "leaseId": next_lease["leaseId"],
+            "error": {"reason": "product_unavailable", "retryable": False},
+        })
+        self.store.requeue_dead_letter_tasks([lease["taskId"]], expected_count=1,
+            request_id="recheck-missing", actor="operator", reason="Check product again")
+        refreshed = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(refreshed["taskId"], lease["taskId"])
+        self.assertIn("B012345678", refreshed["settings"]["refreshFamilyAsins"])
+
+    def test_manual_unavailable_recheck_clears_server_cache_and_refreshes_agent(self) -> None:
+        job = self.store.create_job({"urls": ["B012345678"]})
+        self.store.register_client(client_hello("client-a", slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "partial", "reason": "product_unavailable", "retryable": False,
+                      "nonRetryableAsins": ["B012345679"],
+                      "retryAfter": (utc_now() + timedelta(hours=24)).isoformat()},
+        })
+        self.store.requeue_dead_letter_tasks([lease["taskId"]], expected_count=1,
+            request_id="recheck-unavailable", actor="operator", reason="Check stock again")
+        refreshed = self.store.lease_tasks("client-a", 1)[0]
+        self.assertEqual(refreshed["taskId"], lease["taskId"])
+        self.assertIn("B012345678", refreshed["settings"]["refreshFamilyAsins"])
+        self.assertEqual(refreshed["refreshUnavailableAsins"], ["B012345679"])
+
+    def test_unavailable_product_is_terminal_and_next_batch_link_can_run(self) -> None:
+        job = self.store.create_job({"urls": ["B012345678", "B012345679"], "sequentialBatch": True})
+        self.store.register_client(client_hello("client-a", slots=1))
+        lease = self.store.lease_tasks("client-a", 1)[0]
+        response = self.store.fail_task("client-a", {
+            "taskId": lease["taskId"], "leaseId": lease["leaseId"],
+            "error": {"status": "product_unavailable", "reason": "product_unavailable",
+                      "message": "Amazon hiện không bán sản phẩm này.", "retryable": True},
+        })
+        self.assertEqual(response["status"], "dead_letter")
+        summary = self.store.job_summary(job["id"])
+        self.assertEqual(summary["errors"], 0)
+        self.assertEqual(summary["progress"]["batch"]["unavailable"], 1)
+        self.assertEqual(summary["progress"]["batch"]["attention"], 0)
+        self.assertEqual(summary["progress"]["items"][0]["skipReason"], "product_unavailable")
+        snapshot = self.store.get_job(job["id"])
+        self.assertEqual(snapshot["progress"]["batch"]["unavailable"], 1)
+        self.assertEqual(snapshot["progress"]["items"][0]["skipReason"], "product_unavailable")
+        next_lease = self.store.lease_tasks("client-a", 1)[0]
+        self.assertNotEqual(next_lease["taskId"], lease["taskId"])
+
     def test_live_shopify_duplicate_is_terminal_without_a_seo_handoff(self) -> None:
         job = self.store.create_job({"urls": ["B0CHILD001"], "storeId": "store-1"})
         with self.sessions.begin() as session:

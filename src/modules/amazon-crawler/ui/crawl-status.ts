@@ -26,6 +26,9 @@ export function resolveCrawlStatus(input: {
   const counts = [batch && input.progress ? `Đã xử lý ${input.progress.completed}/${input.progress.total} link` : null,
     batch ? `${batch.skippedShopify} link đã có Shopify · ${batch.skippedPipeline} link đang trong Queue/Review · ${batch.covered} link lấy qua link khác` : null,
     batch?.attention ? `${batch.attention} link cần kiểm tra` : null,
+    batch?.unavailable ? `${batch.unavailable} link có ASIN không khả dụng (đã bỏ qua)` : null,
+    batch?.captchaSkipped ? `${batch.captchaSkipped} link chưa xác minh do CAPTCHA (đã bỏ qua lượt này)` : null,
+    batch?.notFound ? `${batch.notFound} link có ASIN không tồn tại (đã bỏ qua)` : null,
     summary.totalProducts > 0 ? `Đã bàn giao ${summary.handedOver}/${summary.totalProducts} sản phẩm` : `Bàn giao mới: 0 sản phẩm`,
     summary.pending > 0 ? `${summary.pending} đang chuẩn bị` : null,
     summary.notHandedOver > 0 ? `${summary.notHandedOver} chưa bàn giao` : null,
@@ -54,7 +57,7 @@ export function resolveCrawlStatus(input: {
   }
   if (batch && input.progress && input.progress.completed >= input.progress.total) return {
     title: summary.pending > 0 ? "Đã xử lý danh sách · Đang bàn giao SEO Queue" : batch.attention || summary.notHandedOver > 0 ? "Lô đã kết thúc · Có mục cần kiểm tra" : "Đã xử lý xong danh sách",
-    detail: counts, tone: summary.pending > 0 ? "working" : batch.attention || summary.notHandedOver > 0 ? "warning" : "success",
+    detail: counts, tone: summary.pending > 0 ? "working" : batch.attention || batch.unavailable || batch.notFound || batch.captchaSkipped || summary.notHandedOver > 0 ? "warning" : "success",
   };
   if (input.completion && summary.pending > 0) return { title: "Đã nhận dữ liệu · Đang bàn giao SEO Queue", detail: input.completion.label, tone: "working" };
   if (input.completion) return { title: input.completion.tone === "success" ? "Phiên cào đã hoàn tất" : "Phiên kết thúc · Còn sản phẩm chưa bàn giao", detail: input.completion.label, tone: input.completion.tone };

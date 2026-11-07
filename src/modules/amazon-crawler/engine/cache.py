@@ -416,7 +416,7 @@ class RawFamilyCache:
             except (KeyError, ValueError, TypeError):
                 self._quarantine(self._path(asin, "failure"))
                 return None
-            if failure.get("status") not in {"not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
+            if failure.get("status") not in {"captcha_skipped", "product_unavailable", "not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
                 self._quarantine(self._path(asin, "failure"))
                 return None
             if failure.get("status") == "not_found" and failure.get("notFoundConfirmed") is not True:
