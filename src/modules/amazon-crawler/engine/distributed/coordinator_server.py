@@ -352,23 +352,59 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         await asyncio.to_thread(image_service.profiles.seed_shared, project_root / "config" / "image-processing-profiles")
         stop = asyncio.Event()
 
+        async def run_maintenance_step(
+            step_name: str,
+            func: Any,
+            *args: Any,
+            timeout: float = 30.0,
+            **kwargs: Any,
+        ) -> tuple[bool, Any]:
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(func, *args, **kwargs),
+                    timeout=timeout,
+                )
+                return True, result
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                debug_event(
+                    "maintenance_step_error",
+                    step=step_name,
+                    error=str(error),
+                    errorType=type(error).__name__,
+                )
+                return False, None
+
         async def reap_loop() -> None:
             next_cleanup_at = 0.0
             while not stop.is_set():
-                await asyncio.to_thread(store.reap_expired)
-                await asyncio.to_thread(store.purge_stopped_jobs)
-                await asyncio.to_thread(command_ledger.expire_pending)
+                await run_maintenance_step("reap_expired", store.reap_expired)
+                await run_maintenance_step("purge_stopped_jobs", store.purge_stopped_jobs)
+                await run_maintenance_step("expire_pending_commands", command_ledger.expire_pending)
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_cleanup_at:
-                    await asyncio.to_thread(store.cleanup_telemetry)
-                    await asyncio.to_thread(
+                    next_cleanup_at = loop_time + 60
+                    await run_maintenance_step("cleanup_telemetry", store.cleanup_telemetry, timeout=60.0)
+                    await run_maintenance_step(
+                        "cleanup_history",
                         store.cleanup_history,
+                        timeout=60.0,
                         retention_minutes=history_retention_minutes,
                     )
-                    await asyncio.to_thread(store.cleanup_attempt_history)
-                    protected_tokens = await asyncio.to_thread(store.review_image_tokens)
-                    await asyncio.to_thread(image_service.clear_expired, protected_tokens)
-                    next_cleanup_at = loop_time + 60
+                    await run_maintenance_step("cleanup_attempt_history", store.cleanup_attempt_history, timeout=60.0)
+                    tokens_ok, protected_tokens = await run_maintenance_step(
+                        "review_image_tokens",
+                        store.review_image_tokens,
+                        timeout=30.0,
+                    )
+                    if tokens_ok and protected_tokens is not None:
+                        await run_maintenance_step(
+                            "clear_expired_images",
+                            image_service.clear_expired,
+                            protected_tokens,
+                            timeout=60.0,
+                        )
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=5)
                 except (TimeoutError, asyncio.TimeoutError):
@@ -382,7 +418,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         finally:
             app.state.is_ready = False
             stop.set()
-            await task
+            await asyncio.gather(task, return_exceptions=True)
             image_service.close()
             engine.dispose()
 
@@ -739,7 +775,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/crawl-jobs/{job_id}/resume")
     async def resume_job(job_id: str) -> dict[str, Any]:
         try:
-            snapshot = store.resume_job(job_id)
+            snapshot = await asyncio.to_thread(store.resume_job, job_id)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         if snapshot is None:
@@ -856,10 +892,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/crawl-jobs/{job_id}/cancel")
     async def cancel_job(job_id: str, force: bool = False) -> dict[str, Any]:
         connected_client_ids = await manager.connected_client_ids()
-        snapshot = store.cancel_job(job_id, connected_client_ids, force=force)
+        snapshot = await asyncio.to_thread(store.cancel_job, job_id, connected_client_ids, force=force)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
-        cache_generation = store.current_cache_generation()
+        cache_generation = await asyncio.to_thread(store.current_cache_generation)
         cancellation = snapshot.get("cancellation") or {}
         debug_event(
             "stop_requested",
@@ -897,7 +933,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.post("/api/v1/crawl-jobs/{job_id}/replace", status_code=202)
     async def replace_job(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        source_job = store.get_job(job_id)
+        source_job = await asyncio.to_thread(store.get_job, job_id)
         if source_job is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
         if source_job.get("status") not in {"completed", "partial"}:
@@ -922,9 +958,9 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.delete("/api/v1/crawl-jobs/{job_id}")
     async def delete_job(job_id: str) -> Response:
         try:
-            if not store.assert_job_deletable(job_id):
+            if not await asyncio.to_thread(store.assert_job_deletable, job_id):
                 raise HTTPException(status_code=404, detail="Crawl job was not found.")
-            snapshot = store.cancel_job(job_id)
+            snapshot = await asyncio.to_thread(store.cancel_job, job_id)
             if snapshot is not None:
                 await manager.broadcast({
                     "type": "cancel",
@@ -932,7 +968,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
                     "cancellationId": (snapshot.get("cancellation") or {}).get("id"),
                     "discard": True,
                 })
-            deleted = store.delete_job(job_id)
+            deleted = await asyncio.to_thread(store.delete_job, job_id)
         except ProductPipelineActiveError as error:
             raise HTTPException(
                 status_code=409,
@@ -945,7 +981,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
     @app.post("/api/v1/crawl-jobs/{job_id}/archive")
     async def archive_job(job_id: str) -> dict[str, str]:
         try:
-            archived = store.archive_job(job_id)
+            archived = await asyncio.to_thread(store.archive_job, job_id)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         if not archived:
@@ -1432,7 +1468,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
 
     @app.get("/api/v1/crawl-jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
-        if store.get_job(job_id) is None:
+        if await asyncio.to_thread(store.get_job, job_id) is None:
             raise HTTPException(status_code=404, detail="Crawl job was not found.")
 
         async def stream():
@@ -1466,7 +1502,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             raise HTTPException(status_code=413, detail="Result payload exceeds 50 MB.") from error
         if request.headers.get("content-encoding", "").casefold() == "gzip":
             try:
-                body = decompress_gzip_limited(body, maximum_bytes=50 * 1024 * 1024)
+                body = await asyncio.to_thread(decompress_gzip_limited, body, maximum_bytes=50 * 1024 * 1024)
             except ResultPayloadTooLarge as error:
                 raise HTTPException(status_code=413, detail="Decompressed result payload exceeds 50 MB.") from error
             except (OSError, EOFError) as error:
@@ -1474,7 +1510,7 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         if len(body) > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Decompressed result payload exceeds 50 MB.")
         try:
-            payload = json.loads(body)
+            payload = await asyncio.to_thread(json.loads, body)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise HTTPException(status_code=400, detail="Result body must be valid JSON.") from error
         if not isinstance(payload, dict):
@@ -1486,10 +1522,10 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         }
         if any(str(payload.get(name) or "") != expected for name, expected in identity.items()):
             raise HTTPException(status_code=400, detail="Result envelope identity does not match route and headers.")
-        checksum = payload_checksum(payload)
+        checksum = await asyncio.to_thread(payload_checksum, payload)
         if x_result_checksum and x_result_checksum != checksum:
             raise HTTPException(status_code=400, detail="Result checksum does not match payload.")
-        response = store.accept_result(task_id, x_client_id, x_lease_id, checksum, payload)
+        response = await asyncio.to_thread(store.accept_result, task_id, x_client_id, x_lease_id, checksum, payload)
         status = response["status"]
         if status == "conflict":
             raise HTTPException(status_code=409, detail={"code": "UPLOAD_CHECKSUM_CONFLICT", "reason": response.get("reason")})
@@ -1516,13 +1552,13 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         try:
             body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
             if request.headers.get("content-encoding", "").casefold() == "gzip":
-                body = decompress_gzip_limited(body, maximum_bytes=50 * 1024 * 1024)
+                body = await asyncio.to_thread(decompress_gzip_limited, body, maximum_bytes=50 * 1024 * 1024)
         except ResultPayloadTooLarge as error:
             raise HTTPException(status_code=413, detail="Decompressed result batch exceeds 50 MB.") from error
         except (OSError, EOFError) as error:
             raise HTTPException(status_code=400, detail="Invalid gzip result batch.") from error
         try:
-            envelope = json.loads(body)
+            envelope = await asyncio.to_thread(json.loads, body)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise HTTPException(status_code=400, detail="Result batch must be valid JSON.") from error
         items = envelope.get("items") if isinstance(envelope, dict) else None
@@ -1545,11 +1581,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
             )):
                 receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "identity_mismatch"})
                 continue
-            checksum = payload_checksum(payload)
+            checksum = await asyncio.to_thread(payload_checksum, payload)
             if item.get("checksum") and item["checksum"] != checksum:
                 receipts.append({"taskId": task_id, "leaseId": lease_id, "status": "invalid", "reason": "checksum_mismatch"})
                 continue
-            accepted = store.accept_result(task_id, x_client_id, lease_id, checksum, payload)
+            accepted = await asyncio.to_thread(store.accept_result, task_id, x_client_id, lease_id, checksum, payload)
             receipts.append({"taskId": task_id, "leaseId": lease_id, **accepted})
         return {"results": receipts}
 
@@ -1569,8 +1605,8 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         try:
             body = await read_request_body_limited(request, maximum_bytes=50 * 1024 * 1024)
             if request.headers.get("content-encoding", "").casefold() == "gzip":
-                body = decompress_gzip_limited(body, maximum_bytes=50 * 1024 * 1024)
-            payload = json.loads(body)
+                body = await asyncio.to_thread(decompress_gzip_limited, body, maximum_bytes=50 * 1024 * 1024)
+            payload = await asyncio.to_thread(json.loads, body)
         except ResultPayloadTooLarge as error:
             raise HTTPException(status_code=413, detail="Product payload exceeds 50 MB.") from error
         except (OSError, EOFError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -1580,10 +1616,11 @@ def create_coordinator_app(*, database_url: str | None = None, create_schema: bo
         identity = {"taskId": task_id, "clientId": x_client_id, "leaseId": x_lease_id}
         if any(str(payload.get(name) or "") != expected for name, expected in identity.items()):
             raise HTTPException(status_code=400, detail="Product envelope identity does not match route and headers.")
-        checksum = payload_checksum(payload)
+        checksum = await asyncio.to_thread(payload_checksum, payload)
         if x_result_checksum and x_result_checksum != checksum:
             raise HTTPException(status_code=400, detail="Product checksum does not match payload.")
-        response = store.accept_product(
+        response = await asyncio.to_thread(
+            store.accept_product,
             task_id,
             x_client_id,
             x_lease_id,

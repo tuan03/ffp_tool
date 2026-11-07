@@ -422,6 +422,13 @@ def create_database_engine(url: str | None = None):
         if sqlite_database and sqlite_database != ":memory:":
             Path(sqlite_database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
         engine_options["poolclass"] = NullPool
+    else:
+        engine_options.update(
+            pool_size=max(5, int(os.environ.get("AMAZON_COORDINATOR_DB_POOL_SIZE", "20"))),
+            max_overflow=max(5, int(os.environ.get("AMAZON_COORDINATOR_DB_MAX_OVERFLOW", "20"))),
+            pool_timeout=max(5, int(os.environ.get("AMAZON_COORDINATOR_DB_POOL_TIMEOUT", "30"))),
+            pool_recycle=max(60, int(os.environ.get("AMAZON_COORDINATOR_DB_POOL_RECYCLE", "1800"))),
+        )
     engine = create_engine(selected, **engine_options)
     if selected.startswith("sqlite"):
         @event.listens_for(engine, "connect")
