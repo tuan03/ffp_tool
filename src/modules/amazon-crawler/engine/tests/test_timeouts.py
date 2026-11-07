@@ -375,15 +375,15 @@ class BrowserStageTimeoutTests(unittest.IsolatedAsyncioTestCase):
             await PlaywrightPool._load_product_page(HungPage(), "https://www.amazon.com/dp/B012345678", selector_timeout=0.03)
         self.assertEqual(caught.exception.details["stage"], "selector")
 
-    async def test_manual_captcha_wait_is_bounded_and_reports_captcha_stage(self) -> None:
+    async def test_non_amazon_manual_captcha_wait_is_bounded_and_reports_captcha_stage(self) -> None:
         class CaptchaPage:
             async def content(self): return '<html>Enter the characters you see below</html>'
             async def bring_to_front(self): pass
             async def wait_for_timeout(self, _milliseconds): await asyncio.Event().wait()
         with tempfile.TemporaryDirectory() as directory:
-            pool = PlaywrightPool(profile_root=Path(directory), profiles=1, tabs_per_profile=1, headless=False, captcha_timeout=0.03, zip_code="90001")
+            pool = PlaywrightPool(profile_root=Path(directory), profiles=1, tabs_per_profile=1, headless=False, captcha_timeout=0.03, zip_code="90001", source_platform="etsy")
             with self.assertRaises(CrawlTimeout) as caught:
-                await pool._wait_for_captcha(CaptchaPage(), "https://www.amazon.com/dp/B012345678", None)
+                await pool._wait_for_captcha(CaptchaPage(), "https://www.etsy.com/listing/123", None)
             self.assertEqual(caught.exception.details["stage"], "captcha")
 
 
