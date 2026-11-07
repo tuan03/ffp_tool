@@ -6,6 +6,33 @@ import { resolveCrawlStatus } from "../ui/crawl-status";
 import { CrawlStatusNotice } from "../ui/components/CrawlStatusNotice";
 
 const base = { isRunning: false, isChecking: false, isStale: false, blockers: [], errors: [], summary: { totalProducts: 18, handedOver: 10, pending: 8, notHandedOver: 0 } };
+test("captcha skip ends the spinner without claiming that a product is missing", () => {
+  const status = resolveCrawlStatus({ ...base,
+    progress: { completed: 1, total: 1, phase: "export", message: "",
+      batch: { skippedShopify: 0, skippedPipeline: 0, covered: 0, attention: 0, captchaSkipped: 1 } },
+    summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 } });
+  assert.match(status.detail, /1 link chưa xác minh do CAPTCHA/);
+  assert.doesNotMatch(status.detail, /không tồn tại/);
+  assert.equal(status.tone, "warning");
+});
+test("confirmed missing products are skipped without a failure or running spinner", () => {
+  const status = resolveCrawlStatus({ ...base,
+    progress: { completed: 1, total: 1, phase: "export", message: "",
+      batch: { skippedShopify: 0, skippedPipeline: 0, covered: 0, attention: 0, notFound: 1 } },
+    summary: { totalProducts: 0, handedOver: 0, pending: 0, notHandedOver: 0 } });
+  assert.match(status.detail, /1 link có ASIN không tồn tại/);
+  assert.doesNotMatch(status.detail, /cần kiểm tra/);
+  assert.equal(status.tone, "warning");
+});
+test("unavailable ASINs are reported separately from technical failures", () => {
+  const status = resolveCrawlStatus({ ...base,
+    progress: { completed: 2, total: 2, phase: "export", message: "",
+      batch: { skippedShopify: 0, skippedPipeline: 0, covered: 0, attention: 0, unavailable: 1 } },
+    summary: { totalProducts: 1, handedOver: 1, pending: 0, notHandedOver: 0 } });
+  assert.match(status.detail, /1 link có ASIN không khả dụng/);
+  assert.doesNotMatch(status.detail, /cần kiểm tra/);
+  assert.equal(status.tone, "warning");
+});
 test("unavailable handoff worker replaces spinner without losing received counts", () => {
   const status = resolveCrawlStatus({ ...base, isRunning: true,
     summary: { ...base.summary, workerStatus: "unavailable" } });

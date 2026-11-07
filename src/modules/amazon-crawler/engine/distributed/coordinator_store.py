@@ -1880,7 +1880,7 @@ class CoordinatorStore(CoordinatorObservability):
 
     @staticmethod
     def _store_negative(session, key: str, error: dict[str, Any]) -> None:
-        if error.get("status") not in {"not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
+        if error.get("status") not in {"product_unavailable", "not_found", "temporarily_blocked", "network_error", "parser_error", "partial"}:
             return
         try:
             retry_after = datetime.fromisoformat(str(error["retryAfter"]).replace("Z", "+00:00"))
@@ -2531,7 +2531,12 @@ class CoordinatorStore(CoordinatorObservability):
                 if channel == "amazon_reviews" and (not can_reviews or amazon_blocked):
                     continue
                 amazon_zip = str(job_settings.get("amazonZip") or "90001")
+                recheck_unavailable = channel == "amazon" and bool(task.asin) and (task.last_error or {}).get("errorCode") in {"PRODUCT_UNAVAILABLE", "NOT_FOUND", "CAPTCHA_SKIPPED"} and bool((task.last_error or {}).get("manualRequeueAt"))
+                if recheck_unavailable:
+                    job_settings["refreshFamilyAsins"] = sorted(set(job_settings.get("refreshFamilyAsins") or []) | {task.asin})
                 negative = self._active_negative(session, self._negative_key(task.asin, amazon_zip), now) if (channel == "amazon" and task.asin) else None
+                if recheck_unavailable and negative is not None and negative.get("reason") in {"product_unavailable", "not_found", "captcha_skipped"}:
+                    negative = None
                 if negative is not None:
                     task.last_error = classify_task_error(negative)
                     if negative.get("retryable") is False:
@@ -2598,6 +2603,7 @@ class CoordinatorStore(CoordinatorObservability):
                     "action": str(job_settings.get("action") or job_settings.get("stage", "crawl")),
                     "settings": job_settings,
                     "settingsFingerprint": settings_fingerprint(job_settings),
+                    "refreshUnavailableAsins": list((task.last_error or {}).get("nonRetryableAsins") or []) if recheck_unavailable else [],
                     "leaseExpiresAt": utc_iso(task.lease_expires_at),
                     "jobDeadlineAt": utc_iso(job_deadline),
                     "asinDeadlineAt": utc_iso(asin_deadline),
@@ -5657,6 +5663,10 @@ class CoordinatorStore(CoordinatorObservability):
                                        "manualRequeueAt": utc_iso(), "manualRequeueBy": actor}
                     job = session.get(CrawlJob, task.job_id)
                     if job is not None:
+                        if previous_error.get("errorCode") in {"PRODUCT_UNAVAILABLE", "NOT_FOUND", "CAPTCHA_SKIPPED"} and task.asin:
+                            negative = session.get(CoordinatorState, self._negative_key(task.asin, str(job.settings.get("amazonZip") or "90001")))
+                            if negative is not None:
+                                session.delete(negative)
                         job.status = "queued"
                         job.completed_at = None
                 elif action == "delete":
@@ -5819,9 +5829,19 @@ class CoordinatorStore(CoordinatorObservability):
             phase = "image_processing"
         elif product_counts.get("normalizing") or product_counts.get("received"):
             phase = "normalization"
+        # Reuse the JSON expression so PostgreSQL receives the same bound key
+        # in SELECT and GROUP BY instead of treating them as different columns.
+        terminal_error_code = CrawlTask.last_error["errorCode"].as_string()
+        terminal_product_counts = dict(session.execute(select(terminal_error_code, func.count(CrawlTask.id)).where(
+            CrawlTask.job_id == job.id, CrawlTask.status.in_(["failed", "dead_letter", "dead_letter_deleted"]),
+            terminal_error_code.in_(["PRODUCT_UNAVAILABLE", "NOT_FOUND", "CAPTCHA_SKIPPED"]),
+        ).group_by(terminal_error_code)).all())
+        unavailable_count = int(terminal_product_counts.get("PRODUCT_UNAVAILABLE", 0))
+        not_found_count = int(terminal_product_counts.get("NOT_FOUND", 0))
+        captcha_count = int(terminal_product_counts.get("CAPTCHA_SKIPPED", 0))
         errors = (int(job.rejected_inputs) + int(task_counts.get("failed", 0))
                   + int(task_counts.get("dead_letter", 0)) + int(task_counts.get("dead_letter_deleted", 0))
-                  + int(product_counts.get("failed", 0)))
+                  + int(product_counts.get("failed", 0)) - unavailable_count - not_found_count - captcha_count)
         if job.status in {"cancelling", "cancelled"}:
             errors += int(session.scalar(select(func.count(CrawlTask.id)).where(
                 CrawlTask.job_id == job.id, CrawlTask.status != "failed", CrawlTask.last_error["stage"].as_string() == "job",
@@ -5842,8 +5862,11 @@ class CoordinatorStore(CoordinatorObservability):
                 "skippedShopify": skip_counts["existing_shopify"],
                 "skippedPipeline": skip_counts["existing_pipeline"],
                 "covered": skip_counts["received"],
+                "unavailable": unavailable_count,
+                "notFound": not_found_count,
+                "captchaSkipped": captcha_count,
                 "attention": skip_counts["attention"] + int(task_counts.get("failed", 0))
-                    + int(task_counts.get("dead_letter", 0)) + int(task_counts.get("dead_letter_deleted", 0)),
+                    + int(task_counts.get("dead_letter", 0)) + int(task_counts.get("dead_letter_deleted", 0)) - unavailable_count - not_found_count - captcha_count,
             }}
             if include_batch_inputs:
                 skipped_inputs = {event.payload["taskId"]: event.payload for event in session.scalars(select(JobEvent).where(
@@ -5861,6 +5884,15 @@ class CoordinatorStore(CoordinatorObservability):
                                    "existing_pipeline": f"Bỏ qua: {subject_label} đang trong SEO Queue/Review.",
                                    "attention": "Cần kiểm tra bản xử lý hiện có; không tự tạo bản trùng.",
                                    "received": f"Đã lấy qua {subject_label} {skip.get('relatedAsin') or 'trước đó'}; không cào lại."}[skip["reason"]]
+                    if task.status in {"failed", "dead_letter", "dead_letter_deleted"} and (task.last_error or {}).get("errorCode") == "PRODUCT_UNAVAILABLE":
+                        skip = {"reason": "product_unavailable"}
+                        input_message = str((task.last_error or {}).get("message") or "Bỏ qua: Amazon hiện không bán sản phẩm này.")
+                    elif task.status in {"failed", "dead_letter", "dead_letter_deleted"} and (task.last_error or {}).get("errorCode") == "NOT_FOUND":
+                        skip = {"reason": "product_not_found"}
+                        input_message = str((task.last_error or {}).get("message") or "Bỏ qua: trang sản phẩm Amazon không tồn tại.")
+                    elif task.status in {"failed", "dead_letter", "dead_letter_deleted"} and (task.last_error or {}).get("errorCode") == "CAPTCHA_SKIPPED":
+                        skip = {"reason": "captcha_unverified"}
+                        input_message = "Chưa kiểm tra được — Amazon yêu cầu xác minh CAPTCHA. Đã bỏ qua trong lượt này."
                     batch_progress["items"].append({
                         "taskId": task.id, "source": task.source,
                         "asin": task.asin or task.source_product_id or "",
@@ -6303,6 +6335,12 @@ class CoordinatorStore(CoordinatorObservability):
                     "received": f"Đã lấy qua ASIN {skipped.get('relatedAsin') or 'trước đó'}; không cào lại.",
                 }
                 item.update(message=messages[skipped["reason"]], skipReason=skipped["reason"])
+            if task.status in {"failed", "dead_letter", "dead_letter_deleted"} and (task.last_error or {}).get("errorCode") == "PRODUCT_UNAVAILABLE":
+                item.update(message=str(task.last_error.get("message") or "Bỏ qua: Amazon hiện không bán sản phẩm này."), skipReason="product_unavailable")
+            elif task.status in {"failed", "dead_letter", "dead_letter_deleted"} and (task.last_error or {}).get("errorCode") == "NOT_FOUND":
+                item.update(message=str(task.last_error.get("message") or "Bỏ qua: trang sản phẩm Amazon không tồn tại."), skipReason="product_not_found")
+            elif task.status in {"failed", "dead_letter", "dead_letter_deleted"} and (task.last_error or {}).get("errorCode") == "CAPTCHA_SKIPPED":
+                item.update(message="Chưa kiểm tra được — Amazon yêu cầu xác minh CAPTCHA. Đã bỏ qua trong lượt này.", skipReason="captcha_unverified")
             progress_items.append(item)
         product_counts = dict(session.execute(
             select(CrawlProductItem.status, func.count(CrawlProductItem.id))
@@ -6369,11 +6407,17 @@ class CoordinatorStore(CoordinatorObservability):
         }
         if (job.settings or {}).get("sequentialBatch"):
             skip_counts = Counter(entry["reason"] for entry in skipped_inputs.values())
+            unavailable_count = sum(item.get("skipReason") == "product_unavailable" for item in progress_items)
+            not_found_count = sum(item.get("skipReason") == "product_not_found" for item in progress_items)
+            captcha_count = sum(item.get("skipReason") == "captcha_unverified" for item in progress_items)
             progress["batch"] = {
                 "skippedShopify": skip_counts["existing_shopify"],
                 "skippedPipeline": skip_counts["existing_pipeline"],
                 "covered": skip_counts["received"],
-                "attention": skip_counts["attention"] + failed,
+                "unavailable": unavailable_count,
+                "notFound": not_found_count,
+                "captchaSkipped": captcha_count,
+                "attention": skip_counts["attention"] + failed - unavailable_count - not_found_count - captcha_count,
             }
         if isinstance(latest_batch_progress.get("browserPool"), dict):
             progress["browserPool"] = latest_batch_progress["browserPool"]

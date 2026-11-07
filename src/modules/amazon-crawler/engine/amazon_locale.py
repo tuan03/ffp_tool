@@ -6,6 +6,10 @@ import re
 import urllib.parse
 from typing import Any
 
+from bs4 import BeautifulSoup
+
+from .amazon_availability import product_is_unavailable
+
 AMAZON_ORIGIN = "https://www.amazon.com"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148 Safari/537.36"
 DEFAULT_HEADERS = {
@@ -55,5 +59,7 @@ def html_is_location_blocked(html: str) -> bool:
     )
     if not any(marker.casefold() in html.casefold() for marker in markers):
         return False
+    if product_is_unavailable(BeautifulSoup(html, "html.parser"), html):
+        return False  # No featured offer also appears on genuine unavailable listings.
     has_reliable_price = bool(re.search(r'class=["\'][^"\']*a-offscreen[^"\']*["\'][^>]*>\s*(?:US\s*)?\$', html, re.I))
     return not has_reliable_price

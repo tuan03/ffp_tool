@@ -2291,7 +2291,10 @@ export function AmazonCrawlerPage({
                 <p><span className="block text-xs text-slate-600 dark:text-slate-400">Sản phẩm</span>{Math.max(output.statistics.products, seoHandoffSummary.totalProducts)}</p>
                 <p><span className="block text-xs text-slate-600 dark:text-slate-400">Biến thể nguồn</span>{resultProducts.length > 0 ? output.statistics.sourceVariants : "—"}</p>
                 <p><span className="block text-xs text-slate-600 dark:text-slate-400">Biến thể cuối</span>{resultProducts.length > 0 ? output.statistics.finalVariants : "—"}</p>
-                <p><span className="block text-xs text-slate-600 dark:text-slate-400">Lỗi</span>{output.errors.length}</p>
+                <p><span className="block text-xs text-slate-600 dark:text-slate-400">Lỗi</span>{output.errors.filter(crawlError => !(["PRODUCT_UNAVAILABLE", "NOT_FOUND", "CAPTCHA_SKIPPED"].includes(crawlError.code))).length}</p>
+                {output.errors.some(crawlError => crawlError.code === "PRODUCT_UNAVAILABLE") && <p><span className="block text-xs text-slate-600 dark:text-slate-400">Link có ASIN không khả dụng</span>{output.errors.filter(crawlError => crawlError.code === "PRODUCT_UNAVAILABLE").length}</p>}
+                {output.errors.some(crawlError => crawlError.code === "NOT_FOUND") && <p><span className="block text-xs text-slate-600 dark:text-slate-400">Link có ASIN không tồn tại</span>{output.errors.filter(crawlError => crawlError.code === "NOT_FOUND").length}</p>}
+                {output.errors.some(crawlError => crawlError.code === "CAPTCHA_SKIPPED") && <p><span className="block text-xs text-slate-600 dark:text-slate-400">Chưa xác minh do CAPTCHA</span>{output.errors.filter(crawlError => crawlError.code === "CAPTCHA_SKIPPED").length}</p>}
               </div>
               {(seoHandoffSummary.skippedExistingShopify ?? 0) > 0 || (seoHandoffSummary.skippedExistingPipeline ?? 0) > 0 ? (
                 <p className="text-sm text-amber-700 dark:text-amber-300">
@@ -2431,7 +2434,7 @@ export function AmazonCrawlerPage({
               )}
             </div>
           )}
-          {output?.errors.map((crawlError) => <div key={`${crawlError.source}-${crawlError.code}`} className="rounded-lg border border-rose-200 dark:border-rose-800 p-3 text-rose-700 dark:text-rose-300">
+          {output?.errors.map((crawlError) => <div key={`${crawlError.source}-${crawlError.code}`} className={["PRODUCT_UNAVAILABLE", "NOT_FOUND", "CAPTCHA_SKIPPED"].includes(crawlError.code) ? "rounded-lg border border-amber-200 p-3 text-amber-700 dark:border-amber-800 dark:text-amber-300" : "rounded-lg border border-rose-200 dark:border-rose-800 p-3 text-rose-700 dark:text-rose-300"}>
             <p>{crawlError.source}: {crawlError.code === "WORKER_INTERRUPTED" ? "Family bị gián đoạn khi worker khởi động lại; dữ liệu đã lấy vẫn được giữ." : crawlError.stage ? `Quá thời gian xử lý ở bước ${crawlError.stage}.` : crawlError.message}</p>
             {crawlError.stage ? <details className="mt-2"><summary className="cursor-pointer text-xs">Chi tiết timeout</summary><pre className="mt-2 overflow-auto text-xs">{JSON.stringify({ stage: crawlError.stage, attempt: crawlError.attempt, route: crawlError.route, profile: crawlError.profile, elapsedMs: crawlError.elapsedMs, isRetryable: crawlError.isRetryable, retryAfter: crawlError.retryAfter }, null, 2)}</pre></details> : null}
           </div>)}
@@ -2472,10 +2475,10 @@ export function AmazonCrawlerPage({
   const isCurrentResult = output !== null && (output.settings.storeId || "capozen").toLowerCase() === activeStoreId.toLowerCase() && lastJobId !== dismissedHandoffJobId;
   const statusErrors = [...new Set([
     error, asinPreflightError, handoverError, jobControlTone === "error" && !isJobSnapshotStale ? jobControlMessage : null,
-    ...(isCurrentResult ? (output?.errors ?? []).map(crawlError => `${crawlError.source}: ${crawlError.message}`) : []),
+    ...(isCurrentResult ? (output?.errors ?? []).filter(crawlError => !(["PRODUCT_UNAVAILABLE", "NOT_FOUND", "CAPTCHA_SKIPPED"].includes(crawlError.code))).map(crawlError => `${crawlError.source}: ${crawlError.message}`) : []),
     ...(isCurrentResult || isRunning ? resultProducts : []).filter(product => crawlerSeoHandoffState(product.pipeline) === "not_handed_over")
       .map(product => `${product.asin}: ${product.pipeline?.seo.error || "Chưa bàn giao SEO Queue. Mở Phiên & kết quả để kiểm tra."}`),
-    ...(statusJob?.progress.items ?? []).filter(item => item.status === "failed").map(item => `${item.asin}: ${item.message}`),
+    ...(statusJob?.progress.items ?? []).filter(item => item.status === "failed" && item.skipReason !== "product_unavailable" && item.skipReason !== "product_not_found" && item.skipReason !== "captcha_unverified").map(item => `${item.asin}: ${item.message}`),
   ].filter((message): message is string => Boolean(message)))];
   const crawlStatus = resolveCrawlStatus({
     sourcePlatform,
@@ -3257,7 +3260,7 @@ export function AmazonCrawlerPage({
                         <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">{progressPhaseLabel(progressItem.phase)}</p>
                       </div>
                       <strong className="shrink-0 text-sm">
-                        {progressItem.skipReason ? progressItem.skipReason === "attention" ? "Cần kiểm tra" : "Đã bỏ qua" : progressItem.variantTotal > 0 ? `${progressItem.variantCompleted}/${progressItem.variantTotal}` : progressItem.status}
+                        {progressItem.skipReason ? progressItem.skipReason === "attention" ? "Cần kiểm tra" : progressItem.skipReason === "product_unavailable" ? "Không khả dụng · Đã bỏ qua" : progressItem.skipReason === "captcha_unverified" ? "Chưa xác minh · Đã bỏ qua lượt này" : progressItem.skipReason === "product_not_found" ? "Không tồn tại · Đã bỏ qua" : "Đã bỏ qua" : progressItem.variantTotal > 0 ? `${progressItem.variantCompleted}/${progressItem.variantTotal}` : progressItem.status}
                       </strong>
                     </div>
                     <p className="mt-2 text-sm text-slate-900 dark:text-slate-100">{progressItem.message}</p>

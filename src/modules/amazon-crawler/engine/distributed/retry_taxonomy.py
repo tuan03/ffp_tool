@@ -10,6 +10,7 @@ from ..observability import redact
 
 
 ERROR_CODES = frozenset({
+    "CAPTCHA_SKIPPED", "PRODUCT_UNAVAILABLE",
     "NETWORK_TIMEOUT", "CONNECTION_RESET", "DNS_ERROR", "SERVER_5XX", "RATE_LIMITED",
     "ACCESS_BLOCKED", "INVALID_URL", "NOT_FOUND", "PARSER_FAILED", "VALIDATION_FAILED",
     "BROWSER_CRASH", "WORKER_CRASH", "OUT_OF_MEMORY", "DISK_FULL", "RESULT_UPLOAD_FAILED",
@@ -17,6 +18,7 @@ ERROR_CODES = frozenset({
 })
 
 _REASON_CODES = {
+    "captcha_skipped": "CAPTCHA_SKIPPED", "product_unavailable": "PRODUCT_UNAVAILABLE",
     "timeout": "NETWORK_TIMEOUT", "network_timeout": "NETWORK_TIMEOUT", "read_timeout": "NETWORK_TIMEOUT",
     "connection_reset": "CONNECTION_RESET", "connectionreseterror": "CONNECTION_RESET",
     "dns": "DNS_ERROR", "dns_error": "DNS_ERROR", "http_5xx": "SERVER_5XX",
@@ -30,7 +32,7 @@ _REASON_CODES = {
     "key_revoked": "KEY_REVOKED", "config_invalid": "CONFIG_INVALID", "version_incompatible": "VERSION_INCOMPATIBLE",
     "lease_expired": "LEASE_EXPIRED",
 }
-_PERMANENT_CODES = {"INVALID_URL", "NOT_FOUND", "VALIDATION_FAILED", "AUTH_FAILED", "KEY_REVOKED", "CONFIG_INVALID", "VERSION_INCOMPATIBLE"}
+_PERMANENT_CODES = {"CAPTCHA_SKIPPED", "PRODUCT_UNAVAILABLE", "INVALID_URL", "NOT_FOUND", "VALIDATION_FAILED", "AUTH_FAILED", "KEY_REVOKED", "CONFIG_INVALID", "VERSION_INCOMPATIBLE"}
 _SAFE_ERROR_FIELDS = {
     "status", "reason", "code", "errorCode", "message", "retryable", "isRetryable", "retryAfter",
     "retryAfterSeconds", "httpStatus", "notFoundConfirmed", "stage", "attempt", "elapsedMs",

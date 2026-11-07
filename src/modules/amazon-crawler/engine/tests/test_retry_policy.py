@@ -59,11 +59,73 @@ class ErrorBrowser(FakeBrowser):
 
 
 class RetryPolicyTests(unittest.TestCase):
+    def test_missing_page_requires_content_and_http404_or_browser_verification(self):
+        html = '<html><body><a href="/"><img src="https://images-na.ssl-images-amazon.com/images/G/01/error/en_US/title._TTD_.png" alt="Sorry! We couldn\'t find that page. Try searching or go to Amazon\'s home page."></a></body></html>'
+        for status in (200, 404):
+            with self.subTest(status=status):
+                unverified = response_failure(status, html)
+                self.assertEqual(unverified.retryable, status != 404)
+                self.assertEqual(unverified.confirmed, status == 404)
+                verified = response_failure(status, html, verified=True)
+                self.assertEqual(verified.reason, "not_found")
+                self.assertTrue(verified.confirmed)
+                self.assertFalse(verified.retryable)
+        self.assertTrue(response_failure(503, html, verified=True).retryable)
+        self.assertEqual(response_failure(404, html + '<form action="/errors/validateCaptcha">', verified=True).reason, "captcha")
+        self.assertIsNone(response_failure(200, PRODUCT_HTML + html, verified=True))
+
+    def test_browser_error_image_does_not_wait_for_product_selectors(self):
+        html = '<img alt="Sorry! We couldn\'t find that page." src="/images/G/01/error/en_US/title._TTD_.png">'
+        page = AsyncMock()
+        page.goto.return_value.status = 404
+        page.goto.return_value.headers = {}
+        page.content.return_value = html
+        import asyncio
+        with self.assertRaises(FetchFailure) as caught:
+            asyncio.run(PlaywrightPool._load_product_page(page, "https://www.amazon.com/dp/B012345678"))
+        self.assertEqual(caught.exception.reason, "not_found")
+        page.wait_for_selector.assert_not_awaited()
+
+    def test_explicit_http404_skips_without_browser_verification(self):
+        html = '<img alt="Sorry! We couldn\'t find that page.">'
+        with tempfile.TemporaryDirectory() as directory:
+            fetcher = StatusFetcher(404, proxy=True, body=html)
+            browser = ErrorBrowser(response_failure(404, html, verified=True))
+            crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(), fetcher=fetcher, browser_pool=browser)
+            output = crawler.run(job_id="image-404", sources=["B012345678"], write_export=False)
+            self.assertEqual(fetcher.calls, ["direct"])
+            self.assertEqual(fetcher.delays, [])
+            self.assertEqual(browser.calls, 0)
+            self.assertEqual(output["products"], [])
+            self.assertEqual(output["errors"][0]["code"], "NOT_FOUND")
+            self.assertTrue(output["errors"][0]["notFoundConfirmed"])
+            self.assertFalse(output["errors"][0]["retryable"])
+
     def test_backoff_grows_with_jitter_and_respects_server_minimum(self):
         with patch("engine.retry_policy.random.uniform", return_value=1):
             self.assertEqual(retry_delay(1, base=2), 3)
             self.assertEqual(retry_delay(2, base=2), 5)
             self.assertEqual(retry_delay(3, base=2, retry_after=120), 121)
+
+    def test_expired_missing_page_observation_allows_product_to_return(self):
+        html = '<img alt="Sorry! We couldn\'t find that page.">'
+        with tempfile.TemporaryDirectory() as directory:
+            crawler = AmazonCrawler(root=Path(directory), settings=CrawlSettings(), fetcher=StatusFetcher(404, body=html),
+                browser_pool=ErrorBrowser(response_failure(404, html, verified=True)))
+            crawler.run(job_id="missing", sources=["B012345678"], write_export=False)
+            key = "B012345678:90001:us-v1"
+            self.assertIsNotNone(crawler.cache.load_failure(key))
+            crawler.cache.save_failure(key, status="not_found", reason="not_found", retry_after_seconds=-1,
+                details={"notFoundConfirmed": True})
+            available = '''<input id="ASIN" value="B012345678"><h1 id="productTitle">Handbag</h1>
+                <div id="corePrice_feature_div"><span class="a-offscreen">$19.99</span></div>
+                <img id="landingImage" src="https://m.media-amazon.com/images/I/sample.jpg">'''
+            crawler.fetcher = StaticFetcher(available)
+            crawler.browser_pool = FakeBrowser(available)
+            restored = crawler.run(job_id="returned", sources=["B012345678"], write_export=False)
+            self.assertEqual(restored["errors"], [])
+            self.assertEqual(len(restored["products"]), 1)
+            self.assertIsNone(crawler.cache.load_failure(key))
 
     def test_retry_after_http_date_and_invalid_header(self):
         from datetime import datetime, timezone
@@ -110,13 +172,13 @@ class RetryPolicyTests(unittest.TestCase):
         fetcher._opener = lambda *args: CaptchaOpener()
         with self.assertRaises(FetchFailure) as caught:
             fetcher.fetch("https://www.amazon.com/dp/B012345678")
-        self.assertEqual(caught.exception.reason, "captcha")
+        self.assertEqual(caught.exception.reason, "captcha_skipped")
 
     def test_http_error_captcha_body_takes_precedence_over_503(self):
         fetcher = StatusFetcher(503, body='<form action="/errors/validateCaptcha">')
         with self.assertRaises(Exception) as caught:
             fetcher.fetch("https://www.amazon.com/dp/B012345678")
-        self.assertEqual(classify_crawl_failure(caught.exception)["reason"], "captcha")
+        self.assertEqual(classify_crawl_failure(caught.exception)["reason"], "captcha_skipped")
         self.assertEqual(fetcher.calls, ["direct"])
 
     def test_partial_child503_preserves_rate_limit_reason(self):

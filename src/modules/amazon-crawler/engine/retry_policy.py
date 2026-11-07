@@ -62,12 +62,24 @@ def _retry_after(headers: Mapping[str, str] | None) -> float:
 
 
 def html_is_captcha(html: str) -> bool:
-    lowered = html.casefold()
-    return bool(html) and any(marker in lowered for marker in (
-        "validatecaptcha", "opfcaptcha.amazon.com", "enter the characters you see below", "captchacharacters",
-        "click the button below to continue shopping", "api-services-support@amazon.com",
+    if not html:
+        return False
+    soup = BeautifulSoup(html, "html.parser")
+    # A support address or a script/comment mentioning CAPTCHA is not a challenge.
+    if soup.select('form[action*="validateCaptcha"], form[action*="validatecaptcha"], input#captchacharacters, input[name="field-keywords"][placeholder*="characters"], iframe[src*="opfcaptcha.amazon.com"]'):
+        return True
+    for node in soup.select("script, style, template"):
+        node.decompose()
+    lowered = " ".join(soup.get_text(" ", strip=True).casefold().split())
+    return any(marker in lowered for marker in (
+        "enter the characters you see below", "click the button below to continue shopping",
         "sorry, we just need to make sure you're not a robot", "robot check",
     ))
+
+
+def captcha_skip_failure(http_status: int | None = None) -> FetchFailure:
+    return FetchFailure("Chưa kiểm tra được — Amazon yêu cầu xác minh CAPTCHA. Đã bỏ qua trong lượt này; có thể thử lại sau.",
+                        status="captcha_skipped", reason="captcha_skipped", retryable=False, delay=0, http_status=http_status)
 
 
 def response_failure(status: int | None, html: str, headers: Mapping[str, str] | None = None,
@@ -81,14 +93,18 @@ def response_failure(status: int | None, html: str, headers: Mapping[str, str] |
     if status in {429, 503}:
         return FetchFailure(f"Amazon HTTP {status}; network route needs a cooldown.", status="network_error",
                             reason=f"http_{status}", retryable=True, delay=max(30, _retry_after(headers)), http_status=status)
-    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True).casefold().replace("’", "'") if html else ""
+    soup = BeautifulSoup(html, "html.parser")
+    # Amazon's Dogs error page renders its message as an image. get_text()
+    # alone loses the alt text and turns a confirmed missing page into retries.
+    text = " ".join([soup.get_text(" ", strip=True), *(str(image.get("alt") or "") for image in soup.select("img[alt]"))])
+    text = " ".join(text.casefold().replace("’", "'").split())
     is_missing = any(marker in text for marker in (
         "sorry! we couldn't find that page", "sorry, we couldn't find that page",
         "sorry we couldn't find that page", "product not found",
     ))
     if is_missing or status == 404:
-        confirmed = verified and is_missing and status in {None, 200, 404}
-        return FetchFailure("Amazon product not found (browser verified)." if confirmed else "Amazon 404 has not been verified.",
+        confirmed = is_missing and (status == 404 or (verified and status in {None, 200}))
+        return FetchFailure("Bỏ qua: trang sản phẩm Amazon không tồn tại (đã xác nhận nội dung trang lỗi)." if confirmed else "Amazon 404 has not been verified.",
                             status="not_found" if confirmed else "network_error",
                             reason="not_found" if confirmed else "not_found_unverified",
                             retryable=not confirmed, delay=86400 if confirmed else 30,
