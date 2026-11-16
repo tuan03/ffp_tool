@@ -1518,7 +1518,7 @@ async function workerLoop(workerIndex: number): Promise<void> {
       });
       const claim = claimed.items[0];
       if (!claim) {
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
         continue;
       }
       await processClaim(claim, workerId, proxyStore.storeId, proxyProfile);
